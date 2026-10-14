@@ -24,6 +24,15 @@
 - **导出交付**：字幕 SRT / 分镜 JSON / 导出清单真实下载；剪映草稿（实验性，三轨 draft）一键带出；成片 MP4 在浏览器端用 FFmpeg.wasm 合成（零服务端成本），导出页含交付就绪检查。
 - **自由画布 3**：pavo3 通用生成代理，文本 / 图片 / 视频 / 音频三通道 API 真实接入（从「设置 → 模型服务」取供应商配置）；未配置或后端不可达时自动降级为演示数据并明确标注，不冒充真实产物。
 
+## 📦 安装
+
+- **Docker**：`docker compose up -d --build`
+- **macOS**：`bash scripts/install-macos.sh`
+- **Linux**：`bash scripts/install-linux.sh`
+- **Windows**：双击 `scripts\install-windows.bat` → 运行 `npm run build` → 双击 `scripts\start-windows.bat`
+
+详细步骤见 [docs/安装指南.md](docs/安装指南.md)。
+
 ## 🚀 快速开始（macOS）
 
 ```bash

@@ -1,4 +1,5 @@
 # 一幕·YIMU 企业版一键栈（W6 1.0）
+# 注：简单本地 Docker 体验请用项目根目录的 `docker-compose.yml`（`docker compose up -d --build`），本文件为企业版 W6 栈。
 # 用法：cp .env.enterprise.example .env.enterprise（按需改） && docker compose -f deploy/docker-compose.yml --env-file .env.enterprise up -d --build
 # 访问：http://localhost:5173/app/yimu/（经内置网关）或直连 http://localhost:3000/
 name: yimu-enterprise

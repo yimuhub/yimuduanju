@@ -1,0 +1,36 @@
+# =============================================================================
+# 一幕·YIMU AI 短剧工坊 —— systemd 服务单元模板
+# -----------------------------------------------------------------------------
+# 用法：
+#   1. 自动安装：sudo ./scripts/install-linux.sh，按提示选择安装 systemd 服务
+#      （脚本会自动把 <绝对路径> 替换为项目实际绝对路径）
+#   2. 手动安装：把下面所有的 <绝对路径> 替换为项目实际绝对路径后，
+#      复制到 /etc/systemd/system/yimuduanju.service，再执行：
+#        systemctl daemon-reload && systemctl enable --now yimuduanju
+# 注意：start.sh 默认按 macOS Homebrew 路径查找 PostgreSQL，
+#       Linux 下请按需取消下面 Environment 行的注释并改成实际路径。
+# =============================================================================
+[Unit]
+Description=一幕·YIMU AI 短剧工坊
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+# install-linux.sh 会自动把 <绝对路径> 替换为项目实际路径；手动安装请自行替换。
+WorkingDirectory=<绝对路径>
+# --- PostgreSQL 路径覆盖（start.sh 默认是 Homebrew 路径，Linux 下按需取消注释） ---
+# Debian/Ubuntu（PGDG 或系统源）示例：
+# Environment=PG_BIN=/usr/lib/postgresql/16/bin
+# Environment=PGDATA=/var/lib/postgresql/16/main
+# RHEL 系（PGDG）示例：
+# Environment=PG_BIN=/usr/pgsql-16/bin
+# Environment=PGDATA=/var/lib/pgsql/16/data
+# Arch 示例：
+# Environment=PG_BIN=/usr/bin
+# Environment=PGDATA=/var/lib/postgres/data
+ExecStart=/usr/bin/bash <绝对路径>/scripts/start.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

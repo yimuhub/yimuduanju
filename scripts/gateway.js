@@ -189,12 +189,14 @@ const server = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
-// W4 安全加固：默认仅监听 127.0.0.1（本机回环）。
+// W4 安全加固：默认仅监听 127.0.0.1（本机回环），安全语义不变。
 // 网关代理的 /api/* 包含无认证的业务接口，绑定 0.0.0.0 暴露到局域网/公网
 // 即意味着同网段任意设备可读写本地数据 —— 如确需暴露请先评估风险。
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[gateway] 一幕·YIMU AI 短剧工坊本地网关已启动：http://127.0.0.1:${PORT}`);
-  console.log(`[gateway] 监听地址：127.0.0.1（仅本机访问）`);
+// Docker Compose 下可通过环境变量 GATEWAY_HOST=0.0.0.0 开放容器端口。
+const GATEWAY_HOST = process.env.GATEWAY_HOST || '127.0.0.1';
+server.listen(PORT, GATEWAY_HOST, () => {
+  console.log(`[gateway] 一幕·YIMU AI 短剧工坊本地网关已启动：http://${GATEWAY_HOST}:${PORT}`);
+  console.log(`[gateway] 监听地址：${GATEWAY_HOST}${GATEWAY_HOST === '127.0.0.1' ? '（仅本机访问）' : '（已开放，请评估风险）'}`);
   console.log(`[gateway] 静态资源目录：${DIST_DIR}`);
   console.log(`[gateway] 动态请求转发：${TARGET}`);
 });

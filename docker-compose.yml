@@ -1,0 +1,56 @@
+# 一幕·YIMU AI 短剧工坊 —— 本地 Docker 一键栈（简单体验版）
+# 用法：docker compose up -d --build
+# 访问：http://localhost:5173/app/yimu/
+# 说明：首次运行前建议先执行 `node scripts/setup.js` 生成项目根 .env（密钥）
+# 企业版 W6 栈请用 deploy/docker-compose.yml
+name: yimuduanju
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yimu
+      POSTGRES_USER: yimu
+      POSTGRES_PASSWORD: yimu
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U yimu']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      GATEWAY_HOST: 0.0.0.0
+      DATABASE_URL: postgres://yimu:yimu@postgres:5432/yimu
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '5173:5173'
+
+volumes:
+  pgdata:
+  redisdata:
