@@ -1,0 +1,70 @@
+import { axiosForBackend } from '@client/src/api/http';
+import type {
+  Asset,
+  AssetListParams,
+  AssetListResponse,
+} from '@shared/api.interface';
+
+export const listAssets = (params: AssetListParams = {}) =>
+  axiosForBackend
+    .get<AssetListResponse>('/api/assets', { params })
+    .then((res) => res.data);
+
+/** 媒体展示地址：本地 /uploads 直连；远程走后端代理取流（可自动落盘） */
+export const mediaUrl = (asset: Pick<Asset, 'id' | 'fileUrl'>): string | undefined => {
+  if (!asset.fileUrl) return undefined;
+  if (asset.fileUrl.startsWith('/uploads/')) return asset.fileUrl;
+  if (asset.fileUrl.startsWith('data:') || asset.fileUrl.startsWith('blob:')) return asset.fileUrl;
+  return `/api/assets/${asset.id}/content`;
+};
+
+export const getAsset = (id: string) =>
+  axiosForBackend.get<Asset>(`/api/assets/${id}`).then((res) => res.data);
+
+export const createAsset = (data: Partial<Asset>) =>
+  axiosForBackend.post<Asset>('/api/assets', data).then((res) => res.data);
+
+export const updateAsset = (id: string, data: Partial<Asset>) =>
+  axiosForBackend
+    .patch<Asset>(`/api/assets/${id}`, data)
+    .then((res) => res.data);
+
+export const deleteAsset = (id: string) =>
+  axiosForBackend
+    .delete<{ id: string }>(`/api/assets/${id}`)
+    .then((res) => res.data);
+
+// 白模产线 · 本地二进制上传（白模 webm/照片落盘，octet-stream，复用 axios CSRF 链路）
+// 注意：listProjectAssets 调用的旧路由后端不存在，请用 listAssets({ projectId })。
+export const uploadLocalFile = (
+  projectId: string,
+  blob: Blob,
+  filename: string,
+  durationSeconds?: number,
+) =>
+  axiosForBackend
+    .post<{ asset: Asset; fileUrl: string }>(
+      `/api/projects/${projectId}/uploads${
+        durationSeconds ? `?durationSeconds=${durationSeconds}` : ''
+      }`,
+      blob,
+      {
+        headers: {
+          'Content-Type': blob.type || 'application/octet-stream',
+          'X-Filename': filename,
+        },
+      },
+    )
+    .then((res) => res.data);
+
+export const listProjectAssets = (projectId: string) =>
+  axiosForBackend
+    .get<Asset[]>(`/api/projects/${projectId}/assets`)
+    .then((res) => res.data);
+
+export const presignUpload = (fileName: string, contentType: string) =>
+  axiosForBackend
+    .get<{ uploadUrl: string; fileUrl: string; mode: string }>('/api/storage/presign', {
+      params: { fileName, contentType },
+    })
+    .then((res) => res.data);

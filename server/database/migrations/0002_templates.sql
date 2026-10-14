@@ -1,0 +1,3 @@
+-- 0002_templates.sql · 模板运营字段（幂等）
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS use_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS like_count INTEGER NOT NULL DEFAULT 0;

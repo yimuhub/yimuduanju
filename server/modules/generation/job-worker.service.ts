@@ -1,0 +1,1306 @@
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
+import {
+  assets,
+  characters,
+  generationJobs,
+  locations,
+  modelProviders,
+  projects,
+  scenes,
+  shots,
+} from '@server/database/schema';
+import { and, eq } from 'drizzle-orm';
+import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
+import { mkdir, stat, writeFile } from 'fs/promises';
+import { join } from 'path';
+import type { GenerationJob, ProfessionalPrefs } from '@shared/api.interface';
+import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
+import { StageBindingsService } from '../providers/stage-bindings.service';
+import { GenerationService } from './generation.service';
+import { ModelGatewayService } from './model-gateway.service';
+import { BudgetCapService } from './budget-cap.service';
+import { RoutingService } from './routing.service';
+import { StorySkillsService } from '../story-skills/story-skills.service';
+import { uploadDir } from '../assets/uploads.controller';
+import { Queue, Worker, type Job } from 'bullmq';
+import IORedis from 'ioredis';
+
+/**
+ * 任务消费器（W5：BullMQ 队列版，Redis 不可用时自动降级为进程内串行）。
+ *
+ * - 生产者：每轮认领 pending → 状态置 queued → 推入 generation 队列（jobId 去重）
+ * - 消费者：BullMQ Worker 并发执行（JOB_WORKER_CONCURRENCY，默认 2）
+ * - 启动时回收上次崩溃残留的 running（无 externalTaskId 的回到 pending）
+ * - 其余语义不变：parse_script 物化 / text-image-video-tts 真调 / 无 Key 等待 / maxRetries
+ */
+@Injectable()
+export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(JobWorkerService.name);
+  private timer: NodeJS.Timeout | null = null;
+  private running = false;
+  /** 已提示过“等 Key”的任务，避免每轮刷日志 */
+  private readonly awaitingProvider = new Set<string>();
+  /** 上游限流冷却截止时间（ms epoch）；期间不认领新任务 */
+  private holdUntil = 0;
+  private budgetWarned = false;
+  private queue: Queue | null = null;
+  private worker: Worker | null = null;
+  private redis: IORedis | null = null;
+  /** BullMQ 不可用时的进程内降级开关 */
+  private inlineMode = false;
+  private workerConcurrency = 1;
+  /** V7：消费器是否已启动（区别于 tick 重入锁 running） */
+  private started = false;
+
+  /** V7 并发可见性：当前消费并发 + 队列深度（任务页展示，改并发需重启） */
+  async workerStats(): Promise<{
+    mode: 'queue' | 'inline' | 'off';
+    concurrency: number;
+    waiting: number;
+    active: number;
+  }> {
+    if (!this.started) return { mode: 'off', concurrency: 0, waiting: 0, active: 0 };
+    if (this.inlineMode || !this.queue) {
+      return { mode: 'inline', concurrency: 1, waiting: 0, active: 0 };
+    }
+    const [waiting, active] = await Promise.all([
+      this.queue.getWaitingCount().catch(() => 0),
+      this.queue.getActiveCount().catch(() => 0),
+    ]);
+    return { mode: 'queue', concurrency: this.workerConcurrency, waiting, active };
+  }
+
+  constructor(
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly generationService: GenerationService,
+    private readonly modelGateway: ModelGatewayService,
+    private readonly budgetCap: BudgetCapService,
+    private readonly routing: RoutingService,
+    private readonly storySkills: StorySkillsService,
+    private readonly stageBindings: StageBindingsService,
+  ) {}
+
+  /** B1 环节覆盖：分环节绑定的供应商/模型优先于任务自带与路由决策 */
+  private async applyStageBinding(
+    job: GenerationJob,
+    providerName: string | undefined,
+  ): Promise<{ providerName: string | undefined; model?: string; temperature?: number }> {
+    const stage = stageOfJobType(job.jobType);
+    if (!stage) return { providerName };
+    const binding = await this.stageBindings.resolve(stage as StageKey);
+    if (!binding.providerId && !binding.model && binding.temperature === undefined) {
+      return { providerName };
+    }
+    this.logger.log(
+      `任务 ${job.id} 环节覆盖[${stage}]：${binding.providerName ?? '默认供应商'}/${binding.model ?? '默认模型'}`,
+    );
+    return {
+      providerName: binding.providerName ?? providerName,
+      model: binding.model,
+      temperature: binding.temperature,
+    };
+  }
+
+  async onModuleInit() {
+    if (process.env.JOB_WORKER_ENABLED === 'false') {
+      this.logger.log('任务消费器已关闭（JOB_WORKER_ENABLED=false），任务需手动触发');
+      return;
+    }
+    // 崩溃恢复：无 externalTaskId 的 running 一律回到 pending（有 external 的由轮询继续推进）
+    await this.recoverOrphanedRunning();
+    // Redis 可达 → BullMQ 队列模式；否则进程内串行降级（开发/单机同样可用）
+    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    try {
+      const redis = new IORedis(redisUrl, {
+        maxRetriesPerRequest: null,
+        connectTimeout: 3000,
+        retryStrategy: () => null,
+      });
+      await redis.ping();
+      this.redis = redis;
+      const concurrency = Math.max(
+        1,
+        Math.min(8, Number(process.env.JOB_WORKER_CONCURRENCY) || 2),
+      );
+      this.workerConcurrency = concurrency;
+      this.queue = new Queue('yimu-generation', { connection: redis });
+      this.worker = new Worker(
+        'yimu-generation',
+        (job: Job<{ jobId: string }>) => this.consumeQueuedJob(job.data.jobId),
+        { connection: redis, concurrency },
+      );
+      this.worker.on('failed', (job, err) => {
+        this.logger.warn(`队列任务失败 ${job?.data?.jobId}: ${err.message}`);
+      });
+      this.logger.log(`任务消费器已启动（BullMQ 队列模式，并发 ${concurrency}）`);
+    } catch (e) {
+      this.inlineMode = true;
+      this.logger.warn(
+        `Redis 不可用（${(e as Error).message}），降级为进程内串行消费；如需并发请启动 Redis 并配置 REDIS_URL`,
+      );
+    }
+    const intervalMs = Math.max(
+      2000,
+      Number(process.env.JOB_WORKER_INTERVAL_MS) || 10000,
+    );
+    this.started = true;
+    this.timer = setInterval(() => {
+      void this.tick().catch((err) =>
+        this.logger.error(`消费器轮询异常: ${(err as Error).message}`),
+      );
+    }, intervalMs);
+  }
+
+  async onModuleDestroy() {
+    if (this.timer) clearInterval(this.timer);
+    if (this.worker) await this.worker.close().catch(() => {});
+    if (this.queue) await this.queue.close().catch(() => {});
+    if (this.redis) this.redis.disconnect();
+  }
+
+  /** 启动回收：崩溃残留的 running（无远端任务）回到 pending 等待重领 */
+  private async recoverOrphanedRunning(): Promise<void> {
+    try {
+      // 有 externalTaskId 的视频任务由轮询继续推进，不回收；其余 running 回 pending
+      const others = await this.db
+        .select({ id: generationJobs.id, externalTaskId: generationJobs.externalTaskId })
+        .from(generationJobs)
+        .where(eq(generationJobs.status, 'running'));
+      let recovered = 0;
+      for (const r of others) {
+        if (r.externalTaskId) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await this.db
+          .update(generationJobs)
+          .set({ status: 'pending', updatedAt: new Date() })
+          .where(eq(generationJobs.id, r.id));
+        recovered += 1;
+      }
+      if (recovered > 0) this.logger.log(`崩溃恢复：${recovered} 个残留 running 任务回到 pending`);
+    } catch (e) {
+      this.logger.warn(`崩溃恢复失败: ${(e as Error).message}`);
+    }
+  }
+
+  private async tick(): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    try {
+      // 超预算时暂停认领新任务（在途任务继续推进，避免半截浪费）
+      const cap = this.budgetCap.getCap();
+      if (cap !== null) {
+        const spend = await this.budgetCap.getMonthlySpend();
+        if (spend >= cap) {
+          if (!this.budgetWarned) {
+            this.logger.warn(
+              `月度预算已用尽（¥${spend.toFixed(2)}/¥${cap.toFixed(2)}），消费器暂停认领新任务`,
+            );
+            this.budgetWarned = true;
+          }
+          return;
+        }
+        this.budgetWarned = false;
+      }
+
+      await this.driveInflightVideoJobs();
+      if (this.queue && !this.inlineMode) {
+        // 上游限流冷却：期间不认领新任务（在途轮询继续）
+        if (this.holdUntil && Date.now() < this.holdUntil) return;
+        // 队列模式：认领 pending → queued → 入队（Worker 并发执行）
+        for (let i = 0; i < 5; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const claimed = await this.claimForQueue();
+          if (!claimed) break;
+          // BullMQ 按 jobId 去重：完成过的同 id 再 add 会被静默忽略 →
+          // 重试任务永远卡 queued。带 retryCount+时间戳保证唯一。
+          // 注意：BullMQ jobId 禁止冒号，分隔符必须用下划线。
+          // eslint-disable-next-line no-await-in-loop
+          await this.queue.add(
+            'execute',
+            { jobId: claimed.id },
+            {
+              jobId: `${claimed.id}_r${claimed.retryCount ?? 0}_${Date.now()}`,
+              removeOnComplete: 100,
+              removeOnFail: 200,
+            },
+          );
+        }
+      } else {
+        // 降级模式：进程内串行直接执行（旧行为）
+        const job = await this.generationService.claimNextPendingJob();
+        if (job) await this.process(job);
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  /** 认领一个 pending 并置 queued（队列模式专用，与 claimNextPendingJob 语义一致） */
+  private async claimForQueue(): Promise<GenerationJob | null> {
+    const rows = await this.db
+      .select()
+      .from(generationJobs)
+      .where(eq(generationJobs.status, 'pending'))
+      .orderBy(generationJobs.createdAt)
+      .limit(1);
+    if (rows.length === 0) return null;
+    const claimed = await this.db
+      .update(generationJobs)
+      .set({ status: 'queued', updatedAt: new Date() })
+      .where(
+        and(
+          eq(generationJobs.id, rows[0].id),
+          eq(generationJobs.status, 'pending'),
+        ),
+      )
+      .returning();
+    if (claimed.length === 0) return null;
+    return this.generationService.getJob(claimed[0].id);
+  }
+
+  /** BullMQ Worker 回调：加载最新行状态后执行（终态直接丢弃，保证幂等） */
+  private async consumeQueuedJob(jobId: string): Promise<void> {
+    const job = await this.generationService.getJob(jobId);
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+      return;
+    }
+    if (job.status === 'queued' || job.status === 'pending' || job.status === 'retrying') {
+      await this.db
+        .update(generationJobs)
+        .set({ status: 'running', startedAt: new Date(), updatedAt: new Date() })
+        .where(eq(generationJobs.id, jobId));
+      const fresh = await this.generationService.getJob(jobId);
+      // V5 每镜状态机：任务开跑 → 镜头 generating（变体不碰主状态；best-effort）
+      if (fresh.targetType === 'shot' && fresh.targetId) {
+        const input = (fresh.inputData ?? {}) as Record<string, unknown>;
+        if (typeof input.variantGroup !== 'string') {
+          this.db
+            .update(shots)
+            .set({ status: 'generating', updatedAt: new Date() })
+            .where(
+              and(
+                eq(shots.id, fresh.targetId),
+                ...(fresh.projectId ? [eq(shots.projectId, fresh.projectId)] : []),
+              ),
+            )
+            .catch((e: Error) => this.logger.warn(`镜头状态更新失败 ${fresh.targetId}：${e.message}`));
+        }
+      }
+      await this.process(fresh);
+      return;
+    }
+    // running（被其他路径认领）：跳过，避免双执行
+    this.logger.warn(`队列任务 ${jobId} 已在执行中，跳过重复消费`);
+  }
+
+  /** 推进在途视频任务（已有 externalTaskId 的 running 任务），完成后回写镜头 */
+  private async driveInflightVideoJobs(): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(generationJobs)
+      .where(
+        and(
+          eq(generationJobs.status, 'running'),
+          eq(generationJobs.jobType, 'video'),
+        ),
+      )
+      .limit(5);
+    for (const row of rows) {
+      if (!row.externalTaskId) continue;
+      try {
+        const updated = await this.generationService.pollJob(row.id);
+        if (updated.status === 'succeeded') {
+          const output = (updated.outputData ?? {}) as Record<string, unknown>;
+          await this.writebackToTarget(updated, {
+            videoUrl:
+              typeof output.url === 'string' ? output.url : undefined,
+          });
+        }
+      } catch (e) {
+        this.logger.warn(`在途视频任务推进失败 ${row.id}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  private async process(job: GenerationJob): Promise<void> {
+    this.logger.log(`认领任务 ${job.id}（${job.jobType}，目标 ${job.targetType ?? '-'}）`);
+    // W2 智能路由：按项目预算模式选档位与通道（任务自带 providerName 优先，显式指定不受路由覆盖）
+    const decision = await this.routing.resolve(
+      job.jobType,
+      await this.getProjectBudgetMode(job.projectId),
+      job.projectId,
+    );
+    this.logger.log(`任务 ${job.id} 路由决策：${decision.reason}`);
+    const routedName = job.providerName ?? decision.providerName;
+    // 决策落盘：后续结算/免费判定需要知道实际供应商（否则免费模型会被收费）
+    if (routedName && routedName !== job.providerName) {
+      await this.db
+        .update(generationJobs)
+        .set({ providerName: routedName, updatedAt: new Date() })
+        .where(eq(generationJobs.id, job.id))
+        .catch((e: Error) => this.logger.warn(`任务供应商落盘失败 ${job.id}：${e.message}`));
+    }
+    // B1 环节覆盖：绑定优先于任务自带与路由决策
+    const stage = await this.applyStageBinding(job, routedName);
+    const providerName = stage.providerName;
+    const modelOpts = { model: stage.model, temperature: stage.temperature };
+    try {
+      switch (job.jobType) {
+        case 'parse_script':
+          await this.processParseScript(job);
+          break;
+        case 'script':
+          await this.processScriptJob(job, providerName, modelOpts);
+          break;
+        case 'boards':
+          await this.processBoardsJob(job, providerName, modelOpts);
+          break;
+        case 'text':
+          await this.processText(job, providerName, modelOpts);
+          break;
+        case 'image':
+          await this.processImage(job, providerName, modelOpts);
+          break;
+        case 'video':
+          await this.processVideo(job, providerName, modelOpts);
+          break;
+        case 'tts':
+          await this.processTts(job, providerName);
+          break;
+        default:
+          // storyboard/qc/edit 等类型当前无生产方创建，保留 pending 并提示，避免误判失败
+          this.logger.warn(`暂不支持的任务类型 ${job.jobType}（${job.id}），跳过执行`);
+          await this.releaseToPending(job.id);
+          break;
+      }
+    } catch (e) {
+      const message = (e as Error)?.message ?? '未知错误';
+      // 未配置 Provider：保持 pending 等待配置，不消耗重试次数
+      if (message.includes('API Key') || message.includes('未配置')) {
+        if (!this.awaitingProvider.has(job.id)) {
+          this.logger.warn(`任务 ${job.id} 等待 Provider 配置：${message}`);
+          this.awaitingProvider.add(job.id);
+        }
+        await this.releaseToPending(job.id);
+        return;
+      }
+      this.awaitingProvider.delete(job.id);
+      // 上游限流（pool saturated / rate_limit / 503）：不消耗重试次数，
+      // 冷却 20s 后由 tick 重新认领，避免打爆对端池
+      if (
+        message.includes('pool saturated') ||
+        message.includes('rate_limit') ||
+        /\b503\b/.test(message)
+      ) {
+        this.logger.warn(`任务 ${job.id} 上游限流，冷却后重试：${message.slice(0, 160)}`);
+        this.holdUntil = Date.now() + 20_000;
+        await this.releaseToPending(job.id);
+        return;
+      }
+      this.logger.warn(`任务 ${job.id} 执行失败：${message}`);
+      await this.generationService.noteJobError(job.id, message);
+    }
+  }
+
+  private async getProjectBudgetMode(projectId?: string): Promise<'quality_first' | 'balanced' | 'cost_first' | 'fast_first' | undefined> {
+    if (!projectId) return undefined;
+    const rows = await this.db
+      .select({ budgetMode: projects.budgetMode })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    return (rows[0]?.budgetMode ?? undefined) as
+      | 'quality_first'
+      | 'balanced'
+      | 'cost_first'
+      | 'fast_first'
+      | undefined;
+  }
+
+  private async releaseToPending(id: string): Promise<void> {
+    await this.db
+      .update(generationJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(generationJobs.id, id));
+  }
+
+  private inputPrompt(job: GenerationJob): string {
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    const prompt = input.prompt;
+    return typeof prompt === 'string' ? prompt : '';
+  }
+
+  // ========== 各类型执行 ==========
+
+  private async processText(job: GenerationJob, providerName?: string, opts?: { model?: string; temperature?: number }): Promise<void> {
+    const prompt = this.inputPrompt(job);
+    if (!prompt.trim()) {
+      await this.generationService.settleJobFailure(job.id, '文本任务缺少 prompt');
+      return;
+    }
+    const text = await this.modelGateway.generateText(
+      { prompt, model: opts?.model, temperature: opts?.temperature },
+      providerName,
+    );
+    // F6 调用明细：网关暂存的用量（OpenAI 兼容接口才有）记入 outputData
+    const usage = this.modelGateway.takeLastTextUsage();
+    await this.generationService.settleJobSuccess(job.id, {
+      text,
+      ...(usage ? { usage } : {}),
+    });
+  }
+
+  private async processImage(job: GenerationJob, providerName?: string, opts?: { model?: string }): Promise<void> {
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    const prompt = this.inputPrompt(job);
+    if (!prompt.trim()) {
+      await this.generationService.settleJobFailure(job.id, '图片任务缺少 prompt');
+      return;
+    }
+    const images = await this.modelGateway.generateImage(
+      {
+        prompt,
+        negativePrompt:
+          typeof input.negativePrompt === 'string' ? input.negativePrompt : undefined,
+        model: opts?.model,
+      },
+      providerName,
+    );
+    const firstUrl = images[0]?.url;
+    // data: 大 base64 不进 shots.startFrameUrl（会撑爆行）；先落盘成 /uploads/ 再回写
+    const stableUrl = firstUrl ? await this.ensureLocalUrl(job.projectId, firstUrl) : undefined;
+    if (stableUrl) await this.writebackToTarget(job, { imageUrl: stableUrl });
+    await this.generationService.settleJobSuccess(job.id, { images });
+  }
+
+  private async processVideo(job: GenerationJob, providerName?: string, opts?: { model?: string }): Promise<void> {
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    const prompt = this.inputPrompt(job);
+    if (!prompt.trim()) {
+      await this.generationService.settleJobFailure(job.id, '视频任务缺少 prompt');
+      return;
+    }
+    const refs = Array.isArray(input.references)
+      ? (input.references as unknown[]).filter(
+          (r): r is string => typeof r === 'string' && r.length > 0,
+        )
+      : [];
+    // 一键成片时 references 在建任务那刻首帧尚未生成：执行时按镜头现状补空
+    // （只填空不覆盖已有引用；变体任务同样受益）
+    let imageUrl = refs[0];
+    let lastFrameUrl = refs[2];
+    if ((!imageUrl || !lastFrameUrl) && job.targetType === 'shot' && job.targetId) {
+      const shotRows = await this.db
+        .select({ startFrameUrl: shots.startFrameUrl, endFrameUrl: shots.endFrameUrl })
+        .from(shots)
+        .where(eq(shots.id, job.targetId))
+        .limit(1);
+      if (!imageUrl && shotRows[0]?.startFrameUrl) imageUrl = shotRows[0].startFrameUrl;
+      if (!lastFrameUrl && shotRows[0]?.endFrameUrl) lastFrameUrl = shotRows[0].endFrameUrl;
+    }
+    // 白模选填：references[1] 为白模位（generateShotVideo 约定：首帧/白模/尾帧/角色图）。
+    // 网关侧再做双门控（供应商 videoReference 开关 + 公网 URL），此处只透传不决策。
+    const { taskId } = await this.modelGateway.generateVideo(
+      {
+        prompt,
+        duration:
+          typeof input.duration === 'number' ? input.duration : 5,
+        imageUrl,
+        referenceVideoUrl: refs[1],
+        lastFrameUrl,
+        model: opts?.model,
+      },
+      providerName,
+    );
+    // 远端任务已创建：记录 externalTaskId，保持 running，由轮询完成
+    await this.db
+      .update(generationJobs)
+      .set({ externalTaskId: taskId, progress: 10, updatedAt: new Date() })
+      .where(eq(generationJobs.id, job.id));
+    this.logger.log(`视频远端任务已创建 ${job.id} → ${taskId}`);
+  }
+
+  private async processTts(job: GenerationJob, providerName?: string): Promise<void> {
+    const text = this.inputPrompt(job);
+    if (!text.trim()) {
+      await this.generationService.settleJobFailure(job.id, '配音任务缺少文本');
+      return;
+    }
+    // Agnes 通道无配音能力（官方无音频 API）：直接失败并明示，不浪费调用
+    if (providerName) {
+      const prow = await this.db
+        .select({ formatType: modelProviders.formatType })
+        .from(modelProviders)
+        .where(eq(modelProviders.name, providerName))
+        .limit(1);
+      if (prow.length > 0 && prow[0].formatType === 'agnes') {
+        await this.generationService.settleJobFailure(
+          job.id,
+          '该供应商为 Agnes 测试通道，官方暂无配音接口；请换有 TTS 能力的供应商后重试',
+        );
+        return;
+      }
+    }
+    const result = await this.modelGateway.generateTTS(
+      { text },
+      providerName,
+    );
+    const voiceUrl =
+      result.audioUrl ??
+      (result.audioBase64
+        ? `data:audio/wav;base64,${result.audioBase64}`
+        : undefined);
+    if (voiceUrl) await this.writebackToTarget(job, { voiceUrl });
+    await this.generationService.settleJobSuccess(job.id, {
+      audioUrl: result.audioUrl,
+      hasAudio: Boolean(voiceUrl),
+    });
+  }
+
+  // ========== script 剧本技能任务 ==========
+  /**
+   * 剧本技能任务：LLM 生成/改写剧本 → 存回项目 → 自动链式创建 parse_script 物化。
+   * 无 Key 时 runSkill 抛可读错，由外层统一转为 pending 等待（不烧重试）。
+   */
+  private async processScriptJob(job: GenerationJob, providerName?: string, opts?: { model?: string; temperature?: number }): Promise<void> {
+    if (!job.projectId) {
+      await this.generationService.settleJobFailure(job.id, '剧本任务缺少项目归属');
+      return;
+    }
+    const input = (job.inputData ?? {}) as {
+      kind?: string;
+      source?: string;
+      styleId?: string;
+      genreId?: string;
+      rewriteEnabled?: boolean;
+      directives?: string;
+    };
+    const kind = input.kind === 'script_rewrite' || input.kind === 'one_sentence_expand' || input.kind === 'ad_creative'
+      ? input.kind
+      : 'novel_to_script';
+    // 风格回落：未显式指定则用项目画风（风格包 id 与 ArtStyle 同源）
+    let styleId = input.styleId;
+    if (!styleId) {
+      const artRows = await this.db
+        .select({ artStyle: projects.artStyle })
+        .from(projects)
+        .where(eq(projects.id, job.projectId))
+        .limit(1);
+      styleId = artRows[0]?.artStyle ?? undefined;
+    }
+    const result = await this.storySkills.runSkill({
+      skillId: kind,
+      source: input.source ?? '',
+      styleId,
+      genreId: typeof input.genreId === 'string' ? input.genreId : undefined,
+      model: opts?.model,
+      temperature: opts?.temperature,
+      rewriteEnabled: input.rewriteEnabled,
+      directives: input.directives,
+      providerName: providerName ?? job.providerName,
+    });
+    if (!result.scriptText.trim()) {
+      await this.generationService.settleJobFailure(job.id, '技能未产出可用剧本');
+      return;
+    }
+    await this.db
+      .update(projects)
+      .set({ scriptText: result.scriptText, updatedAt: new Date() })
+      .where(eq(projects.id, job.projectId));
+    await this.generationService.settleJobSuccess(job.id, {
+      skillId: result.skillId,
+      title: result.title,
+      scenesCount: result.scenesCount,
+      dialoguesCount: result.dialoguesCount,
+    });
+    // 链式物化：改写类任务替换旧分镜，避免重复堆积
+    await this.db.insert(generationJobs).values({
+      projectId: job.projectId,
+      jobType: 'parse_script',
+      targetType: 'project',
+      targetId: job.projectId,
+      status: 'pending',
+      priority: 80,
+      inputData: {
+        prompt: result.scriptText,
+        replaceExisting: true,
+        skillId: result.skillId,
+      },
+    });
+    this.logger.log(`剧本技能 ${result.skillId} 完成，已链式创建物化任务`);
+  }
+
+  // ========== boards 分镜表物化 ==========
+  /**
+   * 分镜表技能任务：LLM 输出分镜 JSON → 按 scene 分组建场建镜。
+   * 解析失败（空数组）则降级：链式 parse_script 用原文启发式拆分，不丢任务。
+   */
+  private async processBoardsJob(job: GenerationJob, providerName?: string, opts?: { model?: string; temperature?: number }): Promise<void> {
+    if (!job.projectId) {
+      await this.generationService.settleJobFailure(job.id, '分镜任务缺少项目归属');
+      return;
+    }
+    const input = (job.inputData ?? {}) as {
+      scriptText?: string;
+      styleId?: string;
+      genreId?: string;
+      replaceExisting?: boolean;
+    };
+    const scriptText = (input.scriptText ?? '').trim();
+    if (!scriptText) {
+      await this.generationService.settleJobFailure(job.id, '分镜任务缺少剧本内容');
+      return;
+    }
+    let styleId = input.styleId;
+    if (!styleId) {
+      const artRows = await this.db
+        .select({ artStyle: projects.artStyle })
+        .from(projects)
+        .where(eq(projects.id, job.projectId))
+        .limit(1);
+      styleId = artRows[0]?.artStyle ?? undefined;
+    }
+    let boards: { scene: string; shotSize: string; movement: string; durationSeconds: number; dialogue?: string; visualPrompt?: string }[];
+    try {
+      // 目标总时长：项目 durationSeconds 传入分镜技能，镜头时长之和贴齐（如 90s）
+      const projDurRows = await this.db
+        .select({ durationSeconds: projects.durationSeconds })
+        .from(projects)
+        .where(eq(projects.id, job.projectId))
+        .limit(1);
+      const targetSeconds = Number(projDurRows[0]?.durationSeconds) || undefined;
+      const result = await this.storySkills.runBoards({
+        scriptText,
+        styleId,
+        genreId: typeof input.genreId === 'string' ? input.genreId : undefined,
+        model: opts?.model,
+        temperature: opts?.temperature,
+        providerName: providerName ?? job.providerName,
+        targetSeconds,
+      });
+      boards = result.shots;
+    } catch (e) {
+      await this.generationService.settleJobFailure(job.id, (e as Error).message);
+      return;
+    }
+    if (boards.length === 0) {
+      // 降级：LLM 没产出可用 JSON，转 parse_script 启发式拆分
+      this.logger.warn(`分镜表空结果 ${job.id}，降级走 parse_script`);
+      await this.db.insert(generationJobs).values({
+        projectId: job.projectId,
+        jobType: 'parse_script',
+        targetType: 'project',
+        targetId: job.projectId,
+        status: 'pending',
+        priority: 80,
+        inputData: { prompt: scriptText, replaceExisting: input.replaceExisting === true },
+      });
+      await this.generationService.settleJobSuccess(job.id, { fallback: 'parse_script', shotsCount: 0 });
+      return;
+    }
+    if (input.replaceExisting) {
+      await this.db.delete(shots).where(eq(shots.projectId, job.projectId));
+      await this.db.delete(scenes).where(eq(scenes.projectId, job.projectId));
+    }
+    // 按 scene 分组建场（保持出现顺序），镜号场内递增
+    const groups = new Map<string, typeof boards>();
+    for (const b of boards) {
+      const list = groups.get(b.scene) ?? [];
+      list.push(b);
+      groups.set(b.scene, list);
+    }
+    let sceneNumber = 0;
+    let shotTotal = 0;
+    for (const [title, list] of groups) {
+      sceneNumber += 1;
+      // eslint-disable-next-line no-await-in-loop
+      const [scene] = await this.db
+        .insert(scenes)
+        .values({
+          projectId: job.projectId,
+          sceneNumber,
+          title: title.slice(0, 200),
+          summary: list[0]?.visualPrompt?.slice(0, 200),
+          dialogues: [],
+          actions: [],
+          characterIds: [],
+          props: [],
+          sortOrder: sceneNumber,
+        })
+        .returning({ id: scenes.id });
+      let n = 0;
+      for (const b of list) {
+        n += 1;
+        shotTotal += 1;
+        // eslint-disable-next-line no-await-in-loop
+        await this.db.insert(shots).values({
+          projectId: job.projectId,
+          sceneId: scene.id,
+          shotNumber: n,
+          duration: b.durationSeconds.toFixed(1),
+          shotSize: b.shotSize,
+          cameraAngle: 'eye_level',
+          lens: '50mm',
+          movement: b.movement,
+          dialogue: b.dialogue,
+          subtitleText: b.dialogue,
+          visualPrompt: b.visualPrompt,
+          subject: b.visualPrompt?.slice(0, 200),
+          status: 'draft',
+          sortOrder: n,
+        });
+      }
+    }
+    await this.generationService.settleJobSuccess(job.id, {
+      scenesCount: groups.size,
+      shotsCount: shotTotal,
+    });
+    this.logger.log(`分镜表物化完成 ${job.id}：${groups.size} 场 ${shotTotal} 镜`);
+  }
+
+  // ========== parse_script 启发式物化 ==========
+
+  /**
+   * 无需 LLM 的确定性剧本物化：按“第X场”标题或空行分块拆场景，
+   * 每场景 1 个全景 + 最多 3 个对白特写。产物为 draft 状态分镜，
+   * 用户可在分镜/导演台继续调整后发起真实生成。
+   */
+  private async processParseScript(job: GenerationJob): Promise<void> {
+    if (!job.projectId) {
+      await this.generationService.settleJobFailure(job.id, '解析任务缺少项目归属');
+      return;
+    }
+    const scriptText = this.inputPrompt(job);
+    if (!scriptText.trim()) {
+      await this.generationService.settleJobFailure(job.id, '剧本内容为空');
+      return;
+    }
+
+    // 技能链式物化：改写类任务先清空旧分镜，避免新旧堆积
+    const replaceExisting =
+      ((job.inputData ?? {}) as Record<string, unknown>).replaceExisting === true;
+    if (replaceExisting && job.projectId) {
+      await this.db.delete(shots).where(eq(shots.projectId, job.projectId));
+      await this.db.delete(scenes).where(eq(scenes.projectId, job.projectId));
+      this.logger.log(`物化前已清空旧分镜（技能链 ${job.id}）`);
+    }
+
+    // P1 专业模式透传消费：目标总镜头数/单镜时长/景别/运镜/字幕开关来自 project.metadata；
+    // 缺省时按片长估算（总时长/4s），与极速模式行为一致
+    const projectRows = await this.db
+      .select({
+        durationSeconds: projects.durationSeconds,
+        metadata: projects.metadata,
+      })
+      .from(projects)
+      .where(eq(projects.id, job.projectId))
+      .limit(1);
+    const prefs = this.normalizePrefs(
+      ((projectRows[0]?.metadata ?? {}) as { professional?: ProfessionalPrefs })
+        .professional,
+    );
+    const totalDuration = projectRows[0]?.durationSeconds ?? 90;
+    const targetShots =
+      prefs.shotCount ??
+      Math.max(4, Math.min(60, Math.round(totalDuration / 4)));
+
+    const blocks = this.splitScenes(scriptText);
+    const perSceneTarget = Math.max(
+      1,
+      Math.min(6, Math.ceil(targetShots / Math.max(1, blocks.length))),
+    );
+    let shotTotal = 0;
+    const imageTargets: { shotId: string; prompt: string }[] = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const [scene] = await this.db
+        .insert(scenes)
+        .values({
+          projectId: job.projectId,
+          sceneNumber: i + 1,
+          title: block.title,
+          summary: block.summary,
+          dialogues: block.dialogues,
+          actions: [],
+          characterIds: [],
+          props: [],
+          sortOrder: i + 1,
+        })
+        .returning({ id: scenes.id });
+
+      const shotsToInsert = this.buildShots(block, prefs, perSceneTarget);
+      for (let j = 0; j < shotsToInsert.length; j++) {
+        const s = shotsToInsert[j];
+        const [inserted] = await this.db
+          .insert(shots)
+          .values({
+            projectId: job.projectId,
+            sceneId: scene.id,
+            shotNumber: j + 1,
+            duration: prefs.shotDuration.toFixed(1),
+            shotSize: s.shotSize,
+            cameraAngle: 'eye_level',
+            lens: '50mm',
+            movement: s.movement,
+            dialogue: s.dialogue,
+            subtitleText: prefs.subtitleEnabled ? s.dialogue : undefined,
+            visualPrompt: s.visualPrompt,
+            subject: s.visualPrompt?.slice(0, 200),
+            status: 'draft',
+            sortOrder: j + 1,
+          })
+          .returning({ id: shots.id });
+        imageTargets.push({
+          shotId: inserted.id,
+          prompt: s.visualPrompt || s.dialogue || '全景 establishing shot',
+        });
+        shotTotal += 1;
+      }
+    }
+
+    // 物化完成即建首帧任务：极速模式此前停在 storyboard_ready、
+    // 无人建图 → 进度永远卡在「分镜故事板」5%
+    if (job.projectId && imageTargets.length > 0) {
+      await this.db.insert(generationJobs).values(
+        imageTargets.map((t, i) => ({
+          projectId: job.projectId as string,
+          jobType: 'image' as const,
+          targetType: 'shot' as const,
+          targetId: t.shotId,
+          status: 'pending' as const,
+          priority: 65 - Math.min(30, i),
+          inputData: { prompt: t.prompt },
+        })),
+      );
+      this.logger.log(`物化后已创建 ${imageTargets.length} 个首帧任务`);
+    }
+
+    // 快速通道推进：parsing → planning → storyboard_ready → assets_generating
+    // （跳过 bible_ready；状态机 PATCH 白名单仅约束外部写入，此处为系统推进）
+    await this.advanceProjectStatus(job.projectId, 'parsing', 'planning');
+    await this.advanceProjectStatus(job.projectId, 'planning', 'storyboard_ready');
+    if (imageTargets.length > 0) {
+      await this.advanceProjectStatus(job.projectId, 'storyboard_ready', 'assets_generating');
+    }
+
+    await this.generationService.settleJobSuccess(job.id, {
+      scenesCount: blocks.length,
+      shotsCount: shotTotal,
+      voicePreset: prefs.voicePreset,
+      imageJobs: imageTargets.length,
+    });
+    this.logger.log(
+      `剧本物化完成 ${job.id}：${blocks.length} 场 ${shotTotal} 镜，首帧任务 ${imageTargets.length}`,
+    );
+  }
+
+  /** 专业参数收敛：非法值回落默认，保证物化永不崩 */
+  private normalizePrefs(raw?: ProfessionalPrefs): {
+    shotCount?: number;
+    shotDuration: number;
+    shotSizePref: string;
+    movement: string;
+    voicePreset?: string;
+    subtitleEnabled: boolean;
+  } {
+    const shotDuration =
+      typeof raw?.shotDuration === 'number' &&
+      raw.shotDuration >= 1 &&
+      raw.shotDuration <= 30
+        ? raw.shotDuration
+        : 4;
+    const shotCount =
+      typeof raw?.shotCount === 'number'
+        ? Math.max(1, Math.min(120, Math.floor(raw.shotCount)))
+        : undefined;
+    const shotSizePref = ['mixed', 'closeup', 'wide'].includes(
+      raw?.shotSizePref ?? '',
+    )
+      ? (raw?.shotSizePref as string)
+      : 'mixed';
+    const movement =
+      raw?.cameraStyle === 'static'
+        ? 'static'
+        : raw?.cameraStyle === 'cinematic'
+          ? 'dolly'
+          : raw?.cameraStyle === 'dynamic'
+            ? 'pan'
+            : 'static';
+    return {
+      shotCount,
+      shotDuration,
+      shotSizePref,
+      movement,
+      voicePreset:
+        typeof raw?.voicePreset === 'string' ? raw.voicePreset : undefined,
+      subtitleEnabled: raw?.subtitleEnabled !== false,
+    };
+  }
+
+  private splitScenes(scriptText: string): {
+    title: string;
+    summary: string;
+    dialogues: { character: string; text: string; emotion: string }[];
+  }[] {
+    const lines = scriptText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const blocks: { title?: string; lines: string[] }[] = [];
+    let current: { title?: string; lines: string[] } = { lines: [] };
+    // P1 修复：场标题允许带后缀（如“第一场 雨夜·外”），前缀匹配即可；
+    // 旧正则要求行尾恰为场/集/幕，导致带后缀标题被当成正文。
+    // 双模式扩展：广告技能输出“第X镜”标题，同样视为切分点（不影响旧文本）。
+    const headingRe = /^(第.{1,6}[场集幕镜]|#{1,3}\s*.+|SCENE\s*\d+)/i;
+
+    for (const line of lines) {
+      if (headingRe.test(line) && current.lines.length > 0) {
+        blocks.push(current);
+        current = { title: line.replace(/^#{1,3}\s*/, ''), lines: [] };
+      } else if (headingRe.test(line) && current.lines.length === 0) {
+        current.title = line.replace(/^#{1,3}\s*/, '');
+      } else {
+        current.lines.push(line);
+      }
+    }
+    if (current.lines.length > 0 || current.title) blocks.push(current);
+
+    // 无标题时按 12 行一 chunk 切分，兜底 1 场
+    let list = blocks.filter((b) => b.lines.length > 0);
+    if (list.length === 0) list = [{ lines }];
+    if (list.length === 1 && !list[0].title && list[0].lines.length > 12) {
+      const chunked: typeof list = [];
+      for (let i = 0; i < list[0].lines.length; i += 12) {
+        chunked.push({ lines: list[0].lines.slice(i, i + 12) });
+      }
+      list = chunked;
+    }
+    list = list.slice(0, 12);
+
+    return list.map((b, i) => {
+      const dialogues: { character: string; text: string; emotion: string }[] = [];
+      for (const line of b.lines) {
+        // “角色：台词” / '角色:台词' / “台词” 三种常见写法
+        const labeled = line.match(/^(.{1,12})[:：]\s*(.+)$/);
+        const quoted = line.match(/^[“"]([^”"]+)[”"]$/);
+        if (labeled && dialogues.length < 20) {
+          dialogues.push({ character: labeled[1], text: labeled[2], emotion: '' });
+        } else if (quoted && dialogues.length < 20) {
+          dialogues.push({ character: '旁白', text: quoted[1], emotion: '' });
+        }
+      }
+      return {
+        title: b.title ?? `第 ${i + 1} 场`,
+        summary: b.lines.slice(0, 3).join(' ').slice(0, 200),
+        dialogues,
+      };
+    });
+  }
+
+  private buildShots(
+    block: {
+      summary: string;
+      dialogues: { character: string; text: string }[];
+    },
+    prefs: { shotSizePref: string; movement: string },
+    perSceneTarget: number,
+  ): { shotSize: string; movement: string; dialogue?: string; visualPrompt: string }[] {
+    // 景别偏好：wide 全全景 / closeup 全特写 / mixed 默认（1 全景 + 对白特写）
+    if (prefs.shotSizePref === 'wide') {
+      return [
+        {
+          shotSize: 'wide',
+          movement: prefs.movement,
+          visualPrompt: block.summary || '全景 establishing shot',
+        },
+      ];
+    }
+    const result: {
+      shotSize: string;
+      movement: string;
+      dialogue?: string;
+      visualPrompt: string;
+    }[] = [];
+    if (prefs.shotSizePref === 'mixed') {
+      result.push({
+        shotSize: 'wide',
+        movement: prefs.movement,
+        visualPrompt: block.summary || '全景 establishing shot',
+      });
+    }
+    const dialogueShots = Math.max(
+      0,
+      Math.min(block.dialogues.length, perSceneTarget - result.length),
+    );
+    for (const d of block.dialogues.slice(0, dialogueShots)) {
+      result.push({
+        shotSize: 'closeup',
+        movement: prefs.movement,
+        dialogue: `${d.character}：${d.text}`,
+        visualPrompt: `${d.character}特写，${d.text.slice(0, 60)}`,
+      });
+    }
+    // 保底 1 镜，避免空场
+    if (result.length === 0) {
+      result.push({
+        shotSize: 'wide',
+        movement: prefs.movement,
+        visualPrompt: block.summary || '全景 establishing shot',
+      });
+    }
+    return result;
+  }
+
+  private async advanceProjectStatus(
+    projectId: string,
+    from: string,
+    to: string,
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ status: projects.status })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (rows.length === 0 || rows[0].status !== from) return;
+    await this.db
+      .update(projects)
+      .set({ status: to, updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
+  }
+
+  // ========== 目标回写 ==========
+
+  private async writebackToTarget(
+    job: GenerationJob,
+    urls: { imageUrl?: string; videoUrl?: string; voiceUrl?: string },
+  ): Promise<void> {
+    if (!job.targetId) return;
+    const projectGuard = job.projectId
+      ? { projectId: job.projectId }
+      : undefined;
+
+    if (job.targetType === 'shot') {
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (urls.imageUrl) patch.startFrameUrl = urls.imageUrl;
+      // F7 变体谱系：变体任务成功不覆盖主成片（候选由 adopt 接口显式采纳），
+      // 避免后完成的变体把主视频洗掉；变体输出保留在各自任务 outputData。
+      const input = (job.inputData ?? {}) as Record<string, unknown>;
+      if (urls.videoUrl && typeof input.variantGroup !== 'string') {
+        patch.videoUrl = urls.videoUrl;
+      }
+      // V5 每镜状态机：有产出回写 → ready（变体不改主状态，由采纳时刷新）
+      if (typeof input.variantGroup !== 'string' && Object.keys(patch).length > 1) {
+        patch.status = 'ready';
+      }
+      if (urls.voiceUrl) patch.voiceUrl = urls.voiceUrl;
+      if (Object.keys(patch).length <= 1) return;
+      const conditions = [eq(shots.id, job.targetId)];
+      if (projectGuard) conditions.push(eq(shots.projectId, projectGuard.projectId));
+      await this.db
+        .update(shots)
+        .set(patch)
+        .where(and(...conditions));
+      // 项目资产归档：生成的图/视频/配音同步登记 assets，「项目资产」页可见
+      await this.archiveOutputAssets(job, urls);
+      return;
+    }
+
+    // 角色/场景：图片追加为参考图；V1 四视图定妆照（sheet 标记）插到首位当权威参考
+    if ((job.targetType === 'character' || job.targetType === 'location') && urls.imageUrl) {
+      const table = job.targetType === 'character' ? characters : locations;
+      const rows = await this.db.select().from(table).where(eq(table.id, job.targetId)).limit(1);
+      if (rows.length === 0) return;
+      if (projectGuard && rows[0].projectId !== projectGuard.projectId) return;
+      const existing = (rows[0].referenceImageUrls ?? []) as string[];
+      const input = (job.inputData ?? {}) as Record<string, unknown>;
+      const next = input.sheet === true
+        ? [urls.imageUrl, ...existing.filter((u) => u !== urls.imageUrl)]
+        : [...existing, urls.imageUrl];
+      await this.db
+        .update(table)
+        .set({
+          referenceImageUrls: next,
+          updatedAt: new Date(),
+        })
+        .where(eq(table.id, job.targetId));
+      await this.archiveOutputAssets(job, urls);
+    }
+  }
+
+  /**
+   * 项目资产归档：镜头产出（首帧图/成片/配音）写入 assets，
+   * 「项目资产」页（listByProject）直接可见。sourceId=job.id 幂等去重。
+   */
+  private async archiveOutputAssets(
+    job: GenerationJob,
+    urls: { imageUrl?: string; videoUrl?: string; voiceUrl?: string },
+  ): Promise<void> {
+    if (!job.projectId) return;
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    const prompt = typeof input.prompt === 'string' ? input.prompt : '';
+    const entries: { assetType: string; url: string; mime: string; name: string }[] = [];
+    if (urls.videoUrl && !urls.videoUrl.startsWith('data:')) {
+      entries.push({ assetType: 'video', url: urls.videoUrl, mime: 'video/mp4', name: '成片' });
+    }
+    // data:（b64 兜底）也要归档，archiveLocalFile 负责解码落盘
+    if (urls.imageUrl) {
+      entries.push({ assetType: 'image', url: urls.imageUrl, mime: 'image/png', name: '首帧' });
+    }
+    if (urls.voiceUrl && !urls.voiceUrl.startsWith('data:')) {
+      entries.push({ assetType: 'audio', url: urls.voiceUrl, mime: 'audio/mpeg', name: '配音' });
+    }
+    if (entries.length === 0) return;
+
+    let shotLabel = '';
+    if (job.targetType === 'shot' && job.targetId) {
+      const shotRows = await this.db
+        .select({ shotNumber: shots.shotNumber, duration: shots.duration })
+        .from(shots)
+        .where(eq(shots.id, job.targetId))
+        .limit(1);
+      if (shotRows[0]) {
+        shotLabel = `镜${shotRows[0].shotNumber}-`;
+        for (const e of entries) {
+          if (e.assetType === 'video' && shotRows[0].duration) {
+            e.name = `${e.name}-${shotLabel}${shotRows[0].duration}s`;
+          } else {
+            e.name = `${e.name}-${shotLabel}${e.assetType === 'video' ? '视频' : e.assetType === 'image' ? '图' : '音频'}`;
+          }
+        }
+      }
+    }
+
+    for (const e of entries) {
+      try {
+        const existing = await this.db
+          .select({ id: assets.id })
+          .from(assets)
+          .where(and(eq(assets.sourceId, job.id), eq(assets.assetType, e.assetType)))
+          .limit(1);
+        if (existing.length > 0) continue;
+        // 优先落盘本地：远程 CDN（.cn）不稳定，资产库必须能直接打开
+        const local = await this.archiveLocalFile(job.projectId, e.url, e.assetType, e.mime);
+        // data: 未落盘时不入库（浏览器也打不开无路径的 data 行）；http 回退远程
+        if (e.url.startsWith('data:') && !local) continue;
+        await this.db.insert(assets).values({
+          projectId: job.projectId,
+          assetType: e.assetType,
+          name: e.name.slice(0, 120),
+          fileUrl: local?.fileUrl ?? e.url,
+          filePath: local?.filePath,
+          fileSize: local?.fileSize,
+          mimeType: e.mime,
+          sourceType: 'generated',
+          sourceId: job.id,
+          generationPrompt: prompt.slice(0, 2000) || undefined,
+          status: 'ready',
+        });
+      } catch (err) {
+        this.logger.warn(`资产归档失败 job=${job.id} type=${e.assetType}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  /** data:/远程 → 稳定本地 /uploads/ 路径；失败原样返回 http(s)。 */
+  private async ensureLocalUrl(projectId: string | null, url: string): Promise<string> {
+    if (!projectId || url.startsWith('/uploads/')) return url;
+    if (!url.startsWith('data:') && !url.startsWith('http')) return url;
+    const local = await this.archiveLocalFile(
+      projectId,
+      url,
+      'image',
+      url.startsWith('data:') ? (url.slice(5, url.indexOf(';')) || 'image/png') : 'image/png',
+    );
+    return local?.fileUrl ?? url;
+  }
+
+  /**
+   * 把远程产出拉到 data/uploads/<projectId>/ 并返回本地 fileUrl。
+   * data: base64 直接解码写入。失败则返回 null（调用方回退远程 URL）。
+   */
+  private async archiveLocalFile(
+    projectId: string,
+    remoteUrl: string,
+    assetType: string,
+    mime: string,
+  ): Promise<{ fileUrl: string; filePath: string; fileSize: number } | null> {
+    if (!remoteUrl) return null;
+    if (remoteUrl.startsWith('/uploads/')) {
+      return { fileUrl: remoteUrl, filePath: '', fileSize: 0 };
+    }
+    try {
+      const dir = join(uploadDir(), projectId);
+      await mkdir(dir, { recursive: true });
+      const ext = mime.includes('png') ? 'png' : mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : mime.includes('webp') ? 'webp' : mime.includes('gif') ? 'gif' : mime.includes('mp4') || mime.includes('video') ? 'mp4' : assetType === 'video' ? 'mp4' : assetType === 'image' ? 'png' : 'bin';
+      const name = `${assetType}_${randomUUID().slice(0, 8)}.${ext}`;
+      const dest = join(dir, name);
+      if (remoteUrl.startsWith('data:')) {
+        const comma = remoteUrl.indexOf(',');
+        if (comma < 0) return null;
+        const b64 = remoteUrl.slice(comma + 1);
+        const buf = Buffer.from(b64, 'base64');
+        if (buf.length < 64) return null;
+        await writeFile(dest, buf);
+        return { fileUrl: `/uploads/${projectId}/${name}`, filePath: dest, fileSize: buf.length };
+      }
+      if (remoteUrl.startsWith('data:') || remoteUrl.startsWith('/uploads/')) return null;
+      const ok = await this.curlTo(remoteUrl, dest, 90_000, 4);
+      if (!ok) return null;
+      const st = await stat(dest).catch(() => null);
+      if (!st || st.size < 64) return null;
+      return { fileUrl: `/uploads/${projectId}/${name}`, filePath: dest, fileSize: st.size };
+    } catch (err) {
+      this.logger.warn(`本地归档失败 ${remoteUrl.slice(0, 80)}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /** curl 下载：.cn/.space 互换镜像优先原域，退避重试 */
+  private curlTo(url: string, dest: string, timeoutMs: number, retries: number): Promise<boolean> {
+    const candidates = [url];
+    if (url.includes('cos-platform-outputs.agnes-ai.cn')) {
+      candidates.push(url.replace('cos-platform-outputs.agnes-ai.cn', 'platform-outputs.agnes-ai.space'));
+    }
+    if (url.includes('platform-outputs.agnes-ai.space')) {
+      candidates.push(url.replace('platform-outputs.agnes-ai.space', 'cos-platform-outputs.agnes-ai.cn'));
+    }
+    const unique = [...new Set(candidates)];
+    const timeoutSec = Math.max(15, Math.ceil(timeoutMs / 1000));
+    return new Promise((resolve) => {
+      let attempt = 0;
+      const tryOnce = (): void => {
+        const target = unique[attempt % unique.length];
+        const child = spawn(
+          '/usr/bin/curl',
+          ['-sS', '-f', '-L', '--connect-timeout', '10', '--max-time', String(timeoutSec), '-o', dest, target],
+          { stdio: ['ignore', 'ignore', 'pipe'] },
+        );
+        let err = '';
+        child.stderr.on('data', (d: Buffer) => { err += d.toString(); });
+        const fail = (): void => {
+          attempt += 1;
+          if (attempt >= retries) {
+            this.logger.warn(`下载产出失败（${attempt} 次）: ${err.slice(0, 160)}`);
+            resolve(false);
+            return;
+          }
+          setTimeout(tryOnce, 400 * attempt);
+        };
+        child.on('error', fail);
+        child.on('close', (code) => {
+          if (code === 0) resolve(true);
+          else fail();
+        });
+      };
+      tryOnce();
+    });
+  }
+}

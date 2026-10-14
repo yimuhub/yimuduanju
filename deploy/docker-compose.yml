@@ -1,0 +1,68 @@
+# 一幕·YIMU 企业版一键栈（W6 1.0）
+# 用法：cp .env.enterprise.example .env.enterprise（按需改） && docker compose -f deploy/docker-compose.yml --env-file .env.enterprise up -d --build
+# 访问：http://localhost:5173/app/yimu/（经内置网关）或直连 http://localhost:3000/
+name: yimu-enterprise
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-yimu}
+      POSTGRES_USER: ${DB_USER:-yimu}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-yimu-pass-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-yimu}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 3000
+      SUDA_DATABASE_URL: postgres://${DB_USER:-yimu}:${DB_PASSWORD:-yimu-pass-change-me}@postgres:5432/${DB_NAME:-yimu}?schema=${DB_NAME:-yimu}
+      REDIS_URL: redis://redis:6379
+      JOB_WORKER_ENABLED: 'true'
+      JOB_WORKER_INTERVAL_MS: '10000'
+      JOB_WORKER_CONCURRENCY: '2'
+      MONTHLY_BUDGET_CAP_CNY: ${MONTHLY_BUDGET_CAP_CNY:-}
+      ENTERPRISE_ADMIN_TOKEN: ${ENTERPRISE_ADMIN_TOKEN:-}
+      ENTERPRISE_LICENSE: ${ENTERPRISE_LICENSE:-}
+      LICENSE_SECRET: ${LICENSE_SECRET:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+    ports:
+      - '${SERVER_PORT:-3000}:3000'
+    volumes:
+      - serverlogs:/app/logs
+
+volumes:
+  pgdata:
+  redisdata:
+  serverlogs:

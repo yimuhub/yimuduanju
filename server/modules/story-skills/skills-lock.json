@@ -1,0 +1,13 @@
+{
+  "$schema": "skills-lock",
+  "note": "F4 技能版本锁（移植 ToonFlow skills-lock.json 思想）：注册表版本与此处不一致时服务启动打 warn，防静默漂移。改技能必须同步 bump 此文件。",
+  "skills": {
+    "novel_to_script": "v1.0",
+    "script_rewrite": "v1.0",
+    "one_sentence_expand": "v1.0",
+    "ad_creative": "v1.0",
+    "scene_to_rig": "v1.0",
+    "character_design": "v1.0",
+    "script_to_boards": "v1.0"
+  }
+}

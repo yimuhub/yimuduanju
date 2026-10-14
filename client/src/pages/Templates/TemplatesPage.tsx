@@ -1,0 +1,461 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Search, Sparkles, Filter, Plus, Pencil, Trash2 } from 'lucide-react';
+import { templates as templatesApi } from '@client/src/api';
+import type { Template, TemplateType } from '@shared/api.interface';
+import { logger } from '@client/src/utils/logger';
+import { toast } from 'sonner';
+import { showConfirm } from '@client/src/components/ui/confirm';
+import TemplateDetailModal, {
+  getGradient,
+  getTypeLabel,
+  getTypeColor,
+  formatDuration,
+} from './TemplateDetailModal';
+
+type TabKey = 'all' | TemplateType;
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'duration', label: '时长模板' },
+  { key: 'genre', label: '题材模板' },
+  { key: 'style', label: '形态模板' },
+];
+
+const STYLE_OPTIONS = [
+  { value: '', label: '全部风格' },
+  { value: 'realistic', label: '写实' },
+  { value: 'live_action', label: '真人实景' },
+  { value: 'anime_2d', label: '日漫' },
+  { value: 'chinese_comic', label: '国漫' },
+  { value: 'xianxia', label: '仙侠' },
+  { value: 'cg_cyberpunk', label: '赛博朋克' },
+  { value: 'guofeng_3d', label: '国风3D' },
+];
+
+const DURATION_OPTIONS = [
+  { value: '', label: '全部时长' },
+  { value: '30', label: '30秒以内' },
+  { value: '60', label: '60秒' },
+  { value: '90', label: '90秒' },
+  { value: '120', label: '2分钟以上' },
+];
+
+const TemplatesPage = () => {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<TabKey>('all');
+  const [keyword, setKeyword] = useState('');
+  const [styleFilter, setStyleFilter] = useState('');
+  const [durationFilter, setDurationFilter] = useState('');
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(
+    null,
+  );
+  // P1 深链：?template=<id> 自动打开详情（Dashboard 热门模板入口）
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepTemplateId = searchParams.get('template');
+
+  useEffect(() => {
+    setLoading(true);
+    templatesApi
+      .listTemplates({
+        templateType: activeTab === 'all' ? undefined : activeTab,
+        keyword: keyword || undefined,
+        pageSize: 50,
+      })
+      .then((res) => {
+        // P1 修复：后端暂不支持风格/时长过滤，在客户端对真实结果过滤；
+        // 之前该逻辑藏在 mock 兜底里，真后端下筛选 silently 失效
+        let items = res.items;
+        if (styleFilter) items = items.filter((t) => t.artStyle === styleFilter);
+        if (durationFilter) {
+          const target = Number(durationFilter);
+          items = items.filter((t) => {
+            if (target === 30) return t.durationSeconds <= 30;
+            if (target === 120) return t.durationSeconds >= 120;
+            return Math.abs(t.durationSeconds - target) < 15;
+          });
+        }
+        setTemplates(items);
+        setLoadError(false);
+        // 深链打开详情
+        if (deepTemplateId) {
+          const found = res.items.find((t) => t.id === deepTemplateId);
+          if (found) setSelectedTemplate(found);
+          else {
+            templatesApi
+              .getTemplate(deepTemplateId)
+              .then((t) => setSelectedTemplate(t))
+              .catch(() => toast.error('模板不存在或已删除'));
+          }
+        }
+      })
+      .catch((e) => {
+        // P1 诚信修复：失败展示空列表+报错，不再用 8 条假模板冒充
+        logger.error('load templates failed', String(e));
+        setTemplates([]);
+        setLoadError(true);
+      })
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, keyword, styleFilter, durationFilter]);
+
+  const handleUseTemplate = (tpl: Template) => {
+    // W5 打点：使用次数供热门排序
+    templatesApi.trackUse(tpl.id).catch(() => {});
+    navigate(`/create?templateId=${tpl.id}`);
+  };
+
+  // P1 模板管理（增删改）
+  const [showForm, setShowForm] = useState(false);
+  const [editingTpl, setEditingTpl] = useState<Template | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    templateType: 'full' as TemplateType,
+    durationSeconds: 60,
+    aspectRatio: '9:16',
+  });
+
+  const reloadTemplates = () => {
+    setLoading(true);
+    templatesApi
+      .listTemplates({ pageSize: 50 })
+      .then((res) => {
+        setTemplates(res.items);
+        setLoadError(false);
+      })
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!formData.name.trim() || saving) return;
+    setSaving(true);
+    try {
+      if (editingTpl) {
+        await templatesApi.updateTemplate(editingTpl.id, {
+          name: formData.name.trim(),
+          templateType: formData.templateType,
+          durationSeconds: Number(formData.durationSeconds) || 60,
+          aspectRatio: formData.aspectRatio as Template['aspectRatio'],
+        });
+        toast.success('模板已更新');
+      } else {
+        await templatesApi.createTemplate({
+          name: formData.name.trim(),
+          templateType: formData.templateType,
+          durationSeconds: Number(formData.durationSeconds) || 60,
+          aspectRatio: formData.aspectRatio as Template['aspectRatio'],
+        });
+        toast.success('模板已创建');
+      }
+      setShowForm(false);
+      setEditingTpl(null);
+      reloadTemplates();
+    } catch {
+      toast.error('保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tpl: Template) => {
+    if (!await showConfirm(`确定删除模板「${tpl.name}」吗？`)) return;
+    try {
+      await templatesApi.deleteTemplate(tpl.id);
+      setTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
+      toast.success('已删除');
+    } catch {
+      toast.error('删除失败');
+    }
+  };
+
+  const templateCount = useMemo(() => templates.length, [templates]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">模板中心</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            精选模板，一键套用快速创作 · 共 {templateCount} 个模板
+          </p>
+        </div>
+        {/* P1 修复：模板增删改之前只能调 curl；现补管理入口 */}
+        <button
+          onClick={() => {
+            setEditingTpl(null);
+            setFormData({ name: '', templateType: 'full', durationSeconds: 60, aspectRatio: '9:16' });
+            setShowForm(true);
+          }}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+        >
+          <Plus className="h-4 w-4" />
+          新建模板
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`rounded-full px-5 py-2 text-sm font-medium transition-all ${
+              activeTab === tab.key
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'border border-input bg-white text-foreground hover:border-primary hover:text-primary'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="搜索模板名称..."
+            className="h-10 w-full rounded-xl border border-input bg-white pl-10 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Filter className="h-4 w-4 text-muted-foreground" />
+          <select
+            value={styleFilter}
+            onChange={(e) => setStyleFilter(e.target.value)}
+            className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          >
+            {STYLE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={durationFilter}
+            onChange={(e) => setDurationFilter(e.target.value)}
+            className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          >
+            {DURATION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20 text-muted-foreground">
+          加载中...
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-20 shadow-sm">
+          <p className="text-sm font-medium text-foreground">模板加载失败</p>
+          <p className="mt-1 text-sm text-muted-foreground">请确认后端服务正常后重试</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 rounded-xl bg-primary px-6 py-2 text-sm font-medium text-primary-foreground"
+          >
+            重新加载
+          </button>
+        </div>
+      ) : templates.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <Sparkles className="mb-3 h-10 w-10 opacity-50" />
+          <p>暂无匹配的模板</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {templates.map((tpl) => (
+            <div
+              key={tpl.id}
+              onClick={() => setSelectedTemplate(tpl)}
+              className="group relative cursor-pointer overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
+            >
+              <div
+                className={`relative aspect-[3/4] bg-gradient-to-br ${getGradient(
+                  tpl.artStyle,
+                )} flex items-center justify-center`}
+              >
+                <span className="text-xs font-medium text-white/90">未获取</span>
+                <span
+                  className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-xs font-medium ${getTypeColor(
+                    tpl.templateType,
+                  )}`}
+                >
+                  {getTypeLabel(tpl.templateType)}
+                </span>
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleUseTemplate(tpl);
+                    }}
+                    className="rounded-full bg-white px-6 py-2.5 text-sm font-semibold text-foreground shadow-lg transition-transform hover:scale-105"
+                  >
+                    使用模板
+                  </button>
+                </div>
+              </div>
+              <div className="p-4">
+                <h3 className="truncate text-sm font-semibold text-foreground">
+                  {tpl.name}
+                </h3>
+                {tpl.description && (
+                  <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                    {tpl.description}
+                  </p>
+                )}
+                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    {formatDuration(tpl.durationSeconds)}
+                  </span>
+                  {/* W5 市场：使用次数展示；0 次不展示，避免冷启动难看 */}
+                  {(tpl.useCount ?? 0) > 0 && (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                      {tpl.useCount} 人用过
+                    </span>
+                  )}
+                  <span>{tpl.aspectRatio}</span>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingTpl(tpl);
+                      setFormData({
+                        name: tpl.name,
+                        templateType: tpl.templateType,
+                        durationSeconds: tpl.durationSeconds,
+                        aspectRatio: tpl.aspectRatio,
+                      });
+                      setShowForm(true);
+                    }}
+                    className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-input py-1.5 text-xs font-medium hover:border-primary hover:text-primary"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    编辑
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteTemplate(tpl);
+                    }}
+                    className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-input py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-500"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showForm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowForm(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold">
+              {editingTpl ? '编辑模板' : '新建模板'}
+            </h3>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="text-sm font-medium">名称</label>
+                <input
+                  value={formData.name}
+                  onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="如：都市悬疑 90 秒"
+                  className="mt-1.5 h-10 w-full rounded-xl border border-input px-3 text-sm outline-none focus:border-primary"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium">类型</label>
+                  <select
+                    value={formData.templateType}
+                    onChange={(e) => setFormData((p) => ({ ...p, templateType: e.target.value as TemplateType }))}
+                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                  >
+                    <option value="full">完整</option>
+                    <option value="duration">时长</option>
+                    <option value="genre">题材</option>
+                    <option value="style">风格</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">时长（秒）</label>
+                  <input
+                    type="number"
+                    value={formData.durationSeconds}
+                    onChange={(e) => setFormData((p) => ({ ...p, durationSeconds: Number(e.target.value) }))}
+                    className="mt-1.5 h-10 w-full rounded-xl border border-input px-3 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">画幅</label>
+                <select
+                  value={formData.aspectRatio}
+                  onChange={(e) => setFormData((p) => ({ ...p, aspectRatio: e.target.value }))}
+                  className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                >
+                  <option value="9:16">9:16 竖屏</option>
+                  <option value="16:9">16:9 横屏</option>
+                  <option value="1:1">1:1 方形</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setShowForm(false)}
+                className="rounded-xl border border-input px-4 py-2 text-sm font-medium hover:bg-muted/50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveTemplate}
+                disabled={saving || !formData.name.trim()}
+                className="rounded-xl bg-primary px-5 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+              >
+                {saving ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedTemplate && (
+        <TemplateDetailModal
+          template={selectedTemplate}
+          onClose={() => {
+            setSelectedTemplate(null);
+            // 清除深链参数，避免刷新重复弹
+            if (deepTemplateId) {
+              const next = new URLSearchParams(searchParams);
+              next.delete('template');
+              setSearchParams(next, { replace: true });
+            }
+          }}
+          onUse={handleUseTemplate}
+        />
+      )}
+    </div>
+  );
+};
+
+export default TemplatesPage;

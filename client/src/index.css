@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./tailwind-theme.css";
+@import "./typography.css";
+
+/* Tailwind v4 PostCSS 模式必须显式声明扫描源（之前由平台 preset 包办） */
+@source "./**/*.{ts,tsx}";
+@source "../index.html";
+@source "../../node_modules/streamdown/dist/*.js";
+@config "../../tailwind.config.ts";
+

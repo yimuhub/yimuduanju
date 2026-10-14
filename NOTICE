@@ -1,0 +1,52 @@
+# NOTICE —— 一幕·YIMU AI 短剧工坊 授权与商业使用说明
+
+一幕·YIMU AI 短剧工坊
+Copyright (C) 2026 yimu.hyipf.com
+
+## 许可模式
+
+本程序采用 **Business Source License 1.1**（SPDX 标识：`BUSL-1.1`），
+对外称 "source-available"（源码可见）。完整条款见同目录 `LICENSE` 文件。
+BSL 1.1 不是 OSI 认证的开源许可证。
+
+免费层（无需商业授权）：个人学习、研究；非商业用途；个人自媒体创作；
+企业内部评估；任何主体连续 12 个月内因使用本程序获得的直接商业价值
+低于人民币 10 万元。
+
+以下情形**超出免费层**，需要另行获得商业授权：
+
+- 任何主体连续 12 个月内因使用本程序获得的直接商业价值达到或超过人民币 10 万元；
+- 闭源商业部署（不愿接受 BSL 条款约束的 SaaS / 私域交付）；
+- 白标（去除一幕品牌后交付）；
+- 再分发（将本程序集成进闭源产品转售）。
+
+商业授权可免费登记，亦可阶梯定价。
+
+> 商务联系邮箱：**yimu@hyipf.com**
+
+每个版本自首次公开发布之日起满 4 年，自动转为 Apache License 2.0。
+
+## 商标
+
+"一幕·YIMU"及相关标识的商标权归 yimu.hyipf.com 所有，需另行授权方可使用。
+
+## 第三方模型与 Key
+
+本程序本身不捆绑任何模型 API Key。所有生成调用均使用你自己配置的
+供应商 Key，按供应商账单独立结算；平台记录的费用仅为生产管理参考，
+以上游供应商账单为准。
+
+## 第三方开源组件声明
+
+本程序依赖以下第三方开源组件（仅作依赖库使用，未修改其源码），
+其版权归各自权利人所有：
+
+- `@lark-apaas/*` 全系列（fullstack-nestjs-core、client-toolkit、
+  fullstack-preset(s)、dataloom 等）——MIT License，
+  Copyright (c) 2024 Lark Technologies Pte. Ltd. and/or its affiliates
+- NestJS、React、Vite、Tailwind CSS、Drizzle ORM 等——
+  均为 MIT / Apache-2.0 / ISC / BSD 等宽松许可（详见 package-lock.json）
+- `sharp` 图像库所附 libvips 预编译二进制——LGPL-3.0，
+  以动态链接方式使用，未修改
+
+上述组件的完整许可文本见其各自发布包内的 LICENSE 文件。
