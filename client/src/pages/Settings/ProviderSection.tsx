@@ -677,6 +677,96 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
             </div>
 
             <div className="max-h-[62vh] space-y-5 overflow-y-auto p-5">
+              {!editingId && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-primary">
+                      ✨ 新手一键预设模板（自动填好 Base URL、格式与全套推荐模型，仅需粘贴 API Key）
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      {
+                        label: '🔥 火山方舟（即梦全栈推荐）',
+                        patch: {
+                          name: '火山方舟（即梦全栈）',
+                          providerType: 'volcengine_ark' as ProviderType,
+                          baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+                          formatType: 'volcengine_ark' as FormatType,
+                          textModel: 'doubao-seed-1-6-250615',
+                          imageModel: 'doubao-seedream-3-0-t2i-250415',
+                          videoModel: 'doubao-seedance-1-0-pro-250528',
+                          ttsModel: 'doubao-tts',
+                          ttsVoice: 'zh_female_cancan_mars_bigtts',
+                          capabilities: { text: true, image: true, video: true, tts: true },
+                          isDefault: true,
+                        },
+                      },
+                      {
+                        label: '⚡ 硅基流动 SiliconFlow',
+                        patch: {
+                          name: '硅基流动 SiliconFlow',
+                          providerType: 'openai_proxy' as ProviderType,
+                          baseUrl: 'https://api.siliconflow.cn/v1',
+                          formatType: 'openai' as FormatType,
+                          textModel: 'deepseek-ai/DeepSeek-V3',
+                          imageModel: 'Kwai-Kolors/Kolors',
+                          videoModel: 'Wan-AI/Wan2.1-T2V-14B',
+                          ttsModel: 'FunAudioLLM/CosyVoice2-0.5B',
+                          ttsVoice: 'alex',
+                          capabilities: { text: true, image: true, video: true, tts: true },
+                          isDefault: true,
+                        },
+                      },
+                      {
+                        label: '🌐 OpenAI 标准全栈',
+                        patch: {
+                          name: 'OpenAI 全能通道',
+                          providerType: 'openai_proxy' as ProviderType,
+                          baseUrl: 'https://api.openai.com/v1',
+                          formatType: 'openai' as FormatType,
+                          textModel: 'gpt-4o-mini',
+                          imageModel: 'gpt-image-1',
+                          videoModel: 'sora-1.0',
+                          ttsModel: 'tts-1',
+                          ttsVoice: 'alloy',
+                          capabilities: { text: true, image: true, video: true, tts: true },
+                          isDefault: true,
+                        },
+                      },
+                      {
+                        label: '🧪 免 Key 演练沙盒（Mock）',
+                        patch: {
+                          name: '本地免 Key 演练沙盒',
+                          providerType: 'custom' as ProviderType,
+                          baseUrl: 'http://localhost:3000/mock',
+                          formatType: 'mock' as FormatType,
+                          textModel: 'mock-text',
+                          imageModel: 'mock-image',
+                          videoModel: 'mock-video',
+                          ttsModel: 'mock-tts',
+                          ttsVoice: 'alloy',
+                          capabilities: { text: true, image: true, video: true, tts: true },
+                          isDefault: false,
+                        },
+                      },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setFormData((prev) => ({ ...prev, ...preset.patch }));
+                          setCustomFields(new Set(['textModel', 'imageModel', 'videoModel', 'ttsModel']));
+                          toast.success(`已套用「${preset.patch.name}」预设，请粘贴 API Key 后保存`);
+                        }}
+                        className="rounded-lg border border-primary/30 bg-white px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary hover:bg-primary/10"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">连接信息</div>
               <div>
                 <label className="text-sm font-medium text-foreground">

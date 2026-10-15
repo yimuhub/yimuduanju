@@ -145,18 +145,43 @@ const server = http.createServer((req, res) => {
   }
 
   const headers = { ...req.headers, host: target.host };
-  // 本地单用户身份头（后端 userContext 需要；已去平台化，不再模拟任何外部网关，
-  // 内容就是本地用户本身）
-  headers['x-larkgw-suda-webuser'] = WEBUSER_HEADER;
-  // W4：管理员 token 注入 —— 仅管理类接口（后端 AdminGuard fail-closed 校验）。
-  // 覆盖 /api/admin/* 全部与两个计费写接口；普通业务接口不注入。
-  // ENTERPRISE_ADMIN_TOKEN 未配置时不注入，后端返回 401（预期行为，见启动告警）。
+  // 支持多租户/多用户身份头：若客户端携带 x-yimu-user-id 则构造对应租户上下文，否则回落本地默认用户
+  const customUserId = typeof req.headers['x-yimu-user-id'] === 'string' ? req.headers['x-yimu-user-id'].trim() : '';
+  const customTenantId = typeof req.headers['x-yimu-tenant-id'] === 'string' ? req.headers['x-yimu-tenant-id'].trim() : '';
+  if (customUserId && /^[a-zA-Z0-9_-]{1,64}$/.test(customUserId)) {
+    headers['x-larkgw-suda-webuser'] = encodeURIComponent(
+      JSON.stringify({
+        user_id: customUserId,
+        tenant_id: customTenantId && /^[a-zA-Z0-9_-]{1,64}$/.test(customTenantId) ? customTenantId : 'local',
+        app_id: 'yimu',
+        user_type: 'user',
+        user_name: { zh_cn: customUserId },
+      }),
+    );
+  } else if (!headers['x-larkgw-suda-webuser']) {
+    headers['x-larkgw-suda-webuser'] = WEBUSER_HEADER;
+  }
+  // 安全加固（修复网关代填提权风险）：
+  // 仅当客户端未显式携带 x-admin-token、且请求严格来自本机回环地址（127.0.0.1 / ::1）、
+  // 且未设置 GATEWAY_AUTO_ADMIN_TOKEN=false 时，才为本机开发自动注入管理员令牌；
+  // 局域网/公网（GATEWAY_HOST=0.0.0.0）访问管理接口必须由客户端自行携带合法 x-admin-token。
+  const remoteAddr = (req.socket && req.socket.remoteAddress) || '';
+  const isLoopback =
+    remoteAddr === '127.0.0.1' ||
+    remoteAddr === '::1' ||
+    remoteAddr === '::ffff:127.0.0.1';
   const needAdminToken =
     pathname === '/api/admin' ||
     pathname.startsWith('/api/admin/') ||
     (req.method === 'PATCH' &&
       (/^\/api\/billing\/pricing\/.+/.test(pathname) || pathname === '/api/billing/official'));
-  if (needAdminToken && process.env.ENTERPRISE_ADMIN_TOKEN) {
+  if (
+    needAdminToken &&
+    !headers['x-admin-token'] &&
+    isLoopback &&
+    process.env.GATEWAY_AUTO_ADMIN_TOKEN !== 'false' &&
+    process.env.ENTERPRISE_ADMIN_TOKEN
+  ) {
     headers['x-admin-token'] = process.env.ENTERPRISE_ADMIN_TOKEN;
   }
   // CSRF：后端 CSRF 中间件自行下发 suda-csrf-token cookie 并注入渲染页面的

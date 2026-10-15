@@ -120,8 +120,8 @@ const CanvasInner = () => {
   const lastPaneClick = useRef<{ x: number; y: number; t: number } | null>(null);
   const flowWrapRef = useRef<HTMLDivElement>(null);
 
-  /* ---- 持久化：按项目读/写 localStorage（Pavo 同款：画布自动保存） ---- */
-  const { projectName, restoreCanvas } = useP3Store();
+  /* ---- 持久化：按项目读/写 localStorage（Pavo 同款：画布自动保存）+ 后端数据库实体自动同步 ---- */
+  const { projectName, restoreCanvas, syncFromBackend } = useP3Store();
   // 路由参数名为 id（project/:id/canvas-free3），之前误读 projectId 导致恒为 undefined、
   // 画布持久化与白模上传都拿不到项目归属；此处修正（白模产线需要真实 projectId）。
   const { id: routeProjectId } = useParams<{ id: string }>();
@@ -140,8 +140,11 @@ const CanvasInner = () => {
     } catch {
       /* 损坏数据忽略 */
     }
+    if (projectId) {
+      void syncFromBackend(projectId);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistKey]);
+  }, [persistKey, projectId]);
   useEffect(() => {
     try {
       const snap = { nodes, edges, projectName };

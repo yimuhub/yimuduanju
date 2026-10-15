@@ -25,8 +25,9 @@ import ProjectAgentsTab from './pages/ProjectWorkspace/tabs/ProjectAgentsTab';
 import ProjectTasksTab from './pages/ProjectWorkspace/tabs/ProjectTasksTab';
 import ProjectQcTab from './pages/ProjectWorkspace/tabs/ProjectQcTab';
 import ProjectExportTab from './pages/ProjectWorkspace/tabs/ProjectExportTab';
-// P1 性能：两个画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
+// P1 性能：三个画布（含 three/xyflow 重依赖与一键成片流水线）懒加载，首屏不再背全量包
 const PavoCanvas = lazy(() => import('./pages/CanvasStudioV2/PavoCanvas'));
+const CanvasAutoPage = lazy(() => import('./pages/CanvasStudioV2/CanvasAutoPage'));
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
 
 const RoutesComponent = () => {
@@ -36,7 +37,7 @@ const RoutesComponent = () => {
   }, []);
   return (
     <Routes>
-      {/* 无限画布 v2 · Pavo 式交互（节点即工具箱 / 分支创作 / 3D 导演台 / @ 引用）；画布-auto 阶段二拆一键成片 */}
+      {/* 无限画布 v2 · Pavo 式交互（节点即工具箱 / 分支创作 / 3D 导演台 / @ 引用） */}
       <Route
         path="project/:id/canvas"
         element={
@@ -47,12 +48,13 @@ const RoutesComponent = () => {
           </RouteErrorGuard>
         }
       />
+      {/* 一键成片独立流水线页（已拆分为 8 步可视化确认与批量全自动投递工作台） */}
       <Route
         path="project/:id/canvas-auto"
         element={
           <RouteErrorGuard>
-            <Suspense fallback={<CanvasLoading tip="一键成片加载中..." />}>
-              <PavoCanvas />
+            <Suspense fallback={<CanvasLoading tip="一键成片流水线加载中..." />}>
+              <CanvasAutoPage />
             </Suspense>
           </RouteErrorGuard>
         }

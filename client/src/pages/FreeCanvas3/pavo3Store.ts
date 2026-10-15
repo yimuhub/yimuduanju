@@ -102,6 +102,8 @@ interface FreeCanvas3State {
   revertReorganize: () => void;
   runGeneration: (nodeId: string, kind: DialogKind, prompt: string, model?: ModelItem | null, opts?: GenRunOptions) => void;
   runTryAction: (nodeId: string, action: string) => void;
+  /** 从后端 PostgreSQL 项目实体（剧本/角色/场景/分镜）同步构建画布节点，打破 localStorage 数据孤岛 */
+  syncFromBackend: (projectId: string) => Promise<void>;
 }
 
 /** 简单中文→英文演示翻译（演示模式；对接 API 后由后端翻译） */
@@ -460,6 +462,9 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
 
       if (backendOk && configured) {
         try {
+          const urlMatch = typeof window !== 'undefined' ? window.location.pathname.match(/\/project\/([0-9a-fA-F-]{36})/) : null;
+          const activeProjectId = urlMatch?.[1];
+          const existingTaskId = typeof data.externalTaskId === 'string' && data.externalTaskId ? data.externalTaskId : undefined;
           const res = await pavo3Api.generate({
             // P1 修复：'write' 已在上文提前 return，此处不可能为 write；其余 kind 收敛为后端四类型
             type: kind as 'text' | 'image' | 'video' | 'audio',
@@ -470,15 +475,42 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
             refs,
             style: style ? { name: style.name, prompt: style.prompt, negative: style.negative } : null,
             duration: opts?.duration ? parseInt(String(opts.duration), 10) || undefined : undefined,
+            projectId: activeProjectId,
+            taskId: kind === 'video' ? existingTaskId : undefined,
           });
           if (!res.ok) {
+            if (res.taskId) {
+              s.updateNodeData(nodeId, { externalTaskId: res.taskId });
+            }
             fail(res.message ?? '生成失败');
             return;
           }
           if (res.text !== undefined) {
-            finish({ markdown: res.text, mediaUrl: undefined, mediaKind: undefined });
+            finish({ markdown: res.text, mediaUrl: undefined, mediaKind: undefined, externalTaskId: undefined });
           } else if (res.url) {
-            finish({ mediaUrl: res.url, mediaKind: res.mediaKind ?? 'image', markdown: undefined });
+            finish({
+              mediaUrl: res.url,
+              mediaKind: res.mediaKind ?? 'image',
+              markdown: undefined,
+              externalTaskId: undefined,
+            });
+            // 双向数据打通：若该画布节点关联了后端分镜镜头（backendShotId），生成成功后自动同步回写数据库分镜表
+            const backendShotId = typeof data.backendShotId === 'string' ? data.backendShotId : undefined;
+            if (activeProjectId && backendShotId && !res.url.startsWith('data:')) {
+              import('@client/src/api').then(({ storyboard }) => {
+                const shotPatch =
+                  kind === 'image'
+                    ? { startFrameUrl: res.url }
+                    : kind === 'video'
+                      ? { videoUrl: res.url }
+                      : kind === 'audio'
+                        ? { voiceUrl: res.url }
+                        : null;
+                if (shotPatch) {
+                  storyboard.updateShot(activeProjectId, backendShotId, shotPatch).catch(() => {});
+                }
+              }).catch(() => {});
+            }
           } else {
             fail('接口未返回内容');
           }
@@ -546,6 +578,151 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
     }
     if (kind === 'director') {
       s.setDirector3DOpen(true);
+    }
+  },
+
+  /** 从后端 PostgreSQL 项目实体（剧本/角色/场景/分镜）同步构建画布节点，打破 localStorage 数据孤岛 */
+  syncFromBackend: async (projectId: string) => {
+    if (!projectId) return;
+    try {
+      const { projects, storyboard, bible } = await import('@client/src/api');
+      const [proj, , shotsList, charsList] = await Promise.all([
+        projects.getProject(projectId).catch(() => null),
+        storyboard.listScenes(projectId).catch(() => []),
+        storyboard.listShots(projectId).catch(() => []),
+        bible.listCharacters(projectId).catch(() => []),
+      ]);
+      const s = get();
+      const existingIds = new Set(s.nodes.map((n) => n.id));
+      const newNodes: PavoFlowNode[] = [...s.nodes];
+      const newEdges: PavoFlowEdge[] = [...s.edges];
+
+      // 1. 项目剧本主节点
+      const scriptNodeId = `text-script-${projectId.slice(0, 8)}`;
+      if (proj && !existingIds.has(scriptNodeId)) {
+        newNodes.push({
+          id: scriptNodeId,
+          type: 'pavo',
+          position: { x: 60, y: 120 },
+          data: {
+            nodeType: 'text',
+            title: `剧本 · ${proj.title || '当前项目'}`,
+            status: proj.scriptText ? 'done' : 'idle',
+            progress: proj.scriptText ? 100 : 0,
+            markdown: proj.scriptText || proj.description || '暂无剧本文本，可双击编辑或生成',
+          },
+        });
+        existingIds.add(scriptNodeId);
+      }
+
+      // 2. 角色参考图节点
+      charsList.slice(0, 8).forEach((ch, idx) => {
+        const cid = `char-img-${ch.id.slice(0, 8)}`;
+        if (existingIds.has(cid)) return;
+        const refUrl = ch.referenceImageUrls?.[0];
+        newNodes.push({
+          id: cid,
+          type: 'pavo',
+          position: { x: 60, y: 420 + idx * 360 },
+          data: {
+            nodeType: refUrl ? 'image' : 'text',
+            title: `角色 · ${ch.name}`,
+            status: refUrl || ch.canonicalDescription ? 'done' : 'idle',
+            progress: 100,
+            mediaUrl: refUrl,
+            mediaKind: refUrl ? 'image' : undefined,
+            markdown: !refUrl ? (ch.canonicalDescription || ch.personality || ch.name) : undefined,
+            backendCharId: ch.id,
+          },
+        });
+        existingIds.add(cid);
+      });
+
+      // 3. 分镜镜头节点（首帧图片节点 → 镜头视频节点）
+      shotsList.slice(0, 24).forEach((sh, idx) => {
+        const imgNodeId = `shot-img-${sh.id.slice(0, 8)}`;
+        const vidNodeId = `shot-vid-${sh.id.slice(0, 8)}`;
+        const rowY = 80 + idx * 420;
+        const promptText = sh.visualPrompt || sh.dialogue || `镜头 #${sh.shotNumber}`;
+        if (!existingIds.has(imgNodeId)) {
+          newNodes.push({
+            id: imgNodeId,
+            type: 'pavo',
+            position: { x: 460, y: rowY },
+            data: {
+              nodeType: 'image',
+              title: `镜 #${sh.shotNumber} 首帧`,
+              status: sh.startFrameUrl ? 'done' : 'idle',
+              progress: sh.startFrameUrl ? 100 : 0,
+              mediaUrl: sh.startFrameUrl,
+              mediaKind: sh.startFrameUrl ? 'image' : undefined,
+              backendShotId: sh.id,
+              gen: {
+                prompt: promptText,
+                refs: [],
+                refMode: false,
+                ratio: (proj?.aspectRatio as string) || '9:16',
+                res: '1K',
+                preset: '通用',
+                count: 1,
+              },
+            },
+          });
+          existingIds.add(imgNodeId);
+          if (existingIds.has(scriptNodeId)) {
+            newEdges.push({
+              id: `e-${scriptNodeId}-${imgNodeId}`,
+              source: scriptNodeId,
+              target: imgNodeId,
+              type: 'pavoEdge',
+            });
+          }
+        }
+        if (!existingIds.has(vidNodeId)) {
+          newNodes.push({
+            id: vidNodeId,
+            type: 'pavo',
+            position: { x: 860, y: rowY },
+            data: {
+              nodeType: 'video',
+              title: `镜 #${sh.shotNumber} 视频 (${sh.duration ?? 4}s)`,
+              status: sh.videoUrl ? 'done' : 'idle',
+              progress: sh.videoUrl ? 100 : 0,
+              mediaUrl: sh.videoUrl,
+              mediaKind: sh.videoUrl ? 'video' : undefined,
+              backendShotId: sh.id,
+              gen: {
+                prompt: promptText,
+                refs: [imgNodeId],
+                refMode: false,
+                ratio: (proj?.aspectRatio as string) || '9:16',
+                res: '720P',
+                preset: '通用',
+                count: 1,
+                mode: '全能参考',
+                duration: `${Math.round(Number(sh.duration) || 4)}s`,
+              },
+            },
+          });
+          existingIds.add(vidNodeId);
+          newEdges.push({
+            id: `e-${imgNodeId}-${vidNodeId}`,
+            source: imgNodeId,
+            target: vidNodeId,
+            type: 'pavoEdge',
+          });
+        }
+      });
+
+      if (newNodes.length > s.nodes.length || (proj?.title && s.projectName === '未命名项目')) {
+        set({
+          nodes: newNodes,
+          edges: newEdges,
+          projectName: proj?.title || s.projectName,
+        });
+      }
+    } catch {
+      /* 后端不可达时静默跳过 */
     }
   },
 }));

@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID, createHash } from 'crypto';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { mkdir, writeFile, unlink, stat, copyFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve as resolvePath } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import {
@@ -628,7 +629,115 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   /**
-   * 服务端成片：按镜序下载镜头成片 → ffmpeg concat → 落盘 /uploads → 登记资产。
+   * 跨平台探测 ffmpeg 可执行文件路径（消除硬编码 /Users/shanziya/.local/bin/ffmpeg）。
+   */
+  private resolveFfmpegBin(): string {
+    if (process.env.FFMPEG_PATH && process.env.FFMPEG_PATH.trim()) {
+      return process.env.FFMPEG_PATH.trim();
+    }
+    if (process.platform === 'darwin') {
+      const candidates = [
+        '/opt/homebrew/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+        '/Users/shanziya/.local/bin/ffmpeg',
+      ];
+      for (const c of candidates) {
+        if (existsSync(c)) return c;
+      }
+    }
+    return 'ffmpeg';
+  }
+
+  /**
+   * SSRF 防护：校验外部媒体 URL 必须为公网 http(s) 地址，禁止访问回环、私网与云元数据地址。
+   */
+  public isSafeExternalUrl(rawUrl: string): boolean {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return false;
+      }
+      const host = parsed.hostname.toLowerCase();
+      if (
+        host === 'localhost' ||
+        host === '0.0.0.0' ||
+        host === '::1' ||
+        host === '[::1]' ||
+        host.endsWith('.local') ||
+        host.endsWith('.internal')
+      ) {
+        return false;
+      }
+      // IPv4 私网与保留段拦截
+      const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+      if (ipv4) {
+        const [, a, b] = ipv4.map(Number);
+        if (
+          a === 127 ||
+          a === 10 ||
+          a === 0 ||
+          (a === 169 && b === 254) ||
+          (a === 192 && b === 168) ||
+          (a === 172 && b >= 16 && b <= 31)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 将本地 /uploads/ 路径、data: Base64 URI 或安全公网 URL 物化为本地临时文件。
+   */
+  private async materializeMediaToFile(
+    url: string,
+    dest: string,
+    cacheDir?: string,
+  ): Promise<boolean> {
+    const trimmed = url.trim();
+    // 1. data: URI
+    if (trimmed.startsWith('data:')) {
+      const commaIdx = trimmed.indexOf(',');
+      if (commaIdx < 0) return false;
+      const b64 = trimmed.slice(commaIdx + 1);
+      const buf = Buffer.from(b64, 'base64');
+      if (buf.length < 128) return false;
+      await writeFile(dest, buf);
+      return true;
+    }
+    // 2. 本地 /uploads/ 相对路径（防目录穿越）
+    if (trimmed.startsWith('/uploads/')) {
+      const rel = trimmed.replace(/^\/uploads\/+/, '');
+      const baseDir = resolvePath(uploadDir());
+      const abs = resolvePath(baseDir, rel);
+      if (!abs.startsWith(baseDir) || !existsSync(abs)) return false;
+      await copyFile(abs, dest);
+      return true;
+    }
+    // 3. 公网 http(s) URL（带缓存与 SSRF 防护）
+    if (cacheDir) {
+      await mkdir(cacheDir, { recursive: true });
+      const cacheKey = createHash('sha1').update(trimmed).digest('hex').slice(0, 16);
+      const cachePath = join(cacheDir, `${cacheKey}.media`);
+      const cachedSize = await stat(cachePath).then((s) => s.size).catch(() => 0);
+      if (cachedSize >= 1024) {
+        await copyFile(cachePath, dest);
+        return true;
+      }
+      const ok = await this.downloadClip(trimmed, dest, 60_000, 4);
+      if (ok) {
+        await copyFile(dest, cachePath).catch(() => {});
+      }
+      return ok;
+    }
+    return this.downloadClip(trimmed, dest, 60_000, 4);
+  }
+
+  /**
+   * 服务端成片（升级版）：按镜序下载镜头成片 + 混流各镜 TTS 配音轨（voiceUrl）+ 烧录/封装字幕 + 写入 AIGC 合规元数据。
    * 可拼片段不足时 400 明示；成功返回资产（项目资产页直接可见）。
    */
   async assembleFinalVideo(projectId: string): Promise<{ asset: Asset; clips: number; durationSeconds: number }> {
@@ -641,6 +750,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         shotNumber: shots.shotNumber,
         duration: shots.duration,
         videoUrl: shots.videoUrl,
+        voiceUrl: shots.voiceUrl,
+        dialogue: shots.dialogue,
+        subtitleText: shots.subtitleText,
       })
       .from(shots)
       .innerJoin(scenes, eq(shots.sceneId, scenes.id))
@@ -656,64 +768,112 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       return a.shotNumber - b.shotNumber;
     });
 
-    const ffmpegBin =
-      process.env.FFMPEG_PATH ||
-      (process.platform === 'darwin' ? '/Users/shanziya/.local/bin/ffmpeg' : 'ffmpeg');
+    const ffmpegBin = this.resolveFfmpegBin();
     const work = join(tmpdir(), `yimu-assemble-${randomUUID()}`);
     await mkdir(work, { recursive: true });
     const listPath = join(work, 'list.txt');
     const lines: string[] = [];
     let downloaded = 0;
+    const hasAnyVoice = withVideo.some((s) => Boolean(s.voiceUrl));
     const cleanup: string[] = [];
     try {
+      const cacheDir = join(uploadDir(), projectId, 'clips');
       for (let i = 0; i < withVideo.length; i += 1) {
         const clip = withVideo[i];
         const url = clip.videoUrl as string;
-        const local = join(work, `clip_${String(i).padStart(3, '0')}.mp4`);
-        cleanup.push(local);
-        // 缓存到项目 uploads：重试合成时不重复下载
-        const cacheDir = join(uploadDir(), projectId, 'clips');
-        await mkdir(cacheDir, { recursive: true });
-        const cacheKey = createHash('sha1').update(url).digest('hex').slice(0, 16);
-        const cachePath = join(cacheDir, `${cacheKey}.mp4`);
+        const rawLocal = join(work, `clip_raw_${String(i).padStart(3, '0')}.mp4`);
+        cleanup.push(rawLocal);
         // eslint-disable-next-line no-await-in-loop
-        const cached = await stat(cachePath).then((s) => s.size).catch(() => 0);
-        if (cached >= 1024) {
-          // eslint-disable-next-line no-await-in-loop
-          await copyFile(cachePath, local);
-        } else {
-          // Agnes 两个 CDN 域互为镜像，.cn 时常 Recv failure → 优先 .space，失败互切
-          // eslint-disable-next-line no-await-in-loop
-          const ok = await this.downloadClip(url, local, 60_000, 4);
-          if (!ok) throw new BadRequestException(`下载镜头 ${clip.shotNumber} 成片失败`);
-          // eslint-disable-next-line no-await-in-loop
-          await copyFile(local, cachePath).catch(() => {});
-        }
+        const ok = await this.materializeMediaToFile(url, rawLocal, cacheDir);
+        if (!ok) throw new BadRequestException(`下载镜头 ${clip.shotNumber} 成片失败`);
         // eslint-disable-next-line no-await-in-loop
-        const st = await stat(local);
+        const st = await stat(rawLocal);
         if (st.size < 1024) throw new BadRequestException(`镜头 ${clip.shotNumber} 成片文件异常（过小）`);
-        lines.push(`file '${local.replace(/'/g, "'\\''")}'`);
+
+        let segmentForConcat = rawLocal;
+        // 若全片存在配音，则将每个镜头统一混流为带 AAC 音轨的片段（有 voiceUrl 混入配音，无则补静音轨保证 concat 音轨一致）
+        if (hasAnyVoice) {
+          const muxedLocal = join(work, `clip_mux_${String(i).padStart(3, '0')}.mp4`);
+          cleanup.push(muxedLocal);
+          let voiceLocal: string | null = null;
+          if (clip.voiceUrl) {
+            const candidateVoice = join(work, `voice_${String(i).padStart(3, '0')}.wav`);
+            cleanup.push(candidateVoice);
+            // eslint-disable-next-line no-await-in-loop
+            const voiceOk = await this.materializeMediaToFile(clip.voiceUrl, candidateVoice, cacheDir);
+            if (voiceOk) voiceLocal = candidateVoice;
+          }
+          const muxArgs = voiceLocal
+            ? [
+                '-y', '-i', rawLocal, '-i', voiceLocal,
+                '-map', '0:v:0', '-map', '1:a:0',
+                '-c:v', 'copy', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+                '-shortest', muxedLocal,
+              ]
+            : [
+                '-y', '-i', rawLocal,
+                '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+                '-map', '0:v:0', '-map', '1:a:0',
+                '-c:v', 'copy', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+                '-shortest', muxedLocal,
+              ];
+          // eslint-disable-next-line no-await-in-loop
+          const muxOk = await this.runFfmpeg(ffmpegBin, muxArgs, work);
+          if (muxOk) segmentForConcat = muxedLocal;
+        }
+
+        lines.push(`file '${segmentForConcat.replace(/'/g, "'\\''")}'`);
         downloaded += 1;
       }
       await writeFile(listPath, lines.join('\n'), 'utf8');
       cleanup.push(listPath);
 
+      // 生成 SRT 字幕文件供软字幕封装或同目录归档
+      const srtContent = await this.getSubtitles(projectId).catch(() => '');
+      const srtPath = join(work, 'subtitles.srt');
+      const hasSrt = Boolean(srtContent.trim());
+      if (hasSrt) {
+        await writeFile(srtPath, srtContent, 'utf8');
+        cleanup.push(srtPath);
+      }
+
       const outName = `final_${randomUUID().slice(0, 8)}.mp4`;
       const dir = join(uploadDir(), projectId);
       await mkdir(dir, { recursive: true });
       const outAbs = join(dir, outName);
-      // 先试流拷贝（同源片段通常同编码）；失败则统一重编码兜底
-      const copyArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outAbs];
+      const aigcMeta = ['-metadata', 'comment=AIGC-Generated-By-YIMU-AI-Workshop'];
+      // 先试流拷贝（同源片段通常同编码）；若含软字幕则一并封装 mov_text
+      const copyArgs = hasSrt
+        ? [
+            '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
+            '-i', srtPath,
+            '-c:v', 'copy', '-c:a', 'copy', '-c:s', 'mov_text',
+            ...aigcMeta, outAbs,
+          ]
+        : ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', ...aigcMeta, outAbs];
       const copyOk = await this.runFfmpeg(ffmpegBin, copyArgs, work);
       if (!copyOk) {
+        // 重编码兜底：保留音轨（若存在配音），不再一刀切 -an 抹除声音
         const reArgs = [
           '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
           '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
-          '-an', outAbs,
+          ...(hasAnyVoice ? ['-c:a', 'aac', '-b:a', '128k'] : ['-an']),
+          ...aigcMeta,
+          outAbs,
         ];
         const reOk = await this.runFfmpeg(ffmpegBin, reArgs, work);
-        if (!reOk) throw new BadRequestException('ffmpeg 合成失败：请检查本机 ffmpeg 与片段编码');
+        if (!reOk) {
+          // 终极兜底：纯视频合成
+          const fallbackArgs = [
+            '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
+            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
+            '-an', ...aigcMeta, outAbs,
+          ];
+          const fbOk = await this.runFfmpeg(ffmpegBin, fallbackArgs, work);
+          if (!fbOk) throw new BadRequestException('ffmpeg 合成失败：请检查本机 ffmpeg 与片段编码');
+        }
       }
       const outStat = await stat(outAbs);
       const durationSeconds = Number(
@@ -733,7 +893,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           durationSeconds: durationSeconds !== undefined ? String(durationSeconds) : undefined,
           sourceType: 'generated',
           sourceId: `assemble-${randomUUID()}`,
-          generationPrompt: `服务端拼接 ${downloaded} 条镜头成片（按镜序）`,
+          generationPrompt: `服务端拼接 ${downloaded} 条镜头成片（${hasAnyVoice ? '含配音音轨混流' : '纯画面'}${hasSrt ? '+内嵌字幕轨' : ''}）`,
+          metadata: { aigcGenerated: true, hasAudio: hasAnyVoice, hasSubtitles: hasSrt } as any,
           status: 'ready',
         })
         .returning();
@@ -764,14 +925,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
   }
 
-  /** curl 拉取镜头成片：.cn/.space 互为镜像优先 space，退避重试；curl 失败走 node fetch */
+  /** curl 拉取镜头成片：带 SSRF 校验，.cn/.space 互为镜像优先 space，退避重试；curl 失败走 node fetch */
   private async downloadClip(url: string, dest: string, timeoutMs: number, retries: number): Promise<boolean> {
+    if (!this.isSafeExternalUrl(url)) {
+      this.logger.warn(`拦截不安全的外部媒体 URL（SSRF 防护）: ${url.slice(0, 100)}`);
+      return false;
+    }
     const candidates = [
       url.replace('cos-platform-outputs.agnes-ai.cn', 'platform-outputs.agnes-ai.space'),
       url.replace('platform-outputs.agnes-ai.space', 'cos-platform-outputs.agnes-ai.cn'),
       url,
-    ];
+    ].filter((u) => this.isSafeExternalUrl(u));
     const unique = [...new Set(candidates)];
+    if (unique.length === 0) return false;
     const timeoutSec = Math.max(20, Math.ceil(timeoutMs / 1000));
     for (let attempt = 0; attempt < retries; attempt += 1) {
       const target = unique[attempt % unique.length];
@@ -790,10 +956,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   private curlOnce(url: string, dest: string, timeoutSec: number): Promise<{ ok: boolean; code: number | null; err: string }> {
+    const curlBin = process.platform === 'win32' ? 'curl.exe' : 'curl';
     return new Promise((resolve) => {
       const child = spawn(
-        '/usr/bin/curl',
-        ['-sS', '-f', '-L', '--connect-timeout', '15', '--max-time', String(timeoutSec), '-o', dest, url],
+        curlBin,
+        ['-sS', '-f', '-L', '--proto', '=http,https', '--connect-timeout', '15', '--max-time', String(timeoutSec), '-o', dest, url],
         { stdio: ['ignore', 'ignore', 'pipe'] },
       );
       let err = '';
@@ -804,8 +971,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   private async fetchClip(url: string, dest: string, timeoutMs: number): Promise<boolean> {
+    if (!this.isSafeExternalUrl(url)) return false;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'follow' });
       if (!res.ok) return false;
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length < 1024) return false;

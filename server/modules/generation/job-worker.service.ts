@@ -446,12 +446,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.generationService.settleJobFailure(job.id, '文本任务缺少 prompt');
       return;
     }
-    const text = await this.modelGateway.generateText(
+    // 并发安全修复：直接从 generateTextWithUsage 返回 { text, usage }，消除单例 lastTextUsage 竞态
+    const { text, usage } = await this.modelGateway.generateTextWithUsage(
       { prompt, model: opts?.model, temperature: opts?.temperature },
       providerName,
     );
-    // F6 调用明细：网关暂存的用量（OpenAI 兼容接口才有）记入 outputData
-    const usage = this.modelGateway.takeLastTextUsage();
     await this.generationService.settleJobSuccess(job.id, {
       text,
       ...(usage ? { usage } : {}),
@@ -465,20 +464,54 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.generationService.settleJobFailure(job.id, '图片任务缺少 prompt');
       return;
     }
+    // 收集参考图：优先使用 input.references，若为镜头生图且未传参考图则自动关联镜头绑定角色的参考图以保持角色一致性
+    const refList: string[] = Array.isArray(input.references)
+      ? (input.references as unknown[]).filter((r): r is string => typeof r === 'string' && r.length > 0)
+      : [];
+    if (refList.length === 0 && job.targetType === 'shot' && job.targetId && job.projectId) {
+      const shotRows = await this.db
+        .select({ characterIds: shots.characterIds, referenceImageUrls: shots.referenceImageUrls })
+        .from(shots)
+        .where(eq(shots.id, job.targetId))
+        .limit(1);
+      const shotRefs = shotRows[0]?.referenceImageUrls ?? [];
+      for (const r of shotRefs) {
+        if (r) refList.push(r);
+      }
+      const charIds = shotRows[0]?.characterIds ?? [];
+      if (refList.length === 0 && charIds.length > 0) {
+        const charRows = await this.db
+          .select({ id: characters.id, referenceImageUrls: characters.referenceImageUrls })
+          .from(characters)
+          .where(eq(characters.projectId, job.projectId));
+        for (const c of charRows) {
+          if (charIds.includes(c.id) && c.referenceImageUrls && c.referenceImageUrls.length > 0) {
+            refList.push(c.referenceImageUrls[0]);
+          }
+        }
+      }
+    }
+    const seed = typeof input.seed === 'number' && Number.isFinite(input.seed) ? input.seed : undefined;
     const images = await this.modelGateway.generateImage(
       {
         prompt,
         negativePrompt:
           typeof input.negativePrompt === 'string' ? input.negativePrompt : undefined,
         model: opts?.model,
+        referenceImages: refList.length > 0 ? refList : undefined,
+        seed,
       },
       providerName,
     );
     const firstUrl = images[0]?.url;
-    // data: 大 base64 不进 shots.startFrameUrl（会撑爆行）；先落盘成 /uploads/ 再回写
+    // data: 大 base64 不进 shots.startFrameUrl 也不原样塞入 outputData JSONB（防 TOAST 表膨胀）；统一先落盘成 /uploads/
     const stableUrl = firstUrl ? await this.ensureLocalUrl(job.projectId, firstUrl) : undefined;
     if (stableUrl) await this.writebackToTarget(job, { imageUrl: stableUrl });
-    await this.generationService.settleJobSuccess(job.id, { images });
+    const sanitizedImages = images.map((img, idx) => ({
+      ...img,
+      url: idx === 0 && stableUrl ? stableUrl : img.url.startsWith('data:') ? (stableUrl ?? '/uploads/inline.png') : img.url,
+    }));
+    await this.generationService.settleJobSuccess(job.id, { images: sanitizedImages });
   }
 
   private async processVideo(job: GenerationJob, providerName?: string, opts?: { model?: string }): Promise<void> {
@@ -528,6 +561,21 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`视频远端任务已创建 ${job.id} → ${taskId}`);
   }
 
+  /**
+   * 将 data:audio/wav;base64,... 音频落盘至 /uploads/{projectId}/tts_{uuid}.wav，
+   * 避免数 MB 的 Base64 字符串直接写入 shots.voice_url 导致 PostgreSQL 行膨胀。
+   */
+  private async ensureLocalAudioUrl(projectId: string | undefined, audioBase64: string): Promise<string> {
+    const raw = audioBase64.replace(/^data:audio\/[a-zA-Z0-9.+-]+;base64,/, '');
+    const buf = Buffer.from(raw, 'base64');
+    const folder = projectId || 'common';
+    const dir = join(uploadDir(), folder);
+    await mkdir(dir, { recursive: true });
+    const filename = `tts_${randomUUID().slice(0, 12)}.wav`;
+    await writeFile(join(dir, filename), buf);
+    return `/uploads/${folder}/${filename}`;
+  }
+
   private async processTts(job: GenerationJob, providerName?: string): Promise<void> {
     const text = this.inputPrompt(job);
     if (!text.trim()) {
@@ -549,18 +597,49 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         return;
       }
     }
+    // 多角色音色自动绑定：优先读 input.voice，其次根据镜头关联的 characterIds 或台词角色前缀匹配 characters.voiceId
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    let resolvedVoice = typeof input.voice === 'string' && input.voice.trim() ? input.voice.trim() : undefined;
+    if (!resolvedVoice && job.projectId) {
+      const charRows = await this.db
+        .select({ id: characters.id, name: characters.name, voiceId: characters.voiceId })
+        .from(characters)
+        .where(eq(characters.projectId, job.projectId));
+      if (charRows.length > 0) {
+        if (job.targetType === 'shot' && job.targetId) {
+          const shotRows = await this.db
+            .select({ characterIds: shots.characterIds, dialogue: shots.dialogue })
+            .from(shots)
+            .where(eq(shots.id, job.targetId))
+            .limit(1);
+          const cids = shotRows[0]?.characterIds ?? [];
+          const byId = charRows.find((c) => cids.includes(c.id) && c.voiceId);
+          if (byId?.voiceId) resolvedVoice = byId.voiceId;
+        }
+        // 台词前缀匹配（如 "林晚：..." 或 "[林晚] ..."）
+        if (!resolvedVoice) {
+          const byName = charRows.find(
+            (c) => c.voiceId && c.name && (text.startsWith(`${c.name}：`) || text.startsWith(`${c.name}:`) || text.includes(`【${c.name}】`)),
+          );
+          if (byName?.voiceId) resolvedVoice = byName.voiceId;
+        }
+      }
+    }
+
     const result = await this.modelGateway.generateTTS(
-      { text },
+      { text, voice: resolvedVoice },
       providerName,
     );
-    const voiceUrl =
-      result.audioUrl ??
-      (result.audioBase64
-        ? `data:audio/wav;base64,${result.audioBase64}`
-        : undefined);
+    let voiceUrl = result.audioUrl;
+    if (!voiceUrl && result.audioBase64) {
+      voiceUrl = await this.ensureLocalAudioUrl(job.projectId, result.audioBase64);
+    } else if (voiceUrl && voiceUrl.startsWith('data:audio/')) {
+      voiceUrl = await this.ensureLocalAudioUrl(job.projectId, voiceUrl);
+    }
     if (voiceUrl) await this.writebackToTarget(job, { voiceUrl });
     await this.generationService.settleJobSuccess(job.id, {
-      audioUrl: result.audioUrl,
+      audioUrl: voiceUrl,
+      voice: resolvedVoice,
       hasAudio: Boolean(voiceUrl),
     });
   }

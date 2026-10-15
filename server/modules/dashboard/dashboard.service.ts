@@ -306,4 +306,100 @@ export class DashboardService {
     }
     return out;
   }
+
+  /**
+   * 平台运营经理专属：全站创作转化漏斗（创意→剧本→分镜→首帧→视频→成片）与供应商通道健康度/错误归因。
+   */
+  async getFunnelAndChannelHealth() {
+    const [funnelRows, providerRows, failedRows] = await Promise.all([
+      this.db.execute(sql`
+        SELECT
+          COUNT(*)::int AS total_projects,
+          COUNT(*) FILTER (WHERE script_text IS NOT NULL AND btrim(script_text) <> '')::int AS with_script,
+          COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM shots s WHERE s.project_id = projects.id))::int AS with_storyboard,
+          COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM shots s WHERE s.project_id = projects.id AND s.start_frame_url IS NOT NULL))::int AS with_keyframes,
+          COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM shots s WHERE s.project_id = projects.id AND s.video_url IS NOT NULL))::int AS with_videos,
+          COUNT(*) FILTER (WHERE status IN ('ready', 'exported'))::int AS exported_or_ready
+        FROM projects
+      `),
+      this.db.execute(sql`
+        SELECT
+          COALESCE(provider_name, 'default') AS provider_name,
+          COUNT(*)::int AS total_calls,
+          COUNT(*) FILTER (WHERE status = 'succeeded')::int AS succeeded_calls,
+          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_calls,
+          COALESCE(SUM(COALESCE(cost, 0)), 0)::float AS total_cost,
+          AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) FILTER (WHERE status = 'succeeded') AS avg_latency_secs
+        FROM generation_jobs
+        GROUP BY COALESCE(provider_name, 'default')
+        ORDER BY total_calls DESC
+      `),
+      this.db.execute(sql`
+        SELECT error_message
+        FROM generation_jobs
+        WHERE status = 'failed' AND error_message IS NOT NULL
+        ORDER BY _created_at DESC
+        LIMIT 200
+      `),
+    ]);
+
+    const f = ((funnelRows as unknown as Record<string, any>[])[0]) || {};
+    const totalProjects = Number(f.total_projects || 0);
+    const withScript = Number(f.with_script || 0);
+    const withStoryboard = Number(f.with_storyboard || 0);
+    const withKeyframes = Number(f.with_keyframes || 0);
+    const withVideos = Number(f.with_videos || 0);
+    const exportedOrReady = Number(f.exported_or_ready || 0);
+    const rate = (n: number) => (totalProjects > 0 ? Math.round((n / totalProjects) * 1000) / 10 : 0);
+
+    const errorAttribution = {
+      rateLimit429: 0,
+      authOrQuota: 0,
+      timeoutOrNetwork: 0,
+      contentCompliance: 0,
+      other: 0,
+    };
+    for (const r of failedRows as unknown as { error_message?: string }[]) {
+      const msg = (r.error_message || '').toLowerCase();
+      if (msg.includes('429') || msg.includes('rate_limit') || msg.includes('saturated')) {
+        errorAttribution.rateLimit429 += 1;
+      } else if (msg.includes('401') || msg.includes('403') || msg.includes('api key') || msg.includes('quota') || msg.includes('余额')) {
+        errorAttribution.authOrQuota += 1;
+      } else if (msg.includes('timeout') || msg.includes('超时') || msg.includes('fetch') || msg.includes('network')) {
+        errorAttribution.timeoutOrNetwork += 1;
+      } else if (msg.includes('合规') || msg.includes('敏感') || msg.includes('违规')) {
+        errorAttribution.contentCompliance += 1;
+      } else {
+        errorAttribution.other += 1;
+      }
+    }
+
+    return {
+      funnel: [
+        { stage: 'created', label: '创建项目', count: totalProjects, conversionRatePct: 100 },
+        { stage: 'script', label: '完成剧本', count: withScript, conversionRatePct: rate(withScript) },
+        { stage: 'storyboard', label: '拆解分镜', count: withStoryboard, conversionRatePct: rate(withStoryboard) },
+        { stage: 'keyframes', label: '生成首帧', count: withKeyframes, conversionRatePct: rate(withKeyframes) },
+        { stage: 'videos', label: '生成视频', count: withVideos, conversionRatePct: rate(withVideos) },
+        { stage: 'exported', label: '成片交付', count: exportedOrReady, conversionRatePct: rate(exportedOrReady) },
+      ],
+      channelHealth: (providerRows as unknown as Record<string, any>[]).map((p) => {
+        const total = Number(p.total_calls || 0);
+        const succ = Number(p.succeeded_calls || 0);
+        return {
+          providerName: String(p.provider_name || 'default'),
+          totalCalls: total,
+          succeededCalls: succ,
+          failedCalls: Number(p.failed_calls || 0),
+          successRate: total > 0 ? Math.round((succ / total) * 1000) / 1000 : 1,
+          totalCostCny: Math.round(Number(p.total_cost || 0) * 100) / 100,
+          avgLatencySeconds:
+            p.avg_latency_secs !== null && p.avg_latency_secs !== undefined
+              ? Math.round(Number(p.avg_latency_secs) * 10) / 10
+              : null,
+        };
+      }),
+      errorAttribution,
+    };
+  }
 }

@@ -45,4 +45,12 @@ export class DashboardController {
   async getUsageTrend(@Query('days') days?: string) {
     return this.dashboardService.getUsageTrend(days);
   }
+
+  /**
+   * 平台运营经理看板：全站创作转化漏斗与供应商通道健康度/错误归因。
+   */
+  @Get('funnel-health')
+  async getFunnelAndChannelHealth() {
+    return this.dashboardService.getFunnelAndChannelHealth();
+  }
 }

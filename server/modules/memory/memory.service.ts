@@ -10,11 +10,13 @@ import { keywordSimilarity } from '@shared/text-metrics';
  * 检索 = 向量余弦 + 关键词混合；模型加载失败时纯关键词降级（shorts 式），不阻塞。
  * 用途：系列记忆语义检索、素材复用向量升级。
  */
-const MODEL_ID = process.env.MEMORY_MODEL ?? 'Xenova/all-MiniLM-L6-v2';
+const MODEL_ID = process.env.MEMORY_MODEL ?? 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
+const FALLBACK_MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
 const VECTOR_WEIGHT = 0.7;
 
 type Extractor = (text: string, opts?: Record<string, unknown>) => Promise<{ data: Float32Array | number[] }>;
 
+@Injectable()
 export class MemoryService {
   private readonly logger = new Logger(MemoryService.name);
   private extractor: Extractor | null = null;
@@ -23,7 +25,7 @@ export class MemoryService {
 
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
-  /** 惰性加载本地模型；失败则永久降级关键词（进程内记忆，避免反复重试） */
+  /** 惰性加载本地多语言向量模型（支持中文语义表征与 HF_ENDPOINT 镜像）；失败则永久降级关键词，不阻塞 */
   async vectorAvailable(): Promise<boolean> {
     if (this.extractor) return true;
     if (this.loadFailed) return false;
@@ -31,11 +33,22 @@ export class MemoryService {
       this.loading = (async () => {
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
-          const { pipeline } = require('@huggingface/transformers') as {
+          const { pipeline, env } = require('@huggingface/transformers') as {
             pipeline: (task: string, model: string, opts?: Record<string, unknown>) => Promise<Extractor>;
+            env?: { remoteHost?: string };
           };
-          this.extractor = await pipeline('feature-extraction', MODEL_ID, { dtype: 'fp32' });
-          this.logger.log(`本地记忆模型已加载 ${MODEL_ID}`);
+          if (env && process.env.HF_ENDPOINT) {
+            env.remoteHost = process.env.HF_ENDPOINT.endsWith('/')
+              ? process.env.HF_ENDPOINT
+              : `${process.env.HF_ENDPOINT}/`;
+          }
+          try {
+            this.extractor = await pipeline('feature-extraction', MODEL_ID, { dtype: 'fp32' });
+            this.logger.log(`本地多语言记忆模型已加载 ${MODEL_ID}`);
+          } catch {
+            this.extractor = await pipeline('feature-extraction', FALLBACK_MODEL_ID, { dtype: 'fp32' });
+            this.logger.log(`回退加载基础记忆模型 ${FALLBACK_MODEL_ID}`);
+          }
           return this.extractor;
         } catch (e) {
           this.loadFailed = true;

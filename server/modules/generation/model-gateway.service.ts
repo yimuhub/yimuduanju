@@ -27,6 +27,11 @@ interface ImageGenerateParams {
   size?: string;
   n?: number;
   negativePrompt?: string;
+  /** 角色/场景参考图（用于保持跨镜头角色与空间一致性） */
+  referenceImageUrl?: string;
+  referenceImages?: string[];
+  /** 固定随机种子（用于锁定角色/画风生成稳定性） */
+  seed?: number;
 }
 
 interface VideoGenerateParams {
@@ -107,7 +112,7 @@ export class ModelGatewayService {
     response = await fetch(second, init);
     return { response, url: second };
   }
-  /** F6：上一次文本调用的用量（take 语义，读走即清；无 usage 的接口返回 null） */
+  /** F6：上一次文本调用的用量（兼容旧调用方；并发 Worker 请用 generateTextWithUsage 消除竞态） */
   private lastTextUsage: { model: string; inputTokens: number; outputTokens: number } | null = null;
 
   takeLastTextUsage(): { model: string; inputTokens: number; outputTokens: number } | null {
@@ -116,7 +121,16 @@ export class ModelGatewayService {
     return u;
   }
 
-  async generateText(params: TextGenerateParams, providerName?: string): Promise<string> {
+  /**
+   * 并发安全的文本生成方法：直接返回 { text, usage }，不在单例上共享可变状态。
+   */
+  async generateTextWithUsage(
+    params: TextGenerateParams,
+    providerName?: string,
+  ): Promise<{
+    text: string;
+    usage: { model: string; inputTokens: number; outputTokens: number } | null;
+  }> {
     const provider = await this.getProvider(providerName, 'text');
     const apiKey = provider.apiKey;
     if (!apiKey) {
@@ -162,21 +176,21 @@ export class ModelGatewayService {
       }
 
       const data = await response.json();
-      // F6 调用明细：OpenAI 兼容接口返回 usage 则暂存，供 worker 记入 outputData
-      //（不改返回签名，老调用方无感）
+      let usageObj: { model: string; inputTokens: number; outputTokens: number } | null = null;
       const usage = data.usage as { prompt_tokens?: unknown; completion_tokens?: unknown } | undefined;
       if (usage && (typeof usage.prompt_tokens === 'number' || typeof usage.completion_tokens === 'number')) {
-        this.lastTextUsage = {
+        usageObj = {
           model,
           inputTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0,
           outputTokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0,
         };
+        this.lastTextUsage = usageObj;
       }
-      return (
+      const text =
         data.choices?.[0]?.message?.content ??
         data.output?.text ??
-        JSON.stringify(data)
-      );
+        JSON.stringify(data);
+      return { text, usage: usageObj };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error(`文本生成请求失败: ${(error as Error).message}`);
@@ -184,6 +198,11 @@ export class ModelGatewayService {
         `文本生成请求失败: ${(error as Error).message}`,
       );
     }
+  }
+
+  async generateText(params: TextGenerateParams, providerName?: string): Promise<string> {
+    const { text } = await this.generateTextWithUsage(params, providerName);
+    return text;
   }
 
   // ========== Image Generation ==========
@@ -205,6 +224,11 @@ export class ModelGatewayService {
     const base = this.normalizeBaseUrl(provider.baseUrl);
     // B2 附加提示词：逗号拼进正文（图片接口无 system 位）
     const prefix = (provider.promptPrefix ?? '').trim();
+    const refImg =
+      params.referenceImageUrl ||
+      (Array.isArray(params.referenceImages) && params.referenceImages.length > 0
+        ? params.referenceImages[0]
+        : undefined);
     const body = {
       model,
       prompt: prefix ? `${prefix}, ${params.prompt}` : params.prompt,
@@ -214,6 +238,10 @@ export class ModelGatewayService {
       response_format: 'b64_json',
       ...(params.negativePrompt
         ? { negative_prompt: params.negativePrompt }
+        : {}),
+      ...(refImg ? { image: refImg } : {}),
+      ...(typeof params.seed === 'number' && Number.isFinite(params.seed)
+        ? { seed: Math.floor(params.seed) }
         : {}),
     };
 

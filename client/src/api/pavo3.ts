@@ -25,6 +25,8 @@ export interface P3GenerateRequest {
   style?: P3StyleInput | null;
   voice?: string;
   duration?: number;
+  projectId?: string;
+  taskId?: string;
 }
 
 export interface P3GenerateResult {
@@ -35,6 +37,8 @@ export interface P3GenerateResult {
   url?: string;
   model?: string;
   provider?: string;
+  taskId?: string;
+  costCny?: number;
 }
 
 /** 生成前检测：后端是否可达且已配置 Provider */
