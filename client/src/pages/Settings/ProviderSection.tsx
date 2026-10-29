@@ -66,6 +66,31 @@ interface ProviderFormData extends CreateProviderRequest {
   apiKey?: string;
 }
 
+/**
+ * 按供应商 baseUrl 推断对应平台的 API Key 控制台直达链接（借鉴主流创作工具的取 Key 引导）。
+ * 未收录的 baseUrl 返回空串，前端不渲染链接。
+ */
+const KEY_GUIDE_URLS: { match: (host: string) => boolean; url: string }[] = [
+  { match: (h) => h.endsWith('volces.com'), url: 'https://console.volcengine.com/ark' },
+  { match: (h) => h.endsWith('siliconflow.cn'), url: 'https://cloud.siliconflow.cn/account/ak' },
+  { match: (h) => h.endsWith('openai.com'), url: 'https://platform.openai.com/api-keys' },
+  { match: (h) => h.endsWith('deepseek.com'), url: 'https://platform.deepseek.com/api_keys' },
+  { match: (h) => h.endsWith('moonshot.cn'), url: 'https://platform.moonshot.cn/console/api-keys' },
+  { match: (h) => h.endsWith('bigmodel.cn'), url: 'https://open.bigmodel.cn/usercenter/apikeys' },
+  { match: (h) => h.endsWith('aliyuncs.com'), url: 'https://bailian.console.aliyun.com/?apiKey=1' },
+  { match: (h) => h.endsWith('minimax.chat') || h.endsWith('minimaxi.com'), url: 'https://platform.minimaxi.com' },
+];
+
+function guessKeyGuideUrl(baseUrl: string | undefined): string {
+  if (!baseUrl) return '';
+  try {
+    const host = new URL(baseUrl).hostname;
+    return KEY_GUIDE_URLS.find((e) => e.match(host))?.url ?? '';
+  } catch {
+    return '';
+  }
+}
+
 const emptyForm: ProviderFormData = {
   name: '',
   providerType: 'volcengine_ark',
@@ -825,6 +850,16 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
               <div>
                 <label className="text-sm font-medium text-foreground">
                   API Key <span className="text-primary">*</span>
+                  {guessKeyGuideUrl(formData.baseUrl) && (
+                    <a
+                      href={guessKeyGuideUrl(formData.baseUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-2 inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
+                    >
+                      前往该平台获取 API Key ↗
+                    </a>
+                  )}
                 </label>
                 <div className="relative mt-2">
                   <input
