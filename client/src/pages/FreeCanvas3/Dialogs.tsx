@@ -19,7 +19,8 @@ import {
   Check,
 } from 'lucide-react';
 import { useP3Store } from './pavo3Store';
-import { MODELS, NODE_TYPES, P3, SHORTCUT_GROUPS, STYLE_CATS, STYLE_LIBRARY } from './pavo3Constants';
+import { NODE_TYPES, P3, SHORTCUT_GROUPS, STYLE_CATS, STYLE_LIBRARY } from './pavo3Constants';
+import { useCanvasModels } from './pavo3DynamicModels';
 import type { PavoNodeType } from './pavo3Types';
 
 const MENU_ICON: Record<string, React.ReactNode> = {
@@ -120,8 +121,10 @@ export const AddNodeMenu = () => {
 /* ---------------- 模型选择弹窗（对接三通道 API 的展示结构） ---------------- */
 export const ModelSelectDialog = () => {
   const { modelSelectFor, setModelSelectFor, selectedModels, setSelectedModel } = useP3Store();
+  // hooks 必须在早返回之前调用
+  const { models: dynList } = useCanvasModels(modelSelectFor ?? 'text');
   if (!modelSelectFor) return null;
-  const list = MODELS[modelSelectFor] ?? [];
+  const list = dynList;
   const current = selectedModels[modelSelectFor];
 
   return (

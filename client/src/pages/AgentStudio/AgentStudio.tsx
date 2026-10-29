@@ -15,7 +15,8 @@ import {
   ExternalLink,
   X,
 } from 'lucide-react';
-import { assets as assetsApi, assistant as assistantApi, generation as generationApi, projects as projectsApi } from '@client/src/api';
+import { assets as assetsApi, assistant as assistantApi, generation as generationApi, projects as projectsApi, templates as templatesApi } from '@client/src/api';
+import type { Template } from '@shared/api.interface';
 import type { Asset, GenerationJob, Project } from '@shared/api.interface';
 
 /**
@@ -108,6 +109,11 @@ const AgentStudio = () => {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [rightTab, setRightTab] = useState<'assets' | 'jobs'>('jobs');
+  // 计划确认门（Manus Plan Mode × Pavo Harness）：开拍前展示拆解计划与可改参数
+  const [pendingPlan, setPendingPlan] = useState<{
+    prompt: string; durationSeconds: number; artStyle: string; aspectRatio: string; budgetMode: string;
+  } | null>(null);
+  const [tpls, setTpls] = useState<Template[]>([]);
   const [panelAssets, setPanelAssets] = useState<Asset[]>([]);
   const [panelJobs, setPanelJobs] = useState<GenerationJob[]>([]);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -118,6 +124,9 @@ const AgentStudio = () => {
     [sessions, activeId],
   );
   useEffect(() => { if (!active) setActiveId(sessions[0]?.id ?? ''); }, [active, sessions]);
+
+  // 极简首页：新会话（仅欢迎消息）时进入 hero 模式——一句话 + 输入框 + 灵感剧场
+  const heroMode = (active?.messages.length ?? 0) <= 1;
 
   const persist = useCallback((next: Session[]) => {
     setSessions(next);
@@ -135,6 +144,12 @@ const AgentStudio = () => {
   const appendMsg = useCallback((sid: string, msg: ChatMsg) => {
     patchSession(sid, (s) => ({ ...s, messages: [...s.messages, msg] }));
   }, [patchSession]);
+
+  useEffect(() => {
+    void templatesApi.listTemplates({ page: 1, pageSize: 8 })
+      .then((r) => setTpls(r.items ?? []))
+      .catch(() => setTpls([]));
+  }, []);
 
   // 右侧面板数据：跟随会话绑定的项目
   useEffect(() => {
@@ -160,15 +175,17 @@ const AgentStudio = () => {
   }, [active?.messages.length, busy]);
 
   // ---- 动作：一句话创建项目（走真实 quick-create 流水线） ----
-  const runQuickCreate = useCallback(async (sid: string, prompt: string) => {
+  const runQuickCreate = useCallback(async (sid: string, prompt: string, opts?: {
+    durationSeconds?: number; artStyle?: string; aspectRatio?: string; budgetMode?: string;
+  }) => {
     appendMsg(sid, { id: uid(), role: 'agent', text: `收到！开始为你搭建短剧项目：\n「${prompt.slice(0, 60)}」\n\n正在创建项目并启动剧本解析…` });
     try {
       const res = await projectsApi.quickCreate({
         prompt,
-        durationSeconds: 45,
-        aspectRatio: '9:16',
-        artStyle: 'realistic',
-        budgetMode: 'balanced',
+        durationSeconds: opts?.durationSeconds ?? 45,
+        aspectRatio: (opts?.aspectRatio ?? '9:16') as never,
+        artStyle: (opts?.artStyle ?? 'realistic') as never,
+        budgetMode: (opts?.budgetMode ?? 'balanced') as never,
         mode: 'quick',
         expandScript: true,
       });
@@ -210,18 +227,14 @@ const AgentStudio = () => {
       if (text.includes('一句话创建')) {
         setInput('');
         appendMsg(sid, { id: uid(), role: 'user', text: '🎬 一句话创建短剧项目' });
-        setBusy(true);
-        try {
-          const fill = window.prompt('用一句话描述你的短剧（题材/人物/反转）：', '深夜便利店，店员捡到一只会说话的猫，它要用九条命换一个愿望');
-          if (fill && fill.trim()) await runQuickCreate(sid, fill.trim());
-        } finally { setBusy(false); }
+        const fill = window.prompt('用一句话描述你的短剧（题材/人物/反转）：', '深夜便利店，店员捡到一只会说话的猫，它要用九条命换一个愿望');
+        if (fill && fill.trim()) setPendingPlan({ prompt: fill.trim(), durationSeconds: 45, artStyle: 'realistic', aspectRatio: '9:16', budgetMode: 'balanced' });
         return;
       }
       setInput('');
       appendMsg(sid, { id: uid(), role: 'user', text, attachments: attachments.length ? attachments : undefined });
       setAttachments([]);
-      setBusy(true);
-      try { await runQuickCreate(sid, prompt); } finally { setBusy(false); }
+      setPendingPlan({ prompt, durationSeconds: 45, artStyle: 'realistic', aspectRatio: '9:16', budgetMode: 'balanced' });
       return;
     }
     if (text.includes('查看最近的生成任务') || text.includes('查看任务')) {
@@ -294,6 +307,56 @@ const AgentStudio = () => {
     }
     return [...map.entries()];
   }, [filtered]);
+
+  // ---- 计划确认门：开拍前展示拆解计划与可改参数（确认才消耗算力） ----
+  const renderPlanGate = () => {
+    if (!pendingPlan) return null;
+    const opt = (arr: readonly (string | number)[], cur: string | number, set: (v: string) => void) => (
+      <div className="flex flex-wrap gap-1.5">
+        {arr.map((v) => (
+          <button
+            key={String(v)}
+            onClick={() => set(String(v))}
+            className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+              String(cur) === String(v) ? 'border-primary bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:border-primary/50'
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+    );
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPendingPlan(null)}>
+        <div className="w-full max-w-lg rounded-2xl border border-border bg-background p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Sparkles className="h-4 w-4 text-primary" /> 开拍计划（确认后开始消耗算力）
+          </div>
+          <p className="mt-2 rounded-lg bg-muted/50 px-3 py-2 text-xs leading-relaxed text-foreground/80">
+            {pendingPlan.prompt}
+          </p>
+          <div className="mt-3 space-y-2.5 text-xs">
+            <div><div className="mb-1.5 font-medium text-muted-foreground">单集时长</div>{opt([30, 45, 60, 90], pendingPlan.durationSeconds, (v) => setPendingPlan({ ...pendingPlan, durationSeconds: Number(v) }))}</div>
+            <div><div className="mb-1.5 font-medium text-muted-foreground">画风</div>{opt(['realistic 写实', 'anime_2d 日漫', 'manhwa 韩漫', 'chinese_comic 国漫', 'guofeng_3d 国风3D'], pendingPlan.artStyle, (v) => setPendingPlan({ ...pendingPlan, artStyle: v.split(' ')[0] }))}</div>
+            <div><div className="mb-1.5 font-medium text-muted-foreground">画幅</div>{opt(['9:16', '16:9', '1:1'], pendingPlan.aspectRatio, (v) => setPendingPlan({ ...pendingPlan, aspectRatio: v }))}</div>
+            <div><div className="mb-1.5 font-medium text-muted-foreground">预算档</div>{opt(['fast_first 极速预演', 'balanced 均衡', 'quality_first 画质优先', 'cost_first 成本优先'], pendingPlan.budgetMode, (v) => setPendingPlan({ ...pendingPlan, budgetMode: v.split(' ')[0] }))}</div>
+          </div>
+          <div className="mt-3 rounded-lg bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+            流水线：题材判定 → 剧本 → 人物/场景资产 → 分镜 → 首帧图 → 视频/配音 → 质检 → 成片。任一环节产物都会进入右侧产出面板，可随时叫停。
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button onClick={() => setPendingPlan(null)} className="rounded-lg border border-input px-4 py-2 text-xs text-muted-foreground hover:bg-muted">再改改</button>
+            <button
+              onClick={() => { const plan = pendingPlan; setPendingPlan(null); if (active) void runQuickCreate(active.id, plan.prompt, plan); }}
+              className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
+            >
+              🎬 开拍
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // ---- 渲染子件 ----
   const msgCard = (m: ChatMsg) => {
@@ -368,8 +431,9 @@ const AgentStudio = () => {
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden">
-      {/* ============ 左：会话列表 ============ */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+      {heroMode && pendingPlan && renderPlanGate()}
+      {/* ============ 左：会话列表（hero 模式隐藏） ============ */}
+      <aside className={`hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex ${heroMode ? 'lg:hidden' : ''}`}>
         <div className="border-b border-sidebar-border p-3">
           <button
             onClick={createSession}
@@ -412,7 +476,87 @@ const AgentStudio = () => {
         </div>
       </aside>
 
-      {/* ============ 中：对话流 ============ */}
+      {/* ============ 中：hero 极简首页 / 对话流 ============ */}
+      {heroMode ? (
+        <section className="flex min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto bg-background px-6 py-10">
+          <div className="w-full max-w-2xl">
+            <h1 className="text-center text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+              一句话，创作一部短剧
+            </h1>
+            <p className="mt-3 text-center text-sm text-muted-foreground">
+              输入创意，AI 拆解计划并自动完成剧本 → 分镜 → 生成 → 成片
+            </p>
+            <div className="mt-8 flex items-end gap-2 rounded-2xl border border-input bg-background p-2.5 shadow-lg focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="添加附件"
+              >
+                <Paperclip className="h-5 w-5" />
+              </button>
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+                }}
+                rows={2}
+                autoFocus
+                placeholder="例如：深夜便利店，店员捡到一只会说话的猫……"
+                className="max-h-40 min-h-[52px] flex-1 resize-none bg-transparent py-2 text-base outline-none placeholder:text-muted-foreground"
+              />
+              <button
+                onClick={() => void send()}
+                disabled={busy || (!input.trim() && attachments.length === 0)}
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md transition-opacity hover:opacity-90 disabled:opacity-40"
+                aria-label="开始创作"
+              >
+                <Send className="h-5 w-5" />
+              </button>
+            </div>
+            {attachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {attachments.map((a, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/50 py-1 pl-1.5 pr-2 text-xs">
+                    {a.dataUrl ? <img src={a.dataUrl} alt={a.name} className="h-6 w-6 rounded object-cover" /> : <Paperclip className="h-3 w-3" />}
+                    <span className="max-w-[140px] truncate">{a.name}</span>
+                    <button onClick={() => setAttachments((p2) => p2.filter((_, j) => j !== i))} aria-label="移除附件"><X className="h-3 w-3" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {['🔥 男频逆袭短剧', '💕 女频甜宠短剧', '🎨 AI 漫剧', '📣 品牌 15s 广告', '🎲 随机来个灵感'].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setInput(c === '🎲 随机来个灵感' ? '外卖骑手雨夜救下神秘老人，醒来发现自己能听见 3 分钟后的声音' : `${c.replace(/^[^ ]+ /, '')}：请用一句话模板帮我起草创意`)}
+                  className="rounded-full border border-border bg-background px-3.5 py-1.5 text-xs text-foreground/80 transition-colors hover:border-primary hover:text-primary"
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            {/* 灵感剧场 */}
+            {tpls.length > 0 && (
+              <div className="mt-10">
+                <div className="mb-3 text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">灵感剧场 · 点击直接开拍</div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {tpls.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setPendingPlan({ prompt: `${t.name}：${t.description ?? '按模板开拍'}`, durationSeconds: 45, artStyle: 'realistic', aspectRatio: '9:16', budgetMode: 'balanced' })}
+                      className="group rounded-xl border border-border bg-background p-3 text-left transition-all hover:border-primary hover:shadow-md"
+                    >
+                      <div className="line-clamp-2 text-xs font-medium text-foreground group-hover:text-primary">{t.name}</div>
+                      <div className="mt-1 line-clamp-1 text-[10px] text-muted-foreground">{t.category ?? '模板'}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : (
       <section className="flex min-w-0 flex-1 flex-col bg-background">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex min-w-0 items-center gap-2">
@@ -539,9 +683,10 @@ const AgentStudio = () => {
           </div>
         </div>
       </section>
+      )}
 
-      {/* ============ 右：产出面板 ============ */}
-      <aside className="hidden w-[300px] shrink-0 flex-col border-l border-sidebar-border bg-sidebar lg:flex">
+      {/* ============ 右：产出面板（hero 模式隐藏） ============ */}
+      <aside className={`hidden w-[300px] shrink-0 flex-col border-l border-sidebar-border bg-sidebar lg:flex ${heroMode ? 'xl:hidden' : ''}`}>
         <div className="flex shrink-0 gap-1 border-b border-sidebar-border p-2">
           {([['jobs', '生成任务', ListTodo], ['assets', '产出资产', ImageIcon]] as const).map(([id, label, Icon]) => (
             <button

@@ -16,7 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import { useP3Store } from './pavo3Store';
-import { MODELS, P3, RATIOS, RESOLUTIONS, PRESETS, COUNTS, STYLE_LIBRARY, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, VIDEO_MODES, type StyleItem } from './pavo3Constants';
+import { P3, RATIOS, RESOLUTIONS, PRESETS, COUNTS, STYLE_LIBRARY, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, VIDEO_MODES, type StyleItem } from './pavo3Constants';
+import { useCanvasModels } from './pavo3DynamicModels';
 import type { DialogKind } from './pavo3Types';
 import { pavo3 as pavo3Api } from '@client/src/api';
 
@@ -96,8 +97,9 @@ function TextGenDialog({ nodeId, kind }: { nodeId: string; kind: DialogKind }) {
   const [full, setFull] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const { runGeneration, setModelSelectFor, closeDialog, selectedModels, nodes, getUpstreamRefs } = useP3Store();
-  const modelId = selectedModels[kind] ?? MODELS[kind]?.[0]?.id ?? '';
-  const model = MODELS[kind]?.find((m) => m.id === modelId);
+  const { models: dynModels } = useCanvasModels(kind);
+  const modelId = selectedModels[kind] ?? dynModels[0]?.id ?? '';
+  const model = dynModels.find((m) => m.id === modelId);
 
   // 上游自动参考（实时计算，显示提示）
   const upstream = useMemo(
@@ -246,7 +248,8 @@ function ImageGenPanel({ nodeId }: { nodeId: string }) {
     selectedModels,
     getUpstreamRefs,
   } = useP3Store();
-  const model = MODELS.image.find((m) => m.id === selectedModels.image);
+  const { models: imageModels } = useCanvasModels('image');
+  const model = imageModels.find((m) => m.id === selectedModels.image);
   const myNode = nodes.find((n) => n.id === nodeId);
 
   // ── 参考自动联动：打开弹窗时自动注入左侧上游节点（递归）──
@@ -590,7 +593,8 @@ function VideoGenPanel({ nodeId }: { nodeId: string }) {
     selectedModels,
     getUpstreamRefs,
   } = useP3Store();
-  const model = MODELS.video.find((m) => m.id === selectedModels.video);
+  const { models: videoModels } = useCanvasModels('video');
+  const model = videoModels.find((m) => m.id === selectedModels.video);
   const myNode = nodes.find((n) => n.id === nodeId);
 
   // ── 参考自动联动：打开弹窗时自动注入左侧上游节点（递归）──

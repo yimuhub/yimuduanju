@@ -23,6 +23,7 @@ import { AssistantModule } from './modules/assistant/assistant.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { StorySkillsModule } from './modules/story-skills/story-skills.module';
 import { MemoryModule } from './modules/memory/memory.module';
+import { SkillsModule } from './modules/skills/skills.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { MemoryModule } from './modules/memory/memory.module';
     StorageModule,
     StorySkillsModule,
     MemoryModule,
+    SkillsModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

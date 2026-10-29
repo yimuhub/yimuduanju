@@ -1,22 +1,59 @@
-import { Injectable, Inject, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, Logger, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { agentMessages, projects, scenes, shots, characters } from '@server/database/schema';
-import { eq, desc, and, count } from 'drizzle-orm';
+import { agentMessages, agentRegistry, projects, scenes, shots, characters } from '@server/database/schema';
+import { eq, desc, and, count, asc } from 'drizzle-orm';
 import type {
   AgentMessage,
   SendAgentMessageRequest,
   AgentRelatedObject,
 } from '@shared/api.interface';
 import { ModelGatewayService } from '../generation/model-gateway.service';
+import { BUILTIN_AGENTS } from './agents.registry';
+import { SkillsService } from '../skills/skills.service';
 
 @Injectable()
-export class AgentsService {
+export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly modelGateway: ModelGatewayService,
+    private readonly skillsService: SkillsService,
   ) {}
+
+  /** 注册表补种：内置 Agent 只补缺不覆盖（用户改过的不重置） */
+  async onModuleInit() {
+    try {
+      const existing = await this.db.select({ name: agentRegistry.name }).from(agentRegistry);
+      const have = new Set(existing.map((r) => r.name));
+      const missing = BUILTIN_AGENTS.filter((a) => !have.has(a.name));
+      if (missing.length > 0) {
+        await this.db.insert(agentRegistry).values(
+          missing.map((a) => ({
+            name: a.name,
+            avatar: a.avatar,
+            persona: a.persona,
+            skillSlugs: a.skillSlugs,
+            tools: a.tools,
+            sort: a.sort,
+            source: 'builtin' as const,
+          })),
+        );
+        this.logger.log(`Agent 注册表补种 ${missing.length} 个内置智能体`);
+      }
+    } catch (e) {
+      this.logger.warn(`Agent 补种跳过：${(e as Error).message}`);
+    }
+  }
+
+  /** Agent 注册表（前端 Agent 列表 / 画布 @Agent 的唯一数据源） */
+  async listRegistry() {
+    return this.db
+      .select()
+      .from(agentRegistry)
+      .where(eq(agentRegistry.enabled, true))
+      .orderBy(asc(agentRegistry.sort));
+  }
 
   async listMessages(projectId: string, limit?: number): Promise<AgentMessage[]> {
     const rows = await this.db
@@ -49,12 +86,23 @@ export class AgentsService {
     // 2. 真实 LLM 回复（注入项目上下文；无 Key 时如实报错，用户消息已保留）
     try {
       const context = await this.buildProjectContext(projectId, dto.agentName);
+      // 注册表注入：按 agentName 取人设（persona）+ 绑定技能包正文；未匹配到注册表则用通用兜底
+      const reg = dto.agentName
+        ? await this.db.select().from(agentRegistry).where(eq(agentRegistry.name, dto.agentName)).limit(1)
+        : [];
+      const agent = reg[0];
+      const skillText = agent
+        ? await this.skillsService.getBodiesBySlugs((agent.skillSlugs as string[]) ?? [])
+        : '';
       const reply = await this.modelGateway.generateText({
         prompt: dto.content,
         systemPrompt:
-          '你是「一木·YIMU AI 视频创作平台」项目智能体，用简体中文回答，简洁实用。' +
-          '当前项目上下文如下，回答要结合项目实际数据，不得编造不存在的分镜/角色/资产：\n' +
-          context,
+          (agent?.persona
+            ? `${agent.persona}\n\n`
+            : '你是「一木·YIMU AI 视频创作平台」项目智能体，用简体中文回答，简洁实用。') +
+          '回答要结合项目实际数据，不得编造不存在的分镜/角色/资产。\n' +
+          (skillText ? `# 生效技能包\n${skillText}\n` : '') +
+          `# 项目上下文\n${context}`,
       });
       const assistantRows = await this.db
         .insert(agentMessages)

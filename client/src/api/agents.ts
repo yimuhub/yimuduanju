@@ -25,3 +25,20 @@ export const clearMessages = (projectId: string) =>
     .then((res) => res.data);
 
 // P1 诚信清理：已删除调用不存在路由（404）的 listAgents；智能体列表为前端静态配置。
+
+/** Agent 注册表项（3.0：后端动态下发，前端不再写死 Agent 列表） */
+export interface AgentRegistryItem {
+  id: string;
+  name: string;
+  avatar: string;
+  persona: string;
+  skillSlugs: string[];
+  tools: string[];
+  sort: number;
+  source: string;
+}
+
+export const listRegistry = () =>
+  axiosForBackend
+    .get<AgentRegistryItem[]>('/api/agents/registry')
+    .then((res) => res.data);

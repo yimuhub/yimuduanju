@@ -606,3 +606,34 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: customTimestamptz("created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 export const auditLogsTable = auditLogs;
+
+/* ================= 3.0 harness 化：skill 注册表 + Agent 注册表 ================= */
+
+export const skills = pgTable("skills", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  line: text("line").notNull().default("common"),
+  slot: text("slot").notNull().default("common"),
+  description: text("description").notNull().default(""),
+  body: text("body").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  version: integer("version").notNull().default(1),
+  source: text("source").notNull().default("builtin"),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const agentRegistry = pgTable("agents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  avatar: text("avatar").notNull().default("🤖"),
+  persona: text("persona").notNull().default(""),
+  skillSlugs: jsonb("skill_slugs").notNull().default([]),
+  tools: jsonb("tools").notNull().default([]),
+  sort: integer("sort").notNull().default(100),
+  enabled: boolean("enabled").notNull().default(true),
+  source: text("source").notNull().default("builtin"),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});

@@ -2,20 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Bot, Send, Trash2, Sparkles, User as UserIcon } from 'lucide-react';
 import { agents } from '@client/src/api';
+import type { AgentRegistryItem } from '@client/src/api/agents';
 import type { AgentMessage } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 
-const assistantList = [
-  { name: '项目导演', desc: '把控全局，规划生产计划', icon: '🎬' },
-  { name: '剧本助手', desc: '优化剧情、润色对白、调整节奏', icon: '📝' },
-  { name: '分镜助手', desc: '规划镜头语言与景别', icon: '🎥' },
-  { name: '角色助手', desc: '人物设定与形象一致性', icon: '👤' },
-  { name: '场景助手', desc: '场景设计与氛围营造', icon: '🏛️' },
-  { name: '摄影助手', desc: '机位、焦段、运镜、光线', icon: '📷' },
-  { name: '剪辑助手', desc: '节奏、转场、时长控制', icon: '✂️' },
-  { name: '质检助手', desc: '一致性、音画同步、成片质检', icon: '🔍' },
-];
+// 3.0：Agent 列表来自后端注册表（人设/技能绑定动态下发），前端不再写死
+const fallbackList = [{ name: '项目导演', desc: '把控全局，规划生产计划', icon: '🎬' }];
 
 const quickPrompts = [
   '帮我规划一下这部短剧的完整生产计划',
@@ -27,7 +20,11 @@ const quickPrompts = [
 
 const ProjectAgentsTab = () => {
   const { id } = useParams<{ id: string }>();
-  const [active, setActive] = useState(assistantList[0].name);
+  useEffect(() => {
+    agents.listRegistry().then((r) => setRegistry(r ?? [])).catch(() => setRegistry([]));
+  }, []);
+  const [registry, setRegistry] = useState<AgentRegistryItem[]>([]);
+  const [active, setActive] = useState('项目导演');
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -84,7 +81,7 @@ const ProjectAgentsTab = () => {
       {/* 左：助手列表 */}
       <div className="w-56 shrink-0 space-y-2 overflow-y-auto rounded-xl border bg-white p-3 shadow-sm scrollbar-thin">
         <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">多智能体 · 项目协作</div>
-        {assistantList.map((a) => (
+        {(registry.length ? registry.map((a) => ({ name: a.name, desc: '', icon: a.avatar })) : fallbackList).map((a) => (
           <button
             key={a.name}
             onClick={() => setActive(a.name)}
@@ -107,7 +104,7 @@ const ProjectAgentsTab = () => {
       <div className="flex min-w-0 flex-1 flex-col rounded-xl border bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="text-base">{assistantList.find((a) => a.name === active)?.icon}</span>
+            <span className="text-base">{(registry.find((a) => a.name === active)?.avatar) ?? fallbackList[0].icon}</span>
             <span className="text-sm font-semibold text-foreground">{active}</span>
             <span className="text-xs text-muted-foreground">· 项目专属 AI 智能体</span>
           </div>
