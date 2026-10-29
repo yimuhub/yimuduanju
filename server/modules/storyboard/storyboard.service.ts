@@ -562,6 +562,29 @@ export class StoryboardService {
     await this.budgetCap.assertAllowed();
     const shot = await this.getShot(projectId, id);
     const jobType = dto.type === 'image' ? 'image' : dto.type === 'video' ? 'video' : 'tts';
+    // 修复：视频重跑旧版只带 prompt+角色参考图，丢掉首帧/白模/尾帧链/时长/运镜事实，
+    // 时长静默回落 5s。现与 generateShotVideo 同口径走 buildVideoJobInput。
+    if (jobType === 'video') {
+      const built = await this.buildVideoJobInput(projectId, shot);
+      const rows = await this.db
+        .insert(generationJobs)
+        .values({
+          projectId,
+          jobType,
+          targetType: 'shot',
+          targetId: shot.id,
+          status: 'pending',
+          inputData: {
+            prompt: built.prompt,
+            duration: built.duration,
+            references: built.references,
+            ...(built.chainedFrom ? { chainedFrom: built.chainedFrom } : {}),
+          },
+        })
+        .returning({ id: generationJobs.id });
+      await this.markShotQueued(projectId, shot.id);
+      return { jobId: rows[0].id };
+    }
     // W4 一致性：重跑同样带入角色参考图
     const charRefs =
       jobType === 'tts'
@@ -576,8 +599,9 @@ export class StoryboardService {
         targetId: shot.id,
         status: 'pending',
         inputData: {
-          prompt: shot.visualPrompt ?? shot.dialogue ?? '',
-          references: charRefs,
+          prompt: shot.visualPrompt ?? (jobType === 'image' ? shot.subject ?? '' : shot.dialogue ?? ''),
+          negativePrompt: jobType === 'image' ? shot.negativePrompt ?? '' : undefined,
+          references: [...(jobType === 'image' ? shot.referenceImageUrls ?? [] : []), ...charRefs],
         },
       })
       .returning({ id: generationJobs.id });
@@ -635,6 +659,9 @@ export class StoryboardService {
     // 中途失败整体回滚，不留下半批任务。
     // 死锁教训：连接池 max=1，事务回调内只能用 tx 做 IO，所有 pool 查询
     // （含 buildVideoJobInput）必须在进事务前算完，否则 begin 后等连接 kills everything。
+    // 修复：旧版图批/配音批只存 prompt——图批丢掉 negativePrompt 与角色参考图
+    // （跨镜一致性静默失效），配音批丢角色音色位。现与单镜 generateShotImage /
+    // generateShotVoice 同口径组装。
     const prepared: { shot: Shot; inputData: Record<string, unknown> }[] = [];
     for (const group of [
       { shots: empty, priority: base, key: 'empty' as const },
@@ -643,6 +670,11 @@ export class StoryboardService {
       for (const shot of group.shots) {
         if (activeByTarget.get(shot.id)) continue;
         // V6 批量视频与单镜同口径：首帧/白模/尾帧链/时长/运镜事实全带上
+        // eslint-disable-next-line no-await-in-loop
+        const charRefs =
+          jobType === 'tts'
+            ? []
+            : await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
         // eslint-disable-next-line no-await-in-loop
         const videoInput = jobType === 'video' ? await this.buildVideoJobInput(projectId, shot) : null;
         prepared.push({
@@ -654,9 +686,16 @@ export class StoryboardService {
                 references: videoInput.references,
                 ...(videoInput.chainedFrom ? { chainedFrom: videoInput.chainedFrom } : {}),
               }
-            : {
-                prompt: shot.visualPrompt ?? shot.dialogue ?? '',
-              },
+            : jobType === 'image'
+              ? {
+                  prompt: shot.visualPrompt ?? shot.subject ?? '',
+                  negativePrompt: shot.negativePrompt ?? '',
+                  references: [...(shot.referenceImageUrls ?? []), ...charRefs],
+                }
+              : {
+                  prompt: shot.visualPrompt ?? shot.dialogue ?? '',
+                  references: charRefs,
+                },
         });
       }
     }

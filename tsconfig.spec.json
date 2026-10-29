@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "incremental": false,
+    "types": ["node", "jest"]
+  },
+  "include": ["server/**/*", "shared/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "client", "source_package"]
+}

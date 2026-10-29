@@ -1459,17 +1459,22 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     if (job.targetType === 'shot') {
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (urls.imageUrl) patch.startFrameUrl = urls.imageUrl;
+      if (urls.voiceUrl) patch.voiceUrl = urls.voiceUrl;
       // F7 变体谱系：变体任务成功不覆盖主成片（候选由 adopt 接口显式采纳），
       // 避免后完成的变体把主视频洗掉；变体输出保留在各自任务 outputData。
       const input = (job.inputData ?? {}) as Record<string, unknown>;
       if (urls.videoUrl && typeof input.variantGroup !== 'string') {
         patch.videoUrl = urls.videoUrl;
       }
-      // V5 每镜状态机：有产出回写 → ready（变体不改主状态，由采纳时刷新）
-      if (typeof input.variantGroup !== 'string' && Object.keys(patch).length > 1) {
+      // V5 每镜状态机：有画面产出回写 → ready（变体不改主状态，由采纳时刷新）。
+      // 修复：旧逻辑只数 patch 键数，配音任务也会把镜头标 ready；
+      // 现在 ready 仅由图/视频回写触发，纯配音回写不改状态。
+      if (
+        typeof input.variantGroup !== 'string' &&
+        (urls.imageUrl || (urls.videoUrl && typeof input.variantGroup !== 'string'))
+      ) {
         patch.status = 'ready';
       }
-      if (urls.voiceUrl) patch.voiceUrl = urls.voiceUrl;
       if (Object.keys(patch).length <= 1) return;
       const conditions = [eq(shots.id, job.targetId)];
       if (projectGuard) conditions.push(eq(shots.projectId, projectGuard.projectId));

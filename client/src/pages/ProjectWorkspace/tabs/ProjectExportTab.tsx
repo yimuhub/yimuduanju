@@ -12,7 +12,7 @@ import {
   Circle,
   Music,
 } from 'lucide-react';
-import { storyboard, templates as templatesApi } from '@client/src/api';
+import { exportApi, storyboard, templates as templatesApi } from '@client/src/api';
 import type { Shot } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { toast } from 'sonner';
@@ -106,19 +106,15 @@ const ProjectExportTab = () => {
     if (!id || assembling) return;
     setAssembling(true);
     try {
-      const res = await fetch(`/api/projects/${id}/export/assemble`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: '{}',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.message || data?.error || `合成失败（${res.status}）`);
-      }
+      // 断链修复：改走 axios 封装（自动携带 CSRF 头；原裸 fetch 直连后端时会 403）
+      const data = await exportApi.assembleVideo(id);
       toast.success(`成片已合成：${data.clips} 段拼接，已归档到「项目资产」`);
     } catch (e) {
-      toast.error((e as Error).message || '服务端合成失败');
+      const axiosMsg =
+        typeof e === 'object' && e && 'response' in e
+          ? ((e as { response?: { data?: { message?: string } } }).response?.data?.message ?? '')
+          : '';
+      toast.error(axiosMsg || (e as Error).message || '服务端合成失败');
     } finally {
       setAssembling(false);
     }
@@ -286,8 +282,8 @@ const ProjectExportTab = () => {
               <div>
                 <p className="font-medium">导出说明</p>
                 <p className="mt-0.5 opacity-80">
-                  以下文件为真实交付物，点击即下载。MP4
-                  成片合成需要视频合成服务，当前版本暂未接入，请先用分镜 JSON + 素材在剪映中合成。
+                  以下文件为真实交付物，点击即下载。有视频片段时可用下方「成片合成」一键生成
+                  MP4（浏览器端合成或服务端 ffmpeg 合成二选一），也可下载分镜 JSON 在剪映中精修。
                 </p>
               </div>
             </div>

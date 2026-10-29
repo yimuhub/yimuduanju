@@ -323,11 +323,20 @@ export class GenerationService {
     return this.mapJob(claimed[0]);
   }
 
-  async retryJob(id: string): Promise<GenerationJob> {    const job = await this.getJob(id);
+  /**
+   * 手动重试：状态回到 pending 供消费器重新认领。
+   * 修复：旧实现置 'retrying'，但认领路径（claimForQueue/claimNextPendingJob）
+   * 只认领 'pending'，手动重试的任务会永久卡死在 retrying。
+   */
+  async retryJob(id: string): Promise<GenerationJob> {
+    const job = await this.getJob(id);
+    if (job.status === 'succeeded') {
+      throw new BadRequestException('任务已成功，无需重试');
+    }
     const rows = await this.db
       .update(generationJobs)
       .set({
-        status: 'retrying',
+        status: 'pending',
         retryCount: job.retryCount + 1,
         errorMessage: null,
         updatedAt: new Date(),

@@ -45,6 +45,29 @@ const STATUS_STEPS: { key: ProjectStatus; label: string }[] = [
   { key: 'exported', label: '已导出' },
 ];
 
+// 小白可读性：任务类型与状态展示中文，不再露出内部枚举
+const JOB_TYPE_LABELS: Record<string, string> = {
+  text: '文本',
+  image: '首帧图',
+  video: '视频',
+  tts: '配音',
+  parse_script: '剧本解析',
+  script: '剧本生成',
+  boards: '分镜表',
+  qc: '质检',
+  edit: '剪辑合成',
+  storyboard: '故事板',
+};
+const JOB_STATUS_LABELS: Record<string, string> = {
+  pending: '排队中',
+  queued: '已入队',
+  running: '生成中',
+  succeeded: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  retrying: '重试中',
+};
+
 const ProjectOverviewTab = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -298,7 +321,10 @@ const ProjectOverviewTab = () => {
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-foreground">
-                      {job.targetType || job.jobType} · {job.targetId?.slice(0, 8) || job.id.slice(0, 8)}
+                      {JOB_TYPE_LABELS[job.jobType] || job.jobType}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        {job.errorMessage ? job.errorMessage.slice(0, 40) : `任务 ${job.id.slice(0, 8)}`}
+                      </span>
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       {job.modelName || '默认模型'} · 费用 ¥{job.cost?.toFixed(2) || '0.00'}
@@ -315,7 +341,7 @@ const ProjectOverviewTab = () => {
                             : 'bg-gray-100 text-gray-600'
                     }`}
                   >
-                    {job.status}
+                    {JOB_STATUS_LABELS[job.status] || job.status}
                   </span>
                 </div>
               ))}
@@ -349,7 +375,7 @@ const ProjectOverviewTab = () => {
               const max = costByType[0]?.cost || 1;
               return (
                 <div key={item.jobType} className="flex items-center gap-3 text-sm">
-                  <span className="w-20 shrink-0 text-muted-foreground">{item.jobType}</span>
+                  <span className="w-20 shrink-0 text-muted-foreground">{JOB_TYPE_LABELS[item.jobType] || item.jobType}</span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-primary to-[#FF7A3A]"

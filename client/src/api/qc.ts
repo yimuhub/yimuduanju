@@ -7,8 +7,9 @@ export const listReports = (projectId: string) =>
     .then((res) => res.data);
 
 export const getReport = (projectId: string, id: string) =>
+  // 断链修复：服务端路由为 GET /api/projects/:projectId/qc/:id（reports/:id 会 404）
   axiosForBackend
-    .get<QcReport>(`/api/projects/${projectId}/qc/reports/${id}`)
+    .get<QcReport>(`/api/projects/${projectId}/qc/${id}`)
     .then((res) => res.data);
 
 export const createReport = (projectId: string) =>

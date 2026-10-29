@@ -52,7 +52,16 @@ describe('security & architecture upgrades', () => {
   });
 
   test('url-guard 异步版：域名解析到私网时拒绝（DNS rebinding 首跳）', async () => {
-    // localhost 在静态阶段即拒绝；域名解析分支依赖本机 DNS，仅验证公网域名放行
-    await expect(isSafeExternalUrl('https://cdn.example.com/video/clip01.mp4')).resolves.toBe(true);
+    // localhost 在静态阶段即拒绝；域名解析分支依赖本机 DNS。
+    // DNS 不可用的环境（离线 CI/沙箱）验证 fail-closed：解析失败一律拒绝。
+    const dnsOk = await require('dns/promises')
+      .lookup('cdn.example.com')
+      .then(() => true)
+      .catch(() => false);
+    if (dnsOk) {
+      await expect(isSafeExternalUrl('https://cdn.example.com/video/clip01.mp4')).resolves.toBe(true);
+    } else {
+      await expect(isSafeExternalUrl('https://cdn.example.com/video/clip01.mp4')).resolves.toBe(false);
+    }
   });
 });

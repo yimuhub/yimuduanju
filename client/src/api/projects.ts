@@ -31,8 +31,9 @@ export const updateProject = (id: string, data: UpdateProjectRequest) =>
     .then((res) => res.data);
 
 export const deleteProject = (id: string) =>
+  // 类型对齐：服务端返回 { success: true }（projects.controller delete）
   axiosForBackend
-    .delete<{ id: string }>(`/api/projects/${id}`)
+    .delete<{ success: boolean }>(`/api/projects/${id}`)
     .then((res) => res.data);
 
 export const quickCreate = (data: QuickCreateRequest) =>
