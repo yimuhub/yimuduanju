@@ -637,10 +637,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       return process.env.FFMPEG_PATH.trim();
     }
     if (process.platform === 'darwin') {
+      const home = process.env.HOME ?? '';
       const candidates = [
         '/opt/homebrew/bin/ffmpeg',
         '/usr/local/bin/ffmpeg',
-        '/Users/shanziya/.local/bin/ffmpeg',
+        ...(home ? [`${home}/.local/bin/ffmpeg`] : []),
       ];
       for (const c of candidates) {
         if (existsSync(c)) return c;
