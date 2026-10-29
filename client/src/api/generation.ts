@@ -44,3 +44,36 @@ export const workerStats = () =>
       '/api/generation/worker-stats',
     )
     .then((res) => res.data);
+
+/** SSE 任务流快照（GET /api/generation/jobs/stream，2s 全量推送） */
+export interface JobStreamSnapshot {
+  jobs: GenerationJob[];
+  terminal: boolean;
+  total?: number;
+}
+
+/**
+ * 订阅任务流（EventSource）。同源携带 cookie；onerror 时回调 onError，
+ * 调用方可在此时降级为轮询。返回 cleanup（关闭连接）。
+ */
+export const openJobStream = (
+  projectId: string | undefined,
+  onData: (snap: JobStreamSnapshot) => void,
+  onError?: () => void,
+): (() => void) => {
+  if (typeof EventSource === 'undefined') {
+    onError?.();
+    return () => {};
+  }
+  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+  const es = new EventSource(`/api/generation/jobs/stream${qs}`);
+  es.onmessage = (ev) => {
+    try {
+      onData(JSON.parse(ev.data) as JobStreamSnapshot);
+    } catch {
+      /* 忽略坏帧 */
+    }
+  };
+  es.onerror = () => onError?.();
+  return () => es.close();
+};

@@ -9,6 +9,7 @@ import type { Project, ProjectStatus } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 
 const tabs = [
+  { to: 'flow', label: '流程总控', group: '概览', hint: '九段流水线总控：当前段高亮、确认门一键通过、开拍后在这里等成片' },
   { to: '', label: '概览', end: true, group: '概览', hint: '项目整体进度、成本与快捷入口' },
   { to: 'script', label: '剧本', group: '剧本圣经', hint: '查看与编辑全剧分场剧本' },
   { to: 'bible', label: '圣经', group: '剧本圣经', hint: '世界观设定与视觉风格圣经' },
@@ -118,11 +119,11 @@ const ProjectWorkspacePage = () => {
             导出成片
           </button>
           <button
-            onClick={() => navigate(`/project/${id}/tasks`)}
+            onClick={() => navigate(`/project/${id}/flow`)}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
           >
             <Play className="h-4 w-4" />
-            继续生成
+            流程总控
           </button>
         </div>
       </div>

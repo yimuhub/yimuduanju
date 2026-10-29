@@ -217,3 +217,9 @@ export class ProjectListQueryDto extends PageQueryDto {
   @MaxLength(100)
   keyword?: string;
 }
+
+/** 阶段确认门（POST /api/projects/:id/approve） */
+export class ApproveProjectDto {
+  @IsIn(['script', 'storyboard', 'final'])
+  stage!: 'script' | 'storyboard' | 'final';
+}

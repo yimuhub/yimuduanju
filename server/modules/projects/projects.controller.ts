@@ -15,6 +15,7 @@ import type { Request } from 'express';
 import { ProjectsService } from './projects.service';
 import { AssetsService } from '../assets/assets.service';
 import {
+  ApproveProjectDto,
   CreateProjectDto,
   ProjectListQueryDto,
   QuickCreateDto,
@@ -84,6 +85,21 @@ export class ProjectsController {
       { ...dto, mode: dto.mode ?? 'quick' },
       userId,
     );
+  }
+
+  /**
+   * 阶段确认门（三道门）：script=确认剧本后物化分镜；storyboard=确认分镜后
+   * 批量首帧并进入全自动段（图→视频→配音→剪辑→质检）；final=质检确认成片。
+   * 必须注册在 `:id` 通配语义之外：方法级路由（POST）与 GET :id 不冲突。
+   */
+  @Post(':id/approve')
+  async approve(
+    @Req() req: Request,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ApproveProjectDto,
+  ): Promise<Project> {
+    const { userId } = req.userContext;
+    return this.projectsService.approve(id, dto.stage, userId);
   }
 
   @Patch(':id')

@@ -69,6 +69,19 @@ export interface ProjectMetadata {
   totalCharacters: number;
   estimatedCost: number;
   estimatedTime: number;
+  /**
+   * 流水线阶段确认门（docs/流程重构方案-v2.md 三道门）：
+   * script=剧本确认（过门后物化分镜）、storyboard=分镜确认（过门后批量首帧并
+   * 自动连跑 图→视频→配音→剪辑→质检）、final=质检确认（过门后 qc→ready 成片）。
+   * 值为通过时间 ISO 字符串；存 metadata 免迁移。
+   */
+  pipeline?: {
+    approvals?: {
+      script?: string;
+      storyboard?: string;
+      final?: string;
+    };
+  };
 }
 
 /**
@@ -884,6 +897,10 @@ export interface ProjectProgressResponse {
   overallProgress: number;
   steps: GenerationProgress[];
   currentStep?: string;
+  /** 三道阶段确认门的通过状态（true=已通过） */
+  gates?: { script: boolean; storyboard: boolean; final: boolean };
+  /** 当前等待用户确认的门（null=无门可过，流水线自动段进行中） */
+  nextGate?: 'script' | 'storyboard' | 'final' | null;
 }
 
 export interface GenerateImageRequest {

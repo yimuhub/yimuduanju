@@ -60,6 +60,42 @@ const ProjectStoryboardTab = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [batching, setBatching] = useState(false);
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
+  // P2 修复（方案断点7）：提示词编辑搬进行卡片展开区——改 prompt 与重跑单镜同处完成
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const [savingPromptIds, setSavingPromptIds] = useState<Set<string>>(new Set());
+
+  const handleSavePrompt = async (shot: Shot, rerun?: 'image') => {
+    if (!id) return;
+    const draft = promptDrafts[shot.id];
+    if (draft === undefined) return;
+    setSavingPromptIds((prev) => new Set(prev).add(shot.id));
+    try {
+      await storyboard.updateShot(id, shot.id, { visualPrompt: draft });
+      setShots((prev) =>
+        prev.map((s) => (s.id === shot.id ? { ...s, visualPrompt: draft } : s)),
+      );
+      setPromptDrafts((prev) => {
+        const next = { ...prev };
+        delete next[shot.id];
+        return next;
+      });
+      if (rerun === 'image') {
+        await storyboard.rerunShot(id, shot.id, { type: 'image' });
+        toast.success('提示词已保存，已重跑该镜首帧');
+      } else {
+        toast.success('提示词已保存');
+      }
+    } catch (err) {
+      logger.error('Save prompt failed:', String(err));
+      toast.error('提示词保存失败');
+    } finally {
+      setSavingPromptIds((prev) => {
+        const next = new Set(prev);
+        next.delete(shot.id);
+        return next;
+      });
+    }
+  };
 
   // P1 配音闭环：试听 + 不满意重配（之前配音只有 URL 存着，无处可听）
   const handleVoice = async (shot: Shot) => {
@@ -387,6 +423,40 @@ const ProjectStoryboardTab = () => {
                 {isExpanded && (
                   <div className="border-t border-border bg-muted/20 p-3">
                     <div className="space-y-1.5 text-xs">
+                      {/* P2 行内提示词编辑：改完可就地重跑单镜，不再跳导演台 */}
+                      <div>
+                        <span className="font-medium text-foreground">画面提示词：</span>
+                        <textarea
+                          value={promptDrafts[shot.id] ?? shot.visualPrompt ?? ''}
+                          onChange={(e) =>
+                            setPromptDrafts((prev) => ({ ...prev, [shot.id]: e.target.value }))
+                          }
+                          rows={3}
+                          placeholder="描述这一镜的画面（将用于生成首帧图与视频）"
+                          className="mt-1 w-full resize-y rounded-md border border-input bg-white p-2 text-xs outline-none focus:border-primary"
+                        />
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleSavePrompt(shot)}
+                            disabled={
+                              savingPromptIds.has(shot.id) ||
+                              (promptDrafts[shot.id] ?? shot.visualPrompt ?? '') === (shot.visualPrompt ?? '')
+                            }
+                            className="rounded-md border border-input bg-white px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-40"
+                          >
+                            {savingPromptIds.has(shot.id) ? '保存中…' : '保存'}
+                          </button>
+                          <button
+                            onClick={() => handleSavePrompt(shot, 'image')}
+                            disabled={savingPromptIds.has(shot.id) || !promptDrafts[shot.id]}
+                            title="保存提示词并重跑该镜首帧"
+                            className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/5 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 disabled:opacity-40"
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                            保存并重跑首帧
+                          </button>
+                        </div>
+                      </div>
                       {shot.dialogue && (
                         <div>
                           <span className="font-medium text-foreground">台词：</span>

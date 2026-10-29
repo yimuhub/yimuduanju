@@ -15,6 +15,7 @@ import StylesPage from './pages/Styles/StylesPage';
 import AccountPage from './pages/Account/AccountPage';
 import SettingsPage from './pages/Settings/SettingsPage';
 import ProjectWorkspacePage from './pages/ProjectWorkspace/ProjectWorkspacePage';
+import ProjectFlowTab from './pages/ProjectWorkspace/tabs/ProjectFlowTab';
 import ProjectOverviewTab from './pages/ProjectWorkspace/tabs/ProjectOverviewTab';
 import ProjectScriptTab from './pages/ProjectWorkspace/tabs/ProjectScriptTab';
 import ProjectBibleTab from './pages/ProjectWorkspace/tabs/ProjectBibleTab';
@@ -86,6 +87,7 @@ const RoutesComponent = () => {
         <Route path="account" element={<AccountPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="project/:id" element={<ProjectWorkspacePage />}>
+          <Route path="flow" element={<ProjectFlowTab />} />
           <Route index element={<ProjectOverviewTab />} />
           <Route path="script" element={<ProjectScriptTab />} />
           <Route path="bible" element={<ProjectBibleTab />} />

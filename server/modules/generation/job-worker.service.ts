@@ -16,7 +16,7 @@ import {
   scenes,
   shots,
 } from '@server/database/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { mkdir, stat, writeFile } from 'fs/promises';
@@ -29,6 +29,9 @@ import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
 import { RoutingService } from './routing.service';
 import { StorySkillsService } from '../story-skills/story-skills.service';
+import { StoryboardService } from '../storyboard/storyboard.service';
+import { ExportService } from '../export/export.service';
+import { QcService } from '../qc/qc.service';
 import { uploadDir } from '../assets/uploads.controller';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
@@ -86,6 +89,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly routing: RoutingService,
     private readonly storySkills: StorySkillsService,
     private readonly stageBindings: StageBindingsService,
+    private readonly storyboardService: StoryboardService,
+    private readonly exportService: ExportService,
+    private readonly qcService: QcService,
   ) {}
 
   /** B1 环节覆盖：分环节绑定的供应商/模型优先于任务自带与路由决策 */
@@ -211,6 +217,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       await this.driveInflightVideoJobs();
+      // 流水线自动链驱动（P0 断链修复）：图→视频→配音→剪辑→质检 段内自动连跑
+      await this.drivePipeline().catch((e: Error) =>
+        this.logger.warn(`流水线自动链驱动失败: ${e.message}`),
+      );
       if (this.queue && !this.inlineMode) {
         // 上游限流冷却：期间不认领新任务（在途轮询继续）
         if (this.holdUntil && Date.now() < this.holdUntil) return;
@@ -375,8 +385,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         case 'tts':
           await this.processTts(job, providerName);
           break;
+        case 'edit':
+          await this.processEdit(job);
+          break;
+        case 'qc':
+          await this.processQc(job);
+          break;
         default:
-          // storyboard/qc/edit 等类型当前无生产方创建，保留 pending 并提示，避免误判失败
+          // storyboard 等类型当前无生产方创建，保留 pending 并提示，避免误判失败
           this.logger.warn(`暂不支持的任务类型 ${job.jobType}（${job.id}），跳过执行`);
           await this.releaseToPending(job.id);
           break;
@@ -644,6 +660,261 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // ========== 流水线确认门（docs/流程重构方案-v2.md 三道门） ==========
+
+  /** 读项目 metadata.pipeline.approvals（三道门通过时间；无记录 = 未过门） */
+  private async pipelineApprovals(projectId: string): Promise<{
+    script?: string;
+    storyboard?: string;
+    final?: string;
+  }> {
+    const rows = await this.db
+      .select({ metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const meta = (rows[0]?.metadata ?? {}) as {
+      pipeline?: { approvals?: { script?: string; storyboard?: string; final?: string } };
+    };
+    return meta.pipeline?.approvals ?? {};
+  }
+
+  // ========== P0 断链修复：段内自动连跑驱动器 ==========
+
+  /**
+   * 每轮 tick 调用，把过门项目的流水线推进到下一段（幂等，全链去重守卫）：
+   * 1. 补写回：前端 poll 提前结算的视频任务不再丢产物（videoUrl 补写 + 资产归档）
+   * 2. 图全完成 → 自动建 video 任务（有首帧、无成片、无在途也无成功记录的镜头）
+   * 3. 视频全完成 → 自动建 tts 任务（有对白且无配音的镜头）
+   * 4. 配音全完成 → 状态推进 editing，自动建 edit 任务（服务端 ffmpeg 合成）
+   * 5. edit 成功（processEdit）→ 状态推进 qc，建 qc 任务；qc 完成后停在 qc 等门3
+   * 生效条件：已过分镜确认门；或项目已存在 video 任务（旧数据兼容）。
+   */
+  private async drivePipeline(): Promise<void> {
+    const projRows = await this.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(
+        inArray(projects.status, [
+          'assets_generating',
+          'video_generating',
+          'audio_generating',
+        ]),
+      );
+    for (const proj of projRows) {
+      // eslint-disable-next-line no-await-in-loop
+      await this.driveProjectPipeline(proj.id).catch((e: Error) =>
+        this.logger.warn(`项目 ${proj.id} 自动链推进失败: ${e.message}`),
+      );
+    }
+  }
+
+  private async driveProjectPipeline(projectId: string): Promise<void> {
+    const approvals = await this.pipelineApprovals(projectId);
+    const [shotRows, jobRows] = await Promise.all([
+      this.db.select().from(shots).where(eq(shots.projectId, projectId)),
+      this.db
+        .select({
+          id: generationJobs.id,
+          jobType: generationJobs.jobType,
+          status: generationJobs.status,
+          targetId: generationJobs.targetId,
+          targetType: generationJobs.targetType,
+          projectId: generationJobs.projectId,
+          inputData: generationJobs.inputData,
+          outputData: generationJobs.outputData,
+        })
+        .from(generationJobs)
+        .where(eq(generationJobs.projectId, projectId)),
+    ]);
+    const isActive = (s: string) =>
+      ['pending', 'queued', 'running', 'retrying'].includes(s);
+    const isVariant = (input: unknown) =>
+      typeof (input as Record<string, unknown> | null)?.variantGroup === 'string';
+
+    // 旧数据兼容：未过门但已发起过视频生产的项目继续自动链；已过门的一律链
+    const hasVideoJobs = jobRows.some((j) => j.jobType === 'video');
+    if (!approvals.storyboard && !hasVideoJobs) return;
+
+    // 0) 补写回：succeeded 的非变体 video 任务，镜头还没拿到成片 → 补 writeback
+    //    （修复：前端 /poll 抢先结算成功后，writeback 永远不发生的丢产物问题）
+    for (const j of jobRows) {
+      if (j.jobType !== 'video' || j.status !== 'succeeded' || !j.targetId) continue;
+      if (isVariant(j.inputData)) continue;
+      const shot = shotRows.find((s) => s.id === j.targetId);
+      if (!shot) continue;
+      const out = (j.outputData ?? {}) as Record<string, unknown>;
+      const url = typeof out.url === 'string' && out.url ? out.url : undefined;
+      if (url && shot.videoUrl !== url) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.writebackToTarget(j as unknown as GenerationJob, { videoUrl: url }).catch(
+          (e: Error) => this.logger.warn(`补写回视频失败 ${j.id}: ${e.message}`),
+        );
+        shot.videoUrl = url;
+      }
+    }
+
+    const activeJobsOf = (t: string) =>
+      jobRows.filter((j) => j.jobType === t && isActive(j.status) && !isVariant(j.inputData));
+
+    // 1) 图未跑完不推进
+    if (activeJobsOf('image').length > 0) return;
+
+    const activeVideoTargets = new Set(
+      activeJobsOf('video').map((j) => j.targetId as string),
+    );
+    const doneVideoTargets = new Set(
+      jobRows
+        .filter(
+          (j) =>
+            j.jobType === 'video' &&
+            j.status === 'succeeded' &&
+            j.targetId &&
+            !isVariant(j.inputData),
+        )
+        .map((j) => j.targetId as string),
+    );
+
+    // 2) 自动建 video：有首帧、无成片、无在途也无成功记录的镜头（失败镜不自动重投）
+    const needVideo = shotRows.filter(
+      (s) =>
+        s.startFrameUrl &&
+        !s.videoUrl &&
+        !doneVideoTargets.has(s.id) &&
+        !activeVideoTargets.has(s.id) &&
+        s.status !== 'failed',
+    );
+    if (needVideo.length > 0) {
+      for (const s of needVideo) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.storyboardService
+          .generateShotVideo(projectId, s.id)
+          .catch((e: Error) =>
+            this.logger.warn(`自动建视频任务失败（镜 ${s.shotNumber}）: ${e.message}`),
+          );
+      }
+      this.logger.log(`自动链：项目 ${projectId} 新建 ${needVideo.length} 个视频任务`);
+      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
+      return; // 本轮到此为止，视频跑完再进配音
+    }
+
+    // 3) 视频未跑完不推进
+    if (activeJobsOf('video').length > 0) {
+      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
+      return;
+    }
+
+    // 4) 自动建 tts：有对白、无配音、无在途 tts 的镜头
+    const activeTtsTargets = new Set(activeJobsOf('tts').map((j) => j.targetId as string));
+    const doneTtsTargets = new Set(
+      jobRows
+        .filter((j) => j.jobType === 'tts' && j.status === 'succeeded' && j.targetId)
+        .map((j) => j.targetId as string),
+    );
+    const needTts = shotRows.filter(
+      (s) =>
+        (s.dialogue ?? '').trim().length > 0 &&
+        !s.voiceUrl &&
+        !doneTtsTargets.has(s.id) &&
+        !activeTtsTargets.has(s.id) &&
+        s.status !== 'failed',
+    );
+    if (needTts.length > 0) {
+      await this.db.insert(generationJobs).values(
+        needTts.map((s) => ({
+          projectId,
+          jobType: 'tts' as const,
+          targetType: 'shot' as const,
+          targetId: s.id,
+          status: 'pending' as const,
+          priority: 45,
+          inputData: { prompt: s.dialogue ?? '' },
+        })),
+      );
+      this.logger.log(`自动链：项目 ${projectId} 新建 ${needTts.length} 个配音任务`);
+      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
+      await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
+      return;
+    }
+
+    // 5) 配音未跑完不推进
+    if (activeJobsOf('tts').length > 0) {
+      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
+      await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
+      return;
+    }
+
+    // 6) 全段完成 → editing + 建 edit 任务（服务端合成，幂等去重）
+    const activeEdit = jobRows.some((j) => j.jobType === 'edit' && isActive(j.status));
+    const doneEdit = jobRows.some((j) => j.jobType === 'edit' && j.status === 'succeeded');
+    if (!doneEdit && !activeEdit) {
+      await this.db.insert(generationJobs).values({
+        projectId,
+        jobType: 'edit',
+        targetType: 'project',
+        targetId: projectId,
+        status: 'pending',
+        priority: 40,
+        inputData: { prompt: 'pipeline-assemble' },
+      });
+      this.logger.log(`自动链：项目 ${projectId} 全部镜头就绪，已创建剪辑合成任务`);
+    }
+    await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
+    await this.advanceProjectStatus(projectId, 'audio_generating', 'editing');
+  }
+
+  // ========== edit 服务端合成 / qc 质检任务（激活状态机 editing/qc 死区） ==========
+
+  /** edit 任务：复用 export/assemble 的 ffmpeg 合成 → editing → qc，自动建质检任务 */
+  private async processEdit(job: GenerationJob): Promise<void> {
+    if (!job.projectId) {
+      await this.generationService.settleJobFailure(job.id, '剪辑任务缺少项目归属');
+      return;
+    }
+    try {
+      const result = await this.exportService.assembleFinalVideo(job.projectId);
+      await this.generationService.settleJobSuccess(job.id, {
+        assetId: result.asset.id,
+        clips: result.clips,
+        durationSeconds: result.durationSeconds,
+      });
+      await this.advanceProjectStatus(job.projectId, 'editing', 'qc');
+      await this.db.insert(generationJobs).values({
+        projectId: job.projectId,
+        jobType: 'qc',
+        targetType: 'project',
+        targetId: job.projectId,
+        status: 'pending',
+        priority: 40,
+        inputData: { prompt: 'pipeline-qc' },
+      });
+      this.logger.log(`成片合成完成 ${job.id}：${result.clips} 段，已创建质检任务`);
+    } catch (e) {
+      // 可预见的业务性失败（如无成片可拼）直接终结，不烧 3 次重试
+      if ((e as Error).message.includes('暂无镜头成片')) {
+        await this.generationService.settleJobFailure(job.id, (e as Error).message);
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /** qc 任务：确定性规则质检（复用 QcService.triggerQc）→ 停在 qc 等门3 成片确认 */
+  private async processQc(job: GenerationJob): Promise<void> {
+    if (!job.projectId) {
+      await this.generationService.settleJobFailure(job.id, '质检任务缺少项目归属');
+      return;
+    }
+    const report = await this.qcService.triggerQc(job.projectId, {});
+    await this.generationService.settleJobSuccess(job.id, {
+      reportId: report.id,
+      overallScore: report.overallScore,
+      pass: report.pass,
+      issueCount: report.issues.length,
+    });
+    this.logger.log(`质检完成 ${job.id}：得分 ${report.overallScore}，等待成片确认门`);
+  }
+
   // ========== script 剧本技能任务 ==========
   /**
    * 剧本技能任务：LLM 生成/改写剧本 → 存回项目 → 自动链式创建 parse_script 物化。
@@ -694,6 +965,19 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .update(projects)
       .set({ scriptText: result.scriptText, updatedAt: new Date() })
       .where(eq(projects.id, job.projectId));
+    // 门1 剧本确认：未过门则停在「剧本已产出」，等 POST /approve(stage=script) 后再物化分镜
+    const approvals = await this.pipelineApprovals(job.projectId);
+    if (!approvals.script) {
+      await this.generationService.settleJobSuccess(job.id, {
+        skillId: result.skillId,
+        title: result.title,
+        scenesCount: result.scenesCount,
+        dialoguesCount: result.dialoguesCount,
+        awaitingApproval: 'script',
+      });
+      this.logger.log(`剧本技能完成，等待剧本确认门（项目 ${job.projectId}）`);
+      return;
+    }
     await this.generationService.settleJobSuccess(job.id, {
       skillId: result.skillId,
       title: result.title,
@@ -945,9 +1229,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // 物化完成即建首帧任务：极速模式此前停在 storyboard_ready、
-    // 无人建图 → 进度永远卡在「分镜故事板」5%
-    if (job.projectId && imageTargets.length > 0) {
+    // 门2 分镜确认：未过门不自动建首帧任务（分镜保持 draft，等 POST /approve(stage=storyboard)）；
+    // 已过门（或任务显式带 autoSubmit，兼容既有调用方）则照旧批量建图
+    const approvals = await this.pipelineApprovals(job.projectId);
+    const autoSubmit =
+      Boolean(approvals.storyboard) ||
+      ((job.inputData ?? {}) as Record<string, unknown>).autoSubmit === true;
+    if (job.projectId && imageTargets.length > 0 && autoSubmit) {
       await this.db.insert(generationJobs).values(
         imageTargets.map((t, i) => ({
           projectId: job.projectId as string,
@@ -960,13 +1248,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         })),
       );
       this.logger.log(`物化后已创建 ${imageTargets.length} 个首帧任务`);
+    } else if (imageTargets.length > 0) {
+      this.logger.log(`分镜已物化，等待分镜确认门（项目 ${job.projectId}）：确认后自动批量生成`);
     }
 
-    // 快速通道推进：parsing → planning → storyboard_ready → assets_generating
+    // 快速通道推进：parsing → planning → storyboard_ready（→ assets_generating，仅在已建图时）
     // （跳过 bible_ready；状态机 PATCH 白名单仅约束外部写入，此处为系统推进）
     await this.advanceProjectStatus(job.projectId, 'parsing', 'planning');
     await this.advanceProjectStatus(job.projectId, 'planning', 'storyboard_ready');
-    if (imageTargets.length > 0) {
+    if (autoSubmit && imageTargets.length > 0) {
       await this.advanceProjectStatus(job.projectId, 'storyboard_ready', 'assets_generating');
     }
 

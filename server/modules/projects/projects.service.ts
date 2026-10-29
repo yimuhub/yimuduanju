@@ -1,10 +1,11 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { eq, and, ilike, count, desc, sql } from 'drizzle-orm';
+import { eq, and, ilike, count, desc, sql, inArray } from 'drizzle-orm';
 
-import { projects, generationJobs } from '@server/database/schema';
+import { projects, generationJobs, shots } from '@server/database/schema';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { MemoryService } from '../memory/memory.service';
+import { StoryboardService } from '../storyboard/storyboard.service';
 import type {
   Project,
   ProjectListItem,
@@ -160,6 +161,7 @@ export class ProjectsService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly budgetCap: BudgetCapService,
     private readonly memory: MemoryService,
+    private readonly storyboardService: StoryboardService,
   ) {}
 
   async list(params: ProjectListParams): Promise<ProjectListResponse> {
@@ -425,10 +427,106 @@ export class ProjectsService {
     };
   }
 
+  /**
+   * 阶段确认门（docs/流程重构方案-v2.md 三道门）：
+   * - script：确认剧本 → 物化分镜（链上 parse_script 任务）
+   * - storyboard：确认分镜 → 批量首帧 + 状态推进 assets_generating，此后
+   *   图→视频→配音→剪辑→质检由 job-worker 自动连跑
+   * - final：质检确认 → qc → ready 成片
+   * 通过时间记入 metadata.pipeline.approvals（免迁移），job-worker 据此放行自动段。
+   */
+  async approve(
+    id: string,
+    stage: 'script' | 'storyboard' | 'final',
+    userId: string,
+  ): Promise<Project> {
+    const current = await this.findById(id);
+    if (current.status === 'failed') {
+      throw new BadRequestException('项目处于失败状态，请先修复失败任务再确认');
+    }
+    const meta = {
+      ...((current.metadata ?? {}) as Record<string, unknown>),
+    };
+    const pipeline = {
+      ...((meta.pipeline as Record<string, unknown> | undefined) ?? {}),
+    };
+    const approvals = {
+      ...((pipeline.approvals as Record<string, string> | undefined) ?? {}),
+    };
+    approvals[stage] = new Date().toISOString();
+    pipeline.approvals = approvals;
+    meta.pipeline = pipeline;
+
+    // 落门记录
+    await this.update(
+      id,
+      { metadata: meta as unknown as UpdateProjectRequest['metadata'] },
+      userId,
+    );
+
+    if (stage === 'script') {
+      // 剧本确认 → 物化分镜：仅当尚未物化（无镜头）且没有在途物化任务时补链
+      const [shotCountRows, parseJobs] = await Promise.all([
+        this.db.select({ c: count() }).from(shots).where(eq(shots.projectId, id)),
+        this.db
+          .select({ id: generationJobs.id })
+          .from(generationJobs)
+          .where(
+            and(
+              eq(generationJobs.projectId, id),
+              inArray(generationJobs.jobType, ['parse_script', 'boards']),
+              inArray(generationJobs.status, ['pending', 'queued', 'running', 'retrying', 'succeeded']),
+            ),
+          )
+          .limit(1),
+      ]);
+      if (Number(shotCountRows[0]?.c ?? 0) === 0 && parseJobs.length === 0) {
+        if (!current.scriptText?.trim()) {
+          throw new BadRequestException('项目还没有剧本内容，无法物化分镜');
+        }
+        await this.db.insert(generationJobs).values({
+          projectId: id,
+          jobType: 'parse_script',
+          targetType: 'project',
+          targetId: id,
+          status: 'pending',
+          priority: 80,
+          inputData: { prompt: current.scriptText },
+        });
+        this.logger.log(`剧本确认门通过 ${id}：已创建物化任务`);
+      }
+    }
+
+    if (stage === 'storyboard') {
+      // 分镜确认 → 批量首帧（batchGenerate 自带幂等去重）+ 状态推进
+      const shotRows = await this.db
+        .select({ id: shots.id })
+        .from(shots)
+        .where(eq(shots.projectId, id))
+        .limit(1);
+      if (shotRows.length > 0) {
+        await this.storyboardService.batchGenerate(id, { type: 'image' });
+        this.logger.log(`分镜确认门通过 ${id}：已批量创建首帧任务`);
+      }
+      if (current.status === 'storyboard_ready') {
+        await this.update(id, { status: 'assets_generating' }, userId);
+      }
+    }
+
+    if (stage === 'final') {
+      // 成片确认 → qc → ready
+      if (current.status === 'qc') {
+        await this.update(id, { status: 'ready' }, userId);
+      }
+    }
+
+    return this.findById(id);
+  }
+
   async getProgress(id: string): Promise<ProjectProgressResponse> {
     // 确认项目存在
     const projectRows = await this.db
-      .select({ id: projects.id, status: projects.status })
+      .select({ id: projects.id, status: projects.status, metadata: projects.metadata })
       .from(projects)
       .where(eq(projects.id, id))
       .limit(1);
@@ -438,6 +536,24 @@ export class ProjectsService {
     }
 
     const projectStatus = projectRows[0].status as ProjectStatus;
+    const approvals = (
+      (projectRows[0].metadata ?? {}) as {
+        pipeline?: { approvals?: { script?: string; storyboard?: string; final?: string } };
+      }
+    ).pipeline?.approvals ?? {};
+    const gates = {
+      script: Boolean(approvals.script),
+      storyboard: Boolean(approvals.storyboard),
+      final: Boolean(approvals.final),
+    };
+    const nextGate: ProjectProgressResponse['nextGate'] =
+      ['parsing', 'planning'].includes(projectStatus) && !gates.script
+        ? 'script'
+        : projectStatus === 'storyboard_ready' && !gates.storyboard
+          ? 'storyboard'
+          : projectStatus === 'qc' && !gates.final
+            ? 'final'
+            : null;
 
     // 统计各阶段任务进度
     const jobRows = await this.db
@@ -525,6 +641,8 @@ export class ProjectsService {
       overallProgress,
       steps,
       currentStep,
+      gates,
+      nextGate,
     };
   }
 }

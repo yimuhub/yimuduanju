@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   RefreshCw,
@@ -7,8 +7,11 @@ import {
   Filter,
   ChevronDown,
   Layers,
+  RotateCcw,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { generation } from '@client/src/api';
+import { openJobStream } from '@client/src/api/generation';
 import type { GenerationJob, JobStatus, JobType } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
@@ -59,15 +62,18 @@ const typeLabelMap: Record<JobType, string> = {
 
 const ProjectTasksTab = () => {
   const { id } = useParams<{ id: string }>();
-  const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  // 全量任务（SSE 快照或兜底轮询写入），展示时在前端做状态/类型过滤
+  const [allJobs, setAllJobs] = useState<GenerationJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<JobType | 'all'>('all');
-  const [total, setTotal] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pollingIds, setPollingIds] = useState<Set<string>>(new Set());
   const [workerInfo, setWorkerInfo] = useState<{ mode: string; concurrency: number; waiting: number; active: number } | null>(null);
+  // SSE 断线标记：降级回 5s 轮询（DramaClaw stream-client 模式）
+  const [sseDown, setSseDown] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
   useEffect(() => {
     generation.workerStats().then(setWorkerInfo).catch(() => {});
   }, []);
@@ -89,54 +95,73 @@ const ProjectTasksTab = () => {
     }
   }, []);
 
+  const applyJobs = useCallback((items: GenerationJob[]) => {
+    const prevActive = prevActiveRef.current;
+    const nowActive = new Set<string>();
+    for (const job of items) {
+      if (['pending', 'queued', 'running', 'retrying'].includes(job.status)) {
+        nowActive.add(job.id);
+      } else if (job.status === 'succeeded' && prevActive.has(job.id)) {
+        notifyCompleted(job);
+      }
+    }
+    prevActiveRef.current = nowActive;
+    if (nowActive.size > 0 && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      void Notification.requestPermission();
+    }
+    setAllJobs(items);
+    setError(null);
+  }, [notifyCompleted]);
+
   const fetchJobs = useCallback(() => {
     if (!id) return;
-    const params: { projectId: string; pageSize: number; page: number; status?: JobStatus; jobType?: JobType } = {
-      projectId: id,
-      pageSize: 50,
-      page: 1,
-    };
-    if (statusFilter !== 'all') params.status = statusFilter;
-    if (typeFilter !== 'all') params.jobType = typeFilter;
-
-    generation.listJobs(params)
+    generation.listJobs({ projectId: id, pageSize: 100, page: 1 })
       .then((data) => {
-        // P1 体验：检测本轮新完成的任务并通知（之前跑完只能靠人盯）
-        const prevActive = prevActiveRef.current;
-        const nowActive = new Set<string>();
-        for (const job of data.items) {
-          if (['pending', 'queued', 'running', 'retrying'].includes(job.status)) {
-            nowActive.add(job.id);
-          } else if (job.status === 'succeeded' && prevActive.has(job.id)) {
-            notifyCompleted(job);
-          }
-        }
-        prevActiveRef.current = nowActive;
-        if (nowActive.size > 0 && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-          void Notification.requestPermission();
-        }
-        setJobs(data.items);
-        setTotal(data.total);
-        setError(null);
+        applyJobs(data.items);
       })
       .catch((err) => {
         logger.error('Failed to load jobs:', String(err));
         setError('加载任务列表失败');
       })
       .finally(() => setLoading(false));
-  }, [id, statusFilter, typeFilter, notifyCompleted]);
+  }, [id, applyJobs]);
 
   useEffect(() => {
     setLoading(true);
     fetchJobs();
   }, [fetchJobs]);
 
+  // SSE 实时任务流（2s 快照，含状态/进度/失败原因）；断线降级回轮询
+  useEffect(() => {
+    if (!id || sseDown) return;
+    const close = openJobStream(
+      id,
+      (snap) => {
+        applyJobs(snap.jobs ?? []);
+        setLoading(false);
+      },
+      () => setSseDown(true),
+    );
+    return close;
+  }, [id, sseDown, applyJobs]);
+
+  // 前端过滤（状态/类型），SSE 全量快照本地筛选
+  const jobs = useMemo(
+    () =>
+      allJobs.filter(
+        (j) =>
+          (statusFilter === 'all' || j.status === statusFilter) &&
+          (typeFilter === 'all' || j.jobType === typeFilter),
+      ),
+    [allJobs, statusFilter, typeFilter],
+  );
+
   // P1 修复：仅当存在未完成任务时轮询，且页面不可见时跳过；之前无条件 5s 请求
-  const hasActiveJobs = jobs.some((j) =>
+  const hasActiveJobs = allJobs.some((j) =>
     ['pending', 'queued', 'running', 'retrying'].includes(j.status),
   );
   useEffect(() => {
-    if (!hasActiveJobs) return;
+    if (!sseDown || !hasActiveJobs) return;
     const timer = setInterval(() => {
       if (!document.hidden) fetchJobs();
     }, 5000);
@@ -148,7 +173,34 @@ const ProjectTasksTab = () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [fetchJobs, hasActiveJobs]);
+  }, [fetchJobs, hasActiveJobs, sseDown]);
+
+  const failedJobs = useMemo(
+    () => allJobs.filter((j) => j.status === 'failed'),
+    [allJobs],
+  );
+
+  // P2 断点9：失败任务聚合重试入口（之前只有逐任务重试）
+  const handleRetryAllFailed = async () => {
+    if (failedJobs.length === 0 || retryingAll) return;
+    if (!await showConfirm(`将重试全部 ${failedJobs.length} 个失败任务，继续吗？`)) return;
+    setRetryingAll(true);
+    let ok = 0;
+    let fail = 0;
+    for (const j of failedJobs) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await generation.retryJob(j.id);
+        ok += 1;
+      } catch {
+        fail += 1;
+      }
+    }
+    if (ok > 0) toast.success(`已重新投递 ${ok} 个失败任务${fail > 0 ? `，${fail} 个失败` : ''}`);
+    else toast.error('重试失败，请稍后再试');
+    setRetryingAll(false);
+    if (sseDown) fetchJobs();
+  };
 
   const handleRetry = async (jobId: string) => {
     try {
@@ -177,7 +229,7 @@ const ProjectTasksTab = () => {
     setPollingIds((prev) => new Set(prev).add(jobId));
     try {
       const updated = await generation.pollJob(jobId);
-      setJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
+      setAllJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
     } catch (err) {
       logger.error('Poll failed:', String(err));
     } finally {
@@ -231,12 +283,27 @@ const ProjectTasksTab = () => {
         <div>
           <h2 className="text-lg font-semibold text-foreground">任务队列</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            共 {total} 个任务
-            {hasActiveJobs ? ' · 有进行中任务时每 5 秒自动刷新' : ' · 无进行中任务，已暂停自动刷新'}
+            共 {allJobs.length} 个任务
+            {sseDown
+              ? hasActiveJobs
+                ? ' · SSE 不可用，已降级轮询（有进行中任务时每 5 秒刷新）'
+                : ' · SSE 不可用，已降级轮询（无进行中任务，已暂停刷新）'
+              : ' · SSE 实时推送中'}
             {workerInfo && ` · 消费器${workerInfo.mode === 'queue' ? `并发${workerInfo.concurrency}（排队${workerInfo.waiting}，执行${workerInfo.active}）` : workerInfo.mode === 'inline' ? '单机串行降级' : '未启动'}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {failedJobs.length > 0 && (
+            <button
+              onClick={handleRetryAllFailed}
+              disabled={retryingAll}
+              title="一键重试全部失败任务"
+              className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+            >
+              <RotateCcw className={`h-4 w-4 ${retryingAll ? 'animate-spin' : ''}`} />
+              {retryingAll ? '重试中…' : `重试全部失败（${failedJobs.length}）`}
+            </button>
+          )}
           <button
             onClick={fetchJobs}
             className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"

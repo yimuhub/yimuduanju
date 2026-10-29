@@ -16,9 +16,10 @@ import {
   ExternalLink,
   X,
 } from 'lucide-react';
-import { assets as assetsApi, assistant as assistantApi, generation as generationApi, projects as projectsApi, templates as templatesApi } from '@client/src/api';
+import { assets as assetsApi, assistant as assistantApi, generation as generationApi, projects as projectsApi, providers as providersApi, templates as templatesApi } from '@client/src/api';
 import type { Template } from '@shared/api.interface';
-import type { Asset, GenerationJob, Project } from '@shared/api.interface';
+import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
+import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
 
 /**
  * 创作作战室（首页 · Agent 三段式）
@@ -118,6 +119,10 @@ const AgentStudio = () => {
   const [tpls, setTpls] = useState<Template[]>([]);
   const [panelAssets, setPanelAssets] = useState<Asset[]>([]);
   const [panelJobs, setPanelJobs] = useState<GenerationJob[]>([]);
+  // 火宝式引导：无任何已启用供应商时，hero 输入框上方显示配置横幅
+  const [providerMissing, setProviderMissing] = useState(false);
+  // 流程总控实时进度：会话绑定项目后 5s 轮询 progress，项目卡片/右侧面板直接消费
+  const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -162,6 +167,11 @@ const AgentStudio = () => {
     void templatesApi.listTemplates({ page: 1, pageSize: 8 })
       .then((r) => setTpls(r.items ?? []))
       .catch(() => setTpls([]));
+    // Provider 配置检测：空配置 → 引导横幅（配好后自动消失）
+    void providersApi
+      .listProviders()
+      .then((list) => setProviderMissing(list.filter((p) => p.enabled).length === 0))
+      .catch(() => setProviderMissing(false));
   }, []);
 
   // 右侧面板数据：跟随会话绑定的项目
@@ -174,13 +184,41 @@ const AgentStudio = () => {
     }
   }, [active?.projectId]);
 
+  // 流程总控进度：会话绑定项目后轮询 progress（项目卡片 mini 进度条 + 右侧面板）
+  useEffect(() => {
+    const pid = active?.projectId;
+    if (!pid) {
+      setProgress(null);
+      return;
+    }
+    const load = () => {
+      void projectsApi.getProgress(pid).then(setProgress).catch(() => { /* 静默 */ });
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [active?.projectId]);
+
+  // 任务面板：SSE 实时推送（2s 快照），EventSource 失败时降级回 5s 轮询
   useEffect(() => {
     const jobParams = { page: 1, pageSize: 15, ...(active?.projectId ? { projectId: active.projectId } : {}) };
     void generationApi.listJobs(jobParams).then((r) => setPanelJobs(r.items ?? [])).catch(() => setPanelJobs([]));
-    const timer = setInterval(() => {
-      void generationApi.listJobs(jobParams).then((r) => setPanelJobs(r.items ?? [])).catch(() => { /* 静默 */ });
-    }, 5000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startPolling = () => {
+      if (timer) return;
+      timer = setInterval(() => {
+        void generationApi.listJobs(jobParams).then((r) => setPanelJobs(r.items ?? [])).catch(() => { /* 静默 */ });
+      }, 5000);
+    };
+    const close = openJobStream(
+      active?.projectId,
+      (snap: JobStreamSnapshot) => setPanelJobs(snap.jobs ?? []),
+      startPolling,
+    );
+    return () => {
+      close();
+      if (timer) clearInterval(timer);
+    };
   }, [active?.projectId]);
 
   useEffect(() => {
@@ -372,23 +410,52 @@ const AgentStudio = () => {
   };
 
   // ---- 渲染子件 ----
+  const gateLabel: Record<string, string> = {
+    script: '剧本确认', storyboard: '分镜确认', final: '成片确认',
+  };
+
   const msgCard = (m: ChatMsg) => {
     if (m.card?.kind === 'project') {
+      const pid = m.card.projectId;
+      // 实时进度：当前会话绑定的同项目才显示（其他历史卡片不轮询）
+      const prog = pid === active?.projectId ? progress : null;
+      const currentStep = prog?.steps.find((s) => s.step === prog.currentStep);
       return (
         <div className="mt-2 rounded-xl border border-primary/25 bg-primary/5 p-3">
           <div className="flex items-center gap-2 text-xs font-semibold text-primary">
             <Film className="h-3.5 w-3.5" /> 项目已就绪
           </div>
           <p className="mt-1 text-sm font-medium text-foreground">{m.card.title}</p>
+          {/* mini 实时进度（轮询 getProgress）：开拍后在这里就能看到流水线推进 */}
+          {prog && (
+            <div className="mt-2.5 rounded-lg bg-background/70 px-2.5 py-2">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span className="truncate">
+                  {prog.nextGate
+                    ? `✋ 等待确认：${gateLabel[prog.nextGate] ?? prog.nextGate}`
+                    : currentStep
+                      ? `${currentStep.stepLabel}${prog.overallStatus === 'ready' ? '完成' : '中'}`
+                      : prog.overallStatus}
+                </span>
+                <span className="shrink-0 font-medium text-foreground">{prog.overallProgress}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${Math.max(2, prog.overallProgress)}%` }}
+                />
+              </div>
+            </div>
+          )}
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button
-              onClick={() => navigate(`/project/${m.card.kind === 'project' ? m.card.projectId : ''}`)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+              onClick={() => navigate(`/project/${pid}/flow`)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90"
             >
-              <FolderKanban className="h-3.5 w-3.5" /> 进入专业工作台
+              <Film className="h-3.5 w-3.5" /> 进入流程总控
             </button>
             <button
-              onClick={() => navigate(`/project/${m.card.kind === 'project' ? m.card.projectId : ''}/tasks`)}
+              onClick={() => navigate(`/project/${pid}/tasks`)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
             >
               <ListTodo className="h-3.5 w-3.5" /> 任务队列
@@ -493,6 +560,21 @@ const AgentStudio = () => {
       {heroMode ? (
         <section className="flex min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto bg-background px-6 py-10">
           <div className="w-full max-w-2xl">
+            {/* 无 Provider 配置引导横幅（火宝式：配置完成后自动消失） */}
+            {providerMissing && (
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                <span className="min-w-0">
+                  <span className="font-semibold">尚未配置模型供应商：</span>
+                  生成功能需要至少一个 API Key。请先到「设置 → 供应商」添加，配置后此横幅自动消失。
+                </span>
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700"
+                >
+                  去配置供应商
+                </button>
+              </div>
+            )}
             <h1 className="text-center text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
               一句话，创作一部短剧
             </h1>
@@ -715,8 +797,32 @@ const AgentStudio = () => {
         </div>
         <div className="flex-1 overflow-y-auto p-2.5">
           {active?.projectId && (
-            <div className="mb-2 rounded-lg bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary">
-              当前会话已绑定项目，展示该项目产出
+            <div className="mb-2 space-y-2">
+              <div className="rounded-lg bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary">
+                当前会话已绑定项目，展示该项目产出
+              </div>
+              {progress && (
+                <button
+                  onClick={() => navigate(`/project/${active.projectId}/flow`)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-left transition-colors hover:border-primary/50"
+                >
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="truncate font-medium text-foreground">
+                      {progress.nextGate
+                        ? `✋ ${gateLabel[progress.nextGate] ?? progress.nextGate}`
+                        : (progress.steps.find((s) => s.step === progress.currentStep)?.stepLabel ?? progress.overallStatus)}
+                    </span>
+                    <span className="text-muted-foreground">{progress.overallProgress}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{ width: `${Math.max(2, progress.overallProgress)}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 text-[10px] text-primary">进入流程总控 →</div>
+                </button>
+              )}
             </div>
           )}
           {rightTab === 'jobs' ? (

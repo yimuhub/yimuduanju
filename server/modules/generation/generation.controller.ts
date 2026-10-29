@@ -43,7 +43,8 @@ export class GenerationController {
   /**
    * P2-3 任务流 SSE（移植 MicroDrama api.py:183-219 的断线重放思想）：
    * 每 2s 推全量快照（非事件流；重连即拿到最新快照 = 天然重放）。
-   * 注意：必须注册在 jobs/:id 之前，否则 stream 被当成 id 吞掉。
+   * 快照推送完整 GenerationJob（含 errorMessage/cost 等），供任务页与作战室
+   * 面板直接渲染，掉线时前端降级回轮询。必须注册在 jobs/:id 之前。
    */
   @Sse('jobs/stream')
   streamJobs(
@@ -57,18 +58,10 @@ export class GenerationController {
         } as JobListQueryDto),
       ),
       map((res) => {
-        const jobs = res.items.map((j) => ({
-          id: j.id,
-          jobType: j.jobType,
-          status: j.status,
-          progress: j.progress,
-          targetId: j.targetId,
-          updatedAt: j.updatedAt,
-        }));
-        const terminal = jobs.length > 0 && jobs.every((j) =>
+        const terminal = res.items.length > 0 && res.items.every((j) =>
           ['succeeded', 'failed', 'cancelled'].includes(j.status),
         );
-        return { data: { jobs, terminal } } as MessageEvent;
+        return { data: { jobs: res.items, terminal, total: res.total } } as MessageEvent;
       }),
     );
   }
