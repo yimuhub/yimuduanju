@@ -58,7 +58,7 @@ export default function CanvasAutoPage() {
       const [proj, scList, shList, chList, qcRep] = await Promise.all([
         projectsApi.getProject(projectId).catch(() => null),
         storyboardApi.listScenes(projectId).catch(() => []),
-        storyboardApi.listShots(projectId).catch(() => []),
+        storyboardApi.listAllShots(projectId).catch(() => []),
         bibleApi.listCharacters(projectId).catch(() => []),
         qcApi.getLatestReport(projectId).catch(() => null),
       ]);
@@ -111,9 +111,7 @@ export default function CanvasAutoPage() {
     if (!projectId) return;
     setRunningStage('keyframes');
     try {
-      const res = await storyboardApi.batchGenerate(projectId, {
-        types: ['image'],
-      });
+      const res = await storyboardApi.batchGenerate(projectId, { type: 'image' });
       toast.success(`已提交 ${res.jobIds?.length ?? 0} 个镜头首帧生成任务`);
       await loadAll();
     } catch (e) {
@@ -128,9 +126,7 @@ export default function CanvasAutoPage() {
     if (!projectId) return;
     setRunningStage('videos');
     try {
-      const res = await storyboardApi.batchGenerate(projectId, {
-        types: ['video'],
-      });
+      const res = await storyboardApi.batchGenerate(projectId, { type: 'video' });
       toast.success(`已提交 ${res.jobIds?.length ?? 0} 个镜头视频生成任务`);
       await loadAll();
     } catch (e) {
@@ -145,9 +141,7 @@ export default function CanvasAutoPage() {
     if (!projectId) return;
     setRunningStage('voices');
     try {
-      const res = await storyboardApi.batchGenerate(projectId, {
-        types: ['tts'],
-      });
+      const res = await storyboardApi.batchGenerate(projectId, { type: 'voice' });
       toast.success(`已提交 ${res.jobIds?.length ?? 0} 个镜头配音任务（自动匹配角色专属音色）`);
       await loadAll();
     } catch (e) {
@@ -162,7 +156,7 @@ export default function CanvasAutoPage() {
     if (!projectId) return;
     setRunningStage('qc');
     try {
-      const rep = await qcApi.triggerQc(projectId, {});
+      const rep = await qcApi.createReport(projectId);
       setLatestQc(rep);
       toast.success(`质检完成：综合得分 ${rep.overallScore} 分`);
     } catch (e) {
@@ -201,10 +195,13 @@ export default function CanvasAutoPage() {
           scriptText: project.scriptText,
         });
       }
-      const res = await storyboardApi.batchGenerate(projectId, {
-        types: ['image', 'video', 'tts'],
-      });
-      toast.success(`全自动流水线已启动：共投递 ${res.jobIds?.length ?? 0} 个生成任务至后台队列`);
+      const res = await Promise.all([
+        storyboardApi.batchGenerate(projectId, { type: 'image' }),
+        storyboardApi.batchGenerate(projectId, { type: 'video' }),
+        storyboardApi.batchGenerate(projectId, { type: 'voice' }),
+      ]);
+      const jobCount = res.reduce((n, r) => n + (r.jobIds?.length ?? 0), 0);
+      toast.success(`全自动流水线已启动：共投递 ${jobCount} 个生成任务至后台队列`);
       await loadAll();
     } catch (e) {
       toast.error(`全自动投递失败：${(e as Error).message}`);

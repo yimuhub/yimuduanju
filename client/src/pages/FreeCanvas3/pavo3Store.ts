@@ -589,7 +589,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
       const [proj, , shotsList, charsList] = await Promise.all([
         projects.getProject(projectId).catch(() => null),
         storyboard.listScenes(projectId).catch(() => []),
-        storyboard.listShots(projectId).catch(() => []),
+        storyboard.listAllShots(projectId).catch(() => []),
         bible.listCharacters(projectId).catch(() => []),
       ]);
       const s = get();

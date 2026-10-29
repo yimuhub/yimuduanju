@@ -11,3 +11,4 @@ export * as dashboard from './dashboard';
 export * as pavo3 from './pavo3';
 export * as billing from './billing';
 export * as assistant from './assistant';
+export * as exportApi from './export';
