@@ -39,13 +39,14 @@
   --chart-3: hsl(280 60% 60%);
   --chart-4: hsl(27 92% 49%);
   --chart-5: hsl(292 54% 76%);
-  --sidebar: hsl(0 0% 100%);
-  --sidebar-foreground: hsl(220 14% 14%);
+  /* 对标即梦/可灵工作台：深色侧栏与浅色内容区形成层次对比 */
+  --sidebar: hsl(222 24% 11%);
+  --sidebar-foreground: hsl(220 14% 80%);
   --sidebar-primary: hsl(2 85% 60%);
   --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(2 85% 97%);
-  --sidebar-accent-foreground: hsl(2 85% 45%);
-  --sidebar-border: hsl(220 14% 89%);
+  --sidebar-accent: hsl(0 0% 100% / 0.07);
+  --sidebar-accent-foreground: hsl(0 0% 100%);
+  --sidebar-border: hsl(0 0% 100% / 0.08);
   --sidebar-ring: hsl(2 85% 60%);
 
   /* Computed borders using hsl relative color syntax */
@@ -68,21 +69,21 @@
   --shadow-y: 2px;
   --shadow-blur: 12px;
   --shadow-spread: 0px;
-  --shadow-opacity: 0.02;
+  --shadow-opacity: 0.04;
   --shadow-color: #000000;
-  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.01);
-  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.01);
+  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.02);
+  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.02);
   --shadow-sm:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 1px 2px -1px hsl(0 0% 0% / 0.02);
+    0px 2px 12px 0px hsl(0 0% 0% / 0.04), 0px 1px 2px -1px hsl(0 0% 0% / 0.03);
   --shadow:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 1px 2px -1px hsl(0 0% 0% / 0.02);
+    0px 2px 12px 0px hsl(0 0% 0% / 0.04), 0px 1px 2px -1px hsl(0 0% 0% / 0.03);
   --shadow-md:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 2px 4px -1px hsl(0 0% 0% / 0.02);
+    0px 2px 12px 0px hsl(0 0% 0% / 0.04), 0px 2px 4px -1px hsl(0 0% 0% / 0.04);
   --shadow-lg:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 4px 6px -1px hsl(0 0% 0% / 0.02);
+    0px 4px 16px 0px hsl(0 0% 0% / 0.05), 0px 4px 6px -1px hsl(0 0% 0% / 0.03);
   --shadow-xl:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 8px 10px -1px hsl(0 0% 0% / 0.02);
-  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.05);
+    0px 6px 20px 0px hsl(0 0% 0% / 0.06), 0px 8px 10px -1px hsl(0 0% 0% / 0.04);
+  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.08);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -167,6 +168,56 @@
  * need to be distinguished from eachother visually.
  */
 @layer utilities {
+  /* ===== 视觉统一 token（3.0 UI 对标打磨：即梦 / 可灵 / Pavo）===== */
+
+  /* 手法① 渐变主按钮：与品牌 logo 同一 red→orange 渐变语言，主 CTA 专用 */
+  .btn-gradient {
+    background-image: linear-gradient(135deg, hsl(2 85% 60%) 0%, hsl(25 95% 55%) 100%);
+    color: hsl(0 0% 100%);
+    box-shadow: 0 4px 14px -4px hsl(2 85% 60% / 0.45);
+    transition: filter 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  }
+  .btn-gradient:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 6px 18px -4px hsl(2 85% 60% / 0.55);
+  }
+  .btn-gradient:active {
+    transform: scale(0.98);
+  }
+
+  /* 手法② 卡片 hover 微动效：轻微上浮 + 阴影加深，用于可点击卡片 */
+  .card-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 28px -10px hsl(220 20% 20% / 0.14);
+    border-color: hsl(220 14% 80%);
+  }
+
+  /* 手法③ 侧栏激活态：渐变底 + 白字 + 投影，替代纯色块 */
+  .nav-active {
+    background-image: linear-gradient(135deg, hsl(2 85% 55%) 0%, hsl(25 95% 52%) 100%);
+    color: hsl(0 0% 100%);
+    box-shadow: 0 4px 12px -4px hsl(2 85% 55% / 0.5);
+  }
+
+  /* 手法④ 深色侧栏滚动条：细轨低调，避免亮色滚动条破坏深色面 */
+  .sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(0 0% 100% / 0.18) transparent;
+  }
+  .sidebar-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: hsl(0 0% 100% / 0.18);
+    border-radius: 9999px;
+  }
+  .sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
   /* Hide ugly search cancel button in Chrome until we can style it properly */
   input[type="search"]::-webkit-search-cancel-button {
     @apply hidden;

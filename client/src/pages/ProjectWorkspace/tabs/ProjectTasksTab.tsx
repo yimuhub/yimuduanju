@@ -84,7 +84,7 @@ const ProjectTasksTab = () => {
     try {
       if (typeof Notification === 'undefined') return;
       if (Notification.permission === 'granted') {
-        new Notification('一木·YIMU AI 视频创作平台 · 任务完成', {
+        new Notification('一幕·YIMU AI 短剧创作平台 · 任务完成', {
           body: `${typeLabelMap[job.jobType] || job.jobType}已完成，可前往查看`,
         });
       } else if (Notification.permission === 'default') {

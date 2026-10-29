@@ -37,7 +37,7 @@ const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page')
 const RoutesComponent = () => {
   // 浏览器页签标题：平台渲染的 HTML 标题不可控，应用挂载后统一覆盖为品牌名
   useEffect(() => {
-    document.title = '一幕·YIMU AI 短剧工坊';
+    document.title = '一幕·YIMU AI 短剧创作平台';
   }, []);
   return (
     <Routes>

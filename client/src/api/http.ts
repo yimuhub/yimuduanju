@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 /**
- * 一木·YIMU 自有后端请求实例（已去平台化）。
+ * 一幕·YIMU 自有后端请求实例（已去平台化）。
  * 替代 @lark-apaas/client-toolkit 的 getAxiosForBackend——后者会在上报错误时
  * 向外部平台发送遥测（slardar），且带登录跳转逻辑（x-login-url）。
  * 本实例：同源相对路径、携带 cookie（网关/CSRF 桥接用）、401/403 直接抛错不跳转。

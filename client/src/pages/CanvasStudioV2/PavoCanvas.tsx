@@ -1,5 +1,5 @@
 /**
- * 一木·YIMU AI 视频创作平台 画布 v2 —— Pavo 式主工作台
+ * 一幕·YIMU AI 短剧创作平台 画布 v2 —— Pavo 式主工作台
  * 布局：左侧「画布元素」列表（可折叠）+ 中央无限画布（布局最大化）+ 右侧节点工具/对话助手
  * 交互：双击加节点 · 点击节点弹专属 AI 工具（节点即工具箱）· 分支生成 · @ 引用资产 · 3D 导演台
  * 视觉：浅白极简 + 青绿点缀
@@ -264,7 +264,7 @@ const Workspace = () => {
         <button onClick={() => navigate(`/project/${projectId}`)} style={topBtn}><ArrowLeft size={13} /> 返回项目</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: PAVO_C.text }}>
           <span style={{ width: 24, height: 24, borderRadius: 7, background: PAVO_C.primary, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>木</span>
-          一木·YIMU AI 视频创作平台
+          一幕·YIMU AI 短剧创作平台
           <span style={{ fontSize: 9.5, fontWeight: 600, padding: '2px 9px', borderRadius: 999, background: PAVO_C.primarySoft, color: PAVO_C.primaryDeep }}>无限画布</span>
         </div>
 

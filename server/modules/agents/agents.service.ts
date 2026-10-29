@@ -99,7 +99,7 @@ export class AgentsService implements OnModuleInit {
         systemPrompt:
           (agent?.persona
             ? `${agent.persona}\n\n`
-            : '你是「一木·YIMU AI 视频创作平台」项目智能体，用简体中文回答，简洁实用。') +
+            : '你是「一幕·YIMU AI 短剧创作平台」项目智能体，用简体中文回答，简洁实用。') +
           '回答要结合项目实际数据，不得编造不存在的分镜/角色/资产。\n' +
           (skillText ? `# 生效技能包\n${skillText}\n` : '') +
           `# 项目上下文\n${context}`,
@@ -110,7 +110,7 @@ export class AgentsService implements OnModuleInit {
           projectId,
           role: 'assistant',
           content: reply,
-          agentName: dto.agentName ?? '一木·YIMU AI 视频创作平台助手',
+          agentName: dto.agentName ?? '一幕·YIMU AI 短剧创作平台助手',
           relatedObjects: [],
         })
         .returning();

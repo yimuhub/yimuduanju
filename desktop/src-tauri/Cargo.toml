@@ -1,0 +1,26 @@
+[package]
+name = "yimu-desktop"
+version = "3.0.0"
+description = "一幕·YIMU AI 短剧创作平台 桌面壳（Tauri 2 v0）"
+edition = "2021"
+rust-version = "1.77.2"
+
+# Tauri 2 固定库名约定：<name>_lib，main.rs 调用 yimu_desktop_lib::run()
+[lib]
+name = "yimu_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

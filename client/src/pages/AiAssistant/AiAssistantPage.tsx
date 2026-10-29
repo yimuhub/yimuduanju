@@ -25,7 +25,7 @@ interface Conversation {
 
 const AiAssistantPage = () => {
   const [conversations] = useState<Conversation[]>([
-    { id: 'global', name: '一木·YIMU AI 视频创作平台助手', description: '全局创作助手' },
+    { id: 'global', name: '一幕·YIMU AI 短剧创作平台助手', description: '全局创作助手' },
   ]);
   const [activeConvId, setActiveConvId] = useState('global');
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -33,7 +33,7 @@ const AiAssistantPage = () => {
       id: 'msg-1',
       role: 'assistant',
       content:
-        '你好！我是「一木·YIMU AI 视频创作平台」助手 👋 我可以帮你进行剧本创作、分镜设计、角色设定、风格建议等短剧创作相关的工作。有什么我可以帮你的吗？',
+        '你好！我是「一幕·YIMU AI 短剧创作平台」助手 👋 我可以帮你进行剧本创作、分镜设计、角色设定、风格建议等短剧创作相关的工作。有什么我可以帮你的吗？',
       createdAt: new Date().toISOString(),
     },
   ]);
@@ -101,7 +101,7 @@ const AiAssistantPage = () => {
       {
         id: `msg-${Date.now()}`,
         role: 'assistant',
-        content: '你好！我是「一木·YIMU AI 视频创作平台」助手，有什么新的创作想法吗？',
+        content: '你好！我是「一幕·YIMU AI 短剧创作平台」助手，有什么新的创作想法吗？',
         createdAt: new Date().toISOString(),
       },
     ]);
@@ -166,7 +166,7 @@ const AiAssistantPage = () => {
           </div>
           <div>
             <h2 className="text-base font-semibold text-foreground">
-              {activeConv?.name || '一木·YIMU AI 视频创作平台助手'}
+              {activeConv?.name || '一幕·YIMU AI 短剧创作平台助手'}
             </h2>
             <p className="text-xs text-muted-foreground">
               {activeConv?.description || '你的智能创作伙伴'}

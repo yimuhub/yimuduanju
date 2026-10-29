@@ -1,5 +1,5 @@
 /**
- * 一木·YIMU AI 视频创作平台 画布 v2 —— 演示生成引擎
+ * 一幕·YIMU AI 短剧创作平台 画布 v2 —— 演示生成引擎
  * 模拟 Pavo 各节点工具的真实产出：文生图 / 角色四视图 / 场景全景 / 剧本拆解 / 多分支等。
  * 阶段四接入真实三通道 API（火山 / 中转站 / 自定义）时，替换本模块为真实调用适配层。
  */
@@ -32,7 +32,7 @@ export function pavoDemoImage(seed: string, label: string): string {
     `</linearGradient></defs>` +
     `<rect width='400' height='560' fill='url(#g)'/>` +
     `<text x='200' y='270' text-anchor='middle' font-size='20' fill='rgba(255,255,255,0.94)' font-family='sans-serif'>${label}</text>` +
-    `<text x='200' y='312' text-anchor='middle' font-size='12' fill='rgba(255,255,255,0.78)' font-family='sans-serif'>一木·YIMU AI 视频创作平台演示生成 · 后续接入真实 API</text>` +
+    `<text x='200' y='312' text-anchor='middle' font-size='12' fill='rgba(255,255,255,0.78)' font-family='sans-serif'>一幕·YIMU AI 短剧创作平台演示生成 · 后续接入真实 API</text>` +
     `</svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -82,7 +82,7 @@ function splitShots(text: string): string[] {
  * @returns 产出的新节点
  */
 export async function runPavoTool(kind: PavoNodeData['kind'], tool: string, input: string): Promise<ToolOutput> {
-  const text = input.trim() || '一木·YIMU AI 视频创作平台的创意';
+  const text = input.trim() || '一幕·YIMU AI 短剧创作平台的创意';
   const seed = text + Math.random().toString(36).slice(2, 6);
 
   switch (tool) {
@@ -97,7 +97,7 @@ export async function runPavoTool(kind: PavoNodeData['kind'], tool: string, inpu
       return {
         nodes: [{
           ...defaultPavoNode('script', '剧本大纲'),
-          values: { content: `${text}\n\n第一幕：开场钩子\n第二幕：冲突升级\n第三幕：反转与余味\n——由一木·YIMU AI 视频创作平台自动展开（演示）` },
+          values: { content: `${text}\n\n第一幕：开场钩子\n第二幕：冲突升级\n第三幕：反转与余味\n——由一幕·YIMU AI 短剧创作平台自动展开（演示）` },
           seed,
         }],
         edgeNote: '一句话 → 剧本',

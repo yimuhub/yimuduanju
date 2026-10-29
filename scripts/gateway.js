@@ -1,5 +1,5 @@
 /**
- * 一幕·YIMU AI 短剧工坊本地网关（已去平台化）
+ * 一幕·YIMU AI 短剧创作平台本地网关（已去平台化）
  * ---------------------------------------------------------------
  * 职责（仅本地开发）：
  *   1. 直接伺服前端构建产物 dist/client 的静态资源
@@ -23,6 +23,7 @@ const http = require('http');
 const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { randomBytes } = require('crypto');
 
 // 网关自签 CSRF token：随 HTML 页面以 cookie 下发，/api/* 转发时补齐同名 header。
@@ -82,11 +83,30 @@ const MIME = {
   '.map': 'application/json',
 };
 
+// ===== 性能精简：文本类响应 gzip 压缩（按 content-type 判断，SSE 明确排除） =====
+const GZIP_CONTENT_TYPES = new Set([
+  'text/html',
+  'text/css',
+  'application/javascript',
+  'text/javascript',
+  'application/json',
+  'image/svg+xml',
+]);
+/** 客户端是否声明接受 gzip */
+const clientAcceptsGzip = (req) =>
+  ((req && req.headers && req.headers['accept-encoding']) || '').includes('gzip');
+/** 该响应是否可 gzip：类型命中 + 客户端接受 + 未被上游压缩过（SSE 的 text/event-stream 不在白名单内） */
+const shouldGzip = (req, contentType, existingEncoding) =>
+  clientAcceptsGzip(req) &&
+  !existingEncoding &&
+  GZIP_CONTENT_TYPES.has(String(contentType || '').split(';')[0].trim());
+
 /** 伺服单个静态文件；命中返回 true */
-function serveFile(res, filePath, noCache) {
+function serveFile(req, res, filePath, noCache) {
   const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME[ext] || 'application/octet-stream';
   const headers = {
-    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Content-Type': contentType,
     'Cache-Control': noCache || ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
   };
   // HTML 页面响应附带网关自签的 CSRF cookie（随机 token，进程内一次生成）：
@@ -95,6 +115,13 @@ function serveFile(res, filePath, noCache) {
   // 后端为无状态双提交校验（cookie === header 即通过），API 转发时网关已从 cookie 补齐 header。
   if (ext === '.html' && CSRF_TOKEN) {
     headers['Set-Cookie'] = `suda-csrf-token=${CSRF_TOKEN}; Path=/; SameSite=Lax`;
+  }
+  if (shouldGzip(req, contentType, '')) {
+    headers['Content-Encoding'] = 'gzip';
+    headers.Vary = 'Accept-Encoding';
+    res.writeHead(200, headers);
+    fs.createReadStream(filePath).pipe(zlib.createGzip()).pipe(res);
+    return true;
   }
   res.writeHead(200, headers);
   fs.createReadStream(filePath).pipe(res);
@@ -115,7 +142,7 @@ function serveStatic(req, res) {
   // 后端 ViewController 已去平台化，渲染 index 不再注入平台数据，与静态伺服等价）。
   if (urlPath === '/app/yimu' || urlPath === '/app/yimu/') {
     const indexFile = path.join(DIST_DIR, 'index.html');
-    if (fs.existsSync(indexFile)) return serveFile(res, indexFile, true);
+    if (fs.existsSync(indexFile)) return serveFile(req, res, indexFile, true);
     return false;
   }
   // /app/yimu/*：去前缀后先找静态文件，找不到则回退 index.html（SPA 深链路）。
@@ -123,16 +150,16 @@ function serveStatic(req, res) {
     const stripped = urlPath.slice('/app/yimu'.length) || '/';
     const filePath = path.normalize(path.join(DIST_DIR, stripped));
     if (filePath.startsWith(DIST_DIR) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      return serveFile(res, filePath, false);
+      return serveFile(req, res, filePath, false);
     }
     const indexFile = path.join(DIST_DIR, 'index.html');
-    if (fs.existsSync(indexFile)) return serveFile(res, indexFile, true);
+    if (fs.existsSync(indexFile)) return serveFile(req, res, indexFile, true);
     return false;
   }
   const filePath = path.normalize(path.join(DIST_DIR, urlPath));
   if (!filePath.startsWith(DIST_DIR)) return false; // 防目录穿越
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
-  return serveFile(res, filePath, false);
+  return serveFile(req, res, filePath, false);
 }
 
 /* W4：5 个数据补全接口已收敛回后端实现 —— 网关不再拦截直连 PG，统一走下方纯代理转发。 */
@@ -230,6 +257,19 @@ const server = http.createServer((req, res) => {
             .replace(/;\s*SameSite=None/gi, '; SameSite=Lax'),
         );
       }
+      // 性能精简：后端文本类响应（html/css/js/json）经网关 gzip 后再下发；
+      // SSE（text/event-stream）不在白名单内保持逐事件直通，上游已压缩的跳过。
+      if (
+        proxyRes.statusCode === 200 &&
+        shouldGzip(req, proxyRes.headers['content-type'], proxyRes.headers['content-encoding'])
+      ) {
+        delete outHeaders['content-length'];
+        outHeaders['content-encoding'] = 'gzip';
+        outHeaders.Vary = 'Accept-Encoding';
+        res.writeHead(proxyRes.statusCode, outHeaders);
+        proxyRes.pipe(zlib.createGzip()).pipe(res);
+        return;
+      }
       res.writeHead(proxyRes.statusCode, outHeaders);
       proxyRes.pipe(res);
     }
@@ -248,7 +288,7 @@ const server = http.createServer((req, res) => {
 // Docker Compose 下可通过环境变量 GATEWAY_HOST=0.0.0.0 开放容器端口。
 const GATEWAY_HOST = process.env.GATEWAY_HOST || '127.0.0.1';
 server.listen(PORT, GATEWAY_HOST, () => {
-  console.log(`[gateway] 一幕·YIMU AI 短剧工坊本地网关已启动：http://${GATEWAY_HOST}:${PORT}`);
+  console.log(`[gateway] 一幕·YIMU AI 短剧创作平台本地网关已启动：http://${GATEWAY_HOST}:${PORT}`);
   console.log(`[gateway] 监听地址：${GATEWAY_HOST}${GATEWAY_HOST === '127.0.0.1' ? '（仅本机访问）' : '（已开放，请评估风险）'}`);
   console.log(`[gateway] 静态资源目录：${DIST_DIR}`);
   console.log(`[gateway] 动态请求转发：${TARGET}`);

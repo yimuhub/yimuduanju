@@ -14,7 +14,7 @@ const ProfileSection = () => {
             YM
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-foreground">一木用户</h2>
+            <h2 className="text-lg font-semibold text-foreground">一幕用户</h2>
             <p className="text-sm text-muted-foreground">
               创意制作人 · VIP会员
             </p>

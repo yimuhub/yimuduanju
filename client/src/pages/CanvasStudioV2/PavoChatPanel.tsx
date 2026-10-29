@@ -1,5 +1,5 @@
 /**
- * 一木·YIMU AI 视频创作平台 画布 v2 —— 右侧对话助手（小云雀融合）
+ * 一幕·YIMU AI 短剧创作平台 画布 v2 —— 右侧对话助手（小云雀融合）
  * 多会话标签页 / Agent 切换 / @ 引用资产 / 创意助手（热点·爆点·选题·方案）/ 流式 / 落地画布
  */
 import { useEffect, useRef, useState } from 'react';

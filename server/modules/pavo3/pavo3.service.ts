@@ -1,5 +1,5 @@
 /**
- * 一木·YIMU AI 视频创作平台 · 自由画布 3 —— 真实生成代理服务（已收敛接入统一计费与预算守卫）
+ * 一幕·YIMU AI 短剧创作平台 · 自由画布 3 —— 真实生成代理服务（已收敛接入统一计费与预算守卫）
  * 三通道 API（火山方舟 / OpenAI 兼容中转 / 自定义）统一调用：
  *   text  → POST {baseUrl}/chat/completions
  *   image → POST {baseUrl}/images/generations（参考图走 image 字段，dataURL 直传）
@@ -308,7 +308,7 @@ export class Pavo3Service {
           {
             role: 'system',
             content:
-              '你是「一幕·YIMU AI 短剧工坊」的创作助手。根据用户描述生成可直接使用的短剧内容：' +
+              '你是「一幕·YIMU AI 短剧创作平台」的创作助手。根据用户描述生成可直接使用的短剧内容：' +
               '文本生成请输出结构化 Markdown（分镜/剧本/角色设定等）；图片提示词生成请输出精炼的英文图像提示词；' +
               '回答使用与用户提问相同的语言。',
           },

@@ -66,7 +66,7 @@ const PLANS: PlanCard[] = [
 const AccountPage = () => {
   const navigate = useNavigate();
   const [nickname, setNickname] = useState(
-    () => localStorage.getItem(NICKNAME_KEY) || '一木用户',
+    () => localStorage.getItem(NICKNAME_KEY) || '一幕用户',
   );
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(nickname);

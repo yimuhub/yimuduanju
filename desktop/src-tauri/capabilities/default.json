@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口默认能力。v0 仅加载本机网关页面，不启用文件系统/ shell 等插件权限；v1 接入 sidecar 时按最小权限在此追加。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

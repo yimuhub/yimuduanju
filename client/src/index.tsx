@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import { Toaster } from '@client/src/components/ui/sonner';
 
 /**
- * 一木·YIMU AI 视频创作平台应用入口（已去平台化）。
+ * 一幕·YIMU AI 短剧创作平台应用入口（已去平台化）。
  * 说明：此前套用云端模板的 AppContainer（内含遥测上报/水印/鉴权 SDK、
  * 平台运行时调用），现改用自有外壳——ErrorBoundary + 自有 Toaster，
  * 不再向任何外部平台发送请求、不读 window.__platform__。
@@ -22,7 +22,7 @@ const BASENAME = CLIENT_BASE_PATH;
 
 const CrashFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => (
   <div style={{ padding: 40, textAlign: 'center', fontFamily: 'sans-serif' }}>
-    <h2 style={{ fontSize: 18, marginBottom: 8 }}>一木·YIMU AI 视频创作平台启动失败</h2>
+    <h2 style={{ fontSize: 18, marginBottom: 8 }}>一幕·YIMU AI 短剧创作平台启动失败</h2>
     <pre style={{ color: '#666', fontSize: 12, whiteSpace: 'pre-wrap' }}>{error?.message}</pre>
     <button
       onClick={resetErrorBoundary}

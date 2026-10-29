@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 /**
- * 一木·YIMU 自有确认框（已去平台化）。
+ * 一幕·YIMU 自有确认框（已去平台化）。
  * 替代 @lark-apaas/client-toolkit 的 showConfirm——后者从包根导入，
  * 会连带打包平台组件链。用法：`if (!await showConfirm('确定删除？')) return;`
  */

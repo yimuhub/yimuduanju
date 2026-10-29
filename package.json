@@ -1,6 +1,7 @@
 {
   "name": "yimuduanju",
   "version": "3.0.0",
+  "description": "一幕·YIMU AI 短剧创作平台 —— 从一句话创意到成片的 AI 短剧 / AI 漫剧全流程创作平台",
   "private": true,
   "license": "BUSL-1.1",
   "flags": {
@@ -20,6 +21,8 @@
     "build:prod": "npm run build:server && npm run build:client",
     "build:server": "NODE_ENV=production nest build",
     "build:client": "NODE_ENV=production vite build --config vite.config.ts",
+    "desktop:dev": "cd desktop && npx @tauri-apps/cli dev",
+    "desktop:build": "cd desktop && npx @tauri-apps/cli build",
     "start": "NODE_ENV=production node main.js",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",

@@ -315,7 +315,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       { name: 'YouTube Shorts', format: '9:16', note: '标题英文+中文双语，描述挂系列合集' },
     ];
     const out: string[] = [
-      `一木·YIMU AI 视频创作平台发布包 · ${title}`,
+      `一幕·YIMU AI 短剧创作平台发布包 · ${title}`,
       `类型：${kind} · 总时长 ${Math.round(total)}s · ${shotRows.length} 镜 · 画幅 ${project.aspectRatio ?? '9:16'}`,
       `开场钩子句：${firstLine || '（首镜无对白，建议补钩子）'}`,
       '',

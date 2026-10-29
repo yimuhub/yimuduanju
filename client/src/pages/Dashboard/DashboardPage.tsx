@@ -49,6 +49,8 @@ const DashboardPage = () => {
   const [activity, setActivity] = useState<{ id: string; type: string; message: string; createdAt: string }[]>([]);
   const [quickPrompt, setQuickPrompt] = useState('');
   const [loading, setLoading] = useState(true);
+  // 问候语使用本地昵称（与账户页 yimu.account.nickname 保持一致），默认「一幕用户」
+  const [nickname] = useState(() => localStorage.getItem('yimu.account.nickname') || '一幕用户');
 
   const load = useCallback(async () => {
     const [s, j, r, a] = await Promise.all([
@@ -86,7 +88,7 @@ const DashboardPage = () => {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">
-            {new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}，一木
+            {new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}，{nickname}
           </h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {stats && stats.runningJobs > 0
@@ -106,7 +108,7 @@ const DashboardPage = () => {
           />
           <button
             onClick={() => navigate('/')}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground hover:opacity-90"
+            className="btn-gradient flex h-8 shrink-0 items-center gap-1 rounded-lg px-3 text-xs font-semibold"
           >
             开拍 <Send className="h-3 w-3" />
           </button>

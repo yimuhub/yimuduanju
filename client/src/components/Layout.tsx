@@ -39,6 +39,22 @@ const navItems = [
   { to: '/settings', label: '设置', icon: Settings },
 ];
 
+// 侧栏分组（对标即梦/可灵工作台：导航按「创作 / 项目 / 账户」分区，降低长列表噪音）
+const navGroups: { label: string; items: typeof navItems }[] = [
+  {
+    label: '创作',
+    items: [navItems[0], navItems[3], navItems[4]],
+  },
+  {
+    label: '项目',
+    items: [navItems[1], navItems[2], navItems[5], navItems[6], navItems[7]],
+  },
+  {
+    label: '助手与账户',
+    items: [navItems[8], navItems[9], navItems[10]],
+  },
+];
+
 const breadcrumbMap: Record<string, string> = {
   '': '首页',
   dashboard: '数据看板',
@@ -84,6 +100,16 @@ const Layout = () => {
   );
   // 顶栏头像下拉（用户中心 / 设置 / 退出登录）
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  // 侧栏折叠（图标模式），状态跨页面持久
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('yimu.sidebarCollapsed') === '1',
+  );
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      localStorage.setItem('yimu.sidebarCollapsed', prev ? '0' : '1');
+      return !prev;
+    });
+  };
   const toggleDock = () => {
     setDockOpen((prev) => {
       localStorage.setItem('yimu.rightDockOpen', prev ? '0' : '1');
@@ -104,36 +130,53 @@ const Layout = () => {
   const sidebarBody = (
     <>
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 px-5 border-b border-sidebar-border">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#FF403A] to-[#FF7A3A] text-white shadow-sm">
+      <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#FF403A] to-[#FF7A3A] text-white shadow-sm">
           <Clapperboard className="h-5 w-5" />
         </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold leading-snug text-foreground">
-            一木·YIMU AI 视频创作平台
-          </span>
-        </div>
+        {!sidebarCollapsed && (
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold leading-snug text-sidebar-foreground">
+              一幕·YIMU AI 短剧创作平台
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            onClick={() => setDrawerOpen(false)}
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
-                  : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-              }`
-            }
-          >
-            <item.icon className="h-[18px] w-[18px]" />
-            <span>{item.label}</span>
-          </NavLink>
+      {/* Nav（分组 + 可折叠图标模式） */}
+      <nav className={`flex-1 space-y-4 overflow-y-auto px-3 py-4 sidebar-scroll ${sidebarCollapsed ? 'px-2' : ''}`}>
+        {navGroups.map((group) => (
+          <div key={group.label}>
+            {!sidebarCollapsed && (
+              <div className="mb-1 px-3 text-[11px] font-medium uppercase tracking-wider text-sidebar-foreground/40">
+                {group.label}
+              </div>
+            )}
+            {sidebarCollapsed && <div className="mx-2 mb-2 border-t border-sidebar-border" />}
+            <div className="space-y-1">
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  title={sidebarCollapsed ? item.label : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 rounded-lg text-sm font-medium transition-colors ${
+                      sidebarCollapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2.5'
+                    } ${
+                      isActive
+                        ? 'nav-active'
+                        : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                    }`
+                  }
+                >
+                  <item.icon className="h-[18px] w-[18px] shrink-0" />
+                  {!sidebarCollapsed && <span>{item.label}</span>}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
@@ -141,19 +184,30 @@ const Layout = () => {
       <div className="border-t border-sidebar-border p-3">
         <button
           onClick={() => navigate('/account')}
-          className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-sidebar-accent"
+          title={sidebarCollapsed ? '一幕用户' : undefined}
+          className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-sidebar-accent ${sidebarCollapsed ? 'justify-center' : ''}`}
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground">
             YM
           </div>
-          <div className="flex-1 overflow-hidden">
-            <div className="truncate text-sm font-medium text-foreground">
-              一木用户
+          {!sidebarCollapsed && (
+            <div className="flex-1 overflow-hidden">
+              <div className="truncate text-sm font-medium text-sidebar-foreground">
+                一幕用户
+              </div>
+              <div className="truncate text-xs text-sidebar-foreground/60">
+                专业版
+              </div>
             </div>
-            <div className="truncate text-xs text-muted-foreground">
-              专业版
-            </div>
-          </div>
+          )}
+        </button>
+        <button
+          onClick={toggleSidebar}
+          className={`mt-1 hidden w-full items-center gap-3 rounded-lg px-2 py-2 text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground lg:flex ${sidebarCollapsed ? 'justify-center' : ''}`}
+          aria-label={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
+        >
+          <PanelRightOpen className={`h-4 w-4 ${sidebarCollapsed ? 'rotate-180' : ''}`} />
+          {!sidebarCollapsed && <span className="text-xs">折叠侧栏</span>}
         </button>
       </div>
     </>
@@ -165,7 +219,7 @@ const Layout = () => {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* Sidebar（桌面端固定，小屏抽屉） */}
-      <aside className={`hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex ${immersive ? 'w-[220px]' : 'w-60'}`}>
+      <aside className={`hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex ${sidebarCollapsed ? 'w-[68px]' : immersive ? 'w-[220px]' : 'w-60'}`}>
         {sidebarBody}
       </aside>
       {drawerOpen && (
@@ -253,7 +307,7 @@ const Layout = () => {
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
                   <div className="absolute right-0 top-11 z-50 w-44 overflow-hidden rounded-xl border bg-white py-1 shadow-lg">
                     <div className="border-b border-border px-4 py-2.5">
-                      <div className="text-sm font-medium text-foreground">一木用户</div>
+                      <div className="text-sm font-medium text-foreground">一幕用户</div>
                       <div className="text-xs text-muted-foreground">专业版</div>
                     </div>
                     <button
