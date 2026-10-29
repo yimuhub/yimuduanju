@@ -1,431 +1,228 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  Zap,
-  FileText,
-  Sliders,
-  FolderKanban,
-  Film,
-  Image as ImageIcon,
-  Wallet,
-  ChevronRight,
-  Sparkles,
-  Play,
-  Clock,
+  ArrowUpRight, Clapperboard, Coins, Film, FolderKanban, Images,
+  Loader2, Send, Sparkles, Clock,
 } from 'lucide-react';
-import { projects, templates, dashboard, storyboard } from '@client/src/api';
-import type {
-  DashboardStats,
-  ProjectListItem,
-  Template,
-  ProjectStatus,
-} from '@shared/api.interface';
-import { DEMO_SCRIPT } from '@client/src/utils/demoScript';
-import { toast } from 'sonner';
+import { dashboard as dashboardApi, generation as generationApi } from '@client/src/api';
+import type { DashboardStats, GenerationJob, ProjectListItem } from '@shared/api.interface';
 
-const statusLabelMap: Record<ProjectStatus, string> = {
-  draft: '草稿',
-  parsing: '解析中',
-  planning: '规划中',
-  bible_ready: '圣经就绪',
-  storyboard_ready: '分镜就绪',
-  assets_generating: '资产生成中',
-  video_generating: '视频生成中',
-  audio_generating: '音频生成中',
-  editing: '剪辑中',
-  qc: '质检中',
-  ready: '已完成',
-  exported: '已导出',
-  failed: '失败',
+/**
+ * 数据看板（3.0 生产力工作台版）：
+ * 取代旧营销式 hero 页——信息密度优先，全部真实数据：
+ * KPI 行 / 生成任务（实时进度）/ 最近项目（行式）/ 活动流，5s 静默刷新。
+ */
+
+const JOB_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频', tts: '配音', parse_script: '剧本解析', script: '剧本' };
+const JOB_STATUS: Record<string, { label: string; cls: string }> = {
+  pending: { label: '排队', cls: 'bg-amber-50 text-amber-600' },
+  running: { label: '生成中', cls: 'bg-blue-50 text-blue-600' },
+  succeeded: { label: '完成', cls: 'bg-emerald-50 text-emerald-600' },
+  failed: { label: '失败', cls: 'bg-red-50 text-red-600' },
+  cancelled: { label: '取消', cls: 'bg-muted text-muted-foreground' },
+};
+const PROJECT_STATUS: Record<string, { label: string; cls: string }> = {
+  draft: { label: '草稿', cls: 'bg-muted text-muted-foreground' },
+  script_ready: { label: '剧本就绪', cls: 'bg-sky-50 text-sky-600' },
+  assets_generating: { label: '资产生成中', cls: 'bg-blue-50 text-blue-600' },
+  storyboard_ready: { label: '分镜就绪', cls: 'bg-indigo-50 text-indigo-600' },
+  rendering: { label: '成片中', cls: 'bg-violet-50 text-violet-600' },
+  completed: { label: '已完成', cls: 'bg-emerald-50 text-emerald-600' },
+  failed: { label: '失败', cls: 'bg-red-50 text-red-600' },
 };
 
-const statusColorMap: Record<ProjectStatus, string> = {
-  draft: 'bg-muted text-muted-foreground',
-  parsing: 'bg-blue-100 text-blue-700',
-  planning: 'bg-blue-100 text-blue-700',
-  bible_ready: 'bg-blue-100 text-blue-700',
-  storyboard_ready: 'bg-blue-100 text-blue-700',
-  assets_generating: 'bg-blue-100 text-blue-700',
-  video_generating: 'bg-blue-100 text-blue-700',
-  audio_generating: 'bg-blue-100 text-blue-700',
-  editing: 'bg-blue-100 text-blue-700',
-  qc: 'bg-blue-100 text-blue-700',
-  ready: 'bg-green-100 text-green-700',
-  exported: 'bg-green-100 text-green-700',
-  failed: 'bg-red-100 text-red-700',
+const timeAgo = (iso: string) => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
 };
-
-const gradientColors = [
-  'from-rose-400/30 via-orange-300/30 to-amber-400/30',
-  'from-sky-400/30 via-indigo-400/30 to-purple-400/30',
-  'from-emerald-400/30 via-teal-400/30 to-cyan-400/30',
-  'from-pink-400/30 via-rose-400/30 to-red-400/30',
-  'from-violet-400/30 via-purple-400/30 to-fuchsia-400/30',
-  'from-amber-400/30 via-orange-400/30 to-rose-400/30',
-];
-
-const formatDuration = (seconds: number): string => {
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return secs > 0 ? `${mins}分${secs}秒` : `${mins}分钟`;
-};
-
-const formatTimeAgo = (dateStr: string): string => {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '刚刚';
-  if (mins < 60) return `${mins}分钟前`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}小时前`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}天前`;
-  return new Date(dateStr).toLocaleDateString('zh-CN');
-};
-
-const modeCards = [
-  {
-    icon: Zap,
-    title: '极速模式',
-    desc: '输入一句话，AI 全自动完成 90 秒短剧',
-    href: '/create?mode=quick',
-    btnText: '立即体验',
-    gradient: 'from-red-50 to-orange-50',
-    iconBg: 'bg-gradient-to-br from-red-500 to-orange-500',
-  },
-  {
-    icon: FileText,
-    title: '剧本模式',
-    desc: '上传完整剧本，AI 智能解析分镜人物场景',
-    href: '/create?mode=script',
-    btnText: '上传剧本',
-    gradient: 'from-blue-50 to-indigo-50',
-    iconBg: 'bg-gradient-to-br from-blue-500 to-indigo-500',
-  },
-  {
-    icon: Sliders,
-    title: '专业导演模式',
-    desc: '全参数可控，专业导演级创作体验',
-    href: '/create?mode=professional',
-    btnText: '开始创作',
-    gradient: 'from-purple-50 to-pink-50',
-    iconBg: 'bg-gradient-to-br from-purple-500 to-pink-500',
-  },
-];
 
 const DashboardPage = () => {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [recentProjects, setRecentProjects] = useState<ProjectListItem[]>([]);
-  const [hotTemplates, setHotTemplates] = useState<Template[]>([]);
-  const [error, setError] = useState<string>('');
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  const [recent, setRecent] = useState<ProjectListItem[]>([]);
+  const [activity, setActivity] = useState<{ id: string; type: string; message: string; createdAt: string }[]>([]);
+  const [quickPrompt, setQuickPrompt] = useState('');
   const [loading, setLoading] = useState(true);
-  const [creatingDemo, setCreatingDemo] = useState(false);
 
-  // P1 Onboarding：一键创建示例项目（真实管线；之前空状态只有一句话）
-  const handleCreateDemo = async () => {
-    if (creatingDemo) return;
-    setCreatingDemo(true);
-    try {
-      const project = await projects.createProject({
-        title: '示例短剧 · 雨夜告白',
-        mode: 'quick',
-        durationSeconds: 60,
-        scriptText: DEMO_SCRIPT,
-      });
-      await storyboard.parseScript({ scriptText: DEMO_SCRIPT, projectId: project.id });
-      toast.success('示例项目已创建，分镜解析中，马上跳转查看');
-      navigate(`/project/${project.id}/storyboard`);
-    } catch {
-      toast.error('示例创建失败，请重试');
-    } finally {
-      setCreatingDemo(false);
-    }
-  };
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setError('');
-        const [statsData, projectsData, templatesData] = await Promise.all([
-          dashboard.getStats(),
-          dashboard.getRecentProjects(4),
-          templates.listTemplates({ pageSize: 6 }),
-        ]);
-        setStats(statsData);
-        setRecentProjects(projectsData);
-        setHotTemplates(templatesData.items);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '加载失败');
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
+  const load = useCallback(async () => {
+    const [s, j, r, a] = await Promise.all([
+      dashboardApi.getStats().catch(() => null),
+      generationApi.listJobs({ page: 1, pageSize: 8 }).catch(() => ({ items: [] as GenerationJob[] })),
+      dashboardApi.getRecentProjects(6).catch(() => [] as ProjectListItem[]),
+      dashboardApi.getActivityFeed(8).catch(() => []),
+    ]);
+    setStats(s);
+    setJobs((j as { items: GenerationJob[] }).items ?? []);
+    setRecent(r ?? []);
+    setActivity(a ?? []);
+    setLoading(false);
   }, []);
 
-  const statItems = stats
-    ? [
-        { icon: FolderKanban, label: '项目总数', value: stats.totalProjects, color: 'text-blue-500 bg-blue-50' },
-        { icon: Film, label: '生成镜头数', value: stats.totalShots, color: 'text-purple-500 bg-purple-50' },
-        { icon: ImageIcon, label: '资产总数', value: stats.totalAssets, color: 'text-emerald-500 bg-emerald-50' },
-        { icon: Wallet, label: '累计费用', value: `¥${stats.totalCost.toFixed(2)}`, color: 'text-primary bg-red-50' },
-      ]
-    : [];
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const kpis = [
+    { label: '项目总数', value: stats?.totalProjects ?? 0, icon: FolderKanban, cls: 'bg-sky-50 text-sky-600' },
+    { label: '生成镜头', value: stats?.totalShots ?? 0, icon: Film, cls: 'bg-violet-50 text-violet-600' },
+    { label: '产出资产', value: stats?.totalAssets ?? 0, icon: Images, cls: 'bg-emerald-50 text-emerald-600' },
+    { label: '累计费用', value: `¥${(stats?.totalCost ?? 0).toFixed(2)}`, icon: Coins, cls: 'bg-amber-50 text-amber-600' },
+  ];
+
+  const runningJobs = jobs.filter((j) => j.status === 'running' || j.status === 'pending');
+  const activeJobs = runningJobs.length > 0 ? runningJobs : jobs.slice(0, 6);
 
   return (
-    <div className="space-y-6">
-      {/* Hero Section */}
-      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-red-50 via-orange-50 to-purple-50 p-8 md:p-10">
-        <div className="absolute -top-20 -right-20 h-72 w-72 rounded-full bg-gradient-to-br from-red-200/40 to-orange-200/40 blur-3xl" />
-        <div className="absolute -bottom-24 -left-10 h-64 w-64 rounded-full bg-gradient-to-br from-purple-200/40 to-pink-200/40 blur-3xl" />
-        <div className="relative flex flex-col gap-8 md:flex-row md:items-center">
-          <div className="flex-1">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1 text-xs font-medium text-primary shadow-sm backdrop-blur">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>一木·YIMU AI 视频创作平台</span>
-            </div>
-            <h1 className="mt-4 text-3xl font-bold leading-tight text-foreground md:text-4xl">
-              让 AI 拍一部好剧
-            </h1>
-            <p className="mt-3 max-w-md text-base text-muted-foreground">
-              一句话到成片，一木·YIMU AI 视频创作平台。从创意、剧本、分镜到生成剪辑，一站式全流程自动化。
-            </p>
-            <div className="mt-6 flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => navigate('/create')}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-md shadow-primary/20 transition-all hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/30"
-              >
-                <Sparkles className="h-4 w-4" />
-                开始创作
-              </button>
-              {/* P1 修复：之前是无 onClick 死按钮，现滚动到模式区 */}
-              <button
-                onClick={() => document.getElementById('creation-modes')?.scrollIntoView({ behavior: 'smooth' })}
-                className="inline-flex items-center gap-1 rounded-lg px-4 py-3 text-sm font-medium text-foreground/80 transition-colors hover:text-primary"
-              >
-                了解更多
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <div className="relative flex-1">
-            <div className="relative mx-auto aspect-video w-full max-w-md overflow-hidden rounded-xl bg-gradient-to-br from-red-400 via-orange-400 to-purple-500 shadow-2xl">
-              {/* P1 修复：预览播放键之前无动作，现跳一键创作 */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <button
-                  onClick={() => navigate('/create')}
-                  aria-label="开始创作"
-                  className="flex h-16 w-16 items-center justify-center rounded-full bg-white/90 text-primary shadow-lg backdrop-blur transition-transform hover:scale-110"
-                >
-                  <Play className="ml-1 h-7 w-7 fill-current" />
-                </button>
-              </div>
-              <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-white/90">
-                <div className="flex items-center gap-2 text-xs">
-                  <Film className="h-4 w-4" />
-                  <span>AI 自动生成</span>
-                </div>
-                <span className="text-xs">90s · 竖屏</span>
-              </div>
-            </div>
-          </div>
+    <div className="mx-auto max-w-6xl space-y-5">
+      {/* 顶栏：问候 + 快速开拍条（生产力导向，无营销横幅） */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">
+            {new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}，一木
+          </h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {stats && stats.runningJobs > 0
+              ? `${stats.runningJobs} 个任务正在生成 · 今日完成 ${stats.completedToday}`
+              : '流水线空闲，适合开一部新剧'}
+          </p>
         </div>
-      </section>
-
-      {/* Creation Modes */}
-      <section id="creation-modes">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">创作模式</h2>
+        <div className="flex w-full max-w-md items-center gap-2 rounded-xl border border-input bg-background p-1.5 pl-3.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+          <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+          <input
+            value={quickPrompt}
+            onChange={(e) => setQuickPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && quickPrompt.trim()) navigate('/'); }}
+            onFocus={() => navigate('/')}
+            placeholder="一句话开拍，回车进入创作作战室…"
+            className="h-8 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <button
+            onClick={() => navigate('/')}
+            className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground hover:opacity-90"
+          >
+            开拍 <Send className="h-3 w-3" />
+          </button>
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-6 md:grid-cols-3">
-          {modeCards.map((mode) => (
-            <Link
-              key={mode.title}
-              to={mode.href}
-              className="group rounded-xl border bg-white p-6 shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
-            >
-              <div
-                className={`flex h-12 w-12 items-center justify-center rounded-xl ${mode.iconBg} text-white shadow-md`}
-              >
-                <mode.icon className="h-6 w-6" />
-              </div>
-              <h3 className="mt-4 text-base font-semibold text-foreground">
-                {mode.title}
-              </h3>
-              <p className="mt-1.5 text-sm text-muted-foreground">{mode.desc}</p>
-              <div className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary">
-                {mode.btnText}
-                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      {/* Stats */}
-      <section>
-        <h2 className="text-lg font-semibold text-foreground">创作统计</h2>
-        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-          {loading && !stats
-            ? Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="animate-pulse rounded-xl border bg-white p-6">
-                  <div className="h-4 w-20 rounded bg-muted" />
-                  <div className="mt-3 h-7 w-16 rounded bg-muted" />
-                </div>
-              ))
-            : statItems.map((item) => (
-                <div
-                  key={item.label}
-                  className="rounded-xl border bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
-                >
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${item.color}`}>
-                    <item.icon className="h-5 w-5" />
-                  </div>
-                  <div className="mt-3 text-2xl font-semibold text-foreground">
-                    {item.value}
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {item.label}
-                  </div>
-                </div>
-              ))}
-        </div>
-      </section>
-
-      {/* Recent Projects + Hot Templates */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Recent Projects */}
-        <section className="lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-foreground">最近项目</h2>
-            <Link
-              to="/projects"
-              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-            >
-              查看全部
-              <ChevronRight className="h-4 w-4" />
-            </Link>
-          </div>
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {loading
-              ? Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="animate-pulse overflow-hidden rounded-xl border bg-white">
-                    <div className="aspect-video bg-muted" />
-                    <div className="p-4">
-                      <div className="h-4 w-24 rounded bg-muted" />
-                      <div className="mt-2 h-3 w-16 rounded bg-muted" />
-                    </div>
-                  </div>
-                ))
-              : recentProjects.length === 0
-              ? (
-                <div className="col-span-2 rounded-xl border border-dashed p-8 text-center">
-                  <p className="text-sm text-muted-foreground">暂无项目，30 秒创建一个可查看的示例吧</p>
-                  <button
-                    onClick={handleCreateDemo}
-                    disabled={creatingDemo}
-                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    {creatingDemo ? '创建中...' : '一键创建示例项目'}
-                  </button>
-                </div>
-              )
-              : recentProjects.map((project, idx) => (
-                  <Link
-                    key={project.id}
-                    to={`/project/${project.id}`}
-                    className="group overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <div
-                      className={`relative aspect-video bg-gradient-to-br ${gradientColors[idx % gradientColors.length]}`}
-                    >
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-xs font-medium text-white/90">未获取</span>
-                      </div>
-                      <span
-                        className={`absolute right-3 top-3 rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColorMap[project.status]}`}
-                      >
-                        {statusLabelMap[project.status]}
-                      </span>
-                    </div>
-                    <div className="p-4">
-                      <h3 className="truncate text-sm font-semibold text-foreground group-hover:text-primary">
-                        {project.title}
-                      </h3>
-                      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                        <span className="inline-flex items-center gap-1">
-                          <Clock className="h-3.5 w-3.5" />
-                          {formatDuration(project.durationSeconds || 0)}
-                        </span>
-                        <span>{formatTimeAgo(project.updatedAt)}</span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-          </div>
-        </section>
-
-        {/* Hot Templates */}
-        <section>
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-foreground">热门模板</h2>
-            <Link
-              to="/templates"
-              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-            >
-              更多
-              <ChevronRight className="h-4 w-4" />
-            </Link>
-          </div>
-          <div className="mt-4 space-y-3">
-            {loading
-              ? Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg border p-2">
-                    <div className="h-12 w-16 rounded bg-muted" />
-                    <div className="flex-1">
-                      <div className="h-3 w-20 rounded bg-muted" />
-                      <div className="mt-1.5 h-2.5 w-12 rounded bg-muted" />
-                    </div>
-                  </div>
-                ))
-              : hotTemplates.length === 0
-              ? <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">暂无模板</div>
-              : hotTemplates.map((tpl, idx) => (
-                  <Link
-                    key={tpl.id}
-                    // P1 修复：之前跳不存在的 /templates/:id（404）；现用深链打开详情弹窗
-                    to={`/templates?template=${tpl.id}`}
-                    className="flex items-center gap-3 rounded-lg border p-2 transition-colors hover:border-primary/40 hover:bg-primary/5"
-                  >
-                    <div
-                      className={`flex h-12 w-16 flex-shrink-0 items-center justify-center rounded bg-gradient-to-br ${gradientColors[(idx + 2) % gradientColors.length]} text-white/90`}
-                    >
-                      <Film className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {tpl.name}
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                        <span className="rounded bg-muted px-1.5 py-0.5">
-                          {tpl.templateType === 'full' ? '完整' : tpl.templateType === 'style' ? '风格' : tpl.templateType === 'duration' ? '时长' : '类型'}
-                        </span>
-                        <span>{formatDuration(tpl.durationSeconds)}</span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-          </div>
-        </section>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {error}
+      {/* KPI 行 */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-background p-4">
+            <div className="flex items-center justify-between">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${k.cls}`}>
+                <k.icon className="h-4 w-4" />
+              </span>
+            </div>
+            <div className="mt-2.5 text-2xl font-bold tabular-nums tracking-tight text-foreground">{k.value}</div>
+            <div className="text-xs text-muted-foreground">{k.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-5">
+        {/* 左：生成任务 + 最近项目 */}
+        <div className="space-y-4 lg:col-span-3">
+          <section className="rounded-xl border border-border bg-background">
+            <header className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Loader2 className={`h-4 w-4 text-primary ${runningJobs.length ? 'animate-spin' : 'hidden'}`} />
+                生成任务
+              </h2>
+              <button onClick={() => navigate('/')} className="text-xs text-muted-foreground hover:text-primary">
+                全部任务 →
+              </button>
+            </header>
+            {loading ? (
+              <div className="flex h-32 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
+            ) : activeJobs.length === 0 ? (
+              <p className="px-4 py-8 text-center text-xs text-muted-foreground">暂无任务 · 在作战室发起生成后这里实时滚动</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {activeJobs.map((j) => {
+                  const st = JOB_STATUS[j.status] ?? JOB_STATUS.cancelled;
+                  return (
+                    <li key={j.id} className="flex items-center gap-3 px-4 py-2.5">
+                      <span className="w-14 shrink-0 text-xs font-medium text-foreground">{JOB_LABELS[j.jobType] ?? j.jobType}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{j.id.slice(0, 8)} · {j.modelName ?? j.providerName ?? '—'}</span>
+                      {j.status === 'running' && (
+                        <span className="hidden w-24 sm:block">
+                          <span className="block h-1 overflow-hidden rounded-full bg-muted">
+                            <span className="block h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(4, j.progress || 4)}%` }} />
+                          </span>
+                        </span>
+                      )}
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${st.cls}`}>{st.label}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-border bg-background">
+            <header className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Clapperboard className="h-4 w-4 text-primary" /> 最近项目
+              </h2>
+              <button onClick={() => navigate('/projects')} className="text-xs text-muted-foreground hover:text-primary">
+                全部项目 →
+              </button>
+            </header>
+            {recent.length === 0 ? (
+              <p className="px-4 py-8 text-center text-xs text-muted-foreground">还没有项目 · 回作战室一句话开拍</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {recent.map((p) => {
+                  const st = PROJECT_STATUS[p.status] ?? PROJECT_STATUS.draft;
+                  return (
+                    <li key={p.id}>
+                      <button
+                        onClick={() => navigate(`/project/${p.id}`)}
+                        className="group flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/40"
+                      >
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${st.cls}`}>{st.label}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground group-hover:text-primary">{p.title}</span>
+                        <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted-foreground sm:flex">
+                          <Clock className="h-3 w-3" /> {timeAgo(p.updatedAt ?? p.createdAt)}
+                        </span>
+                        <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 group-hover:text-primary" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         </div>
-      )}
+
+        {/* 右：活动流 */}
+        <section className="rounded-xl border border-border bg-background lg:col-span-2">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold text-foreground">动态</h2>
+          </header>
+          {activity.length === 0 ? (
+            <p className="px-4 py-8 text-center text-xs text-muted-foreground">暂无动态</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {activity.map((a) => (
+                <li key={a.id} className="px-4 py-2.5">
+                  <p className="line-clamp-2 text-xs leading-relaxed text-foreground/85">{a.message}</p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
     </div>
   );
 };
