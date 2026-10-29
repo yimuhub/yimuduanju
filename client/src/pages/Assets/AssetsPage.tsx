@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Search,
   Upload,
@@ -6,6 +7,9 @@ import {
   Eye,
   Trash2,
   X,
+  Download,
+  ArrowUpDown,
+  Sparkles,
 } from 'lucide-react';
 import { assets as assetsApi, projects as projectsApi } from '@client/src/api';
 import type { Asset, ProjectListItem } from '@shared/api.interface';
@@ -22,6 +26,14 @@ import AssetPreviewModal, {
 import { showConfirm } from '@client/src/components/ui/confirm';
 
 type AssetTypeFilter = 'all' | 'image' | 'video' | 'audio' | 'subtitle';
+type SortKey = 'newest' | 'oldest' | 'largest' | 'name';
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'newest', label: '最新优先' },
+  { key: 'oldest', label: '最早优先' },
+  { key: 'largest', label: '体积最大' },
+  { key: 'name', label: '名称 A-Z' },
+];
 
 const TYPE_FILTERS: { key: AssetTypeFilter; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -86,6 +98,7 @@ const AssetThumb = ({ asset }: { asset: Asset }) => {
 };
 
 const AssetsPage = () => {
+  const navigate = useNavigate();
   const [assetType, setAssetType] = useState<AssetTypeFilter>('all');
   const [keyword, setKeyword] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -102,6 +115,8 @@ const AssetsPage = () => {
   const [uploadUrl, setUploadUrl] = useState('');
   const [uploadType, setUploadType] = useState('image');
   const [uploading, setUploading] = useState(false);
+  // 客户端排序（列表接口不支持 sort 参数）
+  const [sortKey, setSortKey] = useState<SortKey>('newest');
 
   useEffect(() => {
     projectsApi
@@ -147,6 +162,41 @@ const AssetsPage = () => {
       logger.error('delete asset failed', String(e));
       toast.error('删除失败，请重试');
     }
+  };
+
+  // 客户端排序（列表接口无 sort 参数）
+  const sortedAssets = useMemo(() => {
+    const list = [...assets];
+    switch (sortKey) {
+      case 'oldest':
+        return list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      case 'largest':
+        return list.sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0));
+      case 'name':
+        return list.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      default:
+        return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+  }, [assets, sortKey]);
+
+  // 项目名映射：预览弹窗展示资产归属
+  const projectNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    projectList.forEach((p) => {
+      map[p.id] = p.title;
+    });
+    return map;
+  }, [projectList]);
+
+  const selectedIndex = selectedAsset
+    ? sortedAssets.findIndex((a) => a.id === selectedAsset.id)
+    : -1;
+  const hasPrev = selectedIndex > 0;
+  const hasNext = selectedIndex >= 0 && selectedIndex < sortedAssets.length - 1;
+  const stepPreview = (dir: -1 | 1) => {
+    if (selectedIndex < 0) return;
+    const next = sortedAssets[selectedIndex + dir];
+    if (next) setSelectedAsset(next);
   };
 
   const handleUrlUpload = async () => {
@@ -236,6 +286,20 @@ const AssetsPage = () => {
               ))}
             </select>
           )}
+          <div className="flex items-center gap-1.5">
+            <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              className="h-9 rounded-full border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -255,13 +319,36 @@ const AssetsPage = () => {
           </button>
         </div>
       ) : assets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-          <ImageIcon className="mb-3 h-10 w-10 opacity-50" />
-          <p>暂无资产</p>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-white py-20 text-muted-foreground">
+          <ImageIcon className="mb-3 h-10 w-10 opacity-40" />
+          <p className="text-sm font-medium text-foreground">
+            {keyword || assetType !== 'all' || projectFilter ? '没有匹配的资产' : '资产库还是空的'}
+          </p>
+          <p className="mt-1 text-xs">
+            {keyword || assetType !== 'all' || projectFilter
+              ? '换个筛选条件试试'
+              : '生成任务产出的图片/视频/音频会自动归档到这里'}
+          </p>
+          <div className="mt-5 flex items-center gap-3">
+            <button
+              onClick={() => navigate('/create')}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+            >
+              <Sparkles className="h-4 w-4" />
+              去创作产出资产
+            </button>
+            <button
+              onClick={() => setShowUpload(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-primary/40 bg-primary/5 px-5 py-2.5 text-sm font-medium text-primary hover:bg-primary/10"
+            >
+              <Upload className="h-4 w-4" />
+              登记外部素材
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {assets.map((asset) => {
+          {sortedAssets.map((asset) => {
             const isMedia =
               asset.assetType === 'video' || asset.assetType === 'audio';
 
@@ -305,6 +392,18 @@ const AssetsPage = () => {
                     >
                       <Eye className="h-4 w-4" />
                     </button>
+                    {assetsApi.mediaUrl(asset) && (
+                      <a
+                        href={assetsApi.mediaUrl(asset)}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-foreground shadow-lg hover:scale-110"
+                        title="下载 / 原图打开"
+                      >
+                        <Download className="h-4 w-4" />
+                      </a>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -338,6 +437,20 @@ const AssetsPage = () => {
           asset={selectedAsset}
           onClose={() => setSelectedAsset(null)}
           onDelete={handleDelete}
+          projectName={
+            selectedAsset.projectId
+              ? projectNameById[selectedAsset.projectId]
+              : undefined
+          }
+          hasPrev={hasPrev}
+          hasNext={hasNext}
+          onPrev={() => stepPreview(-1)}
+          onNext={() => stepPreview(1)}
+          position={
+            selectedIndex >= 0
+              ? { index: selectedIndex + 1, total: sortedAssets.length }
+              : undefined
+          }
         />
       )}
 

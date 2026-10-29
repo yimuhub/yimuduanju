@@ -19,7 +19,11 @@ import {
   X,
   PanelRightOpen,
   Sparkles,
+  Palette,
+  UserCircle,
+  LogOut,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const navItems = [
   { to: '/', label: '创作作战室', icon: Sparkles, end: true },
@@ -28,8 +32,10 @@ const navItems = [
   { to: '/project/free/canvas-free3', label: '自由画布', icon: Workflow },
   { to: '/create', label: '一键创作', icon: Wand2 },
   { to: '/templates', label: '模板中心', icon: LayoutGrid },
+  { to: '/styles', label: '风格中心', icon: Palette },
   { to: '/assets', label: '资产库', icon: Image },
   { to: '/ai-assistant', label: 'AI助手', icon: Bot },
+  { to: '/account', label: '用户中心', icon: UserCircle },
   { to: '/settings', label: '设置', icon: Settings },
 ];
 
@@ -41,6 +47,8 @@ const breadcrumbMap: Record<string, string> = {
   templates: '模板中心',
   assets: '资产库',
   'ai-assistant': 'AI助手',
+  account: '用户中心',
+  styles: '风格中心',
   settings: '设置',
   project: '项目工作台',
   canvas: '无限画布',
@@ -74,6 +82,8 @@ const Layout = () => {
   const [dockOpen, setDockOpen] = useState(
     () => localStorage.getItem('yimu.rightDockOpen') !== '0',
   );
+  // 顶栏头像下拉（用户中心 / 设置 / 退出登录）
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const toggleDock = () => {
     setDockOpen((prev) => {
       localStorage.setItem('yimu.rightDockOpen', prev ? '0' : '1');
@@ -129,7 +139,10 @@ const Layout = () => {
 
       {/* User */}
       <div className="border-t border-sidebar-border p-3">
-        <div className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent">
+        <button
+          onClick={() => navigate('/account')}
+          className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-sidebar-accent"
+        >
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground">
             YM
           </div>
@@ -141,7 +154,7 @@ const Layout = () => {
               专业版
             </div>
           </div>
-        </div>
+        </button>
       </div>
     </>
   );
@@ -226,8 +239,56 @@ const Layout = () => {
             >
               <PanelRightOpen className="h-[18px] w-[18px]" />
             </button>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground">
-              YM
+            {/* P1 用户中心：头像点击弹下拉，替代此前不可点的摆设头像 */}
+            <div className="relative">
+              <button
+                onClick={() => setUserMenuOpen((v) => !v)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground transition-transform hover:scale-105"
+                aria-label="用户菜单"
+              >
+                YM
+              </button>
+              {userMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
+                  <div className="absolute right-0 top-11 z-50 w-44 overflow-hidden rounded-xl border bg-white py-1 shadow-lg">
+                    <div className="border-b border-border px-4 py-2.5">
+                      <div className="text-sm font-medium text-foreground">一木用户</div>
+                      <div className="text-xs text-muted-foreground">专业版</div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        navigate('/account');
+                      }}
+                      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted"
+                    >
+                      <UserCircle className="h-4 w-4 text-muted-foreground" />
+                      用户中心
+                    </button>
+                    <button
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        navigate('/settings');
+                      }}
+                      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted"
+                    >
+                      <Settings className="h-4 w-4 text-muted-foreground" />
+                      设置
+                    </button>
+                    <button
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        toast('演示环境暂未接入登录体系');
+                      }}
+                      className="flex w-full items-center gap-2.5 border-t border-border px-4 py-2.5 text-sm text-foreground hover:bg-muted"
+                    >
+                      <LogOut className="h-4 w-4 text-muted-foreground" />
+                      退出登录
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </header>

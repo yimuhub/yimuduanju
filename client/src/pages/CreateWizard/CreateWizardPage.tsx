@@ -481,17 +481,17 @@ const CreateWizardPage = () => {
         </div>
       </div>
 
-      {/* Stepper */}
-      <div className="flex items-center justify-center gap-2">
+      {/* Stepper（连接线随进度着色，完成后打勾） */}
+      <div className="flex items-center justify-center rounded-xl border bg-white px-5 py-3 shadow-sm">
         {steps.map((step, idx) => (
           <div key={step.num} className="flex items-center">
             <div className="flex items-center gap-2">
               <div
-                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
                   currentStep > step.num
                     ? 'bg-emerald-500 text-white'
                     : currentStep === step.num
-                    ? 'bg-primary text-white'
+                    ? 'bg-primary text-white shadow-sm shadow-primary/30'
                     : 'bg-muted text-muted-foreground'
                 }`}
               >
@@ -509,7 +509,7 @@ const CreateWizardPage = () => {
             </div>
             {idx < steps.length - 1 && (
               <div
-                className={`mx-3 h-0.5 w-16 rounded ${
+                className={`mx-4 h-0.5 w-20 rounded-full transition-colors sm:w-32 ${
                   currentStep > step.num ? 'bg-emerald-400' : 'bg-border'
                 }`}
               />
@@ -545,6 +545,7 @@ const CreateWizardPage = () => {
 
       {/* Form views */}
       {!generating && (
+        <>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Main content */}
           <div className="space-y-6 lg:col-span-2">
@@ -668,7 +669,7 @@ const CreateWizardPage = () => {
             </div>
           </div>
 
-          {/* Right settings panel + CTA */}
+          {/* Right settings panel：参数分组卡片（WizardSettings 内部按时长/画幅/画风/导演分组） */}
           <div className="space-y-5">
             <WizardSettings
               duration={duration}
@@ -699,62 +700,63 @@ const CreateWizardPage = () => {
               genreId={genreId}
               setGenreId={setGenreId}
             />
-
-            {/* W2 生成前预估：本次约扣多少、对比市场省多少，下单前确定 */}
-            {estimate ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
-                <div className="flex items-baseline justify-between">
-                  <span className="font-medium">本次预估</span>
-                  <span className="text-base font-bold">¥{estimate.total.toFixed(2)}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between text-emerald-700/80">
-                  <span>市场参考 ¥{estimate.marketTotal.toFixed(2)}</span>
-                  <span>省 ¥{estimate.saved.toFixed(2)}</span>
-                </div>
-                <button
-                  onClick={() => setEstimate(null)}
-                  className="mt-2 text-emerald-700 underline hover:text-emerald-900"
-                >
-                  重新预估
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleEstimate}
-                disabled={estimating || !canGenerate}
-                className="w-full rounded-lg border border-primary/40 bg-primary/5 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {estimating ? '预估中...' : '预估本次费用'}
-              </button>
-            )}
-            {/* Generate button */}
-            {hasUsableProvider === false && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                <p className="font-medium">尚未配置可用的模型服务</p>
-                <p className="mt-0.5 opacity-80">
-                  生成任务将创建并排队等待，配置 API Key 后自动执行；输入内容会保留。
-                </p>
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="mt-2 rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700"
-                >
-                  去配置模型服务
-                </button>
-              </div>
-            )}
-            <button
-              onClick={handleStartGenerate}
-              disabled={!canGenerate}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary via-orange-500 to-purple-500 py-3.5 text-sm font-semibold text-white shadow-lg shadow-primary/20 transition-all hover:shadow-xl hover:shadow-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Sparkles className="h-4 w-4" />
-              {mode === 'script' ? '确认并生成' : '开始生成'}
-            </button>
-            <p className="text-center text-xs text-muted-foreground">
-              剧本解析约数十秒完成；图片/视频生成按 Provider 实际排队执行，可在任务页查看进度
-            </p>
           </div>
         </div>
+
+        {/* 底部固定操作条：预估 / 无 Key 提示 / 生成，滚动到哪里都在手边 */}
+        <div className="sticky bottom-4 z-30 mt-2">
+          <div className="flex flex-col gap-3 rounded-2xl border bg-white/95 p-3 shadow-lg shadow-black/5 backdrop-blur sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              {/* W2 生成前预估：本次约扣多少、对比市场省多少，下单前确定 */}
+              {estimate ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  <span className="font-medium">本次预估</span>
+                  <span className="text-base font-bold">¥{estimate.total.toFixed(2)}</span>
+                  <span className="text-emerald-700/80">
+                    市场参考 ¥{estimate.marketTotal.toFixed(2)} · 省 ¥{estimate.saved.toFixed(2)}
+                  </span>
+                  <button
+                    onClick={() => setEstimate(null)}
+                    className="underline hover:text-emerald-900"
+                  >
+                    重新预估
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handleEstimate}
+                  disabled={estimating || !canGenerate}
+                  className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {estimating ? '预估中...' : '预估本次费用'}
+                </button>
+              )}
+              {hasUsableProvider === false && (
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="mt-2 flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-800 hover:bg-amber-100 sm:max-w-md"
+                >
+                  <span className="font-medium">尚未配置模型服务，任务将排队等待</span>
+                  <span className="ml-auto shrink-0 underline">去配置</span>
+                </button>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <button
+                onClick={handleStartGenerate}
+                disabled={!canGenerate}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary via-orange-500 to-purple-500 px-8 py-3 text-sm font-semibold text-white shadow-lg shadow-primary/20 transition-all hover:shadow-xl hover:shadow-primary/30 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              >
+                <Sparkles className="h-4 w-4" />
+                {mode === 'script' ? '确认并生成' : '开始生成'}
+              </button>
+              <p className="hidden text-[11px] text-muted-foreground sm:block">
+                剧本解析约数十秒；图片/视频按 Provider 排队执行
+              </p>
+            </div>
+          </div>
+        </div>
+        </>
       )}
     </div>
   );

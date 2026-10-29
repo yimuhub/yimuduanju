@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   Send,
   Paperclip,
@@ -102,6 +103,7 @@ const JOB_STATUS_LABELS: Record<string, string> = {
 
 const AgentStudio = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [activeId, setActiveId] = useState(() => '');
   const [searchText, setSearchText] = useState('');
@@ -124,6 +126,17 @@ const AgentStudio = () => {
     [sessions, activeId],
   );
   useEffect(() => { if (!active) setActiveId(sessions[0]?.id ?? ''); }, [active, sessions]);
+
+  // 风格中心「以此风格开拍」深链：携带 stylePrompt 落地后回填输入框并清掉 state（防刷新重复回填）
+  useEffect(() => {
+    const state = location.state as { stylePrompt?: string; styleName?: string } | null;
+    if (state?.stylePrompt) {
+      setInput(state.stylePrompt);
+      toast.success(`已带入「${state.styleName ?? '所选风格'}」提示词，补充题材细节后即可开拍`);
+      navigate('/', { replace: true, state: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 极简首页：新会话（仅欢迎消息）时进入 hero 模式——一句话 + 输入框 + 灵感剧场
   const heroMode = (active?.messages.length ?? 0) <= 1;

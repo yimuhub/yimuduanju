@@ -1,5 +1,16 @@
-import { useState } from 'react';
-import { X, Download, Trash2, Image as ImageIcon, Video, Music, FileText } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  X,
+  Download,
+  Trash2,
+  Image as ImageIcon,
+  Video,
+  Music,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  FolderKanban,
+} from 'lucide-react';
 import type { Asset } from '@shared/api.interface';
 import { assets as assetsApi } from '@client/src/api';
 
@@ -69,18 +80,48 @@ interface AssetPreviewModalProps {
   asset: Asset;
   onClose: () => void;
   onDelete: (id: string) => void;
+  /** 资产归属项目名（可无） */
+  projectName?: string;
+  /** 列表内左右切换 */
+  hasPrev?: boolean;
+  hasNext?: boolean;
+  onPrev?: () => void;
+  onNext?: () => void;
+  /** 第几张 / 共几张 */
+  position?: { index: number; total: number };
 }
 
 const AssetPreviewModal = ({
   asset,
   onClose,
   onDelete,
+  projectName,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  position,
 }: AssetPreviewModalProps) => {
   const [mediaFailed, setMediaFailed] = useState(false);
   const Icon = getTypeIcon(asset.assetType);
   const typeLabel = TYPE_LABELS[asset.assetType] || asset.assetType;
   const url = assetsApi.mediaUrl(asset);
   const canShowMedia = !!url && !mediaFailed;
+
+  // 键盘左右切换 + Esc 关闭（媒体地址变化时重置加载失败状态）
+  useEffect(() => {
+    setMediaFailed(false);
+  }, [asset.id, url]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && hasPrev) onPrev?.();
+      if (e.key === 'ArrowRight' && hasNext) onNext?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, hasPrev, hasNext, onPrev, onNext]);
 
   return (
     <div
@@ -91,13 +132,28 @@ const AssetPreviewModal = ({
         className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b p-4">
-          <h3 className="text-base font-semibold text-foreground">
-            {asset.name}
-          </h3>
+        <div className="flex items-center justify-between gap-3 border-b p-4">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-semibold text-foreground">
+              {asset.name}
+            </h3>
+            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+              {projectName && (
+                <span className="inline-flex items-center gap-1">
+                  <FolderKanban className="h-3 w-3" />
+                  {projectName}
+                </span>
+              )}
+              {position && (
+                <span>
+                  {position.index} / {position.total}
+                </span>
+              )}
+            </div>
+          </div>
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
           >
             <X className="h-4 w-4" />
           </button>
@@ -129,6 +185,25 @@ const AssetPreviewModal = ({
             <span className="text-sm font-medium text-white/90">未获取</span>
           ) : (
             <Icon className="h-20 w-20 text-white/80" />
+          )}
+          {/* 左右切换：同一份过滤结果内逐张浏览 */}
+          {hasPrev && (
+            <button
+              onClick={onPrev}
+              className="absolute left-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-transform hover:scale-110"
+              aria-label="上一个"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
+          {hasNext && (
+            <button
+              onClick={onNext}
+              className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-transform hover:scale-110"
+              aria-label="下一个"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
           )}
           {canShowMedia && asset.durationSeconds && (
             <span className="absolute right-4 top-4 rounded-md bg-black/60 px-2 py-1 text-sm text-white">

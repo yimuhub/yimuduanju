@@ -11,6 +11,8 @@ import CreateWizardPage from './pages/CreateWizard/CreateWizardPage';
 import TemplatesPage from './pages/Templates/TemplatesPage';
 import AssetsPage from './pages/Assets/AssetsPage';
 import AiAssistantPage from './pages/AiAssistant/AiAssistantPage';
+import StylesPage from './pages/Styles/StylesPage';
+import AccountPage from './pages/Account/AccountPage';
 import SettingsPage from './pages/Settings/SettingsPage';
 import ProjectWorkspacePage from './pages/ProjectWorkspace/ProjectWorkspacePage';
 import ProjectOverviewTab from './pages/ProjectWorkspace/tabs/ProjectOverviewTab';
@@ -78,8 +80,10 @@ const RoutesComponent = () => {
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="create" element={<CreateWizardPage />} />
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="styles" element={<StylesPage />} />
         <Route path="assets" element={<AssetsPage />} />
         <Route path="ai-assistant" element={<AiAssistantPage />} />
+        <Route path="account" element={<AccountPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="project/:id" element={<ProjectWorkspacePage />}>
           <Route index element={<ProjectOverviewTab />} />
