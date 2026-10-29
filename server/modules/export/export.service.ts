@@ -15,6 +15,7 @@ import {
 } from '@server/database/schema';
 import { eq, desc, asc } from 'drizzle-orm';
 import { uploadDir } from '../assets/uploads.controller';
+import { isSafeExternalUrl, isSafeExternalUrlStatic } from '../../common/url-guard';
 import type { Asset } from '@shared/api.interface';
 
 /**
@@ -650,43 +651,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   /**
    * SSRF 防护：校验外部媒体 URL 必须为公网 http(s) 地址，禁止访问回环、私网与云元数据地址。
+   * W7 起委托共享守卫 server/common/url-guard（数字 IP 变体、IPv6、DNS 解析复检均已覆盖）。
    */
   public isSafeExternalUrl(rawUrl: string): boolean {
-    try {
-      const parsed = new URL(rawUrl);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return false;
-      }
-      const host = parsed.hostname.toLowerCase();
-      if (
-        host === 'localhost' ||
-        host === '0.0.0.0' ||
-        host === '::1' ||
-        host === '[::1]' ||
-        host.endsWith('.local') ||
-        host.endsWith('.internal')
-      ) {
-        return false;
-      }
-      // IPv4 私网与保留段拦截
-      const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-      if (ipv4) {
-        const [, a, b] = ipv4.map(Number);
-        if (
-          a === 127 ||
-          a === 10 ||
-          a === 0 ||
-          (a === 169 && b === 254) ||
-          (a === 192 && b === 168) ||
-          (a === 172 && b >= 16 && b <= 31)
-        ) {
-          return false;
-        }
-      }
-      return true;
-    } catch {
-      return false;
-    }
+    return isSafeExternalUrlStatic(rawUrl);
+  }
+
+  /** 异步完整校验（含 DNS 解析复检），媒体下载入口使用 */
+  public async checkExternalUrl(rawUrl: string): Promise<boolean> {
+    return isSafeExternalUrl(rawUrl);
   }
 
   /**
@@ -927,7 +900,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   /** curl 拉取镜头成片：带 SSRF 校验，.cn/.space 互为镜像优先 space，退避重试；curl 失败走 node fetch */
   private async downloadClip(url: string, dest: string, timeoutMs: number, retries: number): Promise<boolean> {
-    if (!this.isSafeExternalUrl(url)) {
+    if (!(await this.checkExternalUrl(url))) {
       this.logger.warn(`拦截不安全的外部媒体 URL（SSRF 防护）: ${url.slice(0, 100)}`);
       return false;
     }
@@ -935,7 +908,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       url.replace('cos-platform-outputs.agnes-ai.cn', 'platform-outputs.agnes-ai.space'),
       url.replace('platform-outputs.agnes-ai.space', 'cos-platform-outputs.agnes-ai.cn'),
       url,
-    ].filter((u) => this.isSafeExternalUrl(u));
+    ].filter((u) => isSafeExternalUrlStatic(u));
     const unique = [...new Set(candidates)];
     if (unique.length === 0) return false;
     const timeoutSec = Math.max(20, Math.ceil(timeoutMs / 1000));
@@ -971,7 +944,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   private async fetchClip(url: string, dest: string, timeoutMs: number): Promise<boolean> {
-    if (!this.isSafeExternalUrl(url)) return false;
+    if (!(await this.checkExternalUrl(url))) return false;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'follow' });
       if (!res.ok) return false;

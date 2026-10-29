@@ -69,6 +69,10 @@ function ChartContainer({
   )
 }
 
+// W7 安全修复：config 的 key/color 会拼进 <style> innerHTML，消毒防止 CSS/HTML 注入
+const safeCssIdent = (v: string) => v.replace(/[^a-zA-Z0-9_-]/g, "")
+const safeCssValue = (v: string) => v.replace(/[^a-zA-Z0-9#(),.%\s-]/g, "")
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
     ([, config]) => config.theme || config.color
@@ -84,13 +88,13 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
         __html: Object.entries(THEMES)
           .map(
             ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
+${prefix} [data-chart=${safeCssIdent(id)}] {
 ${colorConfig
   .map(([key, itemConfig]) => {
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    return color ? `  --color-${safeCssIdent(key)}: ${safeCssValue(color)};` : null
   })
   .join("\n")}
 }

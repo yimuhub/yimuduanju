@@ -63,7 +63,7 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   c_red "请升级 Node.js（nvm install 22，或从 https://nodejs.org/ 下载），然后重新运行本脚本。"
   exit 1
 fi
-c_green "    node 版本 OK（v$NODE_VER）"
+c_green "    node 版本 OK（v${NODE_VER}）"
 if [ ! -d "$ROOT_DIR/node_modules" ]; then
   c_red "依赖未安装（未找到 node_modules），请先在项目根目录运行：npm install"
   exit 1

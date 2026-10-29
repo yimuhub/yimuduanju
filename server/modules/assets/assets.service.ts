@@ -9,6 +9,21 @@ import { randomUUID } from 'crypto';
 import { uploadDir } from './upload-dir';
 import type { Asset, AssetListParams, AssetListResponse } from '@shared/api.interface';
 
+/**
+ * W7 安全修复：fileUrl 由客户端经 create/update 提交，内容取流接口会按它读盘或远程拉取。
+ * 收紧为两类合法值：/uploads/ 相对路径（禁路径回溯）与 http(s) 地址（取流入口另有 SSRF 守卫）。
+ */
+function assertSafeFileUrl(v: string): void {
+  if (v.startsWith('/uploads/')) {
+    if (v.split('/').includes('..')) {
+      throw new BadRequestException('fileUrl 非法：不允许路径回溯（..）');
+    }
+    return;
+  }
+  if (/^https?:\/\//i.test(v)) return;
+  throw new BadRequestException('fileUrl 仅允许 /uploads/ 相对路径或 http(s) 地址');
+}
+
 @Injectable()
 export class AssetsService {
   private readonly logger = new Logger(AssetsService.name);
@@ -74,6 +89,10 @@ export class AssetsService {
     if (!dto.projectId) {
       throw new BadRequestException('projectId 为必填项（资产必须归属项目）');
     }
+    if (dto.fileUrl) assertSafeFileUrl(dto.fileUrl);
+    if (dto.thumbnailUrl && /^https?:\/\//i.test(dto.thumbnailUrl) === false && dto.thumbnailUrl.startsWith('/uploads/')) {
+      assertSafeFileUrl(dto.thumbnailUrl);
+    }
     const rows = await this.db
       .insert(assets)
       .values({
@@ -106,7 +125,10 @@ export class AssetsService {
     const patch: Record<string, unknown> = {};
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.assetType !== undefined) patch.assetType = dto.assetType;
-    if (dto.fileUrl !== undefined) patch.fileUrl = dto.fileUrl;
+    if (dto.fileUrl !== undefined) {
+      assertSafeFileUrl(dto.fileUrl);
+      patch.fileUrl = dto.fileUrl;
+    }
     if (dto.filePath !== undefined) patch.filePath = dto.filePath;
     if (dto.thumbnailUrl !== undefined) patch.thumbnailUrl = dto.thumbnailUrl;
     if (dto.mimeType !== undefined) patch.mimeType = dto.mimeType;

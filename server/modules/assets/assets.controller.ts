@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { readFile } from 'fs/promises';
-import { join, resolve } from 'path';
+import { relative, resolve, isAbsolute } from 'path';
 import type {
   Asset,
   AssetListResponse,
@@ -21,6 +21,21 @@ import type {
 import { AssetsService } from './assets.service';
 import { uploadDir } from './upload-dir';
 import { AssetListQueryDto, CreateAssetDto, UpdateAssetDto } from './dto';
+import { isSafeExternalUrl } from '../../common/url-guard';
+
+/**
+ * /uploads/ 相对路径 → 上传目录内绝对路径，并做包含性校验。
+ * 用 path.relative 判定而不是 startsWith 前缀（后者放行 data/uploads-backup 等兄弟目录）。
+ */
+function resolveUnderUploads(fileUrl: string): string {
+  const rel = fileUrl.replace(/^\/uploads\//, '');
+  const base = resolve(uploadDir());
+  const abs = resolve(base, rel);
+  if (isAbsolute(rel) || relative(base, abs).startsWith('..')) {
+    throw new BadRequestException('非法路径');
+  }
+  return abs;
+}
 
 @Controller('api/assets')
 export class AssetsController {
@@ -52,12 +67,9 @@ export class AssetsController {
           : asset.assetType === 'image' ? 'image/png' : 'application/octet-stream');
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (url.startsWith('/uploads/')) {
-      const rel = url.replace(/^\/uploads\//, '');
-      const abs = join(resolve(uploadDir()), rel);
-      if (!abs.startsWith(resolve(uploadDir()))) throw new BadRequestException('非法路径');
+      const abs = resolveUnderUploads(url);
       try {
         const buf = await readFile(abs);
         res.setHeader('Content-Length', String(buf.length));
@@ -79,6 +91,10 @@ export class AssetsController {
     }
     if (!/^https?:\/\//i.test(url)) {
       throw new BadRequestException('不支持的资产地址');
+    }
+    // W7 安全修复：fileUrl 客户端可控（create/update DTO），远程取流必须过 SSRF 守卫
+    if (!(await isSafeExternalUrl(url))) {
+      throw new BadRequestException('资产地址被安全策略拦截（仅允许公网 http/https）');
     }
     const buf = await this.assetsService.fetchRemoteToBuffer(url, asset);
     res.setHeader('Content-Length', String(buf.length));
