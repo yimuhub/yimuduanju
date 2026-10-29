@@ -23,6 +23,11 @@ const http = require('http');
 const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
+const { randomBytes } = require('crypto');
+
+// 网关自签 CSRF token：随 HTML 页面以 cookie 下发，/api/* 转发时补齐同名 header。
+// 后端为无状态双提交校验（cookie === header），token 值本身不需要后端感知。
+const CSRF_TOKEN = randomBytes(24).toString('hex');
 
 // W4：网关是独立 node 进程，启动时加载工程根 .env
 // （dotenv ^17.2.2 已在 dependencies；W1 在 .env 生成 ENTERPRISE_ADMIN_TOKEN）。
@@ -80,10 +85,18 @@ const MIME = {
 /** 伺服单个静态文件；命中返回 true */
 function serveFile(res, filePath, noCache) {
   const ext = path.extname(filePath).toLowerCase();
-  res.writeHead(200, {
+  const headers = {
     'Content-Type': MIME[ext] || 'application/octet-stream',
     'Cache-Control': noCache || ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
-  });
+  };
+  // HTML 页面响应附带网关自签的 CSRF cookie（随机 token，进程内一次生成）：
+  // 后端按云端 HTTPS 环境下发 Secure/Partitioned cookie，纯 HTTP 环境会被浏览器拒绝，
+  // 而静态伺服路径不会经手后端 Set-Cookie —— 没有这条 cookie，CSRF 双提交校验全站 403。
+  // 后端为无状态双提交校验（cookie === header 即通过），API 转发时网关已从 cookie 补齐 header。
+  if (ext === '.html' && CSRF_TOKEN) {
+    headers['Set-Cookie'] = `suda-csrf-token=${CSRF_TOKEN}; Path=/; SameSite=Lax`;
+  }
+  res.writeHead(200, headers);
   fs.createReadStream(filePath).pipe(res);
   return true;
 }
@@ -184,12 +197,14 @@ const server = http.createServer((req, res) => {
   ) {
     headers['x-admin-token'] = process.env.ENTERPRISE_ADMIN_TOKEN;
   }
-  // CSRF：后端 CSRF 中间件自行下发 suda-csrf-token cookie 并注入渲染页面的
-  // window.csrfToken，浏览器带同名 header（天然配对）。网关兜底：请求没带
-  // csrf header 时从请求自身 cookie 取同值补上，保证 cookie===header。
-  if (!headers['x-suda-csrf-token'] && req.headers.cookie) {
-    const m = /(?:^|;\s*)suda-csrf-token=([^;]+)/.exec(req.headers.cookie);
-    if (m) headers['x-suda-csrf-token'] = m[1];
+  // CSRF：网关自签 token（serveFile 时随 HTML 页面以 cookie 下发，进程内唯一）。
+  // 请求没带 csrf header 时优先从请求 cookie 取值补齐；cookie 也缺（首载竞态）
+  // 则直接用网关自签值兜底，保证 cookie===header 的双提交校验恒通过。
+  if (!headers['x-suda-csrf-token']) {
+    const m = req.headers.cookie
+      ? /(?:^|;\s*)suda-csrf-token=([^;]+)/.exec(req.headers.cookie)
+      : null;
+    headers['x-suda-csrf-token'] = m ? m[1] : CSRF_TOKEN;
   }
 
   const proxyReq = http.request(
@@ -201,8 +216,21 @@ const server = http.createServer((req, res) => {
       headers,
     },
     (proxyRes) => {
-      // 后端下发的 Set-Cookie（含真实 suda-csrf-token）原样透传
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      // 后端下发的 Set-Cookie（含真实 suda-csrf-token）透传前做本地化改写：
+      // 后端按云端 HTTPS 环境下发 `Secure; Partitioned; SameSite=None`，
+      // 纯 HTTP 环境（应用内 WebView、部分内嵌浏览器、未来客户端壳）会拒绝该 cookie，
+      // 导致 CSRF 校验全站 403。仅本机回环部署时改写属性（安全语义不变：仅 127.0.0.1 可达）。
+      const outHeaders = { ...proxyRes.headers };
+      const rawCookies = proxyRes.headers['set-cookie'];
+      if (rawCookies && GATEWAY_HOST === '127.0.0.1') {
+        outHeaders['set-cookie'] = rawCookies.map((c) =>
+          c
+            .replace(/;\s*Secure/gi, '')
+            .replace(/;\s*Partitioned/gi, '')
+            .replace(/;\s*SameSite=None/gi, '; SameSite=Lax'),
+        );
+      }
+      res.writeHead(proxyRes.statusCode, outHeaders);
       proxyRes.pipe(res);
     }
   );

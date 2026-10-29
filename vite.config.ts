@@ -21,7 +21,8 @@ export default defineConfig({
     },
   },
   define: {
-    'process.env.CLIENT_BASE_PATH': JSON.stringify(process.env.CLIENT_BASE_PATH || '/'),
+    // 与 scripts/gateway.js 的 /app/yimu 前缀保持一致（basename 失配会导致首页 404）
+    'process.env.CLIENT_BASE_PATH': JSON.stringify(process.env.CLIENT_BASE_PATH || '/app/yimu'),
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
   },
   build: {

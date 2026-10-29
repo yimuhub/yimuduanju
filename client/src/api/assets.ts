@@ -10,6 +10,12 @@ export const listAssets = (params: AssetListParams = {}) =>
     .get<AssetListResponse>('/api/assets', { params })
     .then((res) => res.data);
 
+/** 按项目取全部资产（创作作战室右侧产出面板使用） */
+export const listByProject = (projectId: string) =>
+  axiosForBackend
+    .get<Asset[]>(`/api/assets/by-project/${projectId}`)
+    .then((res) => res.data);
+
 /** 媒体展示地址：本地 /uploads 直连；远程走后端代理取流（可自动落盘） */
 export const mediaUrl = (asset: Pick<Asset, 'id' | 'fileUrl'>): string | undefined => {
   if (!asset.fileUrl) return undefined;

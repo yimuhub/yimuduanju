@@ -4,6 +4,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 
 import Layout from './components/Layout';
 import NotFound from './pages/NotFound/NotFound';
+import AgentStudio from './pages/AgentStudio/AgentStudio';
 import DashboardPage from './pages/Dashboard/DashboardPage';
 import ProjectsPage from './pages/Projects/ProjectsPage';
 import CreateWizardPage from './pages/CreateWizard/CreateWizardPage';
@@ -71,7 +72,9 @@ const RoutesComponent = () => {
         }
       />
       <Route element={<Layout />}>
-        <Route index element={<DashboardPage />} />
+        {/* 首页 = 创作作战室（Agent 三段式）；数据看板移至 /dashboard */}
+        <Route index element={<AgentStudio />} />
+        <Route path="dashboard" element={<DashboardPage />} />
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="create" element={<CreateWizardPage />} />
         <Route path="templates" element={<TemplatesPage />} />

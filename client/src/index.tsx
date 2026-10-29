@@ -15,8 +15,9 @@ import { Toaster } from '@client/src/components/ui/sonner';
  * 不再向任何外部平台发送请求、不读 window.__platform__。
  */
 
-const CLIENT_BASE_PATH = process.env.CLIENT_BASE_PATH || '/';
-// 去平台化说明：应用直挂根路径 /（网关 5173 即首页），不再依赖构建注入的基址。
+const CLIENT_BASE_PATH = process.env.CLIENT_BASE_PATH || '/app/yimu';
+// 网关把 / 302 到 /app/yimu/ 并以该前缀伺服 SPA 深链路，
+// basename 必须与之一致，否则 /app/yimu/ 匹配不到任何路由、直接落 404 兜底页。
 const BASENAME = CLIENT_BASE_PATH;
 
 const CrashFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => (

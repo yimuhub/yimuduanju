@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ConfirmHost } from '@client/src/components/ui/confirm';
+import RightDock from '@client/src/components/RightDock';
 import {
   LayoutDashboard,
   FolderKanban,
@@ -16,10 +17,13 @@ import {
   Workflow,
   Menu,
   X,
+  PanelRightOpen,
+  Sparkles,
 } from 'lucide-react';
 
 const navItems = [
-  { to: '/', label: '工作台', icon: LayoutDashboard, end: true },
+  { to: '/', label: '创作作战室', icon: Sparkles, end: true },
+  { to: '/dashboard', label: '数据看板', icon: LayoutDashboard },
   { to: '/projects', label: '我的项目', icon: FolderKanban },
   { to: '/project/free/canvas-free3', label: '自由画布', icon: Workflow },
   { to: '/create', label: '一键创作', icon: Wand2 },
@@ -65,6 +69,16 @@ const Layout = () => {
   // P1 移动端：抽屉式侧边栏，小屏默认收起
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
+  // 三段式布局：右侧助手坞默认展开（仅 xl 以上占布局），收起状态跨页面持久
+  const [dockOpen, setDockOpen] = useState(
+    () => localStorage.getItem('yimu.rightDockOpen') !== '0',
+  );
+  const toggleDock = () => {
+    setDockOpen((prev) => {
+      localStorage.setItem('yimu.rightDockOpen', prev ? '0' : '1');
+      return !prev;
+    });
+  };
 
   const breadcrumbs = pathParts.map((part: string, index: number) => ({
     label: breadcrumbMap[part] || shortId(part),
@@ -131,10 +145,13 @@ const Layout = () => {
     </>
   );
 
+  // 首页（创作作战室）为沉浸式三段式布局：隐藏顶栏与内边距，交给页面自身全高渲染
+  const immersive = pathParts.length === 0;
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* Sidebar（桌面端固定，小屏抽屉） */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+      <aside className={`hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex ${immersive ? 'w-[220px]' : 'w-60'}`}>
         {sidebarBody}
       </aside>
       {drawerOpen && (
@@ -158,7 +175,8 @@ const Layout = () => {
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* TopBar */}
+        {/* TopBar（沉浸式首页隐藏） */}
+        {!immersive && (
         <header className="flex h-16 items-center justify-between gap-3 border-b border-border bg-background px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <button
@@ -197,16 +215,30 @@ const Layout = () => {
               <Bell className="h-[18px] w-[18px] text-foreground/70" />
               <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />
             </button>
+            <button
+              onClick={toggleDock}
+              className={`hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 xl:flex ${
+                dockOpen ? 'border-primary/40 text-primary' : 'text-foreground/70'
+              }`}
+              aria-label={dockOpen ? '收起助手坞' : '展开助手坞'}
+              title={dockOpen ? '收起助手坞' : '展开助手坞'}
+            >
+              <PanelRightOpen className="h-[18px] w-[18px]" />
+            </button>
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground">
               YM
             </div>
           </div>
         </header>
+        )}
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">
-          <Outlet />
-        </main>
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <main className={`min-w-0 flex-1 overflow-y-auto ${immersive ? 'overflow-hidden p-0' : 'p-4 sm:p-6'}`}>
+            <Outlet />
+          </main>
+          {!immersive && dockOpen && <RightDock onClose={toggleDock} />}
+        </div>
       </div>
       <ConfirmHost />
     </div>
