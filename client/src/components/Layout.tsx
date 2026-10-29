@@ -35,6 +35,7 @@ const navItems = [
 
 const breadcrumbMap: Record<string, string> = {
   '': '首页',
+  dashboard: '数据看板',
   projects: '我的项目',
   create: '一键创作',
   templates: '模板中心',

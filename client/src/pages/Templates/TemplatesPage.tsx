@@ -281,13 +281,24 @@ const TemplatesPage = () => {
               className="group relative cursor-pointer overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
             >
               <div
-                className={`relative aspect-[3/4] bg-gradient-to-br ${getGradient(
+                className={`relative aspect-[3/4] overflow-hidden bg-gradient-to-br ${getGradient(
                   tpl.artStyle,
                 )} flex items-center justify-center`}
               >
-                <span className="text-xs font-medium text-white/90">未获取</span>
+                {/* 无封面时的雅致占位：题材首字大水印 + 装饰光斑，替代刺眼的"未获取" */}
+                {tpl.thumbnailUrl ? (
+                  <img src={tpl.thumbnailUrl} alt={tpl.name} className="absolute inset-0 h-full w-full object-cover" />
+                ) : (
+                  <>
+                    <div className="absolute -left-8 -top-8 h-32 w-32 rounded-full bg-white/15 blur-2xl" />
+                    <div className="absolute -bottom-10 -right-6 h-40 w-40 rounded-full bg-black/10 blur-2xl" />
+                    <span className="select-none text-5xl font-black tracking-widest text-white/35 drop-shadow">
+                      {tpl.name.slice(0, 2)}
+                    </span>
+                  </>
+                )}
                 <span
-                  className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-xs font-medium ${getTypeColor(
+                  className={`absolute left-3 top-3 rounded-full bg-white/85 px-2.5 py-1 text-xs font-medium backdrop-blur ${getTypeColor(
                     tpl.templateType,
                   )}`}
                 >
@@ -316,7 +327,7 @@ const TemplatesPage = () => {
                 )}
                 <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
-                    {formatDuration(tpl.durationSeconds)}
+                    ⏱ {formatDuration(tpl.durationSeconds)}
                   </span>
                   {/* W5 市场：使用次数展示；0 次不展示，避免冷启动难看 */}
                   {(tpl.useCount ?? 0) > 0 && (
@@ -326,7 +337,8 @@ const TemplatesPage = () => {
                   )}
                   <span>{tpl.aspectRatio}</span>
                 </div>
-                <div className="mt-2 flex items-center gap-2">
+                {/* 管理动作收纳为 hover 小图标，浏览态不打扰 */}
+                <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -339,20 +351,20 @@ const TemplatesPage = () => {
                       });
                       setShowForm(true);
                     }}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-input py-1.5 text-xs font-medium hover:border-primary hover:text-primary"
+                    className="rounded-lg bg-white/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-primary"
+                    aria-label="编辑模板"
                   >
-                    <Pencil className="h-3 w-3" />
-                    编辑
+                    <Pencil className="h-3.5 w-3.5" />
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDeleteTemplate(tpl);
                     }}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-input py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-500"
+                    className="rounded-lg bg-white/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-red-500"
+                    aria-label="删除模板"
                   >
-                    <Trash2 className="h-3 w-3" />
-                    删除
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>

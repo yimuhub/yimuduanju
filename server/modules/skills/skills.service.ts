@@ -3,6 +3,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack
 import { eq, and, asc } from 'drizzle-orm';
 import { skills } from '@server/database/schema';
 import { BUILTIN_SKILLS } from './skills.seed';
+import { EXTENDED_SKILLS } from './skills.seed.extended';
 
 /**
  * Skill 注册表（产品 3.0 harness 化核心）。
@@ -21,7 +22,8 @@ export class SkillsService implements OnModuleInit {
     try {
       const existing = await this.db.select({ slug: skills.slug }).from(skills);
       const have = new Set(existing.map((r) => r.slug));
-      const missing = BUILTIN_SKILLS.filter((s) => !have.has(s.slug));
+      const ALL_SKILLS = [...BUILTIN_SKILLS, ...EXTENDED_SKILLS];
+      const missing = ALL_SKILLS.filter((s) => !have.has(s.slug));
       if (missing.length > 0) {
         await this.db.insert(skills).values(
           missing.map((s) => ({
