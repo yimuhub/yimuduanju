@@ -67,18 +67,18 @@ const statusLabelMap: Record<ProjectStatus, string> = {
 
 const statusColorMap: Record<ProjectStatus, string> = {
   draft: 'bg-muted text-muted-foreground',
-  parsing: 'bg-blue-50 text-blue-600',
-  planning: 'bg-blue-50 text-blue-600',
-  bible_ready: 'bg-emerald-50 text-emerald-600',
-  storyboard_ready: 'bg-emerald-50 text-emerald-600',
-  assets_generating: 'bg-amber-50 text-amber-600',
-  video_generating: 'bg-amber-50 text-amber-600',
-  audio_generating: 'bg-amber-50 text-amber-600',
+  parsing: 'bg-blue-500/15 text-blue-400',
+  planning: 'bg-blue-500/15 text-blue-400',
+  bible_ready: 'bg-emerald-500/15 text-emerald-400',
+  storyboard_ready: 'bg-emerald-500/15 text-emerald-400',
+  assets_generating: 'bg-amber-500/15 text-amber-400',
+  video_generating: 'bg-amber-500/15 text-amber-400',
+  audio_generating: 'bg-amber-500/15 text-amber-400',
   editing: 'bg-primary/10 text-primary',
   qc: 'bg-primary/10 text-primary',
-  ready: 'bg-emerald-50 text-emerald-600',
-  exported: 'bg-emerald-50 text-emerald-600',
-  failed: 'bg-red-50 text-red-600',
+  ready: 'bg-emerald-500/15 text-emerald-400',
+  exported: 'bg-emerald-500/15 text-emerald-400',
+  failed: 'bg-red-500/15 text-red-400',
 };
 
 const ProjectWorkspacePage = () => {
@@ -148,7 +148,7 @@ const ProjectWorkspacePage = () => {
 
       {/* 新手流程引导横幅：消除极速模式进入工作台后的“假完成”困惑 */}
       {(displayStatus === 'storyboard_ready' || displayStatus === 'assets_generating' || displayStatus === 'video_generating') && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-900">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/15 px-4 py-3 text-xs text-amber-300">
           <div>
             <span className="font-semibold">🎬 创作流水线进行中：</span>
             剧本与分镜已拆解就绪！系统正在后台队列生成分镜首帧图。你可以在「分镜」或「自由画布 3 ★」中预览画面、为镜头一键生成视频与角色配音，最后在「导出」页合成为带配音与字幕的完整 MP4。
@@ -156,7 +156,7 @@ const ProjectWorkspacePage = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate(`/project/${id}/storyboard`)}
-              className="rounded-lg bg-white px-2.5 py-1 font-medium text-amber-900 shadow-sm hover:bg-amber-100"
+              className="rounded-lg bg-card px-2.5 py-1 font-medium text-amber-300 shadow-sm hover:bg-amber-500/20"
             >
               去分镜表精修
             </button>

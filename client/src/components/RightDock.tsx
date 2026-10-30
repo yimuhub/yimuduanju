@@ -33,10 +33,10 @@ const JOB_TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_STYLES: Record<string, string> = {
-  pending: 'bg-amber-50 text-amber-600',
-  running: 'bg-blue-50 text-blue-600',
-  succeeded: 'bg-emerald-50 text-emerald-600',
-  failed: 'bg-red-50 text-red-600',
+  pending: 'bg-amber-500/15 text-amber-400',
+  running: 'bg-blue-500/15 text-blue-400',
+  succeeded: 'bg-emerald-500/15 text-emerald-400',
+  failed: 'bg-red-500/15 text-red-400',
   cancelled: 'bg-muted text-muted-foreground',
 };
 
@@ -237,7 +237,7 @@ const RightDock = ({ onClose }: { onClose: () => void }) => {
                       </div>
                     )}
                     {job.status === 'failed' && job.errorMessage && (
-                      <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-red-500">
+                      <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-red-3000">
                         {job.errorMessage}
                       </p>
                     )}

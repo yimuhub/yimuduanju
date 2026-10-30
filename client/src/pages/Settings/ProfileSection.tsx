@@ -8,7 +8,7 @@ const ProfileSection = () => {
         </p>
       </div>
 
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex items-center gap-5">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-gradient text-xl font-semibold text-white">
             YM
@@ -48,7 +48,7 @@ const ProfileSection = () => {
               </div>
             </div>
             <button className="relative h-6 w-11 rounded-full bg-primary">
-              <span className="absolute top-0.5 h-5 w-5 translate-x-5 rounded-full bg-white shadow-sm" />
+              <span className="absolute top-0.5 h-5 w-5 translate-x-5 rounded-full bg-card shadow-sm" />
             </button>
           </div>
         </div>

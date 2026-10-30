@@ -23,19 +23,19 @@ const scoreItems: { key: keyof QcReport; label: string }[] = [
 ];
 
 const severityConfig: Record<string, { label: string; className: string; icon: typeof AlertTriangle }> = {
-  critical: { label: '严重', className: 'bg-red-50 text-red-600 border-red-200', icon: XCircle },
-  high: { label: '高', className: 'bg-red-50 text-red-600 border-red-200', icon: AlertTriangle },
-  medium: { label: '中', className: 'bg-amber-50 text-amber-600 border-amber-200', icon: AlertTriangle },
-  low: { label: '低', className: 'bg-blue-50 text-blue-600 border-blue-200', icon: AlertTriangle },
+  critical: { label: '严重', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: XCircle },
+  high: { label: '高', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: AlertTriangle },
+  medium: { label: '中', className: 'bg-amber-500/15 text-amber-400 border-amber-500/30', icon: AlertTriangle },
+  low: { label: '低', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30', icon: AlertTriangle },
 };
 
 const getSeverityInfo = (severity: string) =>
   severityConfig[severity] || severityConfig.medium;
 
 const getVerdict = (score: number, thresholdPass: number, thresholdReview: number) => {
-  if (score >= thresholdPass) return { label: 'PASS', className: 'bg-green-50 text-green-600 border-green-200', icon: CheckCircle2 };
-  if (score >= thresholdReview) return { label: 'REVIEW', className: 'bg-amber-50 text-amber-600 border-amber-200', icon: AlertTriangle };
-  return { label: 'RETRY', className: 'bg-red-50 text-red-600 border-red-200', icon: XCircle };
+  if (score >= thresholdPass) return { label: 'PASS', className: 'bg-green-500/15 text-green-400 border-green-500/30', icon: CheckCircle2 };
+  if (score >= thresholdReview) return { label: 'REVIEW', className: 'bg-amber-500/15 text-amber-400 border-amber-500/30', icon: AlertTriangle };
+  return { label: 'RETRY', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: XCircle };
 };
 
 // Ring progress component using conic-gradient
@@ -157,7 +157,7 @@ const ProjectQcTab = () => {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
           <div className="text-sm text-muted-foreground">加载中...</div>
         </div>
       </div>
@@ -168,7 +168,7 @@ const ProjectQcTab = () => {
     return (
       <div className="space-y-6">
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
             {error}
           </div>
         )}
@@ -190,7 +190,7 @@ const ProjectQcTab = () => {
           </button>
         </div>
 
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-white p-16 shadow-sm">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card p-16 shadow-sm">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
             <AlertTriangle className="h-8 w-8 text-primary" />
           </div>
@@ -216,7 +216,7 @@ const ProjectQcTab = () => {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
           {error}
         </div>
       )}
@@ -251,7 +251,7 @@ const ProjectQcTab = () => {
       </div>
 
       {/* Overall score + verdict */}
-      <div className="rounded-xl border bg-white p-8 shadow-sm">
+      <div className="rounded-xl border bg-card p-8 shadow-sm">
         <div className="flex flex-col items-center gap-4 md:flex-row md:gap-8">
           <div className="flex flex-col items-center">
             <RingProgress score={report.overallScore} size={140} strokeWidth={12} />
@@ -282,7 +282,7 @@ const ProjectQcTab = () => {
               </button>
               <button
                 onClick={() => navigate(`/project/${id}/storyboard`)}
-                className="rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary"
+                className="rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary"
               >
                 打回，去修镜头
               </button>
@@ -302,7 +302,7 @@ const ProjectQcTab = () => {
       </div>
 
       {/* Dimension scores */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h3 className="text-base font-semibold text-foreground">各项评分</h3>
         <div className="mt-5 grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
           {scoreItems.map((item) => {
@@ -318,7 +318,7 @@ const ProjectQcTab = () => {
       </div>
 
       {/* Issues */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-primary" />
           <h3 className="text-base font-semibold text-foreground">问题列表</h3>
@@ -327,7 +327,7 @@ const ProjectQcTab = () => {
           </span>
         </div>
         {(!report.issues || report.issues.length === 0) ? (
-          <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-600">
+          <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/15 p-4 text-sm text-green-400">
             未发现质量问题
           </div>
         ) : (
@@ -344,14 +344,14 @@ const ProjectQcTab = () => {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-semibold uppercase">{sev.label}</span>
-                      <span className="rounded bg-white/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="rounded bg-card/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         {issue.category}
                       </span>
                       {issue.shotId && (
                         <button
                           onClick={() => navigate(`/project/${id}/storyboard`)}
                           title="跳到分镜页修复该镜头（描述中带有镜头编号）"
-                          className="inline-flex items-center gap-1 rounded bg-white/60 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-white"
+                          className="inline-flex items-center gap-1 rounded bg-card/60 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-card"
                         >
                           <Crosshair className="h-3 w-3" />
                           镜头 {issue.shotId.slice(0, 8)} · 去修复
@@ -369,7 +369,7 @@ const ProjectQcTab = () => {
 
       {/* History trend */}
       {history.length > 1 && (
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
           <h3 className="text-base font-semibold text-foreground">历次评分对比</h3>
           <div className="mt-4 flex h-28 items-end gap-3">
             {[...history].reverse().map((h, i) => (
@@ -390,9 +390,9 @@ const ProjectQcTab = () => {
       )}
 
       {/* Recommendations */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex items-center gap-2">
-          <Lightbulb className="h-5 w-5 text-amber-500" />
+          <Lightbulb className="h-5 w-5 text-amber-3000" />
           <h3 className="text-base font-semibold text-foreground">优化建议</h3>
         </div>
         {(!report.recommendations || report.recommendations.length === 0) ? (

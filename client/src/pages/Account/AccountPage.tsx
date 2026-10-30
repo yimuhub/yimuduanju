@@ -113,7 +113,7 @@ const AccountPage = () => {
 
       {/* 个人资料 + 会员卡 */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
-        <div className="rounded-xl border bg-white p-5 shadow-sm lg:col-span-2">
+        <div className="rounded-xl border bg-card p-5 shadow-sm lg:col-span-2">
           <div className="flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-gradient text-lg font-semibold text-primary-foreground">
               YM
@@ -175,13 +175,13 @@ const AccountPage = () => {
 
         {/* 会员卡（品牌红渐变，与全站唯一品牌语言一致） */}
         <div className="relative overflow-hidden rounded-xl bg-brand-gradient p-5 text-white shadow-sm lg:col-span-3">
-          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/15 blur-2xl" />
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-card/15 blur-2xl" />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Crown className="h-5 w-5 text-white" />
               <span className="text-base font-semibold">专业版会员</span>
             </div>
-            <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/80 backdrop-blur">
+            <span className="rounded-full bg-card/10 px-3 py-1 text-xs text-white/80 backdrop-blur">
               2026-12-31 到期
             </span>
           </div>
@@ -196,7 +196,7 @@ const AccountPage = () => {
       </div>
 
       {/* 用量统计 */}
-      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Wallet className="h-4 w-4 text-primary" />
@@ -240,7 +240,7 @@ const AccountPage = () => {
             <div className="mt-2 space-y-1.5">
               {(cost?.jobsByType ?? []).slice(0, 4).map((j) => (
                 <div key={j.jobType} className="flex items-center justify-between text-xs">
-                  <span className="rounded bg-white px-1.5 py-0.5 font-medium text-foreground/70">
+                  <span className="rounded bg-card px-1.5 py-0.5 font-medium text-foreground/70">
                     {j.jobType}
                   </span>
                   <span className="text-muted-foreground">
@@ -268,7 +268,7 @@ const AccountPage = () => {
             return (
               <div
                 key={plan.key}
-                className={`relative rounded-xl border bg-white p-5 shadow-sm ${
+                className={`relative rounded-xl border bg-card p-5 shadow-sm ${
                   plan.current ? 'border-primary/50 ring-1 ring-primary/20' : ''
                 }`}
               >
@@ -289,7 +289,7 @@ const AccountPage = () => {
                 <ul className="mt-3 space-y-1.5">
                   {plan.perks.map((perk) => (
                     <li key={perk} className="flex items-start gap-1.5 text-xs text-foreground/80">
-                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-3000" />
                       {perk}
                     </li>
                   ))}
@@ -312,7 +312,7 @@ const AccountPage = () => {
       </div>
 
       {/* 快捷设置入口 */}
-      <div className="rounded-xl border bg-white p-2 shadow-sm">
+      <div className="rounded-xl border bg-card p-2 shadow-sm">
         <button
           onClick={() => navigate('/settings')}
           className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-sm transition-colors hover:bg-muted/60"

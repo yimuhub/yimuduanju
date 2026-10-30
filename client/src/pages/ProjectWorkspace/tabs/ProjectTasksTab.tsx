@@ -40,11 +40,11 @@ const typeFilters: { value: JobType | 'all'; label: string }[] = [
 const statusInfoMap: Record<JobStatus, { label: string; className: string; barClass: string }> = {
   pending: { label: '等待中', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
   queued: { label: '排队中', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
-  running: { label: '进行中', className: 'bg-blue-50 text-blue-600', barClass: 'bg-blue-500' },
-  succeeded: { label: '已完成', className: 'bg-green-50 text-green-600', barClass: 'bg-green-500' },
-  failed: { label: '失败', className: 'bg-red-50 text-red-600', barClass: 'bg-red-500' },
+  running: { label: '进行中', className: 'bg-blue-500/15 text-blue-400', barClass: 'bg-blue-500/150' },
+  succeeded: { label: '已完成', className: 'bg-green-500/15 text-green-400', barClass: 'bg-green-500/150' },
+  failed: { label: '失败', className: 'bg-red-500/15 text-red-400', barClass: 'bg-red-500/150' },
   cancelled: { label: '已取消', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
-  retrying: { label: '重试中', className: 'bg-amber-50 text-amber-600', barClass: 'bg-amber-500' },
+  retrying: { label: '重试中', className: 'bg-amber-500/15 text-amber-400', barClass: 'bg-amber-500/150' },
 };
 
 const typeLabelMap: Record<JobType, string> = {
@@ -273,7 +273,7 @@ const ProjectTasksTab = () => {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
           {error}
         </div>
       )}
@@ -298,7 +298,7 @@ const ProjectTasksTab = () => {
               onClick={handleRetryAllFailed}
               disabled={retryingAll}
               title="一键重试全部失败任务"
-              className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/15 px-3 py-2 text-sm font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
             >
               <RotateCcw className={`h-4 w-4 ${retryingAll ? 'animate-spin' : ''}`} />
               {retryingAll ? '重试中…' : `重试全部失败（${failedJobs.length}）`}
@@ -306,7 +306,7 @@ const ProjectTasksTab = () => {
           )}
           <button
             onClick={fetchJobs}
-            className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+            className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
           >
             <RefreshCw className="h-4 w-4" />
             刷新
@@ -316,7 +316,7 @@ const ProjectTasksTab = () => {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 rounded-lg border border-input bg-white p-1">
+        <div className="flex items-center gap-1 rounded-lg border border-input bg-card p-1">
           {statusFilters.map((filter) => (
             <button
               key={filter.value}
@@ -337,7 +337,7 @@ const ProjectTasksTab = () => {
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as JobType | 'all')}
-            className="h-9 rounded-lg border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-9 rounded-lg border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           >
             {typeFilters.map((f) => (
               <option key={f.value} value={f.value}>
@@ -350,7 +350,7 @@ const ProjectTasksTab = () => {
 
       {/* Table */}
       <VariantGroups jobs={jobs} onAdopted={fetchJobs} onError={setError} />
-      <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
         {loading ? (
           <div className="p-6 text-center text-sm text-muted-foreground">加载中...</div>
         ) : jobs.length === 0 ? (
@@ -458,7 +458,7 @@ const ProjectTasksTab = () => {
                           {(job.status === 'running' || job.status === 'pending' || job.status === 'queued') && (
                             <button
                               onClick={() => handleCancel(job.id)}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-red-500"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-red-3000"
                               title="取消"
                             >
                               <XCircle className="h-3.5 w-3.5" />
@@ -530,7 +530,7 @@ const VariantGroups = ({
   return (
     <div className="mb-4 space-y-3">
       {[...groups.entries()].map(([gid, list]) => (
-        <div key={gid} className="rounded-xl border bg-white p-4 shadow-sm">
+        <div key={gid} className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="mb-2 flex items-center gap-2">
             <Layers className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">变体组 {gid}</span>

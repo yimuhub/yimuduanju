@@ -23,11 +23,11 @@ const getTypeLabel = (type: TemplateType): string => {
 const getTypeColor = (type: TemplateType): string => {
   switch (type) {
     case 'duration':
-      return 'bg-blue-50 text-blue-600';
+      return 'bg-blue-500/15 text-blue-400';
     case 'genre':
       return 'bg-purple-50 text-purple-600';
     case 'style':
-      return 'bg-emerald-50 text-emerald-600';
+      return 'bg-emerald-500/15 text-emerald-400';
     case 'full':
       return 'bg-primary/10 text-primary';
     default:
@@ -59,7 +59,7 @@ const TemplateDetailModal = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl"
+        className="w-full max-w-lg overflow-hidden rounded-2xl bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div
@@ -69,7 +69,7 @@ const TemplateDetailModal = ({
         >
           <button
             onClick={onClose}
-            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-white"
+            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-card/80 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-card"
           >
             <X className="h-4 w-4" />
           </button>

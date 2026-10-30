@@ -20,8 +20,8 @@ import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
 
 const roleTypeColors: Record<string, string> = {
   主角: 'bg-primary/10 text-primary',
-  配角: 'bg-blue-50 text-blue-600',
-  反派: 'bg-red-50 text-red-600',
+  配角: 'bg-blue-500/15 text-blue-400',
+  反派: 'bg-red-500/15 text-red-400',
   路人: 'bg-muted text-muted-foreground',
 };
 
@@ -201,7 +201,7 @@ const ProjectCharactersTab = () => {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
           {error}
         </div>
       )}
@@ -222,7 +222,7 @@ const ProjectCharactersTab = () => {
               placeholder="搜索角色..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-9 w-56 rounded-lg border border-input bg-white pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="h-9 w-56 rounded-lg border border-input bg-card pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
           <button
@@ -235,7 +235,7 @@ const ProjectCharactersTab = () => {
           <button
             onClick={() => setShowAi((v) => !v)}
             title="人物卡技能：一句话设定→标准人物卡，直接写入人物库"
-            className="flex items-center gap-2 rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary"
+            className="flex items-center gap-2 rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary"
           >
             <Wand2 className="h-4 w-4" />
             AI 设计
@@ -245,13 +245,13 @@ const ProjectCharactersTab = () => {
 
       {/* AI 设计人物（character_design 技能） */}
       {showAi && (
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
           <textarea
             value={aiBrief}
             onChange={(e) => setAiBrief(e.target.value)}
             placeholder="一句话人物设定，如：28岁讲义气的修车工，方脸短寸，多个青梅竹马"
             rows={2}
-            className="w-full resize-y rounded-lg border border-input bg-white p-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+            className="w-full resize-y rounded-lg border border-input bg-card p-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary"
           />
           <div className="mt-2 flex items-center gap-2">
             <button
@@ -270,7 +270,7 @@ const ProjectCharactersTab = () => {
       {loading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-white p-12 text-center">
+        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
           <div className="text-sm text-muted-foreground">
             {search ? '没有匹配的角色' : '暂无角色，点击「添加角色」开始创建'}
           </div>
@@ -280,7 +280,7 @@ const ProjectCharactersTab = () => {
           {filtered.map((char) => (
             <div
               key={char.id}
-              className="group overflow-hidden rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md"
+              className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md"
             >
               {/* Avatar area */}
               <div className="relative h-36 w-full">
@@ -321,7 +321,7 @@ const ProjectCharactersTab = () => {
                 <div className="mt-4 flex items-center gap-2">
                   <button
                     onClick={() => setEditingChar(char)}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-white py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                    className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-card py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
                   >
                     <Edit3 className="h-3.5 w-3.5" />
                     编辑
@@ -329,7 +329,7 @@ const ProjectCharactersTab = () => {
                   <button
                     onClick={() => handleGenerateImage(char.id)}
                     disabled={generatingIds.has(char.id)}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-white py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                    className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-card py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
                   >
                     <Sparkles className="h-3.5 w-3.5" />
                     生成立绘
@@ -338,7 +338,7 @@ const ProjectCharactersTab = () => {
                     onClick={() => handleGenerateSheet(char.id)}
                     disabled={generatingIds.has(char.id)}
                     title="四视图定妆照：特写+正面+侧面+背面拼图，挂参考图首位"
-                    className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-white py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                    className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-card py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
                   >
                     <Grid3X3 className="h-3.5 w-3.5" />
                     四视图
@@ -347,7 +347,7 @@ const ProjectCharactersTab = () => {
                     <button
                       onClick={() => handleCompleteDescription(char.id)}
                       title="按已有设定自动拼装标准描述，作为跨镜一致性锚点"
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-amber-300 bg-amber-50 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-amber-300 bg-amber-500/15 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
                     >
                       <Wand2 className="h-3.5 w-3.5" />
                       补全描述
@@ -355,7 +355,7 @@ const ProjectCharactersTab = () => {
                   )}
                   <button
                     onClick={() => handleToggleLock(char)}
-                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-white text-muted-foreground hover:text-foreground"
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-foreground"
                     title={char.locked ? '解锁' : '锁定'}
                   >
                     {char.locked ? (
@@ -366,7 +366,7 @@ const ProjectCharactersTab = () => {
                   </button>
                   <button
                     onClick={() => handleDelete(char.id)}
-                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-white text-muted-foreground hover:text-red-500"
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-red-3000"
                     title="删除"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -381,7 +381,7 @@ const ProjectCharactersTab = () => {
       {/* Create dialog */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">添加角色</h3>
               <button
@@ -429,7 +429,7 @@ const ProjectCharactersTab = () => {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 onClick={() => setShowCreate(false)}
-                className="rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+                className="rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
               >
                 取消
               </button>
@@ -447,7 +447,7 @@ const ProjectCharactersTab = () => {
       {/* Edit dialog */}
       {editingChar && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">编辑角色</h3>
               <button
@@ -493,7 +493,7 @@ const ProjectCharactersTab = () => {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 onClick={() => setEditingChar(null)}
-                className="rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+                className="rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
               >
                 取消
               </button>

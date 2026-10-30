@@ -168,24 +168,24 @@ const ProjectOverviewTab = () => {
   }, [jobs]);
 
   const stats = [
-    { label: '人物数', value: characters.length, icon: Users, color: 'text-blue-500 bg-blue-50' },
+    { label: '人物数', value: characters.length, icon: Users, color: 'text-blue-3000 bg-blue-500/15' },
     { label: '场景数', value: scenes.length, icon: Film, color: 'text-purple-500 bg-purple-50' },
-    { label: '分镜数', value: shots.length, icon: Clapperboard, color: 'text-amber-500 bg-amber-50' },
-    { label: '资产数', value: assetList.length, icon: FolderOpen, color: 'text-green-500 bg-green-50' },
+    { label: '分镜数', value: shots.length, icon: Clapperboard, color: 'text-amber-3000 bg-amber-500/15' },
+    { label: '资产数', value: assetList.length, icon: FolderOpen, color: 'text-green-3000 bg-green-500/15' },
     { label: '总费用', value: `¥${project?.totalCost?.toFixed(2) || '0.00'}`, icon: DollarSign, color: 'text-primary bg-primary/10' },
-    { label: '预计时长', value: `${project?.durationSeconds || 0}s`, icon: Clock, color: 'text-indigo-500 bg-indigo-50' },
+    { label: '预计时长', value: `${project?.durationSeconds || 0}s`, icon: Clock, color: 'text-indigo-3000 bg-indigo-500/15' },
   ];
 
   return (
     <div className="space-y-6">
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
           {error}
         </div>
       )}
 
       {/* Status timeline */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h3 className="text-base font-semibold text-foreground">项目进度</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           当前阶段：{STATUS_STEPS[currentIdx]?.label || '草稿'}
@@ -247,7 +247,7 @@ const ProjectOverviewTab = () => {
         {stats.map((stat) => (
           <div
             key={stat.label}
-            className="rounded-xl border bg-white p-4 shadow-sm"
+            className="rounded-xl border bg-card p-4 shadow-sm"
           >
             <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${stat.color}`}>
               <stat.icon className="h-5 w-5" />
@@ -265,34 +265,34 @@ const ProjectOverviewTab = () => {
       {/* Quick actions + recent activity */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Quick actions */}
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
           <h3 className="text-base font-semibold text-foreground">快速操作</h3>
           <div className="mt-4 grid grid-cols-2 gap-3">
             {/* P1 修复：快捷操作之前全是死按钮；现分别跳到任务/剧本/分镜/导出页 */}
             <button
               onClick={() => navigate(`/project/${id}/tasks`)}
-              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-white p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-card p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
             >
               <Play className="h-5 w-5 text-primary" />
               继续生成
             </button>
             <button
               onClick={() => navigate(`/project/${id}/script`)}
-              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-white p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-card p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
             >
               <RefreshCw className="h-5 w-5 text-primary" />
               重新解析
             </button>
             <button
               onClick={() => navigate(`/project/${id}/storyboard`)}
-              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-white p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-card p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
             >
               <Sparkles className="h-5 w-5 text-primary" />
               批量生成
             </button>
             <button
               onClick={() => navigate(`/project/${id}/export`)}
-              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-white p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+              className="flex flex-col items-center gap-2 rounded-lg border border-input bg-card p-3 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
             >
               <Download className="h-5 w-5 text-primary" />
               导出成片
@@ -301,7 +301,7 @@ const ProjectOverviewTab = () => {
         </div>
 
         {/* Recent jobs */}
-        <div className="rounded-xl border bg-white p-6 shadow-sm lg:col-span-2">
+        <div className="rounded-xl border bg-card p-6 shadow-sm lg:col-span-2">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold text-foreground">最近活动</h3>
             <span className="text-xs text-muted-foreground">前 5 条</span>
@@ -333,11 +333,11 @@ const ProjectOverviewTab = () => {
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${
                       job.status === 'succeeded'
-                        ? 'bg-green-50 text-green-600'
+                        ? 'bg-green-500/15 text-green-400'
                         : job.status === 'running'
-                          ? 'bg-blue-50 text-blue-600'
+                          ? 'bg-blue-500/15 text-blue-400'
                           : job.status === 'failed'
-                            ? 'bg-red-50 text-red-600'
+                            ? 'bg-red-500/15 text-red-400'
                             : 'bg-muted text-muted-foreground'
                     }`}
                   >
@@ -360,7 +360,7 @@ const ProjectOverviewTab = () => {
       />
 
       {/* Cost breakdown */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-foreground">费用构成</h3>
           <span className="text-sm text-muted-foreground">
@@ -394,7 +394,7 @@ const ProjectOverviewTab = () => {
       </div>
 
       {/* Content mode */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h3 className="text-base font-semibold text-foreground">内容模式</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           短剧走钩子前置口径，广告片走 Hook+PAS+CTA 口径；切换只影响默认值与质检建议，不锁死流程
@@ -408,7 +408,7 @@ const ProjectOverviewTab = () => {
               className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                 (project?.contentMode ?? 'general') === m.id
                   ? 'bg-primary text-primary-foreground'
-                  : 'border border-input bg-white text-foreground/70 hover:border-primary hover:text-primary'
+                  : 'border border-input bg-card text-foreground/70 hover:border-primary hover:text-primary'
               }`}
             >
               {m.label}
@@ -418,7 +418,7 @@ const ProjectOverviewTab = () => {
       </div>
 
       {/* Provider override */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h3 className="text-base font-semibold text-foreground">本项目供应商</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           覆盖全局默认，仅本项目任务走指定通道；清空则跟随全局（含官方直供）
@@ -427,7 +427,7 @@ const ProjectOverviewTab = () => {
           <select
             value={project?.providerOverride?.providerName ?? ''}
             onChange={(e) => handleProviderOverride(e.target.value || null)}
-            className="h-10 min-w-[220px] rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+            className="h-10 min-w-[220px] rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
           >
             <option value="">跟随全局默认</option>
             {enabledProviders.map((p) => (
@@ -445,7 +445,7 @@ const ProjectOverviewTab = () => {
       </div>
 
       {/* Project info */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h3 className="text-base font-semibold text-foreground">项目信息</h3>        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
           <div>
             <div className="text-xs text-muted-foreground">项目模式</div>
@@ -530,7 +530,7 @@ const SeriesLedgerCard = ({
   };
 
   return (
-    <div className="rounded-xl border bg-white p-6 shadow-sm">
+    <div className="rounded-xl border bg-card p-6 shadow-sm">
       <div className="flex items-center gap-2">
         <BookOpen className="h-4 w-4 text-primary" />
         <h3 className="text-base font-semibold text-foreground">系列记忆</h3>
@@ -559,7 +559,7 @@ const SeriesLedgerCard = ({
         onChange={(e) => setFactsText(e.target.value)}
         placeholder="如：第3集阿强右腿受伤；第5集项链给了小美"
         rows={3}
-        className="mt-2 w-full resize-y rounded-lg border border-input bg-white p-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+        className="mt-2 w-full resize-y rounded-lg border border-input bg-card p-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary"
       />
       <div className="mt-2 flex items-center gap-2">
         <button

@@ -134,8 +134,8 @@ export const tagCloseIconVariants = cva('text-foreground', {
 export const addButtonVariants = cva(
   [
     'shrink-0 rounded-full p-0',
-    'bg-neutral-700/10 hover:bg-neutral-700/20! dark:bg-neutral-500/10 dark:hover:bg-neutral-500/20!',
-    'data-[state=open]:bg-neutral-700/20 dark:data-[state=open]:bg-neutral-500/20',
+    'bg-neutral-700/10 hover:bg-neutral-700/20! dark:bg-muted0/10 dark:hover:bg-muted0/20!',
+    'data-[state=open]:bg-neutral-700/20 dark:data-[state=open]:bg-muted0/20',
   ],
   {
     variants: {

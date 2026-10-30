@@ -223,7 +223,7 @@ const TemplatesPage = () => {
             className={`rounded-full px-5 py-2 text-sm font-medium transition-all ${
               activeTab === tab.key
                 ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'border border-input bg-white text-foreground hover:border-primary hover:text-primary'
+                : 'border border-input bg-card text-foreground hover:border-primary hover:text-primary'
             }`}
           >
             {tab.label}
@@ -239,7 +239,7 @@ const TemplatesPage = () => {
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="搜索模板名称..."
-            className="h-10 w-full rounded-xl border border-input bg-white pl-10 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-10 w-full rounded-xl border border-input bg-card pl-10 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
         <div className="flex items-center gap-2">
@@ -247,7 +247,7 @@ const TemplatesPage = () => {
           <select
             value={styleFilter}
             onChange={(e) => setStyleFilter(e.target.value)}
-            className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-10 rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           >
             {STYLE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -258,7 +258,7 @@ const TemplatesPage = () => {
           <select
             value={durationFilter}
             onChange={(e) => setDurationFilter(e.target.value)}
-            className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-10 rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           >
             {DURATION_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -274,7 +274,7 @@ const TemplatesPage = () => {
           加载中...
         </div>
       ) : loadError ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-20 shadow-sm">
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-card py-20 shadow-sm">
           <p className="text-sm font-medium text-foreground">模板加载失败</p>
           <p className="mt-1 text-sm text-muted-foreground">请确认后端服务正常后重试</p>
           <button
@@ -295,7 +295,7 @@ const TemplatesPage = () => {
             <div
               key={tpl.id}
               onClick={() => setSelectedTemplate(tpl)}
-              className="group relative cursor-pointer overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
+              className="group relative cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
             >
               <div
                 className={`relative aspect-[3/4] overflow-hidden bg-gradient-to-br ${getGradient(
@@ -317,7 +317,7 @@ const TemplatesPage = () => {
                   />
                 )}
                 <span
-                  className={`absolute left-3 top-3 rounded-full bg-white/85 px-2.5 py-1 text-xs font-medium backdrop-blur ${getTypeColor(
+                  className={`absolute left-3 top-3 rounded-full bg-card/85 px-2.5 py-1 text-xs font-medium backdrop-blur ${getTypeColor(
                     tpl.templateType,
                   )}`}
                 >
@@ -329,7 +329,7 @@ const TemplatesPage = () => {
                       e.stopPropagation();
                       handleUseTemplate(tpl);
                     }}
-                    className="rounded-full bg-white px-6 py-2.5 text-sm font-semibold text-foreground shadow-lg transition-transform hover:scale-105"
+                    className="rounded-full bg-card px-6 py-2.5 text-sm font-semibold text-foreground shadow-lg transition-transform hover:scale-105"
                   >
                     使用模板
                   </button>
@@ -370,7 +370,7 @@ const TemplatesPage = () => {
                       });
                       setShowForm(true);
                     }}
-                    className="rounded-lg bg-white/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-primary"
+                    className="rounded-lg bg-card/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-primary"
                     aria-label="编辑模板"
                   >
                     <Pencil className="h-3.5 w-3.5" />
@@ -380,7 +380,7 @@ const TemplatesPage = () => {
                       e.stopPropagation();
                       handleDeleteTemplate(tpl);
                     }}
-                    className="rounded-lg bg-white/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-red-500"
+                    className="rounded-lg bg-card/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-red-3000"
                     aria-label="删除模板"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -398,7 +398,7 @@ const TemplatesPage = () => {
           onClick={() => setShowForm(false)}
         >
           <div
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold">
@@ -420,7 +420,7 @@ const TemplatesPage = () => {
                   <select
                     value={formData.templateType}
                     onChange={(e) => setFormData((p) => ({ ...p, templateType: e.target.value as TemplateType }))}
-                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
                   >
                     <option value="full">完整</option>
                     <option value="duration">时长</option>
@@ -443,7 +443,7 @@ const TemplatesPage = () => {
                 <select
                   value={formData.aspectRatio}
                   onChange={(e) => setFormData((p) => ({ ...p, aspectRatio: e.target.value }))}
-                  className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                  className="mt-1.5 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
                 >
                   <option value="9:16">9:16 竖屏</option>
                   <option value="16:9">16:9 横屏</option>

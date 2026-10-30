@@ -1,70 +1,72 @@
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
+  /* ===== 深色主题（对标 AI-EOS 极客模式：近黑底 / 玻璃面板 / 白 8% 发丝线）=====
+     品牌红保留，微调至深色底上更亮更饱和（hsl 4 85% 60%）。 */
+  --button-outline: rgba(255,255,255, .12);
+  --badge-outline: rgba(255,255,255, .06);
 
   /* Automatic computation of border around primary / danger buttons */
   --opaque-button-border-intensity: -8; /* In terms of percentages */
 
-  /* Backgrounds applied on top of other backgrounds when hovered/active */
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
+  /* Backgrounds applied on top of other backgrounds when hovered/active（深色下用白叠加） */
+  --elevate-1: rgba(255,255,255, .04);
+  --elevate-2: rgba(255,255,255, .08);
 
-  --background: hsl(0 0% 100%);
-  --foreground: hsl(220 20% 12%);
-  --card: hsl(0 0% 100%);
-  --card-foreground: hsl(220 20% 12%);
-  --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(220 20% 12%);
-  /* 品牌主色：偏洋红的绯红（活力但不廉价），全站唯一红色系 */
-  --primary: hsl(4 78% 56%);
-  --primary-hover: hsl(4 74% 50%);
+  --background: hsl(225 25% 7%);
+  --foreground: hsl(220 20% 92%);
+  --card: hsl(225 22% 10%);
+  --card-foreground: hsl(220 20% 92%);
+  --popover: hsl(225 24% 11%);
+  --popover-foreground: hsl(220 20% 92%);
+  /* 品牌主色：偏洋红的绯红，深色底上提亮一档保证对比 */
+  --primary: hsl(4 85% 60%);
+  --primary-hover: hsl(4 88% 66%);
   --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(220 14% 96%);
-  --secondary-foreground: hsl(220 14% 14%);
-  --muted: hsl(220 14% 96%);
-  --muted-foreground: hsl(220 9% 44%);
-  --accent: hsl(220 14% 96%);
-  --accent-foreground: hsl(220 14% 14%);
-  --info: hsl(221 83% 53%);
+  --secondary: hsl(225 18% 16%);
+  --secondary-foreground: hsl(220 20% 88%);
+  --muted: hsl(225 18% 15%);
+  --muted-foreground: hsl(220 12% 62%);
+  --accent: hsl(225 18% 16%);
+  --accent-foreground: hsl(220 20% 88%);
+  --info: hsl(213 90% 62%);
   --info-foreground: hsl(230 100% 98%);
-  --destructive: hsl(0 72% 48%);
+  --destructive: hsl(0 78% 60%);
   --destructive-foreground: hsl(0 0% 100%);
-  --success: hsl(130 54% 42%);
+  --success: hsl(142 60% 50%);
   --success-foreground: hsl(115 77% 97%);
-  --warning: hsl(26 90% 49%);
+  --warning: hsl(32 95% 58%);
   --warning-foreground: hsl(33 100% 96%);
-  --border: hsl(220 14% 90%);
-  --input: hsl(220 14% 89%);
-  --ring: hsl(4 78% 56%);
-  --chart-1: hsl(4 78% 56%);
-  --chart-2: hsl(220 70% 55%);
-  --chart-3: hsl(160 60% 45%);
-  --chart-4: hsl(280 55% 60%);
-  --chart-5: hsl(35 90% 58%);
-  /* 三栏统一浅色系（Z Code/Linear 式）：侧栏与右坞同色温浅灰，内容区纯白，发丝线分隔 */
-  --sidebar: hsl(220 20% 97.5%);
-  --sidebar-foreground: hsl(220 10% 42%);
-  --sidebar-primary: hsl(4 78% 56%);
+  --border: hsl(220 20% 92% / 0.08);
+  --input: hsl(220 20% 92% / 0.10);
+  --ring: hsl(4 85% 60%);
+  --chart-1: hsl(4 85% 60%);
+  --chart-2: hsl(220 80% 62%);
+  --chart-3: hsl(160 60% 50%);
+  --chart-4: hsl(280 65% 68%);
+  --chart-5: hsl(35 92% 62%);
+  /* 三栏统一深色系：侧栏与右坞比内容区更深一层，白 8% 发丝线分隔 */
+  --sidebar: hsl(225 26% 5%);
+  --sidebar-foreground: hsl(220 12% 62%);
+  --sidebar-primary: hsl(4 85% 60%);
   --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(220 16% 93%);
-  --sidebar-accent-foreground: hsl(220 20% 14%);
-  --sidebar-border: hsl(220 14% 91%);
-  --sidebar-ring: hsl(4 78% 56%);
+  --sidebar-accent: hsl(225 20% 10%);
+  --sidebar-accent-foreground: hsl(220 20% 92%);
+  --sidebar-border: hsl(220 20% 92% / 0.08);
+  --sidebar-ring: hsl(4 85% 60%);
 
   /* 圆角三档 + 阴影两档 + 品牌渐变（全站唯一语言） */
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --radius-lg: 1rem;
-  --brand-gradient: linear-gradient(135deg, hsl(4 80% 56%), hsl(356 68% 46%));
-  --shadow-card: 0 1px 2px hsl(220 20% 12% / 0.04), 0 2px 8px hsl(220 20% 12% / 0.04);
-  --shadow-hover: 0 4px 12px hsl(220 20% 12% / 0.08), 0 8px 24px hsl(220 20% 12% / 0.08);
+  --brand-gradient: linear-gradient(135deg, hsl(4 88% 60%), hsl(356 72% 50%));
+  --shadow-card: 0 1px 2px hsl(0 0% 0% / 0.5), 0 4px 16px hsl(0 0% 0% / 0.35);
+  --shadow-hover: 0 8px 28px hsl(0 0% 0% / 0.5), 0 4px 20px -6px hsl(4 85% 60% / 0.12);
 
   /* Computed borders using hsl relative color syntax */
   --primary-border: hsl(from var(--primary) h s calc(l + var(--opaque-button-border-intensity)));
-  --secondary-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
-  --destructive-border: hsl(from hsl(2 84% 62%) h s calc(l + var(--opaque-button-border-intensity)));
-  --accent-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
-  --muted-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
+  --secondary-border: hsl(from hsl(225 18% 16%) h s calc(l + var(--opaque-button-border-intensity)));
+  --destructive-border: hsl(from hsl(0 78% 60%) h s calc(l + var(--opaque-button-border-intensity)));
+  --accent-border: hsl(from hsl(225 18% 16%) h s calc(l + var(--opaque-button-border-intensity)));
+  --muted-border: hsl(from hsl(225 18% 16%) h s calc(l + var(--opaque-button-border-intensity)));
   --font-sans:
     'LarkHackSafariFont', 'LarkEmojiFont', 'LarkChineseQuote', '-apple-system',
     'BlinkMacSystemFont', 'Helvetica Neue', 'Tahoma', 'PingFang SC',
@@ -79,21 +81,21 @@
   --shadow-y: 2px;
   --shadow-blur: 12px;
   --shadow-spread: 0px;
-  --shadow-opacity: 0.04;
+  --shadow-opacity: 0.4;
   --shadow-color: #000000;
-  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.02);
-  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.02);
+  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.3);
+  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.3);
   --shadow-sm:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.04), 0px 1px 2px -1px hsl(0 0% 0% / 0.03);
+    0px 2px 12px 0px hsl(0 0% 0% / 0.4), 0px 1px 2px -1px hsl(0 0% 0% / 0.3);
   --shadow:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.04), 0px 1px 2px -1px hsl(0 0% 0% / 0.03);
+    0px 2px 12px 0px hsl(0 0% 0% / 0.4), 0px 1px 2px -1px hsl(0 0% 0% / 0.3);
   --shadow-md:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.04), 0px 2px 4px -1px hsl(0 0% 0% / 0.04);
+    0px 2px 12px 0px hsl(0 0% 0% / 0.4), 0px 2px 4px -1px hsl(0 0% 0% / 0.35);
   --shadow-lg:
-    0px 4px 16px 0px hsl(0 0% 0% / 0.05), 0px 4px 6px -1px hsl(0 0% 0% / 0.03);
+    0px 4px 16px 0px hsl(0 0% 0% / 0.45), 0px 4px 6px -1px hsl(0 0% 0% / 0.35);
   --shadow-xl:
-    0px 6px 20px 0px hsl(0 0% 0% / 0.06), 0px 8px 10px -1px hsl(0 0% 0% / 0.04);
-  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.08);
+    0px 6px 20px 0px hsl(0 0% 0% / 0.5), 0px 8px 10px -1px hsl(0 0% 0% / 0.4);
+  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.6);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -177,19 +179,48 @@
  * Even without handling focused or not, this is six possible combinations that
  * need to be distinguished from eachother visually.
  */
+/* ===== 全局深色底 + 品牌光斑（AI-EOS 式：近黑底上有极淡的品牌色辐射光） ===== */
+body {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(1100px 560px at 82% -12%, hsl(4 85% 60% / 0.06), transparent 62%),
+    radial-gradient(900px 500px at -12% 112%, hsl(356 72% 50% / 0.04), transparent 60%);
+  background-attachment: fixed;
+  color: var(--foreground);
+}
+
 @layer utilities {
   /* ===== 视觉统一 token（3.0 UI 对标打磨：即梦 / 可灵 / Pavo）===== */
 
+  /* 手法⓪ 玻璃拟态卡片（AI-EOS 式）：半透明面板 + 白 8% 描边 + 微渐变 + 模糊 */
+  .glass-card {
+    background:
+      linear-gradient(180deg, hsl(220 25% 92% / 0.04), hsl(220 25% 92% / 0.01)),
+      var(--card);
+    border: 1px solid hsl(220 20% 92% / 0.08);
+    backdrop-filter: blur(8px);
+    box-shadow: var(--shadow-card);
+    border-radius: 1rem;
+  }
+  .glass-card:hover {
+    border-color: hsl(4 85% 60% / 0.35);
+    box-shadow: 0 4px 24px -6px hsl(4 85% 60% / 0.15);
+  }
+  .glass-card-static:hover {
+    border-color: hsl(220 20% 92% / 0.08);
+    box-shadow: var(--shadow-card);
+  }
+
   /* 手法① 渐变主按钮：与品牌 logo 同一 red→orange 渐变语言，主 CTA 专用 */
   .btn-gradient {
-    background-image: linear-gradient(135deg, hsl(2 85% 60%) 0%, hsl(25 95% 55%) 100%);
+    background-image: linear-gradient(135deg, hsl(4 90% 62%) 0%, hsl(25 92% 56%) 100%);
     color: hsl(0 0% 100%);
-    box-shadow: 0 4px 14px -4px hsl(2 85% 60% / 0.45);
+    box-shadow: 0 4px 14px -4px hsl(4 90% 60% / 0.5);
     transition: filter 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
   }
   .btn-gradient:hover {
-    filter: brightness(1.06);
-    box-shadow: 0 6px 18px -4px hsl(2 85% 60% / 0.55);
+    filter: brightness(1.08);
+    box-shadow: 0 6px 18px -4px hsl(4 90% 60% / 0.65);
   }
   .btn-gradient:active {
     transform: scale(0.98);
@@ -201,8 +232,8 @@
   }
   .card-hover:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 28px -10px hsl(220 20% 20% / 0.14);
-    border-color: hsl(220 14% 80%);
+    box-shadow: 0 10px 28px -10px hsl(0 0% 0% / 0.55);
+    border-color: hsl(220 20% 92% / 0.18);
   }
 
   /* 手法③ 侧栏激活态：渐变底 + 白字 + 投影，替代纯色块 */
@@ -318,21 +349,21 @@
 }
 /* ===== 3.0.5 设计系统工具类：全站唯一品牌语言 ===== */
 .bg-brand-gradient {
-  background-image: linear-gradient(135deg, hsl(4 80% 56%), hsl(356 68% 46%));
+  background-image: linear-gradient(135deg, hsl(4 88% 60%), hsl(356 72% 50%));
 }
 .btn-brand {
-  background-image: linear-gradient(135deg, hsl(4 80% 56%), hsl(356 68% 46%));
+  background-image: linear-gradient(135deg, hsl(4 88% 60%), hsl(356 72% 50%));
   color: hsl(0 0% 100%);
   transition: opacity .15s ease, box-shadow .15s ease;
 }
 .btn-brand:hover { opacity: .92; box-shadow: var(--shadow-hover); }
 .nav-active {
-  background: hsl(4 78% 56% / 0.09);
-  color: hsl(4 78% 46%);
-  box-shadow: inset 3px 0 0 0 hsl(4 78% 56%);
+  background: hsl(4 85% 60% / 0.12);
+  color: hsl(4 92% 70%);
+  box-shadow: inset 3px 0 0 0 hsl(4 85% 60%);
   font-weight: 600;
 }
-.nav-idle { color: hsl(220 10% 42%); }
-.nav-idle:hover { background: hsl(220 16% 93%); color: hsl(220 20% 14%); }
+.nav-idle { color: hsl(220 12% 62%); }
+.nav-idle:hover { background: hsl(220 20% 92% / 0.06); color: hsl(220 20% 92%); }
 .card-hover { transition: transform .15s ease, box-shadow .15s ease; }
 .card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }

@@ -223,12 +223,12 @@ const ProjectExportTab = () => {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <div className="lg:col-span-3">
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
             <h3 className="text-base font-semibold text-foreground">项目交付状态</h3>
             {loading ? (
               <p className="mt-4 text-sm text-muted-foreground">加载中...</p>
             ) : loadError ? (
-              <p className="mt-4 text-sm text-red-600">分镜数据加载失败，请刷新重试</p>
+              <p className="mt-4 text-sm text-red-400">分镜数据加载失败，请刷新重试</p>
             ) : (
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <div className="rounded-lg bg-muted/50 p-3">
@@ -264,7 +264,7 @@ const ProjectExportTab = () => {
                   {readiness.map((item) => (
                     <div key={item.label} className="flex items-center gap-2 text-xs">
                       {item.done ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                       ) : (
                         <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
                       )}
@@ -277,7 +277,7 @@ const ProjectExportTab = () => {
               </div>
             )}
 
-            <div className="mt-4 flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-600">
+            <div className="mt-4 flex items-start gap-2 rounded-lg bg-blue-500/15 p-3 text-xs text-blue-400">
               <Info className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
                 <p className="font-medium">导出说明</p>
@@ -291,7 +291,7 @@ const ProjectExportTab = () => {
         </div>
 
         <div className="space-y-6 lg:col-span-2">
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
             <h3 className="text-base font-semibold text-foreground">可下载交付物</h3>
             <div className="mt-4 space-y-2">
               {deliverables.map((item) => (
@@ -321,7 +321,7 @@ const ProjectExportTab = () => {
             </div>
           </div>
 
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
             <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
               <Clapperboard className="h-4 w-4" />
               成片合成（浏览器端）
@@ -333,7 +333,7 @@ const ProjectExportTab = () => {
             </p>
             {/* P1-3 BGM 与配音开关 */}
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
-              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 font-medium text-foreground hover:border-primary">
+              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 font-medium text-foreground hover:border-primary">
                 <Music className="h-3.5 w-3.5" /> {bgmName ? bgmName.slice(0, 16) : '选择 BGM'}
                 <input
                   type="file"
@@ -356,7 +356,7 @@ const ProjectExportTab = () => {
                     setBgmUrl(null);
                     setBgmName(null);
                   }}
-                  className="text-muted-foreground hover:text-red-500"
+                  className="text-muted-foreground hover:text-red-3000"
                 >
                   移除
                 </button>
@@ -398,7 +398,7 @@ const ProjectExportTab = () => {
               </div>
             )}
             {synthStatus === 'error' && (
-              <p className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs text-red-600">{synthMessage || '合成失败'}</p>
+              <p className="mt-3 rounded-lg bg-red-500/15 p-2.5 text-xs text-red-400">{synthMessage || '合成失败'}</p>
             )}
             <div className="mt-4 flex gap-2">
               <button
@@ -436,7 +436,7 @@ const ProjectExportTab = () => {
               <button
                 onClick={handleServerAssemble}
                 disabled={videoClips.length === 0 || assembling}
-                className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-white py-2 text-sm font-semibold text-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-card py-2 text-sm font-semibold text-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Clapperboard className="h-4 w-4" />
                 {assembling ? '合成中…' : videoClips.length === 0 ? '暂无片段（先生成视频）' : '服务端合成并归档资产'}
@@ -445,7 +445,7 @@ const ProjectExportTab = () => {
           </div>
 
           {/* W5 模板市场：项目沉淀为模板 */}
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
             <h3 className="text-base font-semibold text-foreground">存为模板</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               把当前项目的参数（时长/画幅/画风/导演偏好）沉淀为模板，供复用与分享

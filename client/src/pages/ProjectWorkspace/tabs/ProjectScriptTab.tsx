@@ -108,12 +108,12 @@ const ProjectScriptTab = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {savedTip && <span className="text-xs font-medium text-green-600">已保存</span>}
+          {savedTip && <span className="text-xs font-medium text-green-400">已保存</span>}
           <button
             onClick={handleToBoards}
             disabled={boardsBusy}
             title="分镜表技能：剧本→结构化分镜JSON→直接物化（失败回落启发式拆分）"
-            className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
           >
             <Clapperboard className="h-4 w-4" /> {boardsBusy ? '转分镜中…' : '转分镜表'}
           </button>
@@ -127,10 +127,10 @@ const ProjectScriptTab = () => {
         </div>
       </div>
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
       {/* 广告创意（Hook+PAS+CTA，借鉴 creatify skill Part 1 框架） */}
-      <div className="rounded-xl border bg-white shadow-sm">
+      <div className="rounded-xl border bg-card shadow-sm">
         <button
           onClick={() => setAdOpen((v) => !v)}
           className="flex w-full items-center gap-2 px-4 py-3 text-left"
@@ -146,14 +146,14 @@ const ProjectScriptTab = () => {
               onChange={(e) => setAdBrief(e.target.value)}
               placeholder="产品名、核心卖点（最多3个）、目标人群、价格/优惠、期望CTA，如：XX面膜，补水+修护，25-35岁女性，买一送一，CTA点击领取试用"
               rows={3}
-              className="w-full resize-y rounded-lg border border-input bg-white p-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+              className="w-full resize-y rounded-lg border border-input bg-card p-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary"
             />
             <div className="flex items-center gap-2">
               {adGenres.length > 0 && (
                 <select
                   value={adGenreId ?? ''}
                   onChange={(e) => setAdGenreId(e.target.value || undefined)}
-                  className="rounded-lg border border-input bg-white px-2 py-2 text-xs outline-none focus:border-primary"
+                  className="rounded-lg border border-input bg-card px-2 py-2 text-xs outline-none focus:border-primary"
                   title="题材铁律（可选）"
                 >
                   <option value="">不限题材</option>
@@ -178,9 +178,9 @@ const ProjectScriptTab = () => {
       </div>
 
       {loading ? (
-        <div className="rounded-xl border bg-white p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : (
-        <div className="rounded-xl border bg-white shadow-sm">
+        <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-primary" />
@@ -190,7 +190,7 @@ const ProjectScriptTab = () => {
               <span className="text-xs text-muted-foreground">{content.length} 字</span>
               <button
                 onClick={() => navigate(`/project/${id}/canvas`)}
-                className="flex items-center gap-1.5 rounded-md border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                className="flex items-center gap-1.5 rounded-md border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
               >
                 <Sparkles className="h-3.5 w-3.5" /> 去无限画布编排
               </button>
@@ -200,7 +200,7 @@ const ProjectScriptTab = () => {
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder={project?.description ? `${project.description}\n\n在这里编写或粘贴剧本原文...` : '在这里编写或粘贴剧本原文...'}
-            className="min-h-[420px] w-full resize-y rounded-b-xl bg-white p-5 text-sm leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/60"
+            className="min-h-[420px] w-full resize-y rounded-b-xl bg-card p-5 text-sm leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/60"
           />
         </div>
       )}

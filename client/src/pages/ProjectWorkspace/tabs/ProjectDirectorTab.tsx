@@ -125,7 +125,7 @@ const ProjectDirectorTab = () => {
           className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
             current === o.value
               ? 'bg-primary text-primary-foreground'
-              : 'border border-input bg-white text-foreground/70 hover:border-primary hover:text-primary'
+              : 'border border-input bg-card text-foreground/70 hover:border-primary hover:text-primary'
           }`}
         >
           {o.label}
@@ -148,25 +148,25 @@ const ProjectDirectorTab = () => {
           <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
             共 {shots.length} 个镜头 · {scenes.length} 场
           </span>
-          <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary">
+          <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary">
             <Layers className="h-3.5 w-3.5" /> 打开无限画布
           </button>
         </div>
       </div>
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
       {loading ? (
-        <div className="rounded-xl border bg-white p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : shots.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-white p-12 text-center">
+        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
           <div className="text-sm text-muted-foreground">暂无镜头，请先在「分镜」标签页创建场景与镜头</div>
           <button onClick={() => navigate(`/project/${id}/storyboard`)} className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">去分镜</button>
         </div>
       ) : (
         <div className="flex flex-col gap-4 xl:flex-row">
           {/* 左：项目树 */}
-          <div className="w-full shrink-0 rounded-xl border bg-white p-3 shadow-sm xl:w-64">
+          <div className="w-full shrink-0 rounded-xl border bg-card p-3 shadow-sm xl:w-64">
             <div className="mb-2 flex items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
               <ChevronDown className="h-3 w-3" /> 项目结构
             </div>
@@ -210,7 +210,7 @@ const ProjectDirectorTab = () => {
 
           {/* 中：实时监看 */}
           <div className="flex-1">
-            <div className="rounded-xl border bg-white p-4 shadow-sm">
+            <div className="rounded-xl border bg-card p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <MonitorPlay className="h-4 w-4 text-primary" />
@@ -222,7 +222,7 @@ const ProjectDirectorTab = () => {
                   )}
                 </div>
                 {selectedShot?.locked && (
-                  <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                  <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">
                     <Lock className="h-3 w-3" /> 已锁定
                   </span>
                 )}
@@ -269,20 +269,20 @@ const ProjectDirectorTab = () => {
                   <div className="mt-3 flex items-center gap-2">
                     <button
                       onClick={() => navigate(`/project/${id}/storyboard?shot=${selectedShot.id}`)}
-                      className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                      className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
                     >
                       <Sparkles className="h-3.5 w-3.5" /> 生成图片
                     </button>
                     <button
                       onClick={() => navigate(`/project/${id}/storyboard?shot=${selectedShot.id}`)}
-                      className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                      className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
                     >
                       <Play className="h-3.5 w-3.5" /> 生成视频
                     </button>
                     <VariantButton projectId={id ?? ''} shot={selectedShot} onError={setError} />
                     <button
                       onClick={() => updateShot({ locked: !selectedShot.locked })}
-                      className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                      className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
                     >
                       {selectedShot.locked ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
                       {selectedShot.locked ? '解锁' : '锁定'}
@@ -301,7 +301,7 @@ const ProjectDirectorTab = () => {
           {/* 右：导演控制 */}
           <div className="w-full shrink-0 space-y-3 xl:w-72">
             {selectedShot && (
-              <div className="rounded-xl border bg-white p-4 shadow-sm">
+              <div className="rounded-xl border bg-card p-4 shadow-sm">
                 <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-foreground">
                   <Camera className="h-4 w-4 text-primary" /> 导演控制
                 </div>
@@ -324,7 +324,7 @@ const ProjectDirectorTab = () => {
                           className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
                             selectedShot.lens === l
                               ? 'bg-primary text-primary-foreground'
-                              : 'border border-input bg-white text-foreground/70 hover:border-primary hover:text-primary'
+                              : 'border border-input bg-card text-foreground/70 hover:border-primary hover:text-primary'
                           }`}
                         >
                           {l}
@@ -341,7 +341,7 @@ const ProjectDirectorTab = () => {
             )}
             {/* 机位预设（白模产线 · 十种机位类型，一键统一运镜口径） */}
             {selectedShot && (
-              <div className="rounded-xl border bg-white p-4 shadow-sm">
+              <div className="rounded-xl border bg-card p-4 shadow-sm">
                 <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-foreground">
                   <Clapperboard className="h-4 w-4 text-primary" /> 机位预设
                 </div>
@@ -359,7 +359,7 @@ const ProjectDirectorTab = () => {
                         className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
                           active
                             ? 'bg-primary text-primary-foreground'
-                            : 'border border-input bg-white text-foreground/70 hover:border-primary hover:text-primary'
+                            : 'border border-input bg-card text-foreground/70 hover:border-primary hover:text-primary'
                         }`}
                       >
                         {r.label}
@@ -379,7 +379,7 @@ const ProjectDirectorTab = () => {
               />
             )}
             {/* 底部时间线条预览 */}
-            <div className="rounded-xl border bg-white p-3 shadow-sm">
+            <div className="rounded-xl border bg-card p-3 shadow-sm">
               <div className="mb-2 text-[11px] font-medium text-muted-foreground">全片镜头流</div>
               <div className="flex flex-wrap gap-1">
                 {shots.map((s) => (
@@ -390,7 +390,7 @@ const ProjectDirectorTab = () => {
                       selectedShotId === s.id
                         ? 'bg-primary text-primary-foreground'
                         : s.status === 'ready'
-                          ? 'bg-green-100 text-green-700'
+                          ? 'bg-green-500/20 text-green-300'
                           : 'bg-muted text-foreground/60'
                     }`}
                     title={`镜 ${s.shotNumber}`}
@@ -440,7 +440,7 @@ const VariantButton = ({
             setBusy(false);
           }
         }}
-        className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+        className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
       >
         <Layers className="h-3.5 w-3.5" /> {busy ? '创建中…' : '运镜变体×3'}
       </button>
@@ -534,7 +534,7 @@ const WhitemodelCard = ({  projectId,
 
   const meta = shot.whitemodelMeta;
   return (
-    <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-foreground">
         <Box className="h-4 w-4 text-primary" /> 白模参考
       </div>
@@ -560,7 +560,7 @@ const WhitemodelCard = ({  projectId,
               className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
                 source === s.id
                   ? 'bg-primary text-primary-foreground'
-                  : 'border border-input bg-white text-foreground/60 hover:border-primary hover:text-primary'
+                  : 'border border-input bg-card text-foreground/60 hover:border-primary hover:text-primary'
               }`}
             >
               {s.label}
@@ -581,14 +581,14 @@ const WhitemodelCard = ({  projectId,
           <button
             disabled={busy}
             onClick={() => save({ whitemodelUrl: null, whitemodelMeta: undefined } as never)}
-            className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-red-400 hover:text-red-500 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-red-400 hover:text-red-3000 disabled:opacity-50"
           >
             <X className="h-3.5 w-3.5" /> 清除绑定
           </button>
         </div>
       ) : (
         <div className="space-y-2">
-          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary">
             <Upload className="h-3.5 w-3.5" /> {busy ? '处理中…' : '上传白模视频'}
             <input
               type="file"
@@ -605,7 +605,7 @@ const WhitemodelCard = ({  projectId,
           <button
             disabled={busy}
             onClick={() => void loadAssets()}
-            className="flex w-full items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+            className="flex w-full items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
           >
             <Film className="h-3.5 w-3.5" /> 从白模资产选择
           </button>
@@ -629,7 +629,7 @@ const WhitemodelCard = ({  projectId,
                       createdAt: new Date().toISOString(),
                     },
                   } as never)}
-                  className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-foreground/80 hover:bg-white"
+                  className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-foreground/80 hover:bg-card"
                 >
                   {a.name}
                 </button>
@@ -639,7 +639,7 @@ const WhitemodelCard = ({  projectId,
           {!showUrl ? (
             <button
               onClick={() => setShowUrl(true)}
-              className="flex w-full items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+              className="flex w-full items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
             >
               <Link2 className="h-3.5 w-3.5" /> URL 登记（公网白模）
             </button>
@@ -649,7 +649,7 @@ const WhitemodelCard = ({  projectId,
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
                 placeholder="https://…/whitemodel.mp4"
-                className="min-w-0 flex-1 rounded-lg border border-input bg-white px-2 py-1.5 text-xs outline-none focus:border-primary"
+                className="min-w-0 flex-1 rounded-lg border border-input bg-card px-2 py-1.5 text-xs outline-none focus:border-primary"
               />
               <button
                 disabled={busy || !urlInput.trim()}

@@ -84,7 +84,7 @@ const OfficialSection = () => {
     <>
       <div>
         <h1 className="flex items-center gap-2 text-xl font-semibold text-foreground">
-          <BadgeCheck className="h-5 w-5 text-amber-600" />
+          <BadgeCheck className="h-5 w-5 text-amber-400" />
           官方直供通道
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -92,7 +92,7 @@ const OfficialSection = () => {
         </p>
       </div>
 
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -102,14 +102,14 @@ const OfficialSection = () => {
               <span
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                   info?.enabled
-                    ? 'bg-emerald-50 text-emerald-600'
+                    ? 'bg-emerald-500/15 text-emerald-400'
                     : 'bg-muted text-muted-foreground'
                 }`}
               >
                 {info?.enabled ? '已启用' : '未启用'}
               </span>
               {info?.hasApiKey && (
-                <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600">
+                <span className="rounded-full bg-blue-500/15 px-2.5 py-0.5 text-xs font-medium text-blue-400">
                   Key 已配置
                 </span>
               )}
@@ -148,7 +148,7 @@ const OfficialSection = () => {
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.official.example/v1"
-                className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                className="mt-1.5 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
               />
             </div>
             <div>
@@ -158,7 +158,7 @@ const OfficialSection = () => {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="sk-..."
-                className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                className="mt-1.5 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
               />
             </div>
             <div className="md:col-span-2">
@@ -174,7 +174,7 @@ const OfficialSection = () => {
         )}
       </div>
 
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h2 className="text-base font-semibold text-foreground">价格对比（每次调用）</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           官方结算价 vs 市场参考价；调价实时生效后续任务结算
@@ -203,7 +203,7 @@ const OfficialSection = () => {
                         {p.modelKey} · {p.tier}
                       </div>
                     </td>
-                    <td className="py-2.5 pr-4 font-semibold text-emerald-600">
+                    <td className="py-2.5 pr-4 font-semibold text-emerald-400">
                       ¥{p.unitPriceCny.toFixed(2)}
                     </td>
                     <td className="py-2.5 pr-4 text-muted-foreground">

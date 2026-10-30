@@ -68,7 +68,7 @@ const ProjectAssetsTab = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索资产..."
-            className="h-9 w-56 rounded-lg border border-input bg-white pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-9 w-56 rounded-lg border border-input bg-card pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
       </div>
@@ -81,7 +81,7 @@ const ProjectAssetsTab = () => {
             className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
               activeType === t
                 ? 'bg-primary text-primary-foreground'
-                : 'border border-input bg-white text-foreground hover:border-primary hover:text-primary'
+                : 'border border-input bg-card text-foreground hover:border-primary hover:text-primary'
             }`}
           >
             {t}
@@ -89,12 +89,12 @@ const ProjectAssetsTab = () => {
         ))}
       </div>
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
       {loading ? (
-        <div className="rounded-xl border bg-white p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-white p-12 text-center">
+        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
             <FolderOpen className="h-6 w-6 text-muted-foreground" />
           </div>
@@ -105,7 +105,7 @@ const ProjectAssetsTab = () => {
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
           {filtered.map((a) => (
-            <div key={a.id} className="group overflow-hidden rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md">
+            <div key={a.id} className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
               <div className="relative aspect-square">
                 {isImage(a) ? (
                   <MediaOrMissing
@@ -147,7 +147,7 @@ const ProjectAssetsTab = () => {
                 <span className="absolute left-2 top-2 rounded bg-black/40 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-sm">
                   {a.assetType || 'asset'} · v{a.version}
                 </span>
-                {a.locked && <span className="absolute right-2 top-2 rounded bg-amber-500/80 px-1.5 py-0.5 text-[9px] font-medium text-white">锁定</span>}
+                {a.locked && <span className="absolute right-2 top-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-white">锁定</span>}
               </div>
               <div className="p-2.5">
                 <div className="truncate text-xs font-medium text-foreground">{a.name || '未命名资产'}</div>

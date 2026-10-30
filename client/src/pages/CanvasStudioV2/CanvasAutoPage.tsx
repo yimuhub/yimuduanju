@@ -304,7 +304,7 @@ export default function CanvasAutoPage() {
   return (
     <div className="min-h-screen bg-muted/40 text-foreground">
       {/* Top Header */}
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-white px-6 py-4 shadow-sm">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-card px-6 py-4 shadow-sm">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate(`/project/${projectId}`)}
@@ -331,7 +331,7 @@ export default function CanvasAutoPage() {
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => void loadAll()}
-            className="flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/40"
+            className="flex items-center gap-1.5 rounded-lg border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/40"
           >
             <RefreshCw className="h-3.5 w-3.5" />
             刷新进度
@@ -359,7 +359,7 @@ export default function CanvasAutoPage() {
 
       <main className="mx-auto max-w-6xl space-y-6 p-6">
         {loading ? (
-          <div className="flex items-center justify-center rounded-2xl border bg-white py-24 text-sm text-muted-foreground">
+          <div className="flex items-center justify-center rounded-2xl border bg-card py-24 text-sm text-muted-foreground">
             <Loader2 className="mr-2 h-5 w-5 animate-spin text-primary" />
             正在同步项目流水线状态...
           </div>
@@ -373,8 +373,8 @@ export default function CanvasAutoPage() {
                 return (
                   <div
                     key={st.id}
-                    className={`flex flex-col justify-between rounded-2xl border bg-white p-5 shadow-sm transition-all ${
-                      st.done ? 'border-emerald-200/80' : 'border-border'
+                    className={`flex flex-col justify-between rounded-2xl border bg-card p-5 shadow-sm transition-all ${
+                      st.done ? 'border-emerald-500/30' : 'border-border'
                     }`}
                   >
                     <div>
@@ -383,12 +383,12 @@ export default function CanvasAutoPage() {
                           STEP {st.step}
                         </span>
                         {st.done ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
                             <CheckCircle2 className="h-4 w-4" />
                             已就绪
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-xs text-amber-600">
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-400">
                             <Circle className="h-3.5 w-3.5" />
                             待推进
                           </span>
@@ -429,13 +429,13 @@ export default function CanvasAutoPage() {
 
             {/* 成片预览或分镜矩阵预览 */}
             {assembledUrl && (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5">
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/15 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-semibold text-emerald-900">
+                    <h3 className="text-sm font-semibold text-emerald-300">
                       🎉 音画字幕一体化成片已生成就绪
                     </h3>
-                    <p className="mt-1 text-xs text-emerald-700">
+                    <p className="mt-1 text-xs text-emerald-300">
                       成片地址：{assembledUrl}（已归档至项目资产库，包含配音轨与内嵌字幕轨）
                     </p>
                   </div>
@@ -450,7 +450,7 @@ export default function CanvasAutoPage() {
                     </a>
                     <button
                       onClick={() => navigate(`/project/${projectId}/export`)}
-                      className="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                      className="rounded-xl border border-emerald-300 bg-card px-4 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
                     >
                       导出剪映草稿与字幕包
                     </button>
@@ -460,7 +460,7 @@ export default function CanvasAutoPage() {
             )}
 
             {/* 镜头矩阵实时状态一览 */}
-            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="rounded-2xl border bg-card p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-semibold text-foreground">
@@ -514,7 +514,7 @@ export default function CanvasAutoPage() {
                           <span
                             className={`rounded px-1.5 py-0.5 ${
                               sh.startFrameUrl
-                                ? 'bg-emerald-50 text-emerald-600'
+                                ? 'bg-emerald-500/15 text-emerald-400'
                                 : 'bg-muted text-muted-foreground'
                             }`}
                           >
@@ -523,7 +523,7 @@ export default function CanvasAutoPage() {
                           <span
                             className={`rounded px-1.5 py-0.5 ${
                               sh.videoUrl
-                                ? 'bg-blue-50 text-blue-600'
+                                ? 'bg-blue-500/15 text-blue-400'
                                 : 'bg-muted text-muted-foreground'
                             }`}
                           >

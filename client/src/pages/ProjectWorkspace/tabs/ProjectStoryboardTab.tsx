@@ -23,14 +23,14 @@ import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
 
 const statusConfig: Record<string, { label: string; className: string }> = {
   draft: { label: '草稿', className: 'bg-muted text-muted-foreground' },
-  queued: { label: '排队中', className: 'bg-amber-50 text-amber-600' },
+  queued: { label: '排队中', className: 'bg-amber-500/15 text-amber-400' },
   pending: { label: '等待中', className: 'bg-muted text-muted-foreground' },
-  generating: { label: '生成中', className: 'bg-blue-50 text-blue-600' },
-  running: { label: '生成中', className: 'bg-blue-50 text-blue-600' },
-  ready: { label: '已就绪', className: 'bg-green-50 text-green-600' },
-  completed: { label: '已完成', className: 'bg-green-50 text-green-600' },
-  succeeded: { label: '已完成', className: 'bg-green-50 text-green-600' },
-  failed: { label: '失败', className: 'bg-red-50 text-red-600' },
+  generating: { label: '生成中', className: 'bg-blue-500/15 text-blue-400' },
+  running: { label: '生成中', className: 'bg-blue-500/15 text-blue-400' },
+  ready: { label: '已就绪', className: 'bg-green-500/15 text-green-400' },
+  completed: { label: '已完成', className: 'bg-green-500/15 text-green-400' },
+  succeeded: { label: '已完成', className: 'bg-green-500/15 text-green-400' },
+  failed: { label: '失败', className: 'bg-red-500/15 text-red-400' },
 };
 
 const getStatusInfo = (status: string) =>
@@ -236,7 +236,7 @@ const ProjectStoryboardTab = () => {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
           {error}
         </div>
       )}
@@ -255,7 +255,7 @@ const ProjectStoryboardTab = () => {
             <select
               value={selectedScene}
               onChange={(e) => setSelectedScene(e.target.value)}
-              className="h-9 rounded-lg border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="h-9 rounded-lg border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
               <option value="all">全部场景</option>
               {scenes.map((scene) => (
@@ -266,7 +266,7 @@ const ProjectStoryboardTab = () => {
             </select>
           </div>
 
-          <div className="flex items-center rounded-lg border border-input bg-white p-0.5">
+          <div className="flex items-center rounded-lg border border-input bg-card p-0.5">
             <button
               onClick={() => setViewMode('grid')}
               className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
@@ -315,7 +315,7 @@ const ProjectStoryboardTab = () => {
       {loading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
       ) : filteredShots.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-white p-12 text-center">
+        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
           <div className="text-sm text-muted-foreground">
             暂无分镜，请先生成分镜故事板
           </div>
@@ -329,7 +329,7 @@ const ProjectStoryboardTab = () => {
             return (
               <div
                 key={shot.id}
-                className="overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:shadow-md"
+                className="overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md"
               >
                 {/* Thumbnail */}
                 <div
@@ -382,7 +382,7 @@ const ProjectStoryboardTab = () => {
                     <button
                       onClick={() => handleRerun(shot, 'image')}
                       disabled={isRegenerating}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-white py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-card py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
                     >
                       <RefreshCw className="h-3 w-3" />
                       重生成
@@ -390,28 +390,28 @@ const ProjectStoryboardTab = () => {
                     <button
                       onClick={() => handleRerun(shot, 'video')}
                       disabled={isRegenerating}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-white py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-input bg-card py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
                     >
                       <Play className="h-3 w-3" />
                       生成视频
                     </button>
                     <button
                       onClick={() => handleMove(idx, 'up')}
-                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-white text-muted-foreground hover:text-foreground"
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-foreground"
                       title="上移"
                     >
                       <ChevronUp className="h-3 w-3" />
                     </button>
                     <button
                       onClick={() => handleMove(idx, 'down')}
-                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-white text-muted-foreground hover:text-foreground"
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-foreground"
                       title="下移"
                     >
                       <ChevronDown className="h-3 w-3" />
                     </button>
                     <button
                       onClick={() => handleDelete(shot.id)}
-                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-white text-muted-foreground hover:text-red-500"
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-red-3000"
                       title="删除"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -433,7 +433,7 @@ const ProjectStoryboardTab = () => {
                           }
                           rows={3}
                           placeholder="描述这一镜的画面（将用于生成首帧图与视频）"
-                          className="mt-1 w-full resize-y rounded-md border border-input bg-white p-2 text-xs outline-none focus:border-primary"
+                          className="mt-1 w-full resize-y rounded-md border border-input bg-card p-2 text-xs outline-none focus:border-primary"
                         />
                         <div className="mt-1.5 flex items-center gap-1.5">
                           <button
@@ -442,7 +442,7 @@ const ProjectStoryboardTab = () => {
                               savingPromptIds.has(shot.id) ||
                               (promptDrafts[shot.id] ?? shot.visualPrompt ?? '') === (shot.visualPrompt ?? '')
                             }
-                            className="rounded-md border border-input bg-white px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-40"
+                            className="rounded-md border border-input bg-card px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-40"
                           >
                             {savingPromptIds.has(shot.id) ? '保存中…' : '保存'}
                           </button>
@@ -488,7 +488,7 @@ const ProjectStoryboardTab = () => {
                             <button
                               onClick={() => handleVoice(shot)}
                               disabled={isRegenerating}
-                              className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-input bg-white px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-50"
+                              className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-input bg-card px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-50"
                             >
                               <Mic className="h-3 w-3" />
                               不满意，重配
@@ -498,7 +498,7 @@ const ProjectStoryboardTab = () => {
                           <button
                             onClick={() => handleVoice(shot)}
                             disabled={isRegenerating}
-                            className="ml-1 inline-flex items-center gap-1 rounded-md border border-input bg-white px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-50"
+                            className="ml-1 inline-flex items-center gap-1 rounded-md border border-input bg-card px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-50"
                           >
                             <Mic className="h-3 w-3" />
                             生成配音
@@ -516,7 +516,7 @@ const ProjectStoryboardTab = () => {
         </div>
       ) : (
         /* List view */
-        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <table className="w-full text-sm">
             <thead className="bg-muted/30">
               <tr>
@@ -565,7 +565,7 @@ const ProjectStoryboardTab = () => {
                         </button>
                         <button
                           onClick={() => handleDelete(shot.id)}
-                          className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground hover:border-red-300 hover:text-red-500"
+                          className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground hover:border-red-300 hover:text-red-3000"
                         >
                           删除
                         </button>

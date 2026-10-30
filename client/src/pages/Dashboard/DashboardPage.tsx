@@ -15,20 +15,20 @@ import type { DashboardStats, GenerationJob, ProjectListItem } from '@shared/api
 
 const JOB_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频', tts: '配音', parse_script: '剧本解析', script: '剧本' };
 const JOB_STATUS: Record<string, { label: string; cls: string }> = {
-  pending: { label: '排队', cls: 'bg-amber-50 text-amber-600' },
-  running: { label: '生成中', cls: 'bg-blue-50 text-blue-600' },
-  succeeded: { label: '完成', cls: 'bg-emerald-50 text-emerald-600' },
-  failed: { label: '失败', cls: 'bg-red-50 text-red-600' },
+  pending: { label: '排队', cls: 'bg-amber-500/15 text-amber-400' },
+  running: { label: '生成中', cls: 'bg-blue-500/15 text-blue-400' },
+  succeeded: { label: '完成', cls: 'bg-emerald-500/15 text-emerald-400' },
+  failed: { label: '失败', cls: 'bg-red-500/15 text-red-400' },
   cancelled: { label: '取消', cls: 'bg-muted text-muted-foreground' },
 };
 const PROJECT_STATUS: Record<string, { label: string; cls: string }> = {
   draft: { label: '草稿', cls: 'bg-muted text-muted-foreground' },
-  script_ready: { label: '剧本就绪', cls: 'bg-sky-50 text-sky-600' },
-  assets_generating: { label: '资产生成中', cls: 'bg-blue-50 text-blue-600' },
-  storyboard_ready: { label: '分镜就绪', cls: 'bg-indigo-50 text-indigo-600' },
-  rendering: { label: '成片中', cls: 'bg-violet-50 text-violet-600' },
-  completed: { label: '已完成', cls: 'bg-emerald-50 text-emerald-600' },
-  failed: { label: '失败', cls: 'bg-red-50 text-red-600' },
+  script_ready: { label: '剧本就绪', cls: 'bg-sky-500/15 text-sky-400' },
+  assets_generating: { label: '资产生成中', cls: 'bg-blue-500/15 text-blue-400' },
+  storyboard_ready: { label: '分镜就绪', cls: 'bg-indigo-500/15 text-indigo-400' },
+  rendering: { label: '成片中', cls: 'bg-violet-500/15 text-violet-400' },
+  completed: { label: '已完成', cls: 'bg-emerald-500/15 text-emerald-400' },
+  failed: { label: '失败', cls: 'bg-red-500/15 text-red-400' },
 };
 
 const timeAgo = (iso: string) => {
@@ -73,10 +73,10 @@ const DashboardPage = () => {
   }, [load]);
 
   const kpis = [
-    { label: '项目总数', value: stats?.totalProjects ?? 0, icon: FolderKanban, cls: 'bg-sky-50 text-sky-600' },
-    { label: '生成镜头', value: stats?.totalShots ?? 0, icon: Film, cls: 'bg-violet-50 text-violet-600' },
-    { label: '产出资产', value: stats?.totalAssets ?? 0, icon: Images, cls: 'bg-emerald-50 text-emerald-600' },
-    { label: '累计费用', value: `¥${(stats?.totalCost ?? 0).toFixed(2)}`, icon: Coins, cls: 'bg-amber-50 text-amber-600' },
+    { label: '项目总数', value: stats?.totalProjects ?? 0, icon: FolderKanban, cls: 'bg-sky-500/15 text-sky-400' },
+    { label: '生成镜头', value: stats?.totalShots ?? 0, icon: Film, cls: 'bg-violet-500/15 text-violet-400' },
+    { label: '产出资产', value: stats?.totalAssets ?? 0, icon: Images, cls: 'bg-emerald-500/15 text-emerald-400' },
+    { label: '累计费用', value: `¥${(stats?.totalCost ?? 0).toFixed(2)}`, icon: Coins, cls: 'bg-amber-500/15 text-amber-400' },
   ];
 
   const runningJobs = jobs.filter((j) => j.status === 'running' || j.status === 'pending');
@@ -96,7 +96,7 @@ const DashboardPage = () => {
               : '流水线空闲，适合开一部新剧'}
           </p>
         </div>
-        <div className="flex w-full max-w-md items-center gap-2 rounded-xl border border-input bg-background p-1.5 pl-3.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+        <div className="flex w-full max-w-md items-center gap-2 rounded-xl border border-input bg-card p-1.5 pl-3.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
           <Sparkles className="h-4 w-4 shrink-0 text-primary" />
           <input
             value={quickPrompt}
@@ -118,7 +118,7 @@ const DashboardPage = () => {
       {/* KPI 行 */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {kpis.map((k) => (
-          <div key={k.label} className="rounded-xl border border-border bg-background p-4">
+          <div key={k.label} className="glass-card p-4">
             <div className="flex items-center justify-between">
               <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${k.cls}`}>
                 <k.icon className="h-4 w-4" />
@@ -133,7 +133,7 @@ const DashboardPage = () => {
       <div className="grid gap-4 lg:grid-cols-5">
         {/* 左：生成任务 + 最近项目 */}
         <div className="space-y-4 lg:col-span-3">
-          <section className="rounded-xl border border-border bg-background">
+          <section className="rounded-xl border border-border bg-card">
             <header className="flex items-center justify-between border-b border-border px-4 py-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Loader2 className={`h-4 w-4 text-primary ${runningJobs.length ? 'animate-spin' : 'hidden'}`} />
@@ -170,7 +170,7 @@ const DashboardPage = () => {
             )}
           </section>
 
-          <section className="rounded-xl border border-border bg-background">
+          <section className="rounded-xl border border-border bg-card">
             <header className="flex items-center justify-between border-b border-border px-4 py-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Clapperboard className="h-4 w-4 text-primary" /> 最近项目
@@ -207,7 +207,7 @@ const DashboardPage = () => {
         </div>
 
         {/* 右：活动流 */}
-        <section className="rounded-xl border border-border bg-background lg:col-span-2">
+        <section className="rounded-xl border border-border bg-card lg:col-span-2">
           <header className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">动态</h2>
           </header>

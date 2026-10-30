@@ -86,19 +86,19 @@ const ProjectBibleTab = () => {
             世界观与风格定义，确保全片角色、场景、镜头的一致性
           </p>
         </div>
-        <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3.5 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary">
+        <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3.5 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary">
           <Sparkles className="h-4 w-4" /> 去无限画布
         </button>
       </div>
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
       {loading ? (
-        <div className="rounded-xl border bg-white p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* 世界观 */}
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="rounded-xl border bg-card p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10"><Globe className="h-4 w-4 text-primary" /></div>
@@ -121,7 +121,7 @@ const ProjectBibleTab = () => {
           </div>
 
           {/* 风格圣经 */}
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="rounded-xl border bg-card p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10"><Palette className="h-4 w-4 text-primary" /></div>

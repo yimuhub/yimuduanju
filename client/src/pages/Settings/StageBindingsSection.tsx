@@ -124,7 +124,7 @@ const StageBindingsSection = ({ providers }: { providers: ModelProvider[] }) => 
   };
 
   return (
-    <div className="rounded-xl border bg-white p-6 shadow-sm">
+    <div className="rounded-xl border bg-card p-6 shadow-sm">
       <div className="flex items-center gap-2">
         <Cpu className="h-4 w-4 text-primary" />
         <h3 className="text-base font-semibold text-foreground">分环节模型绑定</h3>
@@ -156,7 +156,7 @@ const StageBindingsSection = ({ providers }: { providers: ModelProvider[] }) => 
                 <select
                   value={d.providerId ?? ''}
                   onChange={(e) => pickProvider(s.key, e.target.value)}
-                  className="h-9 rounded-lg border border-input bg-white px-2 text-xs outline-none focus:border-primary"
+                  className="h-9 rounded-lg border border-input bg-card px-2 text-xs outline-none focus:border-primary"
                 >
                   <option value="">默认供应商</option>
                   {providers.filter((p) => p.enabled).map((p) => (
@@ -168,7 +168,7 @@ const StageBindingsSection = ({ providers }: { providers: ModelProvider[] }) => 
                   onChange={(e) => setDrafts((p) => ({ ...p, [s.key]: { ...p[s.key], model: e.target.value } }))}
                   placeholder={loadingModels === s.key ? '拉取模型列表中…' : '模型名（下拉选或手填）'}
                   list={`models-${s.key}`}
-                  className="h-9 rounded-lg border border-input bg-white px-2 text-xs outline-none focus:border-primary"
+                  className="h-9 rounded-lg border border-input bg-card px-2 text-xs outline-none focus:border-primary"
                 />
                 <datalist id={`models-${s.key}`}>
                   {(modelOptions[s.key] ?? []).map((m) => (
@@ -182,14 +182,14 @@ const StageBindingsSection = ({ providers }: { providers: ModelProvider[] }) => 
                   onChange={(e) => setDrafts((p) => ({ ...p, [s.key]: { ...p[s.key], temperature: e.target.value } }))}
                   placeholder="温度 0-2（文本）"
                   inputMode="decimal"
-                  className="h-9 rounded-lg border border-input bg-white px-2 text-xs outline-none focus:border-primary"
+                  className="h-9 rounded-lg border border-input bg-card px-2 text-xs outline-none focus:border-primary"
                 />
                 <input
                   value={d.maxTokens ?? ''}
                   onChange={(e) => setDrafts((p) => ({ ...p, [s.key]: { ...p[s.key], maxTokens: e.target.value } }))}
                   placeholder="上限 token"
                   inputMode="numeric"
-                  className="h-9 rounded-lg border border-input bg-white px-2 text-xs outline-none focus:border-primary"
+                  className="h-9 rounded-lg border border-input bg-card px-2 text-xs outline-none focus:border-primary"
                 />
               </div>
               <div className="mt-2 flex gap-2">

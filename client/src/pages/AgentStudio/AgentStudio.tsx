@@ -15,19 +15,26 @@ import {
   Film,
   ExternalLink,
   X,
+  Activity,
+  LayoutDashboard,
+  Palette,
+  LayoutTemplate,
+  Settings,
+  Clapperboard,
+  UserCircle,
 } from 'lucide-react';
-import { assets as assetsApi, assistant as assistantApi, generation as generationApi, projects as projectsApi, providers as providersApi, templates as templatesApi } from '@client/src/api';
+import { assets as assetsApi, assistant as assistantApi, dashboard as dashboardApi, generation as generationApi, projects as projectsApi, providers as providersApi, templates as templatesApi } from '@client/src/api';
 import type { Template } from '@shared/api.interface';
 import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
 import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
 import TriPane from '@client/src/components/TriPane';
 
 /**
- * 创作作战室（首页 · Agent 三段式）
+ * 创作作战室（首页 · Agent 三段式 · AI-EOS 极客模式结构）
  * ─────────────────────────────────────────────
- * 左：会话列表（今天/更早分组，localStorage 持久）
- * 中：对话流 = 创作过程。支持附件、快捷指令、项目卡片（一键进入专业工作台）
- * 右：产出面板（项目资产 + 生成任务实时进度）
+ * 左：会话列表（进行中/更早分组，localStorage 持久）+ 底部功能网格 + 用户卡
+ * 中：当前对象头 + 模式页签（对话/任务/产出视图），对话流 = 创作过程
+ * 右：功能页标签坞（产出资产 / 生成任务 / 活动轨迹 / 项目工作台预览，可扩展）
  *
  * Agent 编排 v1 为前端编排：开放对话走 assistant.chat；结构化指令
  * （一句话建项目）直接调 quick-create 真实接口，产出真实项目与任务。
@@ -92,12 +99,7 @@ const loadSessions = (): Session[] => {
   return [newSession()];
 };
 
-const dayLabel = (ts: number) => {
-  const d = new Date(ts);
-  const today = new Date();
-  const isSameDay = d.toDateString() === today.toDateString();
-  return isSameDay ? '今天' : d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
-};
+const dayLabel = (ts: number) => (Date.now() - ts < 24 * 3600 * 1000 ? '进行中' : '更早');
 
 const JOB_STATUS_LABELS: Record<string, string> = {
   pending: '排队中', running: '生成中', succeeded: '已完成', failed: '失败', cancelled: '已取消',
@@ -112,7 +114,10 @@ const AgentStudio = () => {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
-  const [rightTab, setRightTab] = useState<'assets' | 'jobs'>('jobs');
+  // 右侧功能页标签坞：产出资产 / 生成任务 / 活动轨迹 / 项目工作台预览（后续可加更多页签）
+  const [rightTab, setRightTab] = useState<'assets' | 'jobs' | 'activity' | 'preview'>('jobs');
+  // 中栏模式页签：对话 / 任务 / 产出视图
+  const [centerTab, setCenterTab] = useState<'chat' | 'jobs' | 'output'>('chat');
   // 计划确认门（Manus Plan Mode × Pavo Harness）：开拍前展示拆解计划与可改参数
   const [pendingPlan, setPendingPlan] = useState<{
     prompt: string; durationSeconds: number; artStyle: string; aspectRatio: string; budgetMode: string;
@@ -120,12 +125,15 @@ const AgentStudio = () => {
   const [tpls, setTpls] = useState<Template[]>([]);
   const [panelAssets, setPanelAssets] = useState<Asset[]>([]);
   const [panelJobs, setPanelJobs] = useState<GenerationJob[]>([]);
+  const [panelActivity, setPanelActivity] = useState<{ id: string; message: string; createdAt: string }[]>([]);
   // 火宝式引导：无任何已启用供应商时，hero 输入框上方显示配置横幅
   const [providerMissing, setProviderMissing] = useState(false);
   // 流程总控实时进度：会话绑定项目后 5s 轮询 progress，项目卡片/右侧面板直接消费
   const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 用户卡昵称（与 Dashboard 一致：yimu.account.nickname）
+  const [nickname] = useState(() => localStorage.getItem('yimu.account.nickname') || '一幕用户');
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? sessions[0],
@@ -222,6 +230,24 @@ const AgentStudio = () => {
     };
   }, [active?.projectId]);
 
+  // 活动轨迹：右栏「活动轨迹」页签用，平台级活动流
+  useEffect(() => {
+    if (rightTab !== 'activity') return;
+    void dashboardApi.getActivityFeed(15).then((r) => setPanelActivity(r ?? [])).catch(() => setPanelActivity([]));
+  }, [rightTab]);
+
+  // ⌘N：新对话（AI-EOS 极客模式同款快捷键；浏览器自带 Ctrl+N 不冲突时也能用）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        createSession();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sessions]);
+
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' });
   }, [active?.messages.length, busy]);
@@ -275,7 +301,7 @@ const AgentStudio = () => {
 
     // 快捷指令分发
     if (text.includes('一句话创建') || /^(做|来|拍)一(部|个|条).{0,30}(剧|片|视频)/.test(text)) {
-      const prompt = text.replace(/^[🎬🎬\s]*一句话创建短剧项目$/, '').trim() || text;
+      const prompt = text.replace(/^[🎬🎬\s]*一句话创建短剧项目$/u, '').trim() || text;
       if (text.includes('一句话创建')) {
         setInput('');
         appendMsg(sid, { id: uid(), role: 'user', text: '🎬 一句话创建短剧项目' });
@@ -380,7 +406,7 @@ const AgentStudio = () => {
     );
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPendingPlan(null)}>
-        <div className="w-full max-w-lg rounded-2xl border border-border bg-background p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="glass-card glass-card-static w-full max-w-lg p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Sparkles className="h-4 w-4 text-primary" /> 开拍计划（确认后开始消耗算力）
           </div>
@@ -547,19 +573,36 @@ const AgentStudio = () => {
           ))}
         </div>
         <div className="border-t border-sidebar-border p-2">
-          {[
-            { to: '/projects', label: '项目中心', icon: FolderKanban },
-            { to: '/assets', label: '资产库', icon: ImageIcon },
-            { to: '/dashboard', label: '数据看板', icon: ListTodo },
-          ].map((it) => (
-            <button
-              key={it.to}
-              onClick={() => navigate(it.to)}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground/75 hover:bg-sidebar-accent"
-            >
-              <it.icon className="h-4 w-4" /> {it.label}
-            </button>
-          ))}
+          {/* 功能网格（AI-EOS 极客模式：2 列小卡，后续可扩展） */}
+          <div className="grid grid-cols-2 gap-1">
+            {[
+              { to: '/projects', label: '我的项目', icon: FolderKanban },
+              { to: '/dashboard', label: '流程总控', icon: LayoutDashboard },
+              { to: '/styles', label: '风格中心', icon: Palette },
+              { to: '/templates', label: '模板中心', icon: LayoutTemplate },
+              { to: '/assets', label: '资产库', icon: ImageIcon },
+              { to: '/settings', label: '设置', icon: Settings },
+            ].map((it) => (
+              <button
+                key={it.to}
+                onClick={() => navigate(it.to)}
+                className="flex flex-col items-center gap-1 rounded-lg px-1 py-2 text-[11px] text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
+                <it.icon className="h-4 w-4" /> {it.label}
+              </button>
+            ))}
+          </div>
+          {/* 用户卡 */}
+          <div className="mt-1.5 flex items-center gap-2.5 rounded-lg px-2 py-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-xs font-semibold text-white">
+              {(nickname || '一').slice(0, 1)}
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium text-sidebar-foreground">{nickname}</div>
+              <div className="truncate text-[10px] text-sidebar-foreground/50">老板 · 一人公司</div>
+            </div>
+            <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="在线" />
+          </div>
         </div>
         </aside>
         )}
@@ -568,7 +611,7 @@ const AgentStudio = () => {
           <div className="w-full max-w-2xl">
             {/* 无 Provider 配置引导横幅（火宝式：配置完成后自动消失） */}
             {providerMissing && (
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/15 px-4 py-3 text-xs text-amber-300">
                 <span className="min-w-0">
                   <span className="font-semibold">尚未配置模型供应商：</span>
                   生成功能需要至少一个 API Key。请先到「设置 → 供应商」添加，配置后此横幅自动消失。
@@ -587,7 +630,7 @@ const AgentStudio = () => {
             <p className="mt-3 text-center text-sm text-muted-foreground">
               输入创意，AI 拆解计划并自动完成剧本 → 分镜 → 生成 → 成片
             </p>
-            <div className="mt-8 flex items-end gap-2 rounded-2xl border border-input bg-background p-2.5 shadow-lg focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+            <div className="glass-card mt-8 flex items-end gap-2 p-2.5 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20">
               <button
                 onClick={() => fileRef.current?.click()}
                 className="rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -646,7 +689,7 @@ const AgentStudio = () => {
                     <button
                       key={t.id}
                       onClick={() => setPendingPlan({ prompt: `${t.name}：${t.description ?? '按模板开拍'}`, durationSeconds: 45, artStyle: 'realistic', aspectRatio: '9:16', budgetMode: 'balanced' })}
-                      className="group rounded-xl border border-border bg-background p-3 text-left transition-all hover:border-primary hover:shadow-md"
+                      className="glass-card glass-card-static group p-3 text-left transition-all hover:border-primary/60"
                     >
                       <div className="line-clamp-2 text-xs font-medium text-foreground group-hover:text-primary">{t.name}</div>
                       <div className="mt-1 line-clamp-1 text-[10px] text-muted-foreground">{t.category ?? '模板'}</div>
@@ -659,7 +702,7 @@ const AgentStudio = () => {
         </section>
       ) : (
       <section className="flex min-w-0 flex-1 flex-col bg-background">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
           <div className="flex min-w-0 items-center gap-2">
             <Sparkles className="h-4 w-4 shrink-0 text-primary" />
             <span className="truncate text-sm font-semibold text-foreground">{active?.title ?? '创作作战室'}</span>
@@ -671,12 +714,28 @@ const AgentStudio = () => {
                 工作台 <ExternalLink className="h-3 w-3" />
               </button>
             )}
+            {/* 模式页签（AI-EOS 极客模式中栏：对话 / 任务 / 产出视图） */}
+            <div className="ml-2 hidden items-center gap-0.5 rounded-lg bg-muted/60 p-0.5 sm:flex">
+              {([['chat', '对话'], ['jobs', '任务'], ['output', '产出视图']] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setCenterTab(id)}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    centerTab === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <span className="hidden shrink-0 text-[11px] text-muted-foreground lg:inline">
             对话即创作 · 进入工作流后可在项目工作台精细操作
           </span>
         </header>
 
+        {centerTab === 'chat' ? (
+        <>
         <div ref={streamRef} className="flex-1 overflow-y-auto px-4 py-5 sm:px-8">
           <div className="mx-auto max-w-2xl space-y-4">
             {(active?.messages ?? []).map((m) => (
@@ -783,16 +842,83 @@ const AgentStudio = () => {
             </p>
           </div>
         </div>
+        </>
+        ) : centerTab === 'jobs' ? (
+        /* 任务视图：中栏直接看流水线任务，不打断对话 */
+        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-8">
+          <div className="mx-auto max-w-2xl space-y-1.5">
+            {panelJobs.length === 0 ? (
+              <p className="py-10 text-center text-xs text-muted-foreground">暂无生成任务 · 在对话里发起生成后这里实时滚动</p>
+            ) : panelJobs.map((j) => (
+              <div key={j.id} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
+                <span className="truncate text-xs font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                  {JOB_STATUS_LABELS[j.status] ?? j.status}{j.status === 'running' ? ` ${j.progress ?? 0}%` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        ) : (
+        /* 产出视图：中栏大图预览产出资产 + 流水线进度 */
+        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-8">
+          <div className="mx-auto max-w-2xl space-y-3">
+            {active?.projectId && progress && (
+              <div className="glass-card glass-card-static p-3.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="truncate font-medium text-foreground">
+                    {progress.nextGate
+                      ? `✋ 等待确认：${gateLabel[progress.nextGate] ?? progress.nextGate}`
+                      : (progress.steps.find((s) => s.step === progress.currentStep)?.stepLabel ?? progress.overallStatus)}
+                  </span>
+                  <span className="font-semibold text-primary">{progress.overallProgress}%</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, progress.overallProgress)}%` }} />
+                </div>
+              </div>
+            )}
+            {panelAssets.length === 0 ? (
+              <p className="py-10 text-center text-xs text-muted-foreground">
+                {active?.projectId ? '该项目暂无产出资产' : '创建项目后，生成的图片 / 视频 / 配音会出现在这里'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {panelAssets.slice(0, 24).map((a) => (
+                  <div key={a.id} className="glass-card glass-card-static overflow-hidden p-0">
+                    {a.assetType === 'image' && a.fileUrl ? (
+                      <img src={`/api/assets/${a.id}/content`} alt={a.name} loading="lazy" className="h-28 w-full object-cover" />
+                    ) : (
+                      <div className="flex h-28 items-center justify-center text-muted-foreground">
+                        {a.assetType === 'video' ? <Film className="h-7 w-7" /> : <ImageIcon className="h-7 w-7" />}
+                      </div>
+                    )}
+                    <p className="truncate px-2 py-1.5 text-[10px] text-muted-foreground">{a.name}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        )}
       </section>
       )}
         right={heroMode ? null : (
         <aside className="hidden h-full w-full min-h-0 flex-col border-l border-sidebar-border bg-sidebar lg:flex">
+        {/* 坞头：「产出」标题 + 绑定提示（AI-EOS 右栏同构，页签可继续扩展） */}
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-sidebar-border px-3">
+          <Clapperboard className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="text-xs font-semibold text-sidebar-foreground">产出</span>
+          {active?.projectId && (
+            <span className="ml-auto truncate rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">已绑定项目</span>
+          )}
+        </div>
         <div className="flex shrink-0 gap-1 border-b border-sidebar-border p-2">
-          {([['jobs', '生成任务', ListTodo], ['assets', '产出资产', ImageIcon]] as const).map(([id, label, Icon]) => (
+          {([['assets', '产出资产', ImageIcon], ['jobs', '生成任务', ListTodo], ['activity', '活动轨迹', Activity], ['preview', '工作台预览', LayoutDashboard]] as const).map(([id, label, Icon]) => (
             <button
               key={id}
               onClick={() => setRightTab(id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors ${
                 rightTab === id ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}
             >
@@ -801,7 +927,7 @@ const AgentStudio = () => {
           ))}
         </div>
         <div className="flex-1 overflow-y-auto p-2.5">
-          {active?.projectId && (
+          {rightTab !== 'preview' && rightTab !== 'activity' && active?.projectId && (
             <div className="mb-2 space-y-2">
               <div className="rounded-lg bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary">
                 当前会话已绑定项目，展示该项目产出
@@ -809,7 +935,7 @@ const AgentStudio = () => {
               {progress && (
                 <button
                   onClick={() => navigate(`/project/${active.projectId}/flow`)}
-                  className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-left transition-colors hover:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-card px-2.5 py-2 text-left transition-colors hover:border-primary/50"
                 >
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="truncate font-medium text-foreground">
@@ -836,7 +962,7 @@ const AgentStudio = () => {
             ) : (
               <ul className="space-y-1.5">
                 {panelJobs.map((j) => (
-                  <li key={j.id} className="rounded-lg border border-transparent bg-background px-2.5 py-2 hover:border-input">
+                  <li key={j.id} className="rounded-lg border border-transparent bg-card px-2.5 py-2 hover:border-input">
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-xs font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
                       <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -849,20 +975,21 @@ const AgentStudio = () => {
                       </div>
                     )}
                     {j.status === 'failed' && j.errorMessage && (
-                      <p className="mt-1 line-clamp-2 text-[10px] text-red-500">{j.errorMessage}</p>
+                      <p className="mt-1 line-clamp-2 text-[10px] text-red-300">{j.errorMessage}</p>
                     )}
                   </li>
                 ))}
               </ul>
             )
-          ) : panelAssets.length === 0 ? (
+          ) : rightTab === 'assets' ? (
+            panelAssets.length === 0 ? (
             <p className="p-3 text-center text-xs text-muted-foreground">
               {active?.projectId ? '该项目暂无产出资产' : '创建项目后，生成的图片 / 视频 / 配音会出现在这里'}
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {panelAssets.slice(0, 24).map((a) => (
-                <div key={a.id} className="overflow-hidden rounded-lg border border-border bg-background">
+                <div key={a.id} className="overflow-hidden rounded-lg border border-border bg-card">
                   {a.assetType === 'image' && a.fileUrl ? (
                     <img src={`/api/assets/${a.id}/content`} alt={a.name} loading="lazy" className="h-24 w-full object-cover" />
                   ) : (
@@ -874,6 +1001,68 @@ const AgentStudio = () => {
                 </div>
               ))}
             </div>
+          )
+          ) : rightTab === 'activity' ? (
+            panelActivity.length === 0 ? (
+              <p className="p-3 text-center text-xs text-muted-foreground">暂无活动轨迹</p>
+            ) : (
+              <ol className="relative space-y-3 border-l border-border pl-4 pt-1">
+                {panelActivity.map((a) => (
+                  <li key={a.id} className="relative">
+                    <span className="absolute -left-[21px] top-1.5 h-1.5 w-1.5 rounded-full bg-primary/60 ring-2 ring-sidebar" />
+                    <p className="line-clamp-3 text-[11px] leading-relaxed text-foreground/85">{a.message}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {(() => { const m = Math.floor((Date.now() - new Date(a.createdAt).getTime()) / 60000); return m < 1 ? '刚刚' : m < 60 ? `${m} 分钟前` : m < 1440 ? `${Math.floor(m / 60)} 小时前` : `${Math.floor(m / 1440)} 天前`; })()}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )
+          ) : (
+            /* 项目工作台预览：进度步骤 + 工作台快捷入口（预览后续可升级为内嵌视图） */
+            active?.projectId ? (
+              <div className="space-y-2">
+                <div className="glass-card glass-card-static p-3">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-foreground">流水线进度</span>
+                    <span className="font-semibold text-primary">{progress?.overallProgress ?? 0}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, progress?.overallProgress ?? 0)}%` }} />
+                  </div>
+                  <ul className="mt-2.5 space-y-1.5">
+                    {(progress?.steps ?? []).map((s) => (
+                      <li key={s.step} className="flex items-center gap-2 text-[11px]">
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.step === progress?.currentStep ? 'bg-primary' : 'bg-muted-foreground/40'}`} />
+                        <span className={s.step === progress?.currentStep ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                          {s.stepLabel}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { to: `/project/${active.projectId}/flow`, label: '流程总控', icon: Clapperboard },
+                    { to: `/project/${active.projectId}/tasks`, label: '任务队列', icon: ListTodo },
+                    { to: `/project/${active.projectId}`, label: '项目工作台', icon: FolderKanban },
+                    { to: '/dashboard', label: '数据看板', icon: LayoutDashboard },
+                  ].map((it) => (
+                    <button
+                      key={it.to}
+                      onClick={() => navigate(it.to)}
+                      className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-[11px] text-foreground/85 transition-colors hover:border-primary/50 hover:text-primary"
+                    >
+                      <it.icon className="h-3.5 w-3.5" /> {it.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="p-3 text-center text-xs text-muted-foreground">
+                会话绑定项目后，这里会预览项目工作台（流水线进度 + 快捷入口）
+              </p>
+            )
           )}
         </div>
         </aside>

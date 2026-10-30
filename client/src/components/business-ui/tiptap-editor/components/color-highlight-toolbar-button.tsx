@@ -30,14 +30,14 @@ const TEXT_COLORS = [
   {
     value: 'var(--color-orange-500)',
     label: '橙色',
-    className: 'bg-orange-500',
+    className: 'bg-orange-500/150',
   },
   {
     value: 'var(--color-yellow-500)',
     label: '黄色',
-    className: 'bg-yellow-500',
+    className: 'bg-yellow-500/150',
   },
-  { value: 'var(--color-green-500)', label: '绿色', className: 'bg-green-500' },
+  { value: 'var(--color-green-500)', label: '绿色', className: 'bg-green-500/150' },
   { value: 'var(--color-blue-600)', label: '蓝色', className: 'bg-blue-600' },
   {
     value: 'var(--color-purple-600)',

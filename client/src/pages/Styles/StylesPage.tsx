@@ -99,7 +99,7 @@ const StylesPage = () => {
             className={`rounded-full px-5 py-2 text-sm font-medium transition-all ${
               tab === item.key
                 ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'border border-input bg-white text-foreground hover:border-primary hover:text-primary'
+                : 'border border-input bg-card text-foreground hover:border-primary hover:text-primary'
             }`}
           >
             {item.label}
@@ -109,7 +109,7 @@ const StylesPage = () => {
 
       {/* 卡片网格 */}
       {styles.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-white py-20 text-muted-foreground">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card py-20 text-muted-foreground">
           <Palette className="mb-3 h-10 w-10 opacity-40" />
           <p>该分类暂无风格</p>
         </div>
@@ -119,7 +119,7 @@ const StylesPage = () => {
             <button
               key={style.id}
               onClick={() => setSelected(style)}
-              className="group overflow-hidden rounded-xl border bg-white text-left shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
+              className="group overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
             >
               <StyleCover style={style} />
               <div className="p-4">
@@ -147,7 +147,7 @@ const StylesPage = () => {
           onClick={() => setSelected(null)}
         >
           <div
-            className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* 头图（横版裁切展示，避免 3:4 竖图撑爆弹窗） */}
@@ -187,7 +187,7 @@ const StylesPage = () => {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-medium text-foreground/70 hover:border-primary hover:text-primary"
                   >
                     {copied === 'positive' ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-500" />
+                      <Check className="h-3.5 w-3.5 text-emerald-3000" />
                     ) : (
                       <Copy className="h-3.5 w-3.5" />
                     )}
@@ -208,7 +208,7 @@ const StylesPage = () => {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-medium text-foreground/70 hover:border-primary hover:text-primary"
                   >
                     {copied === 'negative' ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-500" />
+                      <Check className="h-3.5 w-3.5 text-emerald-3000" />
                     ) : (
                       <Copy className="h-3.5 w-3.5" />
                     )}
@@ -222,7 +222,7 @@ const StylesPage = () => {
             </div>
 
             {/* 底部操作条 */}
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-white p-4">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-card p-4">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 适用：
                 {selected.productLines.map((line) => (

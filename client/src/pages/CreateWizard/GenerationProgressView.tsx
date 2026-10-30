@@ -34,7 +34,7 @@ const GenerationProgressView = ({
             <div className="text-xs text-muted-foreground">总体进度</div>
           </div>
         </div>
-        <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-white/80">
+        <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-card/80">
           <div
             className="h-full rounded-full bg-primary transition-all duration-500"
             style={{ width: `${overallProgress}%` }}
@@ -43,7 +43,7 @@ const GenerationProgressView = ({
       </div>
 
       {/* Steps timeline */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h4 className="text-sm font-semibold text-foreground">生产链路</h4>
         <div className="mt-5 space-y-4">
           {steps.map((step, idx) => {
@@ -66,12 +66,12 @@ const GenerationProgressView = ({
                   <div
                     className={`relative z-10 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border-2 ${
                       isDone
-                        ? 'border-emerald-500 bg-emerald-500 text-white'
+                        ? 'border-emerald-500/250 bg-emerald-500/150 text-white'
                         : isRunning
-                        ? 'border-primary bg-white text-primary'
+                        ? 'border-primary bg-card text-primary'
                         : isFailed
-                        ? 'border-red-500 bg-red-500 text-white'
-                        : 'border-muted-foreground/30 bg-white text-muted-foreground/40'
+                        ? 'border-red-500/250 bg-red-500/150 text-white'
+                        : 'border-muted-foreground/30 bg-card text-muted-foreground/40'
                     }`}
                   >
                     {isDone ? (
@@ -91,7 +91,7 @@ const GenerationProgressView = ({
                           isDone || isRunning
                             ? 'text-foreground'
                             : isFailed
-                            ? 'text-red-600'
+                            ? 'text-red-400'
                             : 'text-muted-foreground'
                         }`}
                       >

@@ -22,7 +22,7 @@ import {
 } from '@client/src/components/ui/avatar';
 
 const ExternalUserTag = () => (
-  <span className="dark:blue-200 inline-flex shrink-0 items-center rounded-sm bg-blue-500/20 px-1.5 py-0.5 text-xs leading-4 text-blue-900">
+  <span className="dark:blue-200 inline-flex shrink-0 items-center rounded-sm bg-blue-500/20 px-1.5 py-0.5 text-xs leading-4 text-blue-300">
     外部
   </span>
 );

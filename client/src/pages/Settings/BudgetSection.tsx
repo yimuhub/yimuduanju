@@ -74,11 +74,11 @@ const BudgetSection = () => {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center rounded-xl border bg-white py-20 text-muted-foreground">
+        <div className="flex items-center justify-center rounded-xl border bg-card py-20 text-muted-foreground">
           加载中...
         </div>
       ) : loadError ? (
-        <div className="rounded-xl border bg-white p-6 text-center shadow-sm">
+        <div className="rounded-xl border bg-card p-6 text-center shadow-sm">
           <div className="text-sm font-medium text-foreground">费用数据加载失败</div>
           <p className="mt-1 text-sm text-muted-foreground">
             请确认后端服务正常后重试，不展示估算假数
@@ -92,17 +92,17 @@ const BudgetSection = () => {
         </div>
       ) : (
         <>
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
             <div className="text-sm text-muted-foreground">本月费用</div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-4xl font-bold text-foreground">
                 ¥{monthlyCost.toFixed(2)}
               </span>
-              <span className="text-sm text-emerald-600">
+              <span className="text-sm text-emerald-400">
                 占预算 {((monthlyCost / Math.max(0.01, effectiveBudget)) * 100).toFixed(1)}%
               </span>
               {monthlyCost >= effectiveBudget * (alertThreshold / 100) && (
-                <span className="text-sm font-medium text-red-600">
+                <span className="text-sm font-medium text-red-400">
                   已达预警线（{alertThreshold}%）
                 </span>
               )}
@@ -127,7 +127,7 @@ const BudgetSection = () => {
             {usageCards.map((item) => (
               <div
                 key={item.label}
-                className="rounded-xl border bg-white p-5 shadow-sm"
+                className="rounded-xl border bg-card p-5 shadow-sm"
               >
                 <div className="text-sm text-muted-foreground">{item.label}</div>
                 <div className="mt-2 text-2xl font-bold text-foreground">
@@ -140,7 +140,7 @@ const BudgetSection = () => {
             ))}
           </div>
 
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
             <h2 className="text-base font-semibold text-foreground">
               本月各类型费用
             </h2>
@@ -171,7 +171,7 @@ const BudgetSection = () => {
         </>
       )}
 
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h2 className="text-base font-semibold text-foreground">预算设置</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           {serverCap !== null
@@ -187,7 +187,7 @@ const BudgetSection = () => {
               type="number"
               value={monthlyBudget}
               onChange={(e) => setMonthlyBudget(Number(e.target.value))}
-              className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
           <div>
@@ -198,7 +198,7 @@ const BudgetSection = () => {
               type="number"
               value={alertThreshold}
               onChange={(e) => setAlertThreshold(Number(e.target.value))}
-              className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
         </div>

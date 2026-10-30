@@ -79,7 +79,7 @@ const ProjectAgentsTab = () => {
   return (
     <div className="flex h-[640px] gap-4">
       {/* 左：助手列表 */}
-      <div className="w-56 shrink-0 space-y-2 overflow-y-auto rounded-xl border bg-white p-3 shadow-sm scrollbar-thin">
+      <div className="w-56 shrink-0 space-y-2 overflow-y-auto rounded-xl border bg-card p-3 shadow-sm scrollbar-thin">
         <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">多智能体 · 项目协作</div>
         {(registry.length ? registry.map((a) => ({ name: a.name, desc: '', icon: a.avatar })) : fallbackList).map((a) => (
           <button
@@ -101,19 +101,19 @@ const ProjectAgentsTab = () => {
       </div>
 
       {/* 中：对话区 */}
-      <div className="flex min-w-0 flex-1 flex-col rounded-xl border bg-white shadow-sm">
+      <div className="flex min-w-0 flex-1 flex-col rounded-xl border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
             <span className="text-base">{(registry.find((a) => a.name === active)?.avatar) ?? fallbackList[0].icon}</span>
             <span className="text-sm font-semibold text-foreground">{active}</span>
             <span className="text-xs text-muted-foreground">· 项目专属 AI 智能体</span>
           </div>
-          <button onClick={handleClear} className="flex items-center gap-1 rounded-md border border-input bg-white px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-500">
+          <button onClick={handleClear} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-3000">
             <Trash2 className="h-3.5 w-3.5" /> 清空
           </button>
         </div>
 
-        {error && <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+        {error && <div className="mx-4 mt-3 rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
         <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4 scrollbar-thin">
           {loading ? (

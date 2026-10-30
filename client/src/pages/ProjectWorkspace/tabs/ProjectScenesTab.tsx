@@ -113,7 +113,7 @@ const ProjectScenesTab = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowCreateLocation(true)} className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3.5 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary">
+          <button onClick={() => setShowCreateLocation(true)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3.5 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary">
             <MapPin className="h-4 w-4" /> 添加地点
           </button>
           <button onClick={() => setShowCreateScene(true)} className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90">
@@ -122,21 +122,21 @@ const ProjectScenesTab = () => {
         </div>
       </div>
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
       {loading ? (
-        <div className="rounded-xl border bg-white p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : (
         <>
           {/* 场景网格 */}
           {scenes.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-white p-12 text-center text-sm text-muted-foreground">
+            <div className="rounded-xl border border-dashed bg-card p-12 text-center text-sm text-muted-foreground">
               暂无场景，点击「添加场景」开始搭建故事结构
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {scenes.map((sc) => (
-                <div key={sc.id} className="group overflow-hidden rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md">
+                <div key={sc.id} className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
                   <div className="relative flex h-32 items-center justify-center bg-muted">
                     <Clapperboard className="h-8 w-8 text-primary/40" />
                     <span className="absolute left-3 top-3 flex items-center gap-1 rounded bg-black/30 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
@@ -149,14 +149,14 @@ const ProjectScenesTab = () => {
                   <div className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="truncate font-semibold text-foreground">{sc.title || `第 ${sc.sceneNumber} 场`}</h3>
-                      <button onClick={() => handleDeleteScene(sc.id)} className="text-muted-foreground opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100" title="删除">
+                      <button onClick={() => handleDeleteScene(sc.id)} className="text-muted-foreground opacity-0 transition-opacity hover:text-red-3000 group-hover:opacity-100" title="删除">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sc.summary || '暂无摘要'}</p>
                     <button
                       onClick={() => navigate(`/project/${id}/storyboard?scene=${sc.id}`)}
-                      className="mt-3 w-full rounded-md border border-input bg-white py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+                      className="mt-3 w-full rounded-md border border-input bg-card py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
                     >
                       查看分镜
                     </button>
@@ -174,7 +174,7 @@ const ProjectScenesTab = () => {
               </h3>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {locations.map((loc) => (
-                  <div key={loc.id} className="group overflow-hidden rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md">
+                  <div key={loc.id} className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
                     <div className="relative h-28 w-full">
                       <MediaOrMissing
                         src={loc.referenceImageUrls?.[0]}
@@ -194,7 +194,7 @@ const ProjectScenesTab = () => {
                       <button
                         onClick={() => handleGenerateLocImage(loc.id)}
                         disabled={generatingIds.has(loc.id)}
-                        className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-input bg-white py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                        className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-input bg-card py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
                       >
                         <ImageIcon className="h-3.5 w-3.5" /> 生成场景图
                       </button>
@@ -210,7 +210,7 @@ const ProjectScenesTab = () => {
       {/* 创建场景弹窗 */}
       {showCreateScene && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">添加场景</h3>
               <button onClick={() => setShowCreateScene(false)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
@@ -232,7 +232,7 @@ const ProjectScenesTab = () => {
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setShowCreateScene(false)} className="rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50">取消</button>
+              <button onClick={() => setShowCreateScene(false)} className="rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50">取消</button>
               <button onClick={handleCreateScene} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">创建</button>
             </div>
           </div>
@@ -242,7 +242,7 @@ const ProjectScenesTab = () => {
       {/* 创建地点弹窗 */}
       {showCreateLocation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">添加地点</h3>
               <button onClick={() => setShowCreateLocation(false)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
@@ -264,7 +264,7 @@ const ProjectScenesTab = () => {
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setShowCreateLocation(false)} className="rounded-lg border border-input bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50">取消</button>
+              <button onClick={() => setShowCreateLocation(false)} className="rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50">取消</button>
               <button onClick={handleCreateLocation} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">创建</button>
             </div>
           </div>

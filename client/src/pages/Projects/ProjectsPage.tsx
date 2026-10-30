@@ -27,19 +27,19 @@ const statusBadge = (status: ProjectStatus): { label: string; dot: string } => {
   switch (status) {
     case 'ready':
     case 'exported':
-      return { label: status === 'ready' ? '已完成' : '已导出', dot: 'bg-emerald-500' };
+      return { label: status === 'ready' ? '已完成' : '已导出', dot: 'bg-emerald-500/150' };
     case 'failed':
-      return { label: '失败', dot: 'bg-red-500' };
+      return { label: '失败', dot: 'bg-red-500/150' };
     case 'draft':
       return { label: '草稿', dot: 'bg-muted-foreground/40' };
     case 'parsing':
     case 'planning':
     case 'bible_ready':
     case 'storyboard_ready':
-      return { label: '前期制作', dot: 'bg-blue-500' };
+      return { label: '前期制作', dot: 'bg-blue-500/150' };
     default:
       // assets/video/audio generating, editing, qc —— 生成管线阶段
-      return { label: '生成中', dot: 'bg-amber-500' };
+      return { label: '生成中', dot: 'bg-amber-500/150' };
   }
 };
 
@@ -215,7 +215,7 @@ const ProjectsPage = () => {
       />
 
       {/* 工具条：搜索 + 状态筛选 + 排序 */}
-      <div className="flex flex-col gap-3 rounded-xl border bg-white p-3 shadow-sm lg:flex-row lg:items-center">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm lg:flex-row lg:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -261,7 +261,7 @@ const ProjectsPage = () => {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-300">
           {error}
         </div>
       )}
@@ -270,7 +270,7 @@ const ProjectsPage = () => {
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="flex animate-pulse items-center gap-4 rounded-xl border bg-white p-4">
+            <div key={i} className="flex animate-pulse items-center gap-4 rounded-xl border bg-card p-4">
               <div className="h-9 w-9 rounded-lg bg-muted" />
               <div className="flex-1 space-y-2">
                 <div className="h-3.5 w-40 rounded bg-muted" />
@@ -282,7 +282,7 @@ const ProjectsPage = () => {
         </div>
       ) : items.length === 0 ? (
         /* 空状态：回作战室开拍 */
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-white py-20">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card py-20">
           <FolderOpen className="h-12 w-12 text-muted-foreground/40" />
           <h3 className="mt-4 text-base font-medium text-foreground">
             {keyword || statusFilter ? '没有匹配的项目' : '还没有项目'}
@@ -311,7 +311,7 @@ const ProjectsPage = () => {
           </div>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           {sortedItems.map((project) => {
             const badge = statusBadge(project.status);
             return (
@@ -390,7 +390,7 @@ const ProjectsPage = () => {
                       handleDelete(project);
                     }}
                     title="删除项目"
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground/60 hover:bg-red-50 hover:text-red-500"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground/60 hover:bg-red-500/15 hover:text-red-3000"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>

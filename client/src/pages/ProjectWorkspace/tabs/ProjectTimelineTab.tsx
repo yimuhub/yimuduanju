@@ -104,23 +104,23 @@ const ProjectTimelineTab = () => {
             多轨道剪辑视图 —— 拖动镜头边缘调整时长，点击选中镜头
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-xs text-muted-foreground shadow-sm">
+        <div className="flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm">
           <Clock className="h-3.5 w-3.5 text-primary" />
           总时长 {Math.round(totalDuration)}s · {orderedShots.length} 镜头
         </div>
       </div>
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
 
       {loading ? (
-        <div className="rounded-xl border bg-white p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : orderedShots.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-white p-12 text-center">
+        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
           <div className="text-sm text-muted-foreground">暂无镜头，请先在「分镜」标签页创建</div>
           <button onClick={() => navigate(`/project/${id}/storyboard`)} className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">去分镜</button>
         </div>
       ) : (
-        <div className="rounded-xl border bg-white shadow-sm">
+        <div className="rounded-xl border bg-card shadow-sm">
           {/* 顶部时间刻度 */}
           <div className="flex items-center gap-1 border-b border-border px-4 py-2">
             <Wand2 className="h-4 w-4 text-primary" />
@@ -175,7 +175,7 @@ const ProjectTimelineTab = () => {
                           {t.key === 'video' && shot.referenceImageUrls?.[0] ? (
                             <Image src={shot.referenceImageUrls[0]} alt="" className="h-full w-12 shrink-0 object-cover" />
                           ) : (
-                            <div className="flex h-full w-9 shrink-0 items-center justify-center bg-white/50">
+                            <div className="flex h-full w-9 shrink-0 items-center justify-center bg-card/50">
                               <Film className="h-3.5 w-3.5 text-foreground/50" />
                             </div>
                           )}
@@ -217,16 +217,16 @@ const ProjectTimelineTab = () => {
                   镜 {sel.shotNumber}
                   {sc && <span className="text-xs font-normal text-muted-foreground">· {sc.title}</span>}
                 </div>
-                <span className="rounded bg-white px-2 py-0.5 text-[10px] text-muted-foreground">{sel.shotSize || '中景'}</span>
-                <span className="rounded bg-white px-2 py-0.5 text-[10px] text-muted-foreground">{sel.duration}s</span>
+                <span className="rounded bg-card px-2 py-0.5 text-[10px] text-muted-foreground">{sel.shotSize || '中景'}</span>
+                <span className="rounded bg-card px-2 py-0.5 text-[10px] text-muted-foreground">{sel.duration}s</span>
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   {sel.visualPrompt || sel.action || sel.dialogue || '暂无描述'}
                 </span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => navigate(`/project/${id}/storyboard?shot=${sel.id}`)} className="flex items-center gap-1 rounded-md border border-input bg-white px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
+                  <button onClick={() => navigate(`/project/${id}/storyboard?shot=${sel.id}`)} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
                     <ChevronLeft className="h-3 w-3" /> 编辑
                   </button>
-                  <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1 rounded-md border border-input bg-white px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
+                  <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
                     画布 <ChevronRight className="h-3 w-3" />
                   </button>
                 </div>

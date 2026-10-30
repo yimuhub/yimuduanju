@@ -252,7 +252,7 @@ function UserProfile(props: UserProfileProps) {
         className="flex min-h-124 w-80 flex-col items-center justify-center gap-4 border-0 p-0"
       >
         <ErrorImage />
-        {/* <Button variant="outline" className="border-red-500 text-black hover:bg-red-50" onClick={fetchData}>
+        {/* <Button variant="outline" className="border-red-500/250 text-foreground hover:bg-red-500/15" onClick={fetchData}>
         加载失败 请重试
       </Button> */}
         <div>
@@ -337,7 +337,7 @@ function SimpleUserProfile(props: {
             <div className="flex items-center gap-2 pt-0.5 pb-1.5 leading-tight font-semibold">
               <span className="text-xl">{userProfileInfo.name}</span>
               {userProfileInfo.userType === '_externalUser' && (
-                <Badge className="rounded-sm border-0 bg-blue-500/20 pt-px pr-1.5 pb-px pl-1 text-sm text-blue-900">
+                <Badge className="rounded-sm border-0 bg-blue-500/20 pt-px pr-1.5 pb-px pl-1 text-sm text-blue-300">
                   外部
                 </Badge>
               )}

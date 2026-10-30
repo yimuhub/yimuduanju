@@ -474,7 +474,7 @@ const CreateWizardPage = () => {
               className={`flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
                 mode === tab.key
                   ? 'border-primary/40 bg-primary/10 text-primary shadow-sm'
-                  : 'border-border bg-white text-foreground/70 hover:border-primary/30 hover:text-foreground'
+                  : 'border-border bg-card text-foreground/70 hover:border-primary/30 hover:text-foreground'
               }`}
             >
               <tab.icon className="h-4 w-4 shrink-0" />
@@ -510,7 +510,7 @@ const CreateWizardPage = () => {
                 <span
                   className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
                     done
-                      ? 'bg-emerald-500 text-white'
+                      ? 'bg-emerald-500/150 text-white'
                       : current
                         ? 'bg-brand-gradient text-white'
                         : 'bg-muted text-muted-foreground'
@@ -536,7 +536,7 @@ const CreateWizardPage = () => {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         {error && !generating && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-300">
             {error}
           </div>
         )}
@@ -554,7 +554,7 @@ const CreateWizardPage = () => {
         )}
 
         {generating && !progress && (
-          <div className="flex flex-col items-center justify-center rounded-xl border bg-white p-16 shadow-sm">
+          <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-16 shadow-sm">
             <Loader2 className="h-10 w-10 animate-spin text-primary" />
             <p className="mt-4 text-sm text-muted-foreground">正在创建项目...</p>
           </div>
@@ -575,14 +575,14 @@ const CreateWizardPage = () => {
                 className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
                   contentMode === m.id
                     ? 'bg-foreground text-background shadow-sm'
-                    : 'border border-border bg-white text-foreground/70 hover:text-foreground'
+                    : 'border border-border bg-card text-foreground/70 hover:text-foreground'
                 }`}
               >
                 {m.label}
               </button>
             ))}
           </div>
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
                 <div className={`flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br ${modeConfig.gradient} text-white`}>
                   <modeConfig.icon className="h-4 w-4" />
@@ -632,7 +632,7 @@ const CreateWizardPage = () => {
                     </label>
                   </div>
                   {skillError && (
-                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-300">
                       {skillError}
                     </div>
                   )}
@@ -663,15 +663,15 @@ const CreateWizardPage = () => {
                     </button>
                   </div>
                   {parseResult && (
-                    <div className="mt-4 flex gap-4 rounded-lg bg-emerald-50 p-4">
-                      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
+                    <div className="mt-4 flex gap-4 rounded-lg bg-emerald-500/15 p-4">
+                      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500/150 text-white">
                         <Check className="h-4 w-4" />
                       </div>
                       <div className="flex-1">
-                        <p className="text-sm font-medium text-emerald-800">
+                        <p className="text-sm font-medium text-emerald-300">
                           剧本解析完成
                         </p>
-                        <p className="mt-1 text-xs text-emerald-700">
+                        <p className="mt-1 text-xs text-emerald-300">
                           识别到 {parseResult.charactersCount} 个角色，
                           {parseResult.scenesCount} 个场景
                         </p>
@@ -759,7 +759,7 @@ const CreateWizardPage = () => {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <button
                 onClick={() => setCurrentStep(1)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-white px-4 py-2 text-sm font-medium text-foreground/70 transition-colors hover:bg-muted"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-card px-4 py-2 text-sm font-medium text-foreground/70 transition-colors hover:bg-muted"
               >
                 <ChevronLeft className="h-4 w-4" />
                 上一步：修改创意
@@ -781,7 +781,7 @@ const CreateWizardPage = () => {
       </div>
 
       {/* 已选参数卡 */}
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
+      <div className="rounded-xl border bg-card p-4 shadow-sm">
         <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">已选参数</div>
         <div className="space-y-2">
           <SummaryRow label="模式" value={modeMeta?.label ?? mode} />
@@ -799,18 +799,18 @@ const CreateWizardPage = () => {
       {/* W2 费用预估：本次约扣多少、对比市场省多少（原底部操作条移入右栏常驻） */}
       <div className="mt-3">
         {estimate ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 p-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-emerald-800">本次预估</span>
+              <span className="text-xs font-medium text-emerald-300">本次预估</span>
               <button
                 onClick={() => setEstimate(null)}
-                className="text-[11px] text-emerald-700 underline hover:text-emerald-900"
+                className="text-[11px] text-emerald-300 underline hover:text-emerald-300"
               >
                 重新预估
               </button>
             </div>
-            <div className="mt-1 text-xl font-bold text-emerald-900">¥{estimate.total.toFixed(2)}</div>
-            <p className="mt-0.5 text-[11px] text-emerald-700/80">
+            <div className="mt-1 text-xl font-bold text-emerald-300">¥{estimate.total.toFixed(2)}</div>
+            <p className="mt-0.5 text-[11px] text-emerald-300/80">
               市场参考 ¥{estimate.marketTotal.toFixed(2)} · 省 ¥{estimate.saved.toFixed(2)}
             </p>
           </div>
@@ -830,7 +830,7 @@ const CreateWizardPage = () => {
         {hasUsableProvider === false && (
           <button
             onClick={() => navigate('/settings')}
-            className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[11px] text-amber-800 hover:bg-amber-100"
+            className="flex w-full items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/15 px-3 py-2 text-left text-[11px] text-amber-300 hover:bg-amber-500/20"
           >
             <span className="font-medium">尚未配置模型服务，任务将排队等待</span>
             <span className="ml-auto shrink-0 underline">去配置</span>

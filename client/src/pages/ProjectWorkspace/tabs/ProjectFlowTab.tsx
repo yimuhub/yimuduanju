@@ -58,7 +58,7 @@ const stepStyle = (step: GenerationProgress, isCurrent: boolean) => {
   if (step.status === 'completed')
     return { dot: 'bg-primary text-white', text: 'text-foreground' };
   if (step.status === 'failed')
-    return { dot: 'bg-red-500 text-white', text: 'text-red-600' };
+    return { dot: 'bg-red-500/150 text-white', text: 'text-red-400' };
   if (step.status === 'running')
     return {
       dot: 'bg-primary/10 text-primary ring-2 ring-primary/40',
@@ -122,13 +122,13 @@ const ProjectFlowTab = () => {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
           {error}
         </div>
       )}
 
       {/* 总览：整体进度 + 下一步 */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-semibold text-foreground">流水线总控</h3>
@@ -140,7 +140,7 @@ const ProjectFlowTab = () => {
           </div>
           <button
             onClick={load}
-            className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+            className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
           >
             <RefreshCw className="h-4 w-4" /> 刷新
           </button>
@@ -154,12 +154,12 @@ const ProjectFlowTab = () => {
 
         {/* 待确认门：唯一需要用户操作的地方 */}
         {nextGate && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/15 px-4 py-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-300">
                 <Hand className="h-4 w-4" /> {GATE_META[nextGate].label}
               </div>
-              <p className="mt-1 text-xs leading-relaxed text-amber-900/80">
+              <p className="mt-1 text-xs leading-relaxed text-amber-300/80">
                 {GATE_META[nextGate].desc}
               </p>
             </div>
@@ -184,7 +184,7 @@ const ProjectFlowTab = () => {
       </div>
 
       {/* 九段流水线（竖向进度栏，对标火宝左侧进度栏） */}
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
         <h3 className="text-base font-semibold text-foreground">流水线步骤</h3>
         <div className="mt-4 space-y-0">
           {(progress?.steps ?? []).map((step, idx) => {
@@ -247,7 +247,7 @@ const ProjectFlowTab = () => {
           <button
             key={b.to}
             onClick={() => navigate(b.to)}
-            className="flex flex-col items-center gap-2 rounded-xl border bg-white p-4 text-sm font-medium text-foreground shadow-sm hover:border-primary hover:text-primary"
+            className="flex flex-col items-center gap-2 rounded-xl border bg-card p-4 text-sm font-medium text-foreground shadow-sm hover:border-primary hover:text-primary"
           >
             <b.icon className="h-5 w-5 text-primary" />
             {b.label}

@@ -182,7 +182,7 @@ const AiAssistantPage = () => {
         </div>
         <Link
           to="/"
-          className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+          className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
         >
           前往创作作战室
           <ExternalLink className="h-3.5 w-3.5" />
@@ -191,7 +191,7 @@ const AiAssistantPage = () => {
 
       <div className="flex min-h-0 flex-1 gap-6">
         {/* 左侧：技能面板（按产品线分组 + 启停开关） */}
-        <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
+        <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
           <div className="border-b px-4 py-3">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />
@@ -233,7 +233,7 @@ const AiAssistantPage = () => {
                         className={`rounded-lg border px-3 py-2.5 transition-colors ${
                           skill.enabled
                             ? 'border-primary/25 bg-primary/[0.04]'
-                            : 'border-border/60 bg-white'
+                            : 'border-border/60 bg-card'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -250,7 +250,7 @@ const AiAssistantPage = () => {
                             }`}
                           >
                             <span
-                              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                              className={`absolute top-0.5 h-4 w-4 rounded-full bg-card shadow-sm transition-transform ${
                                 skill.enabled ? 'translate-x-4' : 'translate-x-0.5'
                               }`}
                             />
@@ -271,7 +271,7 @@ const AiAssistantPage = () => {
         </aside>
 
         {/* 右侧：对话区（保留原有真实网关对话） */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
           <div className="flex items-center gap-3 border-b px-6 py-4">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-gradient text-white">
               <Bot className="h-5 w-5" />
@@ -365,7 +365,7 @@ const AiAssistantPage = () => {
                 onKeyDown={handleKeyDown}
                 placeholder="输入你的问题...（Enter 发送，Shift+Enter 换行）"
                 rows={2}
-                className="flex-1 resize-none rounded-xl border border-input bg-white px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="flex-1 resize-none rounded-xl border border-input bg-card px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <button
                 onClick={handleSend}

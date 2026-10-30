@@ -48,10 +48,10 @@ const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
 };
 
 const PROVIDER_TYPE_COLORS: Record<ProviderType, string> = {
-  volcengine_ark: 'bg-blue-50 text-blue-600',
+  volcengine_ark: 'bg-blue-500/15 text-blue-400',
   openai_proxy: 'bg-purple-50 text-purple-600',
   custom: 'bg-muted/60 text-muted-foreground',
-  official: 'bg-amber-50 text-amber-700',
+  official: 'bg-amber-500/15 text-amber-300',
 };
 
 const CAPABILITY_LABELS: { key: keyof ModelCapabilities; label: string; hint?: string }[] = [
@@ -190,12 +190,12 @@ const ProviderKeysManager = ({ providerId }: { providerId: string }) => {
           {keys.map((k) => (
             <div
               key={k.id}
-              className="flex items-center gap-2 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs"
+              className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs"
             >
               <span className="font-medium text-foreground">{k.label}</span>
               <code className="text-muted-foreground">{k.maskedKey}</code>
               {k.isActive ? (
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-600">
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-400">
                   生效中
                 </span>
               ) : (
@@ -208,7 +208,7 @@ const ProviderKeysManager = ({ providerId }: { providerId: string }) => {
               )}
               <button
                 onClick={() => handleRemove(k)}
-                className="ml-auto text-muted-foreground hover:text-red-500"
+                className="ml-auto text-muted-foreground hover:text-red-3000"
               >
                 删除
               </button>
@@ -221,14 +221,14 @@ const ProviderKeysManager = ({ providerId }: { providerId: string }) => {
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="备注（如 生产Key）"
-          className="h-9 w-32 rounded-lg border border-input bg-white px-2.5 text-xs outline-none focus:border-primary"
+          className="h-9 w-32 rounded-lg border border-input bg-card px-2.5 text-xs outline-none focus:border-primary"
         />
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="粘贴新 Key（只写不显）"
           type="password"
-          className="h-9 flex-1 rounded-lg border border-input bg-white px-2.5 text-xs outline-none focus:border-primary"
+          className="h-9 flex-1 rounded-lg border border-input bg-card px-2.5 text-xs outline-none focus:border-primary"
         />
         <button
           onClick={handleAdd}
@@ -548,7 +548,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
           加载中...
         </div>
       ) : (
-        <div className="divide-y divide-border overflow-hidden rounded-xl border bg-white shadow-sm">
+        <div className="divide-y divide-border overflow-hidden rounded-xl border bg-card shadow-sm">
           {displayProviders.map((provider) => {
             const status = !provider.enabled
               ? null
@@ -572,7 +572,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         {PROVIDER_TYPE_LABELS[provider.providerType]}
                       </span>
                       {provider.isDefault && (
-                        <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-600">
+                        <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-400">
                           <Star className="h-3 w-3 fill-current" />
                           默认
                         </span>
@@ -582,11 +582,11 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                           已停用
                         </span>
                       ) : status === 'ok' ? (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600">
+                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
                           可用
                         </span>
                       ) : status === 'fail' ? (
-                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-3000">
                           连通异常
                         </span>
                       ) : status === 'testing' ? (
@@ -602,7 +602,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         {CAPABILITY_LABELS.filter((cap) => provider.capabilities[cap.key]).map((cap) => (
                           <span
                             key={cap.key}
-                            className="rounded bg-emerald-50/80 px-1.5 py-0.5 text-[10px] text-emerald-600"
+                            className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400"
                           >
                             {cap.label}
                           </span>
@@ -628,7 +628,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       }`}
                     >
                       <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
                           provider.enabled ? 'translate-x-5' : 'translate-x-0.5'
                         }`}
                       />
@@ -643,7 +643,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     <button
                       onClick={() => handleDelete(provider.id)}
                       title="删除"
-                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-500/15 hover:text-red-3000"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -708,7 +708,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
           onClick={() => setShowModal(false)}
         >
           <div
-            className="max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+            className="max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-5">
@@ -727,7 +727,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
               </div>
               <button
                 onClick={() => setShowModal(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/70"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-card/70"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -816,7 +816,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                           setCustomFields(new Set(['textModel', 'imageModel', 'videoModel', 'ttsModel']));
                           toast.success(`已套用「${preset.patch.name}」预设，请粘贴 API Key 后保存`);
                         }}
-                        className="rounded-lg border border-primary/30 bg-white px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary hover:bg-primary/10"
+                        className="rounded-lg border border-primary/30 bg-card px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary hover:bg-primary/10"
                       >
                         {preset.label}
                       </button>
@@ -836,7 +836,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     setFormData((p) => ({ ...p, name: e.target.value }))
                   }
                   placeholder="如：火山方舟主账号"
-                  className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
@@ -856,7 +856,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                           : 'openai',
                     }))
                   }
-                  className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="volcengine_ark">火山引擎方舟</option>
                   <option value="openai_proxy">OpenAI 兼容中转站</option>
@@ -875,7 +875,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     setFormData((p) => ({ ...p, baseUrl: e.target.value }))
                   }
                   placeholder="https://ark.cn-beijing.volces.com/api/v3"
-                  className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
@@ -901,7 +901,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       setFormData((p) => ({ ...p, apiKey: e.target.value }))
                     }
                     placeholder={editingId ? '••••••••（留空表示不修改）' : '输入 API Key'}
-                    className="h-10 w-full rounded-xl border border-input bg-white px-3 pr-10 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    className="h-10 w-full rounded-xl border border-input bg-card px-3 pr-10 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
                   <button
                     type="button"
@@ -947,7 +947,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                             type="button"
                             title="切换为手动填写"
                             onClick={() => setCustomFields((prev) => new Set(prev).add(g.field))}
-                            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-white hover:text-foreground"
+                            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-card hover:text-foreground"
                           >
                             <Pencil className="h-3 w-3" /> 手填
                           </button>
@@ -962,7 +962,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                                 return next;
                               });
                             }}
-                            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-white hover:text-foreground"
+                            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-card hover:text-foreground"
                           >
                             <ChevronDown className="h-3 w-3" /> 下拉
                           </button>
@@ -976,7 +976,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                             setFormData((p) => ({ ...p, [g.field]: e.target.value }))
                           }
                           placeholder="手动填写模型名"
-                          className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                          className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                         />
                       ) : (
                         <select
@@ -984,7 +984,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                           onChange={(e) => {
                             setFormData((p) => ({ ...p, [g.field]: e.target.value }));
                           }}
-                          className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                          className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                         >
                           <option value="">
                             {fetchingModels
@@ -1007,7 +1007,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       )}
                       <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">{g.desc}</p>
                       {agnesOnly && current !== '' && !isFreeAgnesModel(current) && (
-                        <p className="mt-1 text-[11px] font-medium text-amber-700">
+                        <p className="mt-1 text-[11px] font-medium text-amber-300">
                           该模型不在免费名单内，Agnes 测试通道只接免费模型（{FREE_AGNES_MODELS.join('、')}），将产生费用或调用失败。
                         </p>
                       )}
@@ -1015,7 +1015,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   );
                 })}
                 {modelsError && (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/15 p-3 text-xs leading-relaxed text-amber-300">
                     模型列表拉取失败：{modelsError}
                   </div>
                 )}
@@ -1032,7 +1032,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     setFormData((p) => ({ ...p, ttsVoice: e.target.value }))
                   }
                   placeholder="zh_female_miaomiao"
-                  className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
@@ -1049,7 +1049,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   }
                   placeholder="如：所有输出必须用简体中文；图片一律竖构图"
                   rows={2}
-                  className="mt-2 w-full resize-y rounded-xl border border-input bg-white px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="mt-2 w-full resize-y rounded-xl border border-input bg-card px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
@@ -1075,7 +1075,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       }))
                     }
                     placeholder="视频时长s，如 4,8,12"
-                    className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    className="h-10 rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
                   <input
                     type="text"
@@ -1090,7 +1090,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       }))
                     }
                     placeholder="视频尺寸，如 720p,1080p"
-                    className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    className="h-10 rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
                   <input
                     type="text"
@@ -1105,7 +1105,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       }))
                     }
                     placeholder="图片尺寸，如 1024x1024"
-                    className="h-10 rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    className="h-10 rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
               </div>
@@ -1124,7 +1124,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
                         formData.capabilities?.[cap.key]
                           ? 'border-primary bg-primary/10 text-primary'
-                          : 'border-input bg-white text-muted-foreground hover:border-primary/50'
+                          : 'border-input bg-card text-muted-foreground hover:border-primary/50'
                       }`}
                     >
                       {cap.label}
@@ -1145,14 +1145,14 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       formatType: e.target.value as FormatType,
                     }))
                   }
-                  className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="openai">OpenAI 兼容格式（通用规则）</option>
                   <option value="volcengine_ark">火山方舟格式（通用规则）</option>
                   <option value="agnes">Agnes 专用（测试版独立规则，仅免费模型）</option>
                 </select>
                 {formData.formatType === 'agnes' && (
-                  <p className="mt-1 text-[11px] leading-relaxed text-amber-700">
+                  <p className="mt-1 text-[11px] leading-relaxed text-amber-300">
                     Agnes 测试通道：视频走官方双接口（720P/9:16），只接免费模型；暂无配音能力，配音任务会直接提示。
                   </p>
                 )}
@@ -1177,7 +1177,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
                       formData.isDefault ? 'translate-x-5' : 'translate-x-0.5'
                     }`}
                   />
@@ -1187,20 +1187,20 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
               {testResult && (
                 <div
                   className={`flex items-start gap-3 rounded-xl p-3 ${
-                    testResult.success ? 'bg-emerald-50' : 'bg-red-50'
+                    testResult.success ? 'bg-emerald-500/15' : 'bg-red-500/15'
                   }`}
                 >
                   {testResult.success ? (
-                    <Check className="mt-0.5 h-5 w-5 text-emerald-600" />
+                    <Check className="mt-0.5 h-5 w-5 text-emerald-400" />
                   ) : (
-                    <AlertCircle className="mt-0.5 h-5 w-5 text-red-500" />
+                    <AlertCircle className="mt-0.5 h-5 w-5 text-red-3000" />
                   )}
                   <div>
                     <div
                       className={`text-sm font-medium ${
                         testResult.success
-                          ? 'text-emerald-700'
-                          : 'text-red-600'
+                          ? 'text-emerald-300'
+                          : 'text-red-400'
                       }`}
                     >
                       {testResult.success ? '连接成功' : '连接失败'}
@@ -1235,7 +1235,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       <div className="mt-1 text-[11px] text-muted-foreground">{probeMsg}</div>
                     )}
                     {testResult.preview && (
-                      <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-black/80 p-2 text-[11px] leading-relaxed text-green-200">
+                      <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-black/80 p-2 text-[11px] leading-relaxed text-300">
                         {JSON.stringify(testResult.preview, null, 2)}
                       </pre>
                     )}
@@ -1247,18 +1247,18 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
               {modelsResult && (
                 <div
                   className={`rounded-xl p-3 ${
-                    modelsResult.success ? 'bg-emerald-50' : 'bg-red-50'
+                    modelsResult.success ? 'bg-emerald-500/15' : 'bg-red-500/15'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     {modelsResult.success ? (
-                      <Check className="h-4 w-4 text-emerald-600" />
+                      <Check className="h-4 w-4 text-emerald-400" />
                     ) : (
-                      <AlertCircle className="h-4 w-4 text-red-500" />
+                      <AlertCircle className="h-4 w-4 text-red-3000" />
                     )}
                     <span
                       className={`text-sm font-medium ${
-                        modelsResult.success ? 'text-emerald-700' : 'text-red-600'
+                        modelsResult.success ? 'text-emerald-300' : 'text-red-400'
                       }`}
                     >
                       {modelsResult.success
@@ -1289,7 +1289,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         value={modelsFilter}
                         onChange={(e) => setModelsFilter(e.target.value)}
                         placeholder="搜索模型名称..."
-                        className="h-9 w-full rounded-lg border border-input bg-white pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        className="h-9 w-full rounded-lg border border-input bg-card pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                       />
                     </div>
                     <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
@@ -1393,7 +1393,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   value={testMode}
                   onChange={(e) => setTestMode(e.target.value as 'offline' | 'preview' | 'live')}
                   title="offline=格式校验零成本 / preview=请求预览零成本 / live=真实请求"
-                  className="h-[38px] rounded-xl border border-input bg-white px-2 text-xs text-muted-foreground outline-none focus:border-primary"
+                  className="h-[38px] rounded-xl border border-input bg-card px-2 text-xs text-muted-foreground outline-none focus:border-primary"
                 >
                   <option value="live">真实请求</option>
                   <option value="preview">请求预览（免费）</option>

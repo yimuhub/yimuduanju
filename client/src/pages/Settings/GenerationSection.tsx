@@ -45,7 +45,7 @@ const GenerationSection = () => {
       </div>
 
       <div className="space-y-6">
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
           <h2 className="text-base font-semibold text-foreground">视频参数</h2>
           <div className="mt-5 grid grid-cols-2 gap-5">
             <div>
@@ -55,7 +55,7 @@ const GenerationSection = () => {
               <select
                 value={aspectRatio}
                 onChange={(e) => setAspectRatio(e.target.value)}
-                className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               >
                 <option value="9:16">9:16（竖屏）</option>
                 <option value="16:9">16:9（横屏）</option>
@@ -69,7 +69,7 @@ const GenerationSection = () => {
               <select
                 value={artStyle}
                 onChange={(e) => setArtStyle(e.target.value)}
-                className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               >
                 <option value="realistic">写实</option>
                 <option value="live_action">真人实景</option>
@@ -83,7 +83,7 @@ const GenerationSection = () => {
           </div>
         </div>
 
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
           <h2 className="text-base font-semibold text-foreground">预算模式</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             选择默认的预算与质量平衡策略
@@ -101,7 +101,7 @@ const GenerationSection = () => {
                 className={`rounded-xl border p-4 text-left transition-all ${
                   budgetMode === opt.value
                     ? 'border-primary bg-primary/5'
-                    : 'border-input bg-white hover:border-primary/50'
+                    : 'border-input bg-card hover:border-primary/50'
                 }`}
               >
                 <div className="text-sm font-semibold text-foreground">
@@ -115,7 +115,7 @@ const GenerationSection = () => {
           </div>
         </div>
 
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
           <h2 className="text-base font-semibold text-foreground">
             分镜与字幕
           </h2>
@@ -128,7 +128,7 @@ const GenerationSection = () => {
                 type="number"
                 value={shotDuration}
                 onChange={(e) => setShotDuration(Number(e.target.value))}
-                className="mt-2 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             </div>
             <div className="flex items-center">
@@ -147,7 +147,7 @@ const GenerationSection = () => {
                 }`}
               >
                 <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
                     subtitleEnabled ? 'translate-x-5' : 'translate-x-0.5'
                   }`}
                 />

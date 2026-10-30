@@ -123,7 +123,7 @@ const WizardSettings = ({
   return (
     <div className="space-y-5">
       {/* Duration */}
-      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <Clock className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">时长</span>
@@ -146,7 +146,7 @@ const WizardSettings = ({
       </div>
 
       {/* Ratio */}
-      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <Film className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">视频比例</span>
@@ -174,7 +174,7 @@ const WizardSettings = ({
       </div>
 
       {/* Art style */}
-      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <Palette className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">画风选择</span>
@@ -216,7 +216,7 @@ const WizardSettings = ({
 
       {/* Genre (S2: style decides look, genre decides writing) */}
       {genres && genres.length > 0 && setGenreId && (
-        <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="rounded-xl border bg-card p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <BookOpen className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">题材选择</span>
@@ -249,7 +249,7 @@ const WizardSettings = ({
         </div>
       )}
 
-      {/* Budget */}      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      {/* Budget */}      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <DollarSign className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">预算模式</span>
@@ -274,7 +274,7 @@ const WizardSettings = ({
 
       {/* 剧本技能开关：一句话是否经 LLM 扩写成剧本 */}
       {showSkillToggle && setExpandScript && (
-        <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="rounded-xl border bg-card p-5 shadow-sm">
           <div className="mb-1 flex items-center gap-2">
             <Settings className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">剧本技能</span>
@@ -298,7 +298,7 @@ const WizardSettings = ({
 
       {/* Pro mode extra settings */}
       {isProfessional && setShotCount && setShotDuration && setShotSizePref && setCameraStyle && setVoicePreset && setSubtitleEnabled && (
-        <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <div className="rounded-xl border bg-card p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <Settings className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">专业参数</span>

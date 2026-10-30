@@ -54,19 +54,19 @@ export function ConfirmHost() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: 12, padding: 20, minWidth: 300, maxWidth: 420 }}
+            style={{ background: 'var(--popover)', color: 'var(--popover-foreground)', border: '1px solid var(--border)', borderRadius: 12, padding: 20, minWidth: 300, maxWidth: 420 }}
           >
             <div style={{ fontSize: 14, marginBottom: 16 }}>{p.message}</div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button
                 onClick={() => settle(p.id, false)}
-                style={{ padding: '6px 16px', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer', background: '#fff' }}
+                style={{ padding: '6px 16px', borderRadius: 8, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--secondary)', color: 'var(--secondary-foreground)' }}
               >
                 取消
               </button>
               <button
                 onClick={() => settle(p.id, true)}
-                style={{ padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#111', color: '#fff' }}
+                style={{ padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--primary)', color: 'var(--primary-foreground)' }}
               >
                 确定
               </button>

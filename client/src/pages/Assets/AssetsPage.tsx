@@ -47,13 +47,13 @@ const TYPE_FILTERS: { key: AssetTypeFilter; label: string }[] = [
 const getTypeColor = (type: string): string => {
   switch (type) {
     case 'image':
-      return 'bg-blue-50 text-blue-600';
+      return 'bg-blue-500/15 text-blue-400';
     case 'video':
       return 'bg-purple-50 text-purple-600';
     case 'audio':
-      return 'bg-emerald-50 text-emerald-600';
+      return 'bg-emerald-500/15 text-emerald-400';
     case 'subtitle':
-      return 'bg-amber-50 text-amber-600';
+      return 'bg-amber-500/15 text-amber-400';
     default:
       return 'bg-muted text-muted-foreground';
   }
@@ -252,7 +252,7 @@ const AssetsPage = () => {
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="搜索资产名称..."
-            className="h-10 w-full rounded-xl border border-input bg-white pl-10 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-10 w-full rounded-xl border border-input bg-card pl-10 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -263,7 +263,7 @@ const AssetsPage = () => {
               className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
                 assetType === filter.key
                   ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'border border-input bg-white text-foreground hover:border-primary hover:text-primary'
+                  : 'border border-input bg-card text-foreground hover:border-primary hover:text-primary'
               }`}
             >
               {filter.label}
@@ -275,7 +275,7 @@ const AssetsPage = () => {
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
               title="按项目过滤"
-              className="h-9 rounded-full border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+              className="h-9 rounded-full border border-input bg-card px-3 text-sm outline-none focus:border-primary"
             >
               <option value="">全部项目</option>
               {projectList.map((p) => (
@@ -290,7 +290,7 @@ const AssetsPage = () => {
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="h-9 rounded-full border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+              className="h-9 rounded-full border border-input bg-card px-3 text-sm outline-none focus:border-primary"
             >
               {SORT_OPTIONS.map((opt) => (
                 <option key={opt.key} value={opt.key}>
@@ -307,7 +307,7 @@ const AssetsPage = () => {
           加载中...
         </div>
       ) : loadError ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-20 shadow-sm">
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-card py-20 shadow-sm">
           <p className="text-sm font-medium text-foreground">资产加载失败</p>
           <p className="mt-1 text-sm text-muted-foreground">请确认后端服务正常后重试</p>
           <button
@@ -318,7 +318,7 @@ const AssetsPage = () => {
           </button>
         </div>
       ) : assets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-white py-20 text-muted-foreground">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card py-20 text-muted-foreground">
           <ImageIcon className="mb-3 h-10 w-10 opacity-40" />
           <p className="text-sm font-medium text-foreground">
             {keyword || assetType !== 'all' || projectFilter ? '没有匹配的资产' : '资产库还是空的'}
@@ -357,7 +357,7 @@ const AssetsPage = () => {
                 onClick={() => setSelectedAsset(asset)}
                 // P1 性能：长列表渲染优化（百条以上卡顿缓解；完整虚拟滚动见路线图）
                 style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 240px' }}
-                className="group cursor-pointer overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+                className="group cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
                 <div
                   className={`relative aspect-square bg-gradient-to-br ${getTypeGradient(
@@ -386,7 +386,7 @@ const AssetsPage = () => {
                         e.stopPropagation();
                         setSelectedAsset(asset);
                       }}
-                      className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-foreground shadow-lg hover:scale-110"
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-foreground shadow-lg hover:scale-110"
                       title="预览"
                     >
                       <Eye className="h-4 w-4" />
@@ -397,7 +397,7 @@ const AssetsPage = () => {
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-foreground shadow-lg hover:scale-110"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-foreground shadow-lg hover:scale-110"
                         title="下载 / 原图打开"
                       >
                         <Download className="h-4 w-4" />
@@ -408,7 +408,7 @@ const AssetsPage = () => {
                         e.stopPropagation();
                         handleDelete(asset.id);
                       }}
-                      className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-red-500 shadow-lg hover:scale-110"
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-red-3000 shadow-lg hover:scale-110"
                       title="删除"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -459,7 +459,7 @@ const AssetsPage = () => {
           onClick={() => setShowUpload(false)}
         >
           <div
-            className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+            className="w-full max-w-md overflow-hidden rounded-2xl bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b p-5">
@@ -483,7 +483,7 @@ const AssetsPage = () => {
                   <select
                     value={uploadProjectId}
                     onChange={(e) => setUploadProjectId(e.target.value)}
-                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
                   >
                     <option value="">请选择项目</option>
                     {projectList.map((p) => (
@@ -516,7 +516,7 @@ const AssetsPage = () => {
                   <select
                     value={uploadType}
                     onChange={(e) => setUploadType(e.target.value)}
-                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-white px-3 text-sm outline-none focus:border-primary"
+                    className="mt-1.5 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary"
                   >
                     <option value="image">图片</option>
                     <option value="video">视频</option>
