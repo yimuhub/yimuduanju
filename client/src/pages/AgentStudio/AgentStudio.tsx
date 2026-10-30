@@ -7,7 +7,6 @@ import {
   Plus,
   Search,
   Loader2,
-  FolderKanban,
   ListTodo,
   ImageIcon,
   Sparkles,
@@ -16,18 +15,19 @@ import {
   ExternalLink,
   X,
   Activity,
-  LayoutDashboard,
-  Palette,
-  LayoutTemplate,
-  Settings,
-  Clapperboard,
-  UserCircle,
 } from 'lucide-react';
 import { assets as assetsApi, assistant as assistantApi, dashboard as dashboardApi, generation as generationApi, projects as projectsApi, providers as providersApi, templates as templatesApi } from '@client/src/api';
 import type { Template } from '@shared/api.interface';
 import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
 import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
 import TriPane from '@client/src/components/TriPane';
+import WorkspaceRightDock from '@client/src/components/workspace/WorkspaceRightDock';
+import {
+  useWorkspaceTabs,
+  WORKSPACE_PAGES,
+  type WorkspacePageKey,
+} from '@client/src/components/workspace/WorkspaceTabsContext';
+import { OPEN_SESSION_EVENT } from '@client/src/components/workspace/CommandPalette';
 
 /**
  * 创作作战室（首页 · Agent 三段式 · AI-EOS 极客模式结构）
@@ -108,14 +108,15 @@ const JOB_STATUS_LABELS: Record<string, string> = {
 const AgentStudio = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { openTab } = useWorkspaceTabs();
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [activeId, setActiveId] = useState(() => '');
   const [searchText, setSearchText] = useState('');
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
-  // 右侧功能页标签坞：产出资产 / 生成任务 / 活动轨迹 / 项目工作台预览（后续可加更多页签）
-  const [rightTab, setRightTab] = useState<'assets' | 'jobs' | 'activity' | 'preview'>('jobs');
+  // 右侧功能页标签坞：产出资产 / 生成任务 / 活动轨迹（产出签固定；功能签见 WorkspaceTabsContext）
+  const [rightTab, setRightTab] = useState<'assets' | 'jobs' | 'activity'>('jobs');
   // 中栏模式页签：对话 / 任务 / 产出视图
   const [centerTab, setCenterTab] = useState<'chat' | 'jobs' | 'output'>('chat');
   // 计划确认门（Manus Plan Mode × Pavo Harness）：开拍前展示拆解计划与可改参数
@@ -151,6 +152,26 @@ const AgentStudio = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 旧路由 / 画布悬浮导航深链：携带 openTab 落地后在右栏打开对应功能签，并清掉 state（防刷新重复开签）
+  useEffect(() => {
+    const state = location.state as { openTab?: WorkspacePageKey } | null;
+    if (state?.openTab) {
+      openTab(state.openTab);
+      navigate('/', { replace: true, state: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ⌘K 命令面板选中会话：监听全局事件并激活对应会话
+  useEffect(() => {
+    const onOpenSession = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id && sessions.some((s) => s.id === id)) setActiveId(id);
+    };
+    window.addEventListener(OPEN_SESSION_EVENT, onOpenSession);
+    return () => window.removeEventListener(OPEN_SESSION_EVENT, onOpenSession);
+  }, [sessions]);
 
   // 极简首页：新会话（仅欢迎消息）时进入 hero 模式——一句话 + 输入框 + 灵感剧场
   const heroMode = (active?.messages.length ?? 0) <= 1;
@@ -544,8 +565,12 @@ const AgentStudio = () => {
         leftKey="agentstudio.left"
         rightKey="agentstudio.right"
         defaultLeftWidth={280}
-        defaultRightWidth={320}
-        left={heroMode ? null : (
+        defaultRightWidth={360}
+        minLeftWidth={200}
+        maxLeftWidth={360}
+        minRightWidth={280}
+        maxRightWidth={520}
+        left={(
         <aside className="hidden h-full w-full min-h-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
         <div className="border-b border-sidebar-border p-3">
           <button
@@ -573,22 +598,16 @@ const AgentStudio = () => {
           ))}
         </div>
         <div className="border-t border-sidebar-border p-2">
-          {/* 功能网格（AI-EOS 极客模式：2 列小卡，后续可扩展） */}
+          {/* 功能网格（AI-EOS 极客模式：点击在右栏打开对应功能标签页，不再跳转路由） */}
           <div className="grid grid-cols-2 gap-1">
-            {[
-              { to: '/projects', label: '我的项目', icon: FolderKanban },
-              { to: '/dashboard', label: '流程总控', icon: LayoutDashboard },
-              { to: '/styles', label: '风格中心', icon: Palette },
-              { to: '/templates', label: '模板中心', icon: LayoutTemplate },
-              { to: '/assets', label: '资产库', icon: ImageIcon },
-              { to: '/settings', label: '设置', icon: Settings },
-            ].map((it) => (
+            {WORKSPACE_PAGES.map((it) => (
               <button
-                key={it.to}
-                onClick={() => navigate(it.to)}
+                key={it.key}
+                onClick={() => openTab(it.key)}
+                title={it.description}
                 className="flex flex-col items-center gap-1 rounded-lg px-1 py-2 text-[11px] text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               >
-                <it.icon className="h-4 w-4" /> {it.label}
+                <it.icon className="h-4 w-4" /> {it.title}
               </button>
             ))}
           </div>
@@ -903,31 +922,29 @@ const AgentStudio = () => {
         )}
       </section>
       )}
-        right={heroMode ? null : (
-        <aside className="hidden h-full w-full min-h-0 flex-col border-l border-sidebar-border bg-sidebar lg:flex">
-        {/* 坞头：「产出」标题 + 绑定提示（AI-EOS 右栏同构，页签可继续扩展） */}
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-sidebar-border px-3">
-          <Clapperboard className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="text-xs font-semibold text-sidebar-foreground">产出</span>
-          {active?.projectId && (
-            <span className="ml-auto truncate rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">已绑定项目</span>
-          )}
-        </div>
-        <div className="flex shrink-0 gap-1 border-b border-sidebar-border p-2">
-          {([['assets', '产出资产', ImageIcon], ['jobs', '生成任务', ListTodo], ['activity', '活动轨迹', Activity], ['preview', '工作台预览', LayoutDashboard]] as const).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              onClick={() => setRightTab(id)}
-              className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors ${
-                rightTab === id ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" /> {label}
-            </button>
-          ))}
-        </div>
-        <div className="flex-1 overflow-y-auto p-2.5">
-          {rightTab !== 'preview' && rightTab !== 'activity' && active?.projectId && (
+        right={(
+          <WorkspaceRightDock
+            outputView={(
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {/* 产出签子视图：产出资产 / 生成任务 / 活动轨迹 */}
+                <div className="flex shrink-0 items-center gap-1 border-b border-sidebar-border p-2">
+                  {([['assets', '产出资产', ImageIcon], ['jobs', '生成任务', ListTodo], ['activity', '活动轨迹', Activity]] as const).map(([id, label, Icon]) => (
+                    <button
+                      key={id}
+                      onClick={() => setRightTab(id)}
+                      className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors ${
+                        rightTab === id ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" /> {label}
+                    </button>
+                  ))}
+                  {active?.projectId && (
+                    <span className="ml-auto shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">已绑定项目</span>
+                  )}
+                </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+          {rightTab !== 'activity' && active?.projectId && (
             <div className="mb-2 space-y-2">
               <div className="rounded-lg bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary">
                 当前会话已绑定项目，展示该项目产出
@@ -1018,54 +1035,11 @@ const AgentStudio = () => {
                 ))}
               </ol>
             )
-          ) : (
-            /* 项目工作台预览：进度步骤 + 工作台快捷入口（预览后续可升级为内嵌视图） */
-            active?.projectId ? (
-              <div className="space-y-2">
-                <div className="glass-card glass-card-static p-3">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-foreground">流水线进度</span>
-                    <span className="font-semibold text-primary">{progress?.overallProgress ?? 0}%</span>
-                  </div>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, progress?.overallProgress ?? 0)}%` }} />
-                  </div>
-                  <ul className="mt-2.5 space-y-1.5">
-                    {(progress?.steps ?? []).map((s) => (
-                      <li key={s.step} className="flex items-center gap-2 text-[11px]">
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.step === progress?.currentStep ? 'bg-primary' : 'bg-muted-foreground/40'}`} />
-                        <span className={s.step === progress?.currentStep ? 'font-medium text-foreground' : 'text-muted-foreground'}>
-                          {s.stepLabel}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[
-                    { to: `/project/${active.projectId}/flow`, label: '流程总控', icon: Clapperboard },
-                    { to: `/project/${active.projectId}/tasks`, label: '任务队列', icon: ListTodo },
-                    { to: `/project/${active.projectId}`, label: '项目工作台', icon: FolderKanban },
-                    { to: '/dashboard', label: '数据看板', icon: LayoutDashboard },
-                  ].map((it) => (
-                    <button
-                      key={it.to}
-                      onClick={() => navigate(it.to)}
-                      className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-[11px] text-foreground/85 transition-colors hover:border-primary/50 hover:text-primary"
-                    >
-                      <it.icon className="h-3.5 w-3.5" /> {it.label}
-                    </button>
-                  ))}
-                </div>
+          ) : null}
               </div>
-            ) : (
-              <p className="p-3 text-center text-xs text-muted-foreground">
-                会话绑定项目后，这里会预览项目工作台（流水线进度 + 快捷入口）
-              </p>
-            )
-          )}
-        </div>
-        </aside>
+            </div>
+            )}
+          />
         )}
       />
     </>

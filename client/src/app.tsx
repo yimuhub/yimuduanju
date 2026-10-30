@@ -1,19 +1,12 @@
 import React, { Suspense, lazy, useEffect } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ErrorBoundary } from 'react-error-boundary';
 
 import Layout from './components/Layout';
+import { useWorkspaceTabs, type WorkspacePageKey } from './components/workspace/WorkspaceTabsContext';
 import NotFound from './pages/NotFound/NotFound';
 import AgentStudio from './pages/AgentStudio/AgentStudio';
-import DashboardPage from './pages/Dashboard/DashboardPage';
-import ProjectsPage from './pages/Projects/ProjectsPage';
 import CreateWizardPage from './pages/CreateWizard/CreateWizardPage';
-import TemplatesPage from './pages/Templates/TemplatesPage';
-import AssetsPage from './pages/Assets/AssetsPage';
-import AiAssistantPage from './pages/AiAssistant/AiAssistantPage';
-import StylesPage from './pages/Styles/StylesPage';
-import AccountPage from './pages/Account/AccountPage';
-import SettingsPage from './pages/Settings/SettingsPage';
 import ProjectWorkspacePage from './pages/ProjectWorkspace/ProjectWorkspacePage';
 import ProjectFlowTab from './pages/ProjectWorkspace/tabs/ProjectFlowTab';
 import ProjectOverviewTab from './pages/ProjectWorkspace/tabs/ProjectOverviewTab';
@@ -76,17 +69,18 @@ const RoutesComponent = () => {
             </RouteErrorGuard>
           }
         />
-        {/* 首页 = 创作作战室（Agent 三段式）；数据看板移至 /dashboard */}
+        {/* 首页 = 创作作战室（AI-EOS 极客模式三栏屏）；中心功能页统一在右栏标签页打开 */}
         <Route index element={<AgentStudio />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="projects" element={<ProjectsPage />} />
         <Route path="create" element={<CreateWizardPage />} />
-        <Route path="templates" element={<TemplatesPage />} />
-        <Route path="styles" element={<StylesPage />} />
-        <Route path="assets" element={<AssetsPage />} />
-        <Route path="ai-assistant" element={<AiAssistantPage />} />
-        <Route path="account" element={<AccountPage />} />
-        <Route path="settings" element={<SettingsPage />} />
+        {/* 旧路由兼容：/dashboard 等直接访问 → 回首页并在右栏自动打开对应标签页 */}
+        <Route path="dashboard" element={<LegacyRedirect pageKey="dashboard" />} />
+        <Route path="projects" element={<LegacyRedirect pageKey="projects" />} />
+        <Route path="templates" element={<LegacyRedirect pageKey="templates" />} />
+        <Route path="styles" element={<LegacyRedirect pageKey="styles" />} />
+        <Route path="assets" element={<LegacyRedirect pageKey="assets" />} />
+        <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
+        <Route path="account" element={<LegacyRedirect pageKey="account" />} />
+        <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
         <Route path="project/:id" element={<ProjectWorkspacePage />}>
           <Route path="flow" element={<ProjectFlowTab />} />
           <Route index element={<ProjectOverviewTab />} />
@@ -129,6 +123,19 @@ const RouteErrorGuard = ({ children }: { children: React.ReactNode }) => {
       {children}
     </ErrorBoundary>
   );
+};
+
+/** 旧路由兼容：直接访问 /projects 等旧地址时，回首页并在右栏自动打开对应功能标签页 */
+const LegacyRedirect = ({ pageKey }: { pageKey: WorkspacePageKey }) => {
+  const { openTab } = useWorkspaceTabs();
+  const navigate = useNavigate();
+  useEffect(() => {
+    openTab(pageKey);
+    navigate('/', { replace: true });
+    // 仅在首次挂载时执行一次重定向
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
 };
 
 const CanvasLoading = ({ tip }: { tip: string }) => (
