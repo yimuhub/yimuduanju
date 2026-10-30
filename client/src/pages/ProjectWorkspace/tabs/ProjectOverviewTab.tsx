@@ -378,7 +378,7 @@ const ProjectOverviewTab = () => {
                   <span className="w-20 shrink-0 text-muted-foreground">{JOB_TYPE_LABELS[item.jobType] || item.jobType}</span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-primary to-[#FF7A3A]"
+                      className="h-full rounded-full bg-brand-gradient"
                       style={{ width: `${Math.max(4, (item.cost / max) * 100)}%` }}
                     />
                   </div>

@@ -10,47 +10,57 @@
   --elevate-2: rgba(0,0,0, .08);
 
   --background: hsl(0 0% 100%);
-  --foreground: hsl(220 14% 14%);
+  --foreground: hsl(220 20% 12%);
   --card: hsl(0 0% 100%);
-  --card-foreground: hsl(220 14% 14%);
+  --card-foreground: hsl(220 20% 12%);
   --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(220 14% 14%);
-  --primary: hsl(2 85% 60%);
+  --popover-foreground: hsl(220 20% 12%);
+  /* 品牌主色：偏洋红的绯红（活力但不廉价），全站唯一红色系 */
+  --primary: hsl(4 78% 56%);
+  --primary-hover: hsl(4 74% 50%);
   --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(220 14% 96%);
   --secondary-foreground: hsl(220 14% 14%);
   --muted: hsl(220 14% 96%);
-  --muted-foreground: hsl(220 7% 45%);
+  --muted-foreground: hsl(220 9% 44%);
   --accent: hsl(220 14% 96%);
   --accent-foreground: hsl(220 14% 14%);
   --info: hsl(221 83% 53%);
   --info-foreground: hsl(230 100% 98%);
-  --destructive: hsl(2 84% 62%);
+  --destructive: hsl(0 72% 48%);
   --destructive-foreground: hsl(0 0% 100%);
   --success: hsl(130 54% 42%);
   --success-foreground: hsl(115 77% 97%);
   --warning: hsl(26 90% 49%);
   --warning-foreground: hsl(33 100% 96%);
-  --border: hsl(220 14% 89%);
+  --border: hsl(220 14% 90%);
   --input: hsl(220 14% 89%);
-  --ring: hsl(2 85% 60%);
-  --chart-1: hsl(2 85% 60%);
-  --chart-2: hsl(25 95% 55%);
-  --chart-3: hsl(280 60% 60%);
-  --chart-4: hsl(27 92% 49%);
-  --chart-5: hsl(292 54% 76%);
+  --ring: hsl(4 78% 56%);
+  --chart-1: hsl(4 78% 56%);
+  --chart-2: hsl(220 70% 55%);
+  --chart-3: hsl(160 60% 45%);
+  --chart-4: hsl(280 55% 60%);
+  --chart-5: hsl(35 90% 58%);
   /* 对标即梦/可灵工作台：深色侧栏与浅色内容区形成层次对比 */
-  --sidebar: hsl(222 24% 11%);
-  --sidebar-foreground: hsl(220 14% 80%);
-  --sidebar-primary: hsl(2 85% 60%);
+  --sidebar: hsl(222 26% 10%);
+  --sidebar-foreground: hsl(220 14% 86%);
+  --sidebar-primary: hsl(4 78% 56%);
   --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(0 0% 100% / 0.07);
+  --sidebar-accent: hsl(0 0% 100% / 0.06);
   --sidebar-accent-foreground: hsl(0 0% 100%);
   --sidebar-border: hsl(0 0% 100% / 0.08);
-  --sidebar-ring: hsl(2 85% 60%);
+  --sidebar-ring: hsl(4 78% 56%);
+
+  /* 圆角三档 + 阴影两档 + 品牌渐变（全站唯一语言） */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --brand-gradient: linear-gradient(135deg, hsl(4 80% 56%), hsl(356 68% 46%));
+  --shadow-card: 0 1px 2px hsl(220 20% 12% / 0.04), 0 2px 8px hsl(220 20% 12% / 0.04);
+  --shadow-hover: 0 4px 12px hsl(220 20% 12% / 0.08), 0 8px 24px hsl(220 20% 12% / 0.08);
 
   /* Computed borders using hsl relative color syntax */
-  --primary-border: hsl(from hsl(221 83% 53%) h s calc(l + var(--opaque-button-border-intensity)));
+  --primary-border: hsl(from var(--primary) h s calc(l + var(--opaque-button-border-intensity)));
   --secondary-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
   --destructive-border: hsl(from hsl(2 84% 62%) h s calc(l + var(--opaque-button-border-intensity)));
   --accent-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
@@ -306,3 +316,22 @@
     inset: -1px;
   }
 }
+/* ===== 3.0.5 设计系统工具类：全站唯一品牌语言 ===== */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, hsl(4 80% 56%), hsl(356 68% 46%));
+}
+.btn-brand {
+  background-image: linear-gradient(135deg, hsl(4 80% 56%), hsl(356 68% 46%));
+  color: hsl(0 0% 100%);
+  transition: opacity .15s ease, box-shadow .15s ease;
+}
+.btn-brand:hover { opacity: .92; box-shadow: var(--shadow-hover); }
+.nav-active {
+  background: hsl(0 0% 100% / 0.08);
+  color: hsl(0 0% 100%);
+  box-shadow: inset 3px 0 0 0 hsl(4 80% 56%);
+}
+.nav-idle { color: hsl(220 14% 80%); }
+.nav-idle:hover { background: hsl(0 0% 100% / 0.05); color: hsl(0 0% 100%); }
+.card-hover { transition: transform .15s ease, box-shadow .15s ease; }
+.card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }

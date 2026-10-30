@@ -10,7 +10,7 @@ const ProfileSection = () => {
 
       <div className="rounded-xl border bg-white p-6 shadow-sm">
         <div className="flex items-center gap-5">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-xl font-semibold text-white">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-gradient text-xl font-semibold text-white">
             YM
           </div>
           <div>

@@ -168,7 +168,7 @@ const AiAssistantPage = () => {
       {/* 顶部定位说明：与创作作战室（AgentStudio）拉开定位 */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-gradient-to-r from-primary/5 via-white to-white px-5 py-3.5 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-white">
             <Wand2 className="h-5 w-5" />
           </div>
           <div>
@@ -273,7 +273,7 @@ const AiAssistantPage = () => {
         {/* 右侧：对话区（保留原有真实网关对话） */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
           <div className="flex items-center gap-3 border-b px-6 py-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-gradient text-white">
               <Bot className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
@@ -308,7 +308,7 @@ const AiAssistantPage = () => {
                     className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
                       msg.role === 'user'
                         ? 'bg-muted'
-                        : 'bg-gradient-to-br from-primary to-[#FF7A3A] text-white'
+                        : 'bg-brand-gradient text-white'
                     }`}
                   >
                     {msg.role === 'user' ? (
@@ -339,7 +339,7 @@ const AiAssistantPage = () => {
               {/* Typing indicator */}
               {isSending && (
                 <div className="flex items-start gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-white">
                     <Bot className="h-4 w-4" />
                   </div>
                   <div className="rounded-2xl rounded-tl-sm bg-muted px-4 py-3">

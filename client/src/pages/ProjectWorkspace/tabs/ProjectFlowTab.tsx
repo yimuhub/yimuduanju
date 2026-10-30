@@ -147,7 +147,7 @@ const ProjectFlowTab = () => {
         </div>
         <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-primary to-[#FF7A3A] transition-all"
+            className="h-full rounded-full bg-brand-gradient transition-all"
             style={{ width: `${Math.max(2, overall)}%` }}
           />
         </div>

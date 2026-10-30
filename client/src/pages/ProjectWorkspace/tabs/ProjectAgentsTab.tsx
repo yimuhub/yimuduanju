@@ -120,7 +120,7 @@ const ProjectAgentsTab = () => {
             <div className="text-center text-sm text-muted-foreground">加载中...</div>
           ) : messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white shadow-md">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-gradient text-white shadow-md">
                 <Bot className="h-6 w-6" />
               </div>
               <div className="text-sm font-medium text-foreground">你好，我是{active}</div>
@@ -143,7 +143,7 @@ const ProjectAgentsTab = () => {
             messages.map((m) => (
               <div key={m.id} className={`flex gap-2.5 ${m.role === 'user' ? 'justify-end' : ''}`}>
                 {m.role !== 'user' && (
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-white">
                     <Bot className="h-3.5 w-3.5" />
                   </div>
                 )}

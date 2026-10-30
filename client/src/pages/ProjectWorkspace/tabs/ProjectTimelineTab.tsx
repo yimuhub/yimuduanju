@@ -11,7 +11,7 @@ import { Image } from '@client/src/components/ui/image';
 
 // 轨道定义（文档 4.4 节：Video/Character/Dialogue/BGM/SFX/Ambience/Subtitle）
 const tracks = [
-  { key: 'video', label: '视频 Video', icon: Film, color: 'from-primary/30 to-[#FF7A3A]/30', border: 'border-primary/30' },
+  { key: 'video', label: '视频 Video', icon: Film, color: 'from-primary/30 to-primary/15', border: 'border-primary/30' },
   { key: 'dialogue', label: '对白 Dialogue', icon: MessageSquare, color: 'from-blue-400/30 to-cyan-400/30', border: 'border-blue-300' },
   { key: 'bgm', label: '音乐 BGM', icon: Music, color: 'from-purple-400/30 to-pink-400/30', border: 'border-purple-300' },
   { key: 'sfx', label: '音效 SFX', icon: AudioLines, color: 'from-amber-400/30 to-orange-400/30', border: 'border-amber-300' },

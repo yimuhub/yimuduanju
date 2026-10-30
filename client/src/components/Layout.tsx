@@ -131,7 +131,7 @@ const Layout = () => {
     <>
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#FF403A] to-[#FF7A3A] text-white shadow-sm">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-sm">
           <Clapperboard className="h-5 w-5" />
         </div>
         {!sidebarCollapsed && (
@@ -187,7 +187,7 @@ const Layout = () => {
           title={sidebarCollapsed ? '一幕用户' : undefined}
           className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-sidebar-accent ${sidebarCollapsed ? 'justify-center' : ''}`}
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-sm font-semibold text-primary-foreground">
             YM
           </div>
           {!sidebarCollapsed && (
@@ -297,7 +297,7 @@ const Layout = () => {
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen((v) => !v)}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-sm font-semibold text-primary-foreground transition-transform hover:scale-105"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-gradient text-sm font-semibold text-primary-foreground transition-transform hover:scale-105"
                 aria-label="用户菜单"
               >
                 YM

@@ -116,7 +116,7 @@ const AccountPage = () => {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="rounded-xl border bg-white p-5 shadow-sm lg:col-span-2">
           <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-lg font-semibold text-primary-foreground">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-gradient text-lg font-semibold text-primary-foreground">
               YM
             </div>
             <div className="min-w-0 flex-1">

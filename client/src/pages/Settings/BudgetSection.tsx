@@ -109,7 +109,7 @@ const BudgetSection = () => {
             </div>
             <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-primary to-[#FF7A3A]"
+                className="h-full rounded-full bg-brand-gradient"
                 style={{
                   width: `${Math.min(100, (monthlyCost / Math.max(0.01, effectiveBudget)) * 100)}%`,
                 }}
@@ -156,7 +156,7 @@ const BudgetSection = () => {
                     className="flex flex-1 flex-col items-center gap-2"
                   >
                     <div
-                      className="w-full rounded-t-lg bg-gradient-to-t from-primary/80 to-[#FF7A3A]/60"
+                      className="w-full rounded-t-lg bg-gradient-to-t from-primary/80 to-primary/50"
                       style={{ height: `${Math.max(4, (item.cost / maxTypeCost) * 100)}%` }}
                       title={`¥${item.cost.toFixed(2)} / ${item.count}次`}
                     />

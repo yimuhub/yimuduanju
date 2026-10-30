@@ -388,7 +388,7 @@ const ProjectExportTab = () => {
               <div className="mt-3">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-primary to-[#FF7A3A] transition-all"
+                    className="h-full rounded-full bg-brand-gradient transition-all"
                     style={{ width: `${synthProgress}%` }}
                   />
                 </div>
