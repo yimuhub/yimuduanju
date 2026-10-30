@@ -2,22 +2,33 @@ import { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ConfirmHost } from '@client/src/components/ui/confirm';
 import CommandPalette from '@client/src/components/workspace/CommandPalette';
+import ClassicLayout from '@client/src/components/ClassicLayout';
 import {
   WorkspaceTabsProvider,
   WORKSPACE_PAGES,
 } from '@client/src/components/workspace/WorkspaceTabsContext';
+import { readUIMode } from '@client/src/lib/uiMode';
 import { Clapperboard, X, Sparkles, Wand2 } from 'lucide-react';
 
 /**
- * 全站布局（AI-EOS 极客模式 · 三栏制）
+ * 全站布局外壳（双界面模式，参照 AI-EOS ui-mode）
  * ─────────────────────────────────────────────
- * 常规页面 = 唯一一张三栏屏（左会话/任务栏 + 中对话栏 + 右功能标签坞），
- * 由首页「创作作战室」自身提供，Layout 不再渲染外层侧栏 / 顶栏 / 独立 RightDock，
- * 侧栏原功能条目全部进入左栏底部功能网格与右栏标签页（见 WorkspaceTabsContext）。
- * 画布路由保持全屏沉浸 + 左上角悬浮导航（原有逻辑）。
+ * - classic 经典模式：固定侧边栏 + 顶栏 + 整页导航 + RightDock 助手坞（见 ClassicLayout）
+ * - geek    极客模式：唯一一张三栏屏（左会话栏 + 中对话栏 + 右功能标签坞），
+ *   由首页「创作作战室」自身提供，Layout 不再渲染外层侧栏 / 顶栏 / 独立 RightDock，
+ *   侧栏原功能条目全部进入左栏底部功能网格与右栏标签页（见 WorkspaceTabsContext）。
+ * - 画布路由两种模式下均保持全屏沉浸 + 左上角悬浮导航。
  */
 
 const Layout = () => {
+  // 双模式路由分流：切换通过整页刷新（switchUIMode），此处读到的一定是最新档
+  if (readUIMode() === 'classic') {
+    return <ClassicLayout />;
+  }
+  return <GeekLayout />;
+};
+
+const GeekLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   // 画布全屏模式左上角悬浮导航面板开关

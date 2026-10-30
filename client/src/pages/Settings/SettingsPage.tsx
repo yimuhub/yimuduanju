@@ -130,8 +130,8 @@ const SettingsPage = () => {
         description="模型供应商、分环节模型绑定、计费预算与生成偏好"
       />
       <div ref={wrapRef} className="flex gap-6">
-      {/* 左侧锚点子导航 */}
-      <aside className="w-56 shrink-0">
+      {/* 左侧锚点子导航（pane-hide-narrow：在极客模式右栏窄签容器内自动收起，避免横向溢出） */}
+      <aside className="pane-hide-narrow w-56 shrink-0">
         <div className="sticky top-0 space-y-4 py-1">
           <div className="rounded-xl border bg-card p-3 shadow-sm">
             <div className="flex items-center gap-1.5 px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">

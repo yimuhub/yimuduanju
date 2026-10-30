@@ -367,3 +367,13 @@ body {
 .nav-idle:hover { background: hsl(220 20% 92% / 0.06); color: hsl(220 20% 92%); }
 .card-hover { transition: transform .15s ease, box-shadow .15s ease; }
 .card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+
+/* ===== 3.2.2 右栏功能签容器查询：窄签页面自适应 =====
+ * 极客模式右栏功能签（如设置）宽度有限（400-640px），页面内为宽版整页设计的
+ * 固定宽度侧元素（如设置页 w-56 锚点导航）会挤出横向溢出。
+ * 用原生 CSS 容器查询：pane-narrow 声明容器，容器宽 < 720px 时隐藏 pane-hide-narrow 元素。
+ * 经典模式整页宽容器不触发隐藏，不受影响。 */
+.pane-narrow { container-type: inline-size; }
+@container (max-width: 719px) {
+  .pane-hide-narrow { display: none !important; }
+}

@@ -4,6 +4,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 
 import Layout from './components/Layout';
 import { useWorkspaceTabs, type WorkspacePageKey } from './components/workspace/WorkspaceTabsContext';
+import { readUIMode } from './lib/uiMode';
 import NotFound from './pages/NotFound/NotFound';
 import AgentStudio from './pages/AgentStudio/AgentStudio';
 import CreateWizardPage from './pages/CreateWizard/CreateWizardPage';
@@ -27,11 +28,25 @@ const PavoCanvas = lazy(() => import('./pages/CanvasStudioV2/PavoCanvas'));
 const CanvasAutoPage = lazy(() => import('./pages/CanvasStudioV2/CanvasAutoPage'));
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
 
+// 经典模式整页路由：与极客模式右栏签共用同一批懒加载 chunk（Vite 按 module 去重，不重复打包）
+const ClassicPages = {
+  dashboard: lazy(() => import('./pages/Dashboard/DashboardPage')),
+  projects: lazy(() => import('./pages/Projects/ProjectsPage')),
+  templates: lazy(() => import('./pages/Templates/TemplatesPage')),
+  styles: lazy(() => import('./pages/Styles/StylesPage')),
+  assets: lazy(() => import('./pages/Assets/AssetsPage')),
+  'ai-assistant': lazy(() => import('./pages/AiAssistant/AiAssistantPage')),
+  account: lazy(() => import('./pages/Account/AccountPage')),
+  settings: lazy(() => import('./pages/Settings/SettingsPage')),
+} as const;
+
 const RoutesComponent = () => {
   // 浏览器页签标题：平台渲染的 HTML 标题不可控，应用挂载后统一覆盖为品牌名
   useEffect(() => {
     document.title = '一幕·YIMU AI 短剧创作平台';
   }, []);
+  // 双模式：classic = 全部真实路由整页渲染；geek = / 三栏作战室 + 旧路由重定向开签
+  const isClassic = readUIMode() === 'classic';
   return (
     <Routes>
       <Route element={<Layout />}>
@@ -69,18 +84,42 @@ const RoutesComponent = () => {
             </RouteErrorGuard>
           }
         />
-        {/* 首页 = 创作作战室（AI-EOS 极客模式三栏屏）；中心功能页统一在右栏标签页打开 */}
+        {/* 首页 = 创作作战室；经典模式下作为侧栏「创作作战室」项对应的普通页面渲染 */}
         <Route index element={<AgentStudio />} />
         <Route path="create" element={<CreateWizardPage />} />
-        {/* 旧路由兼容：/dashboard 等直接访问 → 回首页并在右栏自动打开对应标签页 */}
-        <Route path="dashboard" element={<LegacyRedirect pageKey="dashboard" />} />
-        <Route path="projects" element={<LegacyRedirect pageKey="projects" />} />
-        <Route path="templates" element={<LegacyRedirect pageKey="templates" />} />
-        <Route path="styles" element={<LegacyRedirect pageKey="styles" />} />
-        <Route path="assets" element={<LegacyRedirect pageKey="assets" />} />
-        <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
-        <Route path="account" element={<LegacyRedirect pageKey="account" />} />
-        <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
+        {isClassic ? (
+          <>
+            {/* 经典模式：所有真实路由直接整页渲染 */}
+            {(Object.keys(ClassicPages) as (keyof typeof ClassicPages)[]).map((key) => {
+              const Page = ClassicPages[key];
+              return (
+                <Route
+                  key={key}
+                  path={key}
+                  element={
+                    <RouteErrorGuard>
+                      <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                        <Page />
+                      </Suspense>
+                    </RouteErrorGuard>
+                  }
+                />
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {/* 旧路由兼容（仅极客模式）：/dashboard 等直接访问 → 回首页并在右栏自动打开对应标签页 */}
+            <Route path="dashboard" element={<LegacyRedirect pageKey="dashboard" />} />
+            <Route path="projects" element={<LegacyRedirect pageKey="projects" />} />
+            <Route path="templates" element={<LegacyRedirect pageKey="templates" />} />
+            <Route path="styles" element={<LegacyRedirect pageKey="styles" />} />
+            <Route path="assets" element={<LegacyRedirect pageKey="assets" />} />
+            <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
+            <Route path="account" element={<LegacyRedirect pageKey="account" />} />
+            <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
+          </>
+        )}
         <Route path="project/:id" element={<ProjectWorkspacePage />}>
           <Route path="flow" element={<ProjectFlowTab />} />
           <Route index element={<ProjectOverviewTab />} />

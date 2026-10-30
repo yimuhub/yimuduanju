@@ -173,11 +173,12 @@ const WorkspaceRightDock = ({ outputView }: WorkspaceRightDockProps) => {
         </div>
       </div>
 
-      {/* 内容区：产出签 = AgentStudio 子视图；功能签 = 真实页面组件（min-w-0 + 深色 token） */}
+      {/* 内容区：产出签 = AgentStudio 子视图；功能签 = 真实页面组件。
+          pane-narrow 容器查询让窄签页面自动收起宽版侧元素；overflow 双向裁剪保证无溢出 */}
       {activeTab.key === OUTPUT_TAB.key ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{outputView}</div>
       ) : activeTab.pageKey ? (
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5">
+        <div className="pane-narrow min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-5">
           <Suspense fallback={<TabLoading />}>
             {(() => {
               const Page = PAGE_COMPONENTS[activeTab.pageKey];

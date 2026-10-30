@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, MessageSquare, CornerDownLeft } from 'lucide-react';
+import { Search, MessageSquare, CornerDownLeft, MonitorCog, Sparkles } from 'lucide-react';
 import {
   WORKSPACE_PAGES,
   useWorkspaceTabs,
   type WorkspacePageMeta,
 } from '@client/src/components/workspace/WorkspaceTabsContext';
+import { readUIMode, switchUIMode, type UIMode } from '@client/src/lib/uiMode';
 
 /**
  * ⌘K 功能搜索浮层（AI-EOS 极客模式同款）
@@ -41,7 +42,8 @@ const loadSessions = (): PaletteSession[] => {
 
 type Item =
   | { kind: 'page'; page: WorkspacePageMeta }
-  | { kind: 'session'; session: PaletteSession };
+  | { kind: 'session'; session: PaletteSession }
+  | { kind: 'mode'; mode: UIMode };
 
 const CommandPalette = () => {
   const [open, setOpen] = useState(false);
@@ -52,6 +54,8 @@ const CommandPalette = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { openTab } = useWorkspaceTabs();
+  // 双模式：极客模式回车=右栏开签；经典模式回车=整页导航。两个模式都提供「切换模式」项
+  const mode = open ? readUIMode() : 'geek';
 
   // ⌘K / Ctrl+K 呼出；Esc 关闭
   useEffect(() => {
@@ -80,6 +84,17 @@ const CommandPalette = () => {
 
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase();
+    // 首位固定：界面模式切换项（两种模式都可随时互切）
+    const modeItem: Item = {
+      kind: 'mode',
+      mode: mode === 'classic' ? 'geek' : 'classic',
+    };
+    const modeMatch =
+      !q ||
+      '模式'.includes(q) ||
+      'mode'.includes(q) ||
+      (mode === 'classic' ? '极客'.includes(q) : '经典'.includes(q));
+    const modeItems: Item[] = modeMatch ? [modeItem] : [];
     const pages = WORKSPACE_PAGES.filter(
       (p) =>
         !q ||
@@ -90,8 +105,8 @@ const CommandPalette = () => {
     const sess = sessions
       .filter((s) => !q || s.title.toLowerCase().includes(q))
       .map((s): Item => ({ kind: 'session', session: s }));
-    return [...pages, ...sess];
-  }, [query, sessions]);
+    return [...modeItems, ...pages, ...sess];
+  }, [query, sessions, mode]);
 
   useEffect(() => {
     setCursor((c) => Math.min(c, Math.max(0, items.length - 1)));
@@ -99,8 +114,22 @@ const CommandPalette = () => {
 
   const run = (item: Item | undefined) => {
     if (!item) return;
+    if (item.kind === 'mode') {
+      // 切换界面模式：写档 + 整页刷新（极客 → /；经典 → 当前页面路由整页渲染）
+      if (item.mode === 'classic') {
+        switchUIMode('classic');
+      } else {
+        switchUIMode('geek', '/');
+      }
+      return;
+    }
     setOpen(false);
     if (item.kind === 'page') {
+      if (mode === 'classic') {
+        // 经典模式：整页导航到真实路由
+        navigate(`/${item.page.key}`);
+        return;
+      }
       openTab(item.page.key);
       if (location.pathname !== '/') navigate('/', { replace: true });
     } else {
@@ -153,6 +182,29 @@ const CommandPalette = () => {
           ) : (
             items.map((item, i) => {
               const active = i === cursor;
+              if (item.kind === 'mode') {
+                const toClassic = item.mode === 'classic';
+                return (
+                  <button
+                    key="switch-mode"
+                    type="button"
+                    onMouseEnter={() => setCursor(i)}
+                    onClick={() => run(item)}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                      active ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted'
+                    }`}
+                  >
+                    {toClassic ? <MonitorCog className="h-4 w-4 shrink-0 text-muted-foreground" /> : <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{toClassic ? '切换到经典模式' : '切换到极客模式'}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {toClassic ? '左侧栏 + 整页导航，一页一件事' : '三栏作战室 + 功能标签页，对话不中断'}
+                      </span>
+                    </span>
+                    {active && <CornerDownLeft className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                  </button>
+                );
+              }
               if (item.kind === 'page') {
                 return (
                   <button

@@ -13,6 +13,8 @@ import {
  * - 拖动分隔条调整左/右栏宽度，中栏自适应（flex-1）；拖拽与 hover 时分隔条高亮品牌色
  * - 双击分隔条恢复该侧默认宽度
  * - 尺寸持久化 localStorage（key 前缀 yimu.tripane.，传入 leftKey/rightKey 才持久化）
+ * - 中栏保底：minCenterWidth（如 520）保证右栏拉到最宽时中栏仍不小于该值——
+ *   空间不足时左右栏允许收缩（shrink），中栏永不小于保底宽度
  * - 窄屏（<lg）退化为单列堆叠：三栏纵向排列（左右栏自然高度、分隔条隐藏），中栏保底高度
  */
 
@@ -51,6 +53,8 @@ export interface TriPaneProps {
   maxLeftWidth?: number;
   minRightWidth?: number;
   maxRightWidth?: number;
+  /** 中栏保底宽度（px，仅 lg 以上生效）；空间不足时左右栏自动收缩给中栏让位 */
+  minCenterWidth?: number;
   className?: string;
 }
 
@@ -68,6 +72,7 @@ const TriPane = ({
   maxLeftWidth = 420,
   minRightWidth = 260,
   maxRightWidth = 480,
+  minCenterWidth = 0,
   className = '',
 }: TriPaneProps) => {
   const [leftWidth, setLeftWidth] = useState(() =>
@@ -166,7 +171,7 @@ const TriPane = ({
       {hasLeft && (
         <>
           <div
-            className="w-full shrink-0 lg:w-[var(--yimu-tripane-left)]"
+            className="w-full min-w-0 shrink-0 lg:w-[var(--yimu-tripane-left)] lg:shrink"
             style={{ '--yimu-tripane-left': `${leftWidth}px` } as CSSProperties}
           >
             {left}
@@ -175,8 +180,11 @@ const TriPane = ({
         </>
       )}
 
-      {/* 中栏自适应 */}
-      <div className="flex min-h-[360px] min-w-0 flex-1 flex-col lg:min-h-0">
+      {/* 中栏自适应：minCenterWidth > 0 时保底宽度（右栏最宽时中栏仍不小于该值） */}
+      <div
+        className="flex min-h-[360px] min-w-0 flex-1 flex-col lg:min-h-0 lg:min-w-[var(--yimu-tripane-center-min,0px)]"
+        style={{ '--yimu-tripane-center-min': `${minCenterWidth}px` } as CSSProperties}
+      >
         {center}
       </div>
 
@@ -184,7 +192,7 @@ const TriPane = ({
         <>
           {renderDivider('right')}
           <div
-            className="w-full shrink-0 lg:w-[var(--yimu-tripane-right)]"
+            className="w-full min-w-0 shrink-0 lg:w-[var(--yimu-tripane-right)] lg:shrink"
             style={{ '--yimu-tripane-right': `${rightWidth}px` } as CSSProperties}
           >
             {right}

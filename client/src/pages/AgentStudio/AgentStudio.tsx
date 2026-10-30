@@ -15,6 +15,7 @@ import {
   ExternalLink,
   X,
   Activity,
+  PanelLeft,
 } from 'lucide-react';
 import { assets as assetsApi, assistant as assistantApi, dashboard as dashboardApi, generation as generationApi, projects as projectsApi, providers as providersApi, templates as templatesApi } from '@client/src/api';
 import type { Template } from '@shared/api.interface';
@@ -28,6 +29,7 @@ import {
   type WorkspacePageKey,
 } from '@client/src/components/workspace/WorkspaceTabsContext';
 import { OPEN_SESSION_EVENT } from '@client/src/components/workspace/CommandPalette';
+import { readUIMode, switchUIMode } from '@client/src/lib/uiMode';
 
 /**
  * 创作作战室（首页 · Agent 三段式 · AI-EOS 极客模式结构）
@@ -104,6 +106,9 @@ const dayLabel = (ts: number) => (Date.now() - ts < 24 * 3600 * 1000 ? '进行�
 const JOB_STATUS_LABELS: Record<string, string> = {
   pending: '排队中', running: '生成中', succeeded: '已完成', failed: '失败', cancelled: '已取消',
 };
+
+// 界面模式：极客模式左栏才显示「经典模式」切换入口（经典模式下同一组件作 / 首页内容，不重复显示）
+const isGeekMode = readUIMode() === 'geek';
 
 const AgentStudio = () => {
   const navigate = useNavigate();
@@ -565,11 +570,12 @@ const AgentStudio = () => {
         leftKey="agentstudio.left"
         rightKey="agentstudio.right"
         defaultLeftWidth={280}
-        defaultRightWidth={360}
-        minLeftWidth={200}
-        maxLeftWidth={360}
-        minRightWidth={280}
-        maxRightWidth={520}
+        defaultRightWidth={440}
+        minLeftWidth={220}
+        maxLeftWidth={340}
+        minRightWidth={400}
+        maxRightWidth={640}
+        minCenterWidth={520}
         left={(
         <aside className="hidden h-full w-full min-h-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
         <div className="border-b border-sidebar-border p-3">
@@ -605,13 +611,14 @@ const AgentStudio = () => {
                 key={it.key}
                 onClick={() => openTab(it.key)}
                 title={it.description}
-                className="flex flex-col items-center gap-1 rounded-lg px-1 py-2 text-[11px] text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                className="flex min-w-0 flex-col items-center gap-1 overflow-hidden rounded-lg px-1 py-2 text-[11px] leading-tight text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               >
-                <it.icon className="h-4 w-4" /> {it.title}
+                <it.icon className="h-4 w-4 shrink-0" />
+                <span className="w-full truncate whitespace-nowrap text-center">{it.title}</span>
               </button>
             ))}
           </div>
-          {/* 用户卡 */}
+          {/* 用户卡 + 界面模式切换（仅极客模式显示「经典模式」入口） */}
           <div className="mt-1.5 flex items-center gap-2.5 rounded-lg px-2 py-2">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-xs font-semibold text-white">
               {(nickname || '一').slice(0, 1)}
@@ -622,6 +629,15 @@ const AgentStudio = () => {
             </div>
             <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="在线" />
           </div>
+          {isGeekMode && (
+            <button
+              onClick={() => switchUIMode('classic', '/projects')}
+              title="切换到经典模式（左侧栏 + 整页导航）"
+              className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border px-2 py-1.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+            >
+              <PanelLeft className="h-3.5 w-3.5 shrink-0" /> 经典模式
+            </button>
+          )}
         </div>
         </aside>
         )}
