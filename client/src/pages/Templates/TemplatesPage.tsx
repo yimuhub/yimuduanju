@@ -6,6 +6,7 @@ import type { Template, TemplateType } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { toast } from 'sonner';
 import { showConfirm } from '@client/src/components/ui/confirm';
+import PageHeader from '@client/src/components/PageHeader';
 import TemplateDetailModal, {
   getGradient,
   getTypeLabel,
@@ -195,26 +196,24 @@ const TemplatesPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">模板中心</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            精选模板，一键套用快速创作 · 共 {templateCount} 个模板
-          </p>
-        </div>
-        {/* P1 修复：模板增删改之前只能调 curl；现补管理入口 */}
-        <button
-          onClick={() => {
-            setEditingTpl(null);
-            setFormData({ name: '', templateType: 'full', durationSeconds: 60, aspectRatio: '9:16' });
-            setShowForm(true);
-          }}
-          className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          新建模板
-        </button>
-      </div>
+      <PageHeader
+        title="模板中心"
+        description={`精选模板，一键套用快速创作 · 共 ${templateCount} 个模板`}
+        actions={
+          /* P1 修复：模板增删改之前只能调 curl；现补管理入口 */
+          <button
+            onClick={() => {
+              setEditingTpl(null);
+              setFormData({ name: '', templateType: 'full', durationSeconds: 60, aspectRatio: '9:16' });
+              setShowForm(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            新建模板
+          </button>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         {TABS.map((tab) => (

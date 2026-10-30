@@ -43,20 +43,9 @@ const getTypeIcon = (type: string) => {
   }
 };
 
-const getTypeGradient = (type: string): string => {
-  switch (type) {
-    case 'image':
-      return 'from-blue-400 via-cyan-400 to-teal-400';
-    case 'video':
-      return 'from-purple-500 via-fuchsia-500 to-pink-500';
-    case 'audio':
-      return 'from-emerald-400 via-green-400 to-teal-400';
-    case 'subtitle':
-      return 'from-amber-400 via-orange-400 to-red-400';
-    default:
-      return 'from-primary via-[#FF7A3A] to-purple-500';
-  }
-};
+// 全站统一品牌语言：资产占位底统一为品牌红浅底（类型区分交给图标与标签）
+const getTypeGradient = (_type: string): string =>
+  'from-primary/20 via-primary/10 to-primary/5';
 
 const getSourceLabel = (source: string): string => {
   switch (source) {
@@ -182,9 +171,9 @@ const AssetPreviewModal = ({
           ) : asset.assetType === 'audio' && canShowMedia ? (
             <audio src={url} controls className="w-4/5" onError={() => setMediaFailed(true)} />
           ) : mediaFailed || (asset.assetType === 'image' && !canShowMedia) || (asset.assetType === 'video' && !canShowMedia) ? (
-            <span className="text-sm font-medium text-white/90">未获取</span>
+            <span className="text-sm font-medium text-muted-foreground">未获取</span>
           ) : (
-            <Icon className="h-20 w-20 text-white/80" />
+            <Icon className="h-20 w-20 text-primary/40" />
           )}
           {/* 左右切换：同一份过滤结果内逐张浏览 */}
           {hasPrev && (

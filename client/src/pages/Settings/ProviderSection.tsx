@@ -50,7 +50,7 @@ const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
 const PROVIDER_TYPE_COLORS: Record<ProviderType, string> = {
   volcengine_ark: 'bg-blue-50 text-blue-600',
   openai_proxy: 'bg-purple-50 text-purple-600',
-  custom: 'bg-gray-50 text-gray-600',
+  custom: 'bg-muted/60 text-muted-foreground',
   official: 'bg-amber-50 text-amber-700',
 };
 
@@ -578,7 +578,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         </span>
                       )}
                       {!provider.enabled ? (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500">
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                           已停用
                         </span>
                       ) : status === 'ok' ? (
@@ -624,7 +624,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                       }
                       title={provider.enabled ? '停用该供应商' : '启用该供应商'}
                       className={`relative h-6 w-11 rounded-full transition-colors ${
-                        provider.enabled ? 'bg-primary' : 'bg-gray-200'
+                        provider.enabled ? 'bg-primary' : 'bg-muted'
                       }`}
                     >
                       <span
@@ -668,7 +668,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     disabled={provider.isDefault}
                     className={`flex items-center gap-1.5 text-xs ${
                       provider.isDefault
-                        ? 'text-gray-400'
+                        ? 'text-muted-foreground/70'
                         : 'text-muted-foreground hover:text-primary'
                     }`}
                   >
@@ -1173,7 +1173,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     setFormData((p) => ({ ...p, isDefault: !p.isDefault }))
                   }
                   className={`relative h-6 w-11 rounded-full transition-colors ${
-                    formData.isDefault ? 'bg-primary' : 'bg-gray-200'
+                    formData.isDefault ? 'bg-primary' : 'bg-muted'
                   }`}
                 >
                   <span
@@ -1333,7 +1333,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                                 title="系统按命名规律的猜测，仅供参考，以手动选择为准"
                                 className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
                                   (m.kind ?? classifyModelId(m.id)) === 'unknown'
-                                    ? 'bg-gray-100 text-gray-500'
+                                    ? 'bg-muted text-muted-foreground'
                                     : 'bg-primary/10 text-primary'
                                 }`}
                               >

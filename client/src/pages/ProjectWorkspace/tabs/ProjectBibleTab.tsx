@@ -124,7 +124,7 @@ const ProjectBibleTab = () => {
           <div className="rounded-xl border bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#FF7A3A]/10"><Palette className="h-4 w-4 text-[#FF7A3A]" /></div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10"><Palette className="h-4 w-4 text-primary" /></div>
                 <div>
                   <h3 className="text-base font-semibold text-foreground">风格圣经</h3>
                   <p className="text-xs text-muted-foreground">视觉 · 镜头 · 色彩 · 光影 · 运动 · 字幕风格</p>

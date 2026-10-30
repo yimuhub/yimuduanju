@@ -103,7 +103,7 @@ const OfficialSection = () => {
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                   info?.enabled
                     ? 'bg-emerald-50 text-emerald-600'
-                    : 'bg-gray-100 text-gray-500'
+                    : 'bg-muted text-muted-foreground'
                 }`}
               >
                 {info?.enabled ? '已启用' : '未启用'}
@@ -131,7 +131,7 @@ const OfficialSection = () => {
               disabled={saving}
               className={`rounded-xl px-5 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50 ${
                 info?.enabled
-                  ? 'bg-gray-500 hover:bg-gray-600'
+                  ? 'bg-muted-foreground/50 hover:bg-muted-foreground/60'
                   : 'bg-amber-600 hover:bg-amber-700'
               }`}
             >

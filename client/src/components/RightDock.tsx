@@ -1,15 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, ListTodo, Send, PanelRightClose, Loader2, RotateCcw } from 'lucide-react';
-import { generation } from '@client/src/api';
-import { assistant as assistantApi } from '@client/src/api';
-import type { GenerationJob } from '@shared/api.interface';
+import {
+  ListTodo,
+  PanelRightClose,
+  Loader2,
+  RotateCcw,
+  Images,
+  Activity,
+  Film,
+  Image as ImageIcon,
+  Music,
+  FileText,
+  ArrowRight,
+} from 'lucide-react';
+import { generation, assets as assetsApi, dashboard as dashboardApi } from '@client/src/api';
+import { mediaUrl } from '@client/src/api/assets';
+import type { Asset, GenerationJob } from '@shared/api.interface';
 
 /**
- * 三段式布局 · 右侧助手坞（Agent 风格常驻面板）。
- * 两个标签：任务动态（实时生成任务轮询）与 AI 快聊（assistant.chat 直连）。
+ * 三段式布局 · 右侧助手坞（Z Code 式 Agent 工作台常驻面板）。
+ * 三个标签：任务（实时生成任务轮询）/ 资产（近期产出缩略网格）/ 动态（平台活动时间线）。
  * xl 以上屏幕默认展开，可通过顶栏按钮或坞内按钮收起；窄屏（<xl）不占布局。
- * 收起状态持久化到 localStorage，跨页面保持。
+ * 收起状态持久化到 localStorage，跨页面保持。AI 对话在独立「AI助手」页（/ai-assistant）。
  */
 
 const JOB_TYPE_LABELS: Record<string, string> = {
@@ -38,12 +50,24 @@ const STATUS_LABELS: Record<string, string> = {
 
 const shortId = (id: string | undefined) => (id ? id.slice(0, 8) : '—');
 
-type DockTab = 'jobs' | 'chat';
+const timeAgo = (iso: string) => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
+};
 
-interface ChatMsg {
-  role: 'user' | 'assistant';
-  text: string;
-}
+type DockTab = 'jobs' | 'assets' | 'activity';
+
+const ASSET_TYPE_ICONS: Record<string, typeof ImageIcon> = {
+  video: Film,
+  image: ImageIcon,
+  audio: Music,
+  subtitle: FileText,
+};
 
 const RightDock = ({ onClose }: { onClose: () => void }) => {
   const navigate = useNavigate();
@@ -73,38 +97,53 @@ const RightDock = ({ onClose }: { onClose: () => void }) => {
     return () => clearInterval(timer);
   }, [tab, loadJobs]);
 
-  // ---- AI 快聊 ----
-  const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: 'assistant', text: '你好！我是 YIMU 创作助手，可以问我怎么策划短剧、怎么用画布和成片流水线。' },
-  ]);
-  const [input, setInput] = useState('');
-  const [chatting, setChatting] = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  // ---- 近期资产 ----
+  const [recentAssets, setRecentAssets] = useState<Asset[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(true);
+  const [assetsError, setAssetsError] = useState<string | null>(null);
+
+  const loadAssets = useCallback(async () => {
+    try {
+      const res = await assetsApi.listAssets({ page: 1, pageSize: 8 });
+      setRecentAssets(res.items ?? []);
+      setAssetsError(null);
+    } catch (e) {
+      setAssetsError((e as Error).message);
+    } finally {
+      setAssetsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, tab]);
+    if (tab !== 'assets') return;
+    void loadAssets();
+  }, [tab, loadAssets]);
 
-  const sendChat = async () => {
-    const text = input.trim();
-    if (!text || chatting) return;
-    setInput('');
-    setMessages((prev) => [...prev, { role: 'user', text }]);
-    setChatting(true);
+  // ---- 平台动态 ----
+  const [activity, setActivity] = useState<
+    { id: string; type: string; message: string; createdAt: string }[]
+  >([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState<string | null>(null);
+
+  const loadActivity = useCallback(async () => {
     try {
-      const res = await assistantApi.chat(text);
-      setMessages((prev) => [...prev, { role: 'assistant', text: res.reply }]);
+      const res = await dashboardApi.getActivityFeed(15);
+      setActivity(res ?? []);
+      setActivityError(null);
     } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', text: `发送失败：${(e as Error).message}` },
-      ]);
+      setActivityError((e as Error).message);
     } finally {
-      setChatting(false);
+      setActivityLoading(false);
     }
-  };
+  }, []);
 
-  const tabBtn = (id: DockTab, label: string, Icon: typeof Bot) => (
+  useEffect(() => {
+    if (tab !== 'activity') return;
+    void loadActivity();
+  }, [tab, loadActivity]);
+
+  const tabBtn = (id: DockTab, label: string, Icon: typeof ListTodo) => (
     <button
       type="button"
       onClick={() => setTab(id)}
@@ -136,13 +175,14 @@ const RightDock = ({ onClose }: { onClose: () => void }) => {
         </button>
       </div>
 
-      {/* 标签切换 */}
+      {/* 标签切换：任务 / 资产 / 动态 */}
       <div className="flex shrink-0 gap-1 border-b border-sidebar-border p-2">
-        {tabBtn('jobs', '任务动态', ListTodo)}
-        {tabBtn('chat', 'AI 助手', Bot)}
+        {tabBtn('jobs', '任务', ListTodo)}
+        {tabBtn('assets', '资产', Images)}
+        {tabBtn('activity', '动态', Activity)}
       </div>
 
-      {tab === 'jobs' ? (
+      {tab === 'jobs' && (
         <div className="flex-1 overflow-y-auto p-2.5">
           {jobsLoading && jobs.length === 0 ? (
             <div className="flex h-32 items-center justify-center text-muted-foreground">
@@ -207,50 +247,106 @@ const RightDock = ({ onClose }: { onClose: () => void }) => {
             </ul>
           )}
         </div>
-      ) : (
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={`max-w-[92%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
-                  m.role === 'user'
-                    ? 'ml-auto bg-primary text-primary-foreground'
-                    : 'bg-background text-foreground'
-                }`}
-              >
-                {m.text}
-              </div>
-            ))}
-            {chatting && (
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> 思考中…
-              </div>
-            )}
-            <div ref={chatBottomRef} />
-          </div>
-          <div className="shrink-0 border-t border-sidebar-border p-2.5">
-            <div className="relative">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) void sendChat();
-                }}
-                placeholder="问问创作建议…"
-                className="h-9 w-full rounded-xl border border-input bg-background pl-3 pr-9 text-xs outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
-              />
+      )}
+
+      {tab === 'assets' && (
+        <div className="flex-1 overflow-y-auto p-2.5">
+          {assetsLoading && recentAssets.length === 0 ? (
+            <div className="flex h-32 items-center justify-center text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+          ) : assetsError ? (
+            <div className="space-y-2 p-2 text-center text-xs text-muted-foreground">
+              <p>资产加载失败：{assetsError}</p>
               <button
                 type="button"
-                onClick={() => void sendChat()}
-                disabled={chatting || !input.trim()}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-primary disabled:opacity-40"
-                aria-label="发送"
+                onClick={() => void loadAssets()}
+                className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 hover:bg-muted"
               >
-                <Send className="h-3.5 w-3.5" />
+                <RotateCcw className="h-3 w-3" /> 重试
               </button>
             </div>
-          </div>
+          ) : recentAssets.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              暂无资产。生成的图片、视频与音频会自动归档到这里。
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {recentAssets.map((asset) => {
+                  const TypeIcon = ASSET_TYPE_ICONS[asset.assetType] ?? FileText;
+                  const thumb = asset.thumbnailUrl || mediaUrl(asset);
+                  return (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      onClick={() => navigate('/assets')}
+                      title={asset.name}
+                      className="group relative aspect-square overflow-hidden rounded-lg border border-border/70 bg-muted/40 transition-colors hover:border-primary/40"
+                    >
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={asset.name}
+                          loading="lazy"
+                          className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center bg-primary/5 text-primary/50">
+                          <TypeIcon className="h-4 w-4" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/assets')}
+                className="mt-2.5 flex w-full items-center justify-center gap-1 rounded-lg border border-input bg-background py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              >
+                进入资产库 <ArrowRight className="h-3 w-3" />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'activity' && (
+        <div className="flex-1 overflow-y-auto p-3">
+          {activityLoading && activity.length === 0 ? (
+            <div className="flex h-32 items-center justify-center text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+          ) : activityError ? (
+            <div className="space-y-2 text-center text-xs text-muted-foreground">
+              <p>动态加载失败：{activityError}</p>
+              <button
+                type="button"
+                onClick={() => void loadActivity()}
+                className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 hover:bg-muted"
+              >
+                <RotateCcw className="h-3 w-3" /> 重试
+              </button>
+            </div>
+          ) : activity.length === 0 ? (
+            <p className="py-8 text-center text-xs text-muted-foreground">暂无动态</p>
+          ) : (
+            <ol className="relative space-y-3 border-l border-border pl-4">
+              {activity.map((a) => (
+                <li key={a.id} className="relative">
+                  <span className="absolute -left-[21px] top-1.5 h-1.5 w-1.5 rounded-full bg-primary/60 ring-2 ring-sidebar" />
+                  <p className="line-clamp-3 text-xs leading-relaxed text-foreground/85">
+                    {a.message}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</p>
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       )}
     </aside>

@@ -237,7 +237,7 @@ const ProjectDirectorTab = () => {
                         className="aspect-video w-full object-cover"
                       />
                     ) : (
-                      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary/10 via-[#FF7A3A]/10 to-purple-500/10">
+                      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-primary/5">
                         <ImageIcon className="h-10 w-10 text-muted-foreground/40" />
                         <span className="text-xs text-muted-foreground">该镜头尚未生成画面，可点击下方「生成图片」</span>
                       </div>

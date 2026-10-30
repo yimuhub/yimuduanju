@@ -246,7 +246,7 @@ const AiAssistantPage = () => {
                             title={skill.enabled ? '停用该技能' : '启用该技能'}
                             aria-label={`切换技能 ${skill.name}`}
                             className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
-                              skill.enabled ? 'bg-primary' : 'bg-gray-200'
+                              skill.enabled ? 'bg-primary' : 'bg-muted'
                             }`}
                           >
                             <span

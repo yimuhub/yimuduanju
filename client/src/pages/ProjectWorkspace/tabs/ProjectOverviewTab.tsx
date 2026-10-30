@@ -338,7 +338,7 @@ const ProjectOverviewTab = () => {
                           ? 'bg-blue-50 text-blue-600'
                           : job.status === 'failed'
                             ? 'bg-red-50 text-red-600'
-                            : 'bg-gray-100 text-gray-600'
+                            : 'bg-muted text-muted-foreground'
                     }`}
                   >
                     {JOB_STATUS_LABELS[job.status] || job.status}

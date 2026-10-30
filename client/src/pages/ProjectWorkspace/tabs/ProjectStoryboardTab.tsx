@@ -22,9 +22,9 @@ import { toast } from 'sonner';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
 
 const statusConfig: Record<string, { label: string; className: string }> = {
-  draft: { label: '草稿', className: 'bg-gray-100 text-gray-600' },
+  draft: { label: '草稿', className: 'bg-muted text-muted-foreground' },
   queued: { label: '排队中', className: 'bg-amber-50 text-amber-600' },
-  pending: { label: '等待中', className: 'bg-gray-100 text-gray-600' },
+  pending: { label: '等待中', className: 'bg-muted text-muted-foreground' },
   generating: { label: '生成中', className: 'bg-blue-50 text-blue-600' },
   running: { label: '生成中', className: 'bg-blue-50 text-blue-600' },
   ready: { label: '已就绪', className: 'bg-green-50 text-green-600' },
@@ -34,7 +34,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 };
 
 const getStatusInfo = (status: string) =>
-  statusConfig[status] || { label: status, className: 'bg-gray-100 text-gray-600' };
+  statusConfig[status] || { label: status, className: 'bg-muted text-muted-foreground' };
 
 const shotSizeLabels: Record<string, string> = {
   close_up: '特写',

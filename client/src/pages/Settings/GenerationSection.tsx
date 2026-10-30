@@ -143,7 +143,7 @@ const GenerationSection = () => {
               <button
                 onClick={() => setSubtitleEnabled(!subtitleEnabled)}
                 className={`relative h-6 w-11 rounded-full transition-colors ${
-                  subtitleEnabled ? 'bg-primary' : 'bg-gray-200'
+                  subtitleEnabled ? 'bg-primary' : 'bg-muted'
                 }`}
               >
                 <span

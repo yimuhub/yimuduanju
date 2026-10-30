@@ -24,6 +24,7 @@ import AssetPreviewModal, {
   TYPE_LABELS,
 } from './AssetPreviewModal';
 import { showConfirm } from '@client/src/components/ui/confirm';
+import PageHeader from '@client/src/components/PageHeader';
 
 type AssetTypeFilter = 'all' | 'image' | 'video' | 'audio' | 'subtitle';
 type SortKey = 'newest' | 'oldest' | 'largest' | 'name';
@@ -54,7 +55,7 @@ const getTypeColor = (type: string): string => {
     case 'subtitle':
       return 'bg-amber-50 text-amber-600';
     default:
-      return 'bg-gray-50 text-gray-600';
+      return 'bg-muted text-muted-foreground';
   }
 };
 
@@ -64,11 +65,11 @@ const AssetThumb = ({ asset }: { asset: Asset }) => {
   const url = assetsApi.mediaUrl(asset);
   if (asset.assetType === 'audio' || asset.assetType === 'subtitle') {
     const TypeIcon = getTypeIcon(asset.assetType);
-    return <TypeIcon className="h-10 w-10 text-white/80" />;
+    return <TypeIcon className="h-10 w-10 text-primary/40" />;
   }
   if (failed || !url) {
     return (
-      <span className="text-xs font-medium text-white/90">未获取</span>
+      <span className="text-xs font-medium text-muted-foreground">未获取</span>
     );
   }
   if (asset.assetType === 'image') {
@@ -94,7 +95,7 @@ const AssetThumb = ({ asset }: { asset: Asset }) => {
       />
     );
   }
-  return <span className="text-xs font-medium text-white/90">未获取</span>;
+  return <span className="text-xs font-medium text-muted-foreground">未获取</span>;
 };
 
 const AssetsPage = () => {
@@ -229,21 +230,19 @@ const AssetsPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">资产库</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            管理所有图片、视频、音频等素材资产 · 共 {assets.length} 个
-          </p>
-        </div>
-        <button
-          onClick={() => setShowUpload(true)}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-        >
-          <Upload className="h-4 w-4" />
-          上传资产
-        </button>
-      </div>
+      <PageHeader
+        title="资产库"
+        description={`管理所有图片、视频、音频等素材资产 · 共 ${assets.length} 个`}
+        actions={
+          <button
+            onClick={() => setShowUpload(true)}
+            className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+          >
+            <Upload className="h-4 w-4" />
+            上传资产
+          </button>
+        }
+      />
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px] max-w-md">

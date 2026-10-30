@@ -140,7 +140,7 @@ const ProjectAssetsTab = () => {
                     </div>
                   )
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/10 via-[#FF7A3A]/10 to-purple-500/10">
+                  <div className="flex h-full w-full items-center justify-center bg-primary/5">
                     {typeIcon(a.assetType)}
                   </div>
                 )}

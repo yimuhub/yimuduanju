@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { dashboard } from '@client/src/api';
 import type { CostSummary, DashboardStats } from '@shared/api.interface';
+import PageHeader from '@client/src/components/PageHeader';
 
 const NICKNAME_KEY = 'yimu.account.nickname';
 
@@ -104,13 +105,11 @@ const AccountPage = () => {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-foreground">
-          <UserCircle className="h-5 w-5 text-primary" />
-          用户中心
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">账户资料、套餐权益与本月用量</p>
-      </div>
+      <PageHeader
+        title="用户中心"
+        icon={UserCircle}
+        description="账户资料、套餐权益与本月用量"
+      />
 
       {/* 个人资料 + 会员卡 */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
@@ -174,12 +173,12 @@ const AccountPage = () => {
           </div>
         </div>
 
-        {/* 会员卡 */}
-        <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-[#2B2016] via-[#4A3620] to-[#6B4E26] p-5 text-white shadow-sm lg:col-span-3">
-          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-[#FFD700]/15 blur-2xl" />
+        {/* 会员卡（品牌红渐变，与全站唯一品牌语言一致） */}
+        <div className="relative overflow-hidden rounded-xl bg-brand-gradient p-5 text-white shadow-sm lg:col-span-3">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/15 blur-2xl" />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Crown className="h-5 w-5 text-[#FFD700]" />
+              <Crown className="h-5 w-5 text-white" />
               <span className="text-base font-semibold">专业版会员</span>
             </div>
             <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/80 backdrop-blur">

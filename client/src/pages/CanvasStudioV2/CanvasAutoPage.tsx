@@ -302,7 +302,7 @@ export default function CanvasAutoPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#F6F7F9] text-foreground">
+    <div className="min-h-screen bg-muted/40 text-foreground">
       {/* Top Header */}
       <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-white px-6 py-4 shadow-sm">
         <div className="flex items-center gap-4">
@@ -345,7 +345,7 @@ export default function CanvasAutoPage() {
           <button
             onClick={handleFullAutoEnqueue}
             disabled={runningStage !== null}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-primary via-orange-500 to-purple-500 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:opacity-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-xl btn-brand px-4 py-2 text-xs font-semibold shadow-sm disabled:opacity-50"
           >
             {runningStage === 'auto_all' ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -490,7 +490,7 @@ export default function CanvasAutoPage() {
                       onClick={() => navigate(`/project/${projectId}/director`)}
                       className="cursor-pointer overflow-hidden rounded-xl border border-border/80 bg-muted/10 transition-shadow hover:shadow-md"
                     >
-                      <div className="relative aspect-video bg-gray-900">
+                      <div className="relative aspect-video bg-black">
                         {sh.startFrameUrl ? (
                           <img
                             src={sh.startFrameUrl}
@@ -498,7 +498,7 @@ export default function CanvasAutoPage() {
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-gray-400">
+                          <div className="flex h-full items-center justify-center text-xs text-muted-foreground/70">
                             待生成首帧
                           </div>
                         )}
@@ -515,7 +515,7 @@ export default function CanvasAutoPage() {
                             className={`rounded px-1.5 py-0.5 ${
                               sh.startFrameUrl
                                 ? 'bg-emerald-50 text-emerald-600'
-                                : 'bg-gray-100 text-gray-500'
+                                : 'bg-muted text-muted-foreground'
                             }`}
                           >
                             {sh.startFrameUrl ? '首帧✓' : '缺首帧'}
@@ -524,7 +524,7 @@ export default function CanvasAutoPage() {
                             className={`rounded px-1.5 py-0.5 ${
                               sh.videoUrl
                                 ? 'bg-blue-50 text-blue-600'
-                                : 'bg-gray-100 text-gray-500'
+                                : 'bg-muted text-muted-foreground'
                             }`}
                           >
                             {sh.videoUrl ? '视频✓' : '缺视频'}
@@ -533,7 +533,7 @@ export default function CanvasAutoPage() {
                             className={`rounded px-1.5 py-0.5 ${
                               sh.voiceUrl
                                 ? 'bg-purple-50 text-purple-600'
-                                : 'bg-gray-100 text-gray-500'
+                                : 'bg-muted text-muted-foreground'
                             }`}
                           >
                             {sh.voiceUrl ? '配音✓' : '缺配音'}

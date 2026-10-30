@@ -1,22 +1,9 @@
 import { X, Play, Clock, Monitor } from 'lucide-react';
 import type { Template, TemplateType } from '@shared/api.interface';
 
-const STYLE_GRADIENTS: Record<string, string> = {
-  realistic: 'from-indigo-500 via-purple-500 to-blue-500',
-  anime_2d: 'from-pink-400 via-rose-400 to-fuchsia-400',
-  chinese_comic: 'from-emerald-500 via-teal-400 to-cyan-500',
-  xianxia: 'from-amber-400 via-yellow-500 to-purple-600',
-  cg_cyberpunk: 'from-fuchsia-500 via-violet-500 to-cyan-400',
-  guofeng_3d: 'from-red-500 via-orange-500 to-amber-500',
-  manhwa: 'from-sky-400 via-blue-500 to-indigo-500',
-  otome: 'from-pink-300 via-rose-300 to-purple-400',
-  cartoon: 'from-yellow-400 via-orange-400 to-red-400',
-};
-
-const getGradient = (style?: string): string =>
-  style && STYLE_GRADIENTS[style]
-    ? STYLE_GRADIENTS[style]
-    : 'from-primary via-[#FF7A3A] to-purple-500';
+// 全站统一品牌语言：模板封面兜底渐变统一为品牌红浅底（封面 SVG 缺失时的占位）
+const getGradient = (_style?: string): string =>
+  'from-primary/20 via-primary/10 to-primary/5';
 
 const getTypeLabel = (type: TemplateType): string => {
   switch (type) {
@@ -82,11 +69,11 @@ const TemplateDetailModal = ({
         >
           <button
             onClick={onClose}
-            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-sm transition-colors hover:bg-white/30"
+            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-white"
           >
             <X className="h-4 w-4" />
           </button>
-          <span className="text-sm font-medium text-white/90">未获取</span>
+          <span className="text-sm font-medium text-muted-foreground">未获取</span>
           <span
             className={`absolute left-4 top-4 rounded-full px-3 py-1 text-xs font-medium ${getTypeColor(
               template.templateType,

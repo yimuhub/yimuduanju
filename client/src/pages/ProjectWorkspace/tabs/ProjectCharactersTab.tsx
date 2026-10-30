@@ -22,11 +22,11 @@ const roleTypeColors: Record<string, string> = {
   主角: 'bg-primary/10 text-primary',
   配角: 'bg-blue-50 text-blue-600',
   反派: 'bg-red-50 text-red-600',
-  路人: 'bg-gray-100 text-gray-600',
+  路人: 'bg-muted text-muted-foreground',
 };
 
 const getRoleColor = (roleType: string): string => {
-  return roleTypeColors[roleType] || 'bg-gray-100 text-gray-600';
+  return roleTypeColors[roleType] || 'bg-muted text-muted-foreground';
 };
 
 const ProjectCharactersTab = () => {

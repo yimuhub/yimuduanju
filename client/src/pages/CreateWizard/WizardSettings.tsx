@@ -40,7 +40,7 @@ export const styleOptions: { label: string; value: ArtStyle; gradient: string; d
   { label: '卡通', value: 'cartoon', gradient: 'from-yellow-400/30 to-orange-400/30', desc: 'Q版轻松，搞笑日常', image: '/styles/cartoon.png' },
   { label: '赛博朋克', value: 'cg_cyberpunk', gradient: 'from-purple-400/30 to-fuchsia-400/30', desc: '霓虹未来都市，科幻动作', image: '/styles/cg_cyberpunk.png' },
   { label: '国风2D', value: 'guofeng_2d', gradient: 'from-red-500/30 to-orange-500/30', desc: '新国潮仙侠宫廷，赛璐璐东方古韵', image: '/styles/guofeng_2d.png' },
-  { label: '扁平风', value: 'flat_2d', gradient: 'from-slate-400/30 to-gray-400/30', desc: '极简几何，职场科普广告', image: '/styles/flat_2d.png' },
+  { label: '扁平风', value: 'flat_2d', gradient: 'from-muted-foreground/20 to-muted-foreground/10', desc: '极简几何，职场科普广告', image: '/styles/flat_2d.png' },
   { label: '90s日漫', value: 'anime_90s', gradient: 'from-amber-400/30 to-yellow-400/30', desc: '手绘怀旧治愈，青春家庭', image: '/styles/anime_90s.png' },
   { label: '都市罗曼史', value: 'urban_romance', gradient: 'from-indigo-400/30 to-violet-400/30', desc: '成熟言情，冷调电影光影', image: '/styles/urban_romance.png' },
   { label: '3D动漫', value: 'anime_3d', gradient: 'from-sky-400/30 to-blue-400/30', desc: '赛璐珞渲染，明快治愈', image: '/styles/anime_3d.png' },
@@ -48,7 +48,7 @@ export const styleOptions: { label: string; value: ArtStyle; gradient: string; d
   { label: '黏土定格', value: 'clay_stopmotion', gradient: 'from-orange-300/30 to-amber-300/30', desc: '手工黏土，童真治愈', image: '/styles/clay_stopmotion.png' },
   { label: '国风赛博', value: 'guofeng_cyber', gradient: 'from-cyan-500/30 to-purple-500/30', desc: '东方美学×全息霓虹', image: '/styles/guofeng_cyber.png' },
   { label: '古风真人', value: 'ancient_real', gradient: 'from-stone-500/30 to-orange-500/30', desc: '实拍纪实，甜宠古偶', image: '/styles/ancient_real.png' },
-  { label: '都市真人', value: 'modern_city_real', gradient: 'from-zinc-400/30 to-stone-400/30', desc: '院线级克制诗意', image: '/styles/modern_city_real.png' },
+  { label: '都市真人', value: 'modern_city_real', gradient: 'from-muted-foreground/20 to-muted-foreground/10', desc: '院线级克制诗意', image: '/styles/modern_city_real.png' },
   { label: '甜宠真人', value: 'urban_sweet_real', gradient: 'from-rose-300/30 to-pink-300/30', desc: '直球温暖现代生活', image: '/styles/urban_sweet_real.png' },
 ];
 

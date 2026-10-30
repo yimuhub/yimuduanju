@@ -12,6 +12,7 @@ import { providers as providersApi } from '@client/src/api';
 import type { ModelProvider } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { toast } from 'sonner';
+import PageHeader from '@client/src/components/PageHeader';
 import ProviderSection from './ProviderSection';
 import GenerationSection, { loadGenDefaults } from './GenerationSection';
 import BudgetSection from './BudgetSection';
@@ -122,7 +123,13 @@ const SettingsPage = () => {
   const budgetMode = BUDGET_MODE_LABELS[loadGenDefaults().budgetMode] ?? '均衡';
 
   return (
-    <div ref={wrapRef} className="flex gap-6">
+    <div className="space-y-6">
+      <PageHeader
+        title="设置"
+        icon={Settings2}
+        description="模型供应商、分环节模型绑定、计费预算与生成偏好"
+      />
+      <div ref={wrapRef} className="flex gap-6">
       {/* 左侧锚点子导航 */}
       <aside className="w-56 shrink-0">
         <div className="sticky top-0 space-y-4 py-1">
@@ -237,6 +244,7 @@ const SettingsPage = () => {
         <section id={sectionId('preferences')}>
           <GenerationSection />
         </section>
+      </div>
       </div>
     </div>
   );

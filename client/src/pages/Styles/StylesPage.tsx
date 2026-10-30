@@ -12,6 +12,7 @@ import {
   type StylePreset,
   type StyleCategory,
 } from '@client/src/data/styleLibrary';
+import PageHeader from '@client/src/components/PageHeader';
 
 type TabKey = StyleCategory | 'all';
 
@@ -83,15 +84,11 @@ const StylesPage = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-foreground">
-          <Palette className="h-5 w-5 text-primary" />
-          风格中心
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {STYLE_LIBRARY.length} 个主流画风，覆盖真人短剧 / 漫剧 / 广告三条产品线 · 点卡片查看提示词
-        </p>
-      </div>
+      <PageHeader
+        title="风格中心"
+        icon={Palette}
+        description={`${STYLE_LIBRARY.length} 个主流画风，覆盖真人短剧 / 漫剧 / 广告三条产品线 · 点卡片查看提示词`}
+      />
 
       {/* 分类 tab */}
       <div className="flex flex-wrap gap-2">

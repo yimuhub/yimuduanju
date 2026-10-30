@@ -20,6 +20,7 @@ import type { ProjectListItem, ProjectStatus } from '@shared/api.interface';
 import { DEMO_SCRIPT } from '@client/src/utils/demoScript';
 import { toast } from 'sonner';
 import { showConfirm } from '@client/src/components/ui/confirm';
+import PageHeader from '@client/src/components/PageHeader';
 
 /** 状态徽章：小圆点 + 文案（面向流程语义分色，而非每个状态一色） */
 const statusBadge = (status: ProjectStatus): { label: string; dot: string } => {
@@ -30,7 +31,7 @@ const statusBadge = (status: ProjectStatus): { label: string; dot: string } => {
     case 'failed':
       return { label: '失败', dot: 'bg-red-500' };
     case 'draft':
-      return { label: '草稿', dot: 'bg-slate-400' };
+      return { label: '草稿', dot: 'bg-muted-foreground/40' };
     case 'parsing':
     case 'planning':
     case 'bible_ready':
@@ -198,22 +199,20 @@ const ProjectsPage = () => {
 
   return (
     <div className="space-y-5">
-      {/* 顶部：标题 + 新建 */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">我的项目</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            共 {total} 个项目，管理你的所有短剧创作
-          </p>
-        </div>
-        <button
-          onClick={() => navigate('/create')}
-          className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          新建项目
-        </button>
-      </div>
+      {/* 顶部：标题 + 新建（全站统一页头） */}
+      <PageHeader
+        title="我的项目"
+        description={`共 ${total} 个项目，管理你的所有短剧创作`}
+        actions={
+          <button
+            onClick={() => navigate('/create')}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            新建项目
+          </button>
+        }
+      />
 
       {/* 工具条：搜索 + 状态筛选 + 排序 */}
       <div className="flex flex-col gap-3 rounded-xl border bg-white p-3 shadow-sm lg:flex-row lg:items-center">

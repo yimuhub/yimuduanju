@@ -38,12 +38,12 @@ const typeFilters: { value: JobType | 'all'; label: string }[] = [
 ];
 
 const statusInfoMap: Record<JobStatus, { label: string; className: string; barClass: string }> = {
-  pending: { label: '等待中', className: 'bg-gray-100 text-gray-600', barClass: 'bg-gray-400' },
-  queued: { label: '排队中', className: 'bg-gray-100 text-gray-600', barClass: 'bg-gray-400' },
+  pending: { label: '等待中', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
+  queued: { label: '排队中', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
   running: { label: '进行中', className: 'bg-blue-50 text-blue-600', barClass: 'bg-blue-500' },
   succeeded: { label: '已完成', className: 'bg-green-50 text-green-600', barClass: 'bg-green-500' },
   failed: { label: '失败', className: 'bg-red-50 text-red-600', barClass: 'bg-red-500' },
-  cancelled: { label: '已取消', className: 'bg-gray-100 text-gray-600', barClass: 'bg-gray-400' },
+  cancelled: { label: '已取消', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
   retrying: { label: '重试中', className: 'bg-amber-50 text-amber-600', barClass: 'bg-amber-500' },
 };
 
@@ -377,8 +377,8 @@ const ProjectTasksTab = () => {
                   // P1 修复：未知状态兜底（之前新增状态直接 info undefined 崩溃）
                   const info = statusInfoMap[job.status] ?? {
                     label: job.status,
-                    className: 'bg-gray-100 text-gray-600',
-                    barClass: 'bg-gray-400',
+                    className: 'bg-muted text-muted-foreground',
+                    barClass: 'bg-muted-foreground/50',
                   };
                   const isRunning = job.status === 'running';
                   const expanded = expandedId === job.id;

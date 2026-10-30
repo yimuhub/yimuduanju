@@ -432,9 +432,9 @@ const CreateWizardPage = () => {
   ];
 
   const getModeIcon = () => {
-    if (mode === 'quick') return { icon: Sparkles, gradient: 'from-red-500 to-orange-500', title: '一句话描述你想做的短剧' };
-    if (mode === 'script') return { icon: FileText, gradient: 'from-blue-500 to-indigo-500', title: '粘贴或输入剧本内容' };
-    return { icon: Sliders, gradient: 'from-purple-500 to-pink-500', title: '创意描述' };
+    if (mode === 'quick') return { icon: Sparkles, gradient: 'from-primary to-[hsl(356_68%_46%)]', title: '一句话描述你想做的短剧' };
+    if (mode === 'script') return { icon: FileText, gradient: 'from-primary to-[hsl(356_68%_46%)]', title: '粘贴或输入剧本内容' };
+    return { icon: Sliders, gradient: 'from-primary to-[hsl(356_68%_46%)]', title: '创意描述' };
   };
 
   const modeConfig = getModeIcon();

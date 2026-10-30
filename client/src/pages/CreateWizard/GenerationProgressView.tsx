@@ -17,7 +17,7 @@ const GenerationProgressView = ({
   return (
     <div className="space-y-6">
       {/* Overall progress */}
-      <div className="rounded-xl border bg-gradient-to-br from-primary/5 via-orange-50/50 to-purple-50/50 p-6">
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-6">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-foreground">
@@ -36,7 +36,7 @@ const GenerationProgressView = ({
         </div>
         <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-white/80">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-primary via-orange-500 to-purple-500 transition-all duration-500"
+            className="h-full rounded-full bg-primary transition-all duration-500"
             style={{ width: `${overallProgress}%` }}
           />
         </div>
