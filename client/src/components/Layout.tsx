@@ -211,6 +211,13 @@ const Layout = () => {
           <PanelRightOpen className={`h-4 w-4 ${sidebarCollapsed ? 'rotate-180' : ''}`} />
           {!sidebarCollapsed && <span className="text-xs">折叠侧栏</span>}
         </button>
+        {/* 版本徽标：每次更新可肉眼核对（构建时从 package.json 注入） */}
+        <div
+          className={`mt-1 text-[10px] tabular-nums text-sidebar-foreground/40 ${sidebarCollapsed ? 'text-center' : 'px-2'}`}
+          title={`构建时间 ${process.env.BUILD_TIME ?? '—'}`}
+        >
+          {sidebarCollapsed ? 'v3.1' : `v${process.env.APP_VERSION ?? '3.1.0'} · ${process.env.BUILD_TIME ?? ''}`}
+        </div>
       </div>
     </>
   );
