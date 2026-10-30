@@ -1,14 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   Send,
-  Plus,
-  MessageSquare,
+  RotateCcw,
   Sparkles,
   User,
+  Wand2,
+  ExternalLink,
+  Grip,
 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Link } from 'react-router-dom';
 import { logger } from '@client/src/utils/logger';
-import { assistant as assistantApi } from '@client/src/api';
+import { assistant as assistantApi, skills as skillsApi } from '@client/src/api';
+import type { SkillItem } from '@client/src/api/skills';
 
 interface ChatMessage {
   id: string;
@@ -17,25 +22,76 @@ interface ChatMessage {
   createdAt: string;
 }
 
-interface Conversation {
-  id: string;
-  name: string;
-  description?: string;
-}
+const LINE_LABELS: Record<string, string> = {
+  shortdrama: '短剧',
+  comic: '漫画',
+  ads: '广告营销',
+  common: '通用',
+};
+
+const LINE_ORDER = ['shortdrama', 'comic', 'ads', 'common'];
+
+const GREETING =
+  '你好，我是「一幕 · YIMU AI 短剧创作平台」助手 👋 我可以帮你做剧本创作、分镜设计、角色设定、风格建议等轻量问答。左侧是我的技能面板，可以按需开关；要做完整的从想法到成片的流水线编排，请去「创作作战室」。';
 
 const AiAssistantPage = () => {
-  const [conversations] = useState<Conversation[]>([
-    { id: 'global', name: '一幕·YIMU AI 短剧创作平台助手', description: '全局创作助手' },
-  ]);
-  const [activeConvId, setActiveConvId] = useState('global');
+  // ===== 技能面板 =====
+  const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(true);
+  const [skillsError, setSkillsError] = useState(false);
+  const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
+
+  useEffect(() => {
+    skillsApi
+      .listSkills()
+      .then((list) => {
+        setSkills(list);
+        setSkillsError(false);
+      })
+      .catch((e) => {
+        logger.warn('加载技能列表失败', e);
+        setSkillsError(true);
+      })
+      .finally(() => setSkillsLoading(false));
+  }, []);
+
+  const handleToggleSkill = async (skill: SkillItem) => {
+    const next = !skill.enabled;
+    setTogglingSlug(skill.slug);
+    // 乐观更新，失败回滚
+    setSkills((prev) =>
+      prev.map((s) => (s.slug === skill.slug ? { ...s, enabled: next } : s)),
+    );
+    try {
+      const updated = await skillsApi.setSkillEnabled(skill.slug, next);
+      setSkills((prev) => prev.map((s) => (s.slug === updated.slug ? updated : s)));
+    } catch {
+      setSkills((prev) =>
+        prev.map((s) => (s.slug === skill.slug ? { ...s, enabled: skill.enabled } : s)),
+      );
+      toast.error('技能开关设置失败，请重试');
+    } finally {
+      setTogglingSlug(null);
+    }
+  };
+
+  const groupedSkills = useMemo(() => {
+    const groups = new Map<string, SkillItem[]>();
+    for (const s of skills) {
+      const list = groups.get(s.line) ?? [];
+      list.push(s);
+      groups.set(s.line, list);
+    }
+    return [...groups.entries()].sort(
+      (a, b) =>
+        (LINE_ORDER.indexOf(a[0]) + 1 || 99) - (LINE_ORDER.indexOf(b[0]) + 1 || 99),
+    );
+  }, [skills]);
+  const enabledSkillCount = skills.filter((s) => s.enabled).length;
+
+  // ===== 对话区（保留原有真实网关对话） =====
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg-1',
-      role: 'assistant',
-      content:
-        '你好！我是「一幕·YIMU AI 短剧创作平台」助手 👋 我可以帮你进行剧本创作、分镜设计、角色设定、风格建议等短剧创作相关的工作。有什么我可以帮你的吗？',
-      createdAt: new Date().toISOString(),
-    },
+    { id: 'msg-1', role: 'assistant', content: GREETING, createdAt: new Date().toISOString() },
   ]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -80,7 +136,7 @@ const AiAssistantPage = () => {
         id: `msg-${Date.now() + 1}`,
         role: 'assistant',
         content:
-          'AI 助手暂不可用（模型服务未配置或调用失败），请到「设置 → 模型服务」配置后重试。',
+          'AI 助手暂不可用（模型服务未配置或调用失败），请到「设置 → 供应商」配置模型服务后重试。',
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errMsg]);
@@ -101,160 +157,229 @@ const AiAssistantPage = () => {
       {
         id: `msg-${Date.now()}`,
         role: 'assistant',
-        content: '你好！我是「一幕·YIMU AI 短剧创作平台」助手，有什么新的创作想法吗？',
+        content: '你好！我是「一幕 · YIMU AI 短剧创作平台」助手，有什么新的创作想法吗？',
         createdAt: new Date().toISOString(),
       },
     ]);
   };
 
-  const activeConv = conversations.find((c) => c.id === activeConvId);
-
   return (
-    <div className="flex h-[calc(100vh-10rem)] gap-6">
-      {/* Left sidebar - conversation list */}
-      <div className="flex w-60 shrink-0 flex-col gap-3">
-        <button
-          onClick={handleNewChat}
-          className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          新建对话
-        </button>
-
-        <div className="flex-1 overflow-y-auto rounded-xl border bg-white shadow-sm">
-          <div className="p-2">
-            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-              我的对话
-            </div>
-            {conversations.map((conv) => (
-              <button
-                key={conv.id}
-                onClick={() => setActiveConvId(conv.id)}
-                className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
-                  activeConvId === conv.id
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-foreground hover:bg-muted/50'
-                }`}
-              >
-                <MessageSquare className="h-4 w-4 shrink-0" />
-                <span className="truncate font-medium">{conv.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Tips card */}
-        <div className="rounded-xl border bg-gradient-to-br from-primary/5 to-[#FF7A3A]/5 p-4 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold text-foreground">
-              创作小贴士
-            </span>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            试试问我：「帮我设计一个都市悬疑短剧的开头」或「给我一些角色设定建议」
-          </p>
-        </div>
-      </div>
-
-      {/* Right - chat area */}
-      <div className="flex flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
-        {/* Chat header */}
-        <div className="flex items-center gap-3 border-b px-6 py-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
-            <Bot className="h-5 w-5" />
+    <div className="flex h-[calc(100vh-10rem)] flex-col gap-4">
+      {/* 顶部定位说明：与创作作战室（AgentStudio）拉开定位 */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-gradient-to-r from-primary/5 via-white to-white px-5 py-3.5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+            <Wand2 className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-foreground">
-              {activeConv?.name || '一幕·YIMU AI 短剧创作平台助手'}
-            </h2>
+            <h1 className="text-sm font-semibold text-foreground">
+              一幕助手 · 技能面板与轻对话
+            </h1>
             <p className="text-xs text-muted-foreground">
-              {activeConv?.description || '你的智能创作伙伴'}
+              查资料、问思路、开关创作技能的轻量入口；需要端到端流水线编排时，前往创作作战室
             </p>
           </div>
         </div>
+        <Link
+          to="/"
+          className="flex items-center gap-1.5 rounded-lg border border-input bg-white px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+        >
+          前往创作作战室
+          <ExternalLink className="h-3.5 w-3.5" />
+        </Link>
+      </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="space-y-5">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex items-start gap-3 ${
-                  msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
-                }`}
-              >
-                {/* Avatar */}
-                <div
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                    msg.role === 'user'
-                      ? 'bg-muted'
-                      : 'bg-gradient-to-br from-primary to-[#FF7A3A] text-white'
-                  }`}
-                >
-                  {msg.role === 'user' ? (
-                    <User className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <Bot className="h-4 w-4" />
-                  )}
-                </div>
+      <div className="flex min-h-0 flex-1 gap-6">
+        {/* 左侧：技能面板（按产品线分组 + 启停开关） */}
+        <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="border-b px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span className="text-sm font-semibold text-foreground">技能面板</span>
+              <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                {skillsLoading ? '…' : `已启用 ${enabledSkillCount}/${skills.length}`}
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              开关实时生效：启用的技能会注入对应生产环节的 Agent
+            </p>
+          </div>
 
-                {/* Message bubble */}
-                <div
-                  className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    msg.role === 'user'
-                      ? 'rounded-tr-sm bg-primary text-primary-foreground'
-                      : 'rounded-tl-sm bg-muted text-foreground'
-                  }`}
-                >
-                  {msg.content}
-                </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {skillsLoading ? (
+              <div className="space-y-2 px-1 py-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/60" />
+                ))}
               </div>
-            ))}
-
-            {/* Typing indicator */}
-            {isSending && (
-              <div className="flex items-start gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="rounded-2xl rounded-tl-sm bg-muted px-4 py-3">
-                  <div className="flex gap-1">
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:-0.3s]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:-0.15s]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40" />
+            ) : skillsError ? (
+              <div className="px-2 py-6 text-center text-xs leading-relaxed text-muted-foreground">
+                技能列表加载失败，请确认后端服务正常后刷新页面重试
+              </div>
+            ) : skills.length === 0 ? (
+              <div className="px-2 py-6 text-center text-xs leading-relaxed text-muted-foreground">
+                暂无已注册技能，完成平台初始化后这里会列出短剧 / 漫画 / 广告各产品线的创作技能
+              </div>
+            ) : (
+              groupedSkills.map(([line, list]) => (
+                <div key={line} className="mb-3 last:mb-0">
+                  <div className="px-1 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {LINE_LABELS[line] ?? line} · {list.length}
+                  </div>
+                  <div className="space-y-1">
+                    {list.map((skill) => (
+                      <div
+                        key={skill.slug}
+                        className={`rounded-lg border px-3 py-2.5 transition-colors ${
+                          skill.enabled
+                            ? 'border-primary/25 bg-primary/[0.04]'
+                            : 'border-border/60 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                            {skill.name}
+                          </span>
+                          <button
+                            onClick={() => handleToggleSkill(skill)}
+                            disabled={togglingSlug === skill.slug}
+                            title={skill.enabled ? '停用该技能' : '启用该技能'}
+                            aria-label={`切换技能 ${skill.name}`}
+                            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
+                              skill.enabled ? 'bg-primary' : 'bg-gray-200'
+                            }`}
+                          >
+                            <span
+                              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                                skill.enabled ? 'translate-x-4' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                        {skill.description && (
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                            {skill.description}
+                          </p>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
+              ))
             )}
-
-            <div ref={messagesEndRef} />
           </div>
-        </div>
+        </aside>
 
-        {/* Input area */}
-        <div className="border-t p-4">
-          <div className="flex items-end gap-3">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="输入你的问题...（Enter 发送，Shift+Enter 换行）"
-              rows={2}
-              className="flex-1 resize-none rounded-xl border border-input bg-white px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
-            />
+        {/* 右侧：对话区（保留原有真实网关对话） */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="flex items-center gap-3 border-b px-6 py-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+              <Bot className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold text-foreground">
+                一幕助手
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                轻量创作问答 · 当前启用 {enabledSkillCount} 项技能
+              </p>
+            </div>
             <button
-              onClick={handleSend}
-              disabled={!input.trim() || isSending}
-              className="flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-50"
+              onClick={handleNewChat}
+              title="开启新对话"
+              className="flex items-center gap-1.5 rounded-lg border border-input px-3 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary"
             >
-              <Send className="h-4 w-4" />
-              发送
+              <RotateCcw className="h-3.5 w-3.5" />
+              新对话
             </button>
           </div>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            AI 生成内容仅供参考，请仔细核对后使用
-          </p>
+
+          {/* Messages */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+            <div className="space-y-5">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex items-start gap-3 ${
+                    msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
+                  }`}
+                >
+                  <div
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                      msg.role === 'user'
+                        ? 'bg-muted'
+                        : 'bg-gradient-to-br from-primary to-[#FF7A3A] text-white'
+                    }`}
+                  >
+                    {msg.role === 'user' ? (
+                      <User className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Bot className="h-4 w-4" />
+                    )}
+                  </div>
+                  <div
+                    className={`max-w-[70%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                      msg.role === 'user'
+                        ? 'rounded-tr-sm bg-primary text-primary-foreground'
+                        : 'rounded-tl-sm bg-muted text-foreground'
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+
+              {messages.length === 0 && !isSending && (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                  <Grip className="mb-3 h-8 w-8 opacity-40" />
+                  <p className="text-sm">从左侧挑几项技能，然后在这里开始提问</p>
+                </div>
+              )}
+
+              {/* Typing indicator */}
+              {isSending && (
+                <div className="flex items-start gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#FF7A3A] text-white">
+                    <Bot className="h-4 w-4" />
+                  </div>
+                  <div className="rounded-2xl rounded-tl-sm bg-muted px-4 py-3">
+                    <div className="flex gap-1">
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:-0.3s]" />
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:-0.15s]" />
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          </div>
+
+          {/* Input area */}
+          <div className="border-t p-4">
+            <div className="flex items-end gap-3">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="输入你的问题...（Enter 发送，Shift+Enter 换行）"
+                rows={2}
+                className="flex-1 resize-none rounded-xl border border-input bg-white px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isSending}
+                className="flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+                发送
+              </button>
+            </div>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              「一幕 · YIMU AI 短剧创作平台」AI 生成内容仅供参考，请仔细核对后使用
+            </p>
+          </div>
         </div>
       </div>
     </div>

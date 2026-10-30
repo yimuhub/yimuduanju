@@ -503,6 +503,24 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
     }));
   };
 
+  /** 行内连通测试：用真实结果更新状态徽章（未测 → 可用/异常），不再只发个"已发送"提示 */
+  const [testStatus, setTestStatus] = useState<Record<string, 'ok' | 'fail' | 'testing'>>({});
+  const runTest = async (id: string) => {
+    setTestStatus((prev) => ({ ...prev, [id]: 'testing' }));
+    try {
+      const res = await providersApi.testProvider(id);
+      setTestStatus((prev) => ({ ...prev, [id]: res.success ? 'ok' : 'fail' }));
+      if (res.success) {
+        toast.success(`连通正常${res.latencyMs !== undefined ? `（${res.latencyMs}ms）` : ''}`);
+      } else {
+        toast.error(`连通失败：${res.message}`);
+      }
+    } catch (e: any) {
+      setTestStatus((prev) => ({ ...prev, [id]: 'fail' }));
+      toast.error(`连通失败：${e?.response?.data?.message || e?.message || '请检查配置'}`);
+    }
+  };
+
   const displayProviders = providers;
 
   return (
@@ -530,80 +548,112 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
           加载中...
         </div>
       ) : (
-        <div className="space-y-3">
-          {displayProviders.map((provider) => (
-            <div
-              key={provider.id}
-              className="rounded-xl border bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                    <Cpu className="h-6 w-6 text-primary" />
+        <div className="divide-y divide-border overflow-hidden rounded-xl border bg-white shadow-sm">
+          {displayProviders.map((provider) => {
+            const status = !provider.enabled
+              ? null
+              : testStatus[provider.id] ?? 'untested';
+            return (
+              <div key={provider.id} className="px-4 py-3.5 sm:px-5">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                    <Cpu className="h-5 w-5 text-primary" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-base font-semibold text-foreground">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <h3 className="text-sm font-semibold text-foreground">
                         {provider.name}
                       </h3>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                           PROVIDER_TYPE_COLORS[provider.providerType]
                         }`}
                       >
                         {PROVIDER_TYPE_LABELS[provider.providerType]}
                       </span>
                       {provider.isDefault && (
-                        <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-600">
+                        <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-600">
                           <Star className="h-3 w-3 fill-current" />
                           默认
                         </span>
                       )}
-                      {!provider.enabled && (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
-                          已禁用
+                      {!provider.enabled ? (
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500">
+                          已停用
+                        </span>
+                      ) : status === 'ok' ? (
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600">
+                          可用
+                        </span>
+                      ) : status === 'fail' ? (
+                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                          连通异常
+                        </span>
+                      ) : status === 'testing' ? (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                          测试中…
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                          未测
                         </span>
                       )}
+                      <span className="flex flex-wrap items-center gap-1">
+                        {CAPABILITY_LABELS.filter((cap) => provider.capabilities[cap.key]).map((cap) => (
+                          <span
+                            key={cap.key}
+                            className="rounded bg-emerald-50/80 px-1.5 py-0.5 text-[10px] text-emerald-600"
+                          >
+                            {cap.label}
+                          </span>
+                        ))}
+                      </span>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
                       {provider.baseUrl}
+                      {provider.textModel && ` · 文本 ${provider.textModel}`}
+                      {typeof provider.activeKeyCount === 'number' &&
+                        provider.activeKeyCount > 0 &&
+                        ` · ${provider.activeKeyCount} 个生效 Key`}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {CAPABILITY_LABELS.map((cap) => (
-                        <span
-                          key={cap.key}
-                          className={`rounded-md px-2 py-0.5 text-xs ${
-                            provider.capabilities[cap.key]
-                              ? 'bg-emerald-50 text-emerald-600'
-                              : 'bg-gray-100 text-gray-400'
-                          }`}
-                        >
-                          {cap.label}
-                        </span>
-                      ))}
-                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      onClick={() =>
+                        handleToggleEnabled(provider.id, !provider.enabled)
+                      }
+                      title={provider.enabled ? '停用该供应商' : '启用该供应商'}
+                      className={`relative h-6 w-11 rounded-full transition-colors ${
+                        provider.enabled ? 'bg-primary' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                          provider.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+                    <button
+                      onClick={() => openEditModal(provider)}
+                      title="编辑"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/60 hover:text-primary"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(provider.id)}
+                      title="删除"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={() =>
-                    handleToggleEnabled(provider.id, !provider.enabled)
-                  }
-                  className={`relative h-6 w-11 rounded-full transition-colors ${
-                    provider.enabled ? 'bg-primary' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                      provider.enabled ? 'translate-x-5' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
-              </div>
-              {keysOpenId === provider.id && (
-                <ProviderKeysManager providerId={provider.id} />
-              )}
-              <div className="mt-4 flex items-center justify-between border-t pt-3">
-                <div className="flex gap-3">
+                {/* 行内扩展操作：Key 管理 / 默认 / 连通测试 */}
+                {keysOpenId === provider.id && (
+                  <ProviderKeysManager providerId={provider.id} />
+                )}
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
                   <button
                     onClick={() =>
                       setKeysOpenId((cur) => (cur === provider.id ? null : provider.id))
@@ -612,11 +662,6 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   >
                     <Database className="h-3.5 w-3.5" />
                     {keysOpenId === provider.id ? '收起 Key' : '管理 Key'}
-                    {typeof provider.activeKeyCount === 'number' && provider.activeKeyCount > 0 && (
-                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">
-                        {provider.activeKeyCount} 生效
-                      </span>
-                    )}
                   </button>
                   <button
                     onClick={() => handleSetDefault(provider.id)}
@@ -631,39 +676,26 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     设为默认
                   </button>
                   <button
-                    onClick={() => {
-                      providersApi.testProvider(provider.id).catch(() => {});
-                      toast('测试请求已发送');
-                    }}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+                    onClick={() => runTest(provider.id)}
+                    disabled={status === 'testing' || !provider.enabled}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary disabled:opacity-50"
                   >
                     <Activity className="h-3.5 w-3.5" />
-                    测试连接
-                  </button>
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => openEditModal(provider)}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                    编辑
-                  </button>
-                  <button
-                    onClick={() => handleDelete(provider.id)}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-red-500"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    删除
+                    {status === 'testing' ? '测试中…' : '测试连通'}
                   </button>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {displayProviders.length === 0 && (
-            <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-16 text-muted-foreground">
+            <div className="flex flex-col items-center justify-center px-6 py-16 text-center text-muted-foreground">
               <Cpu className="mb-3 h-10 w-10 opacity-50" />
-              <p>暂无模型服务，点击上方按钮添加</p>
+              <p className="text-sm font-medium text-foreground">
+                还没有配置模型服务
+              </p>
+              <p className="mt-1 max-w-sm text-xs leading-relaxed">
+                「一幕 · YIMU AI 短剧创作平台」的生成任务都由你自己的模型服务驱动：点击右上角「添加模型服务」，套用一键预设后粘贴 API Key 即可开跑；暂不想配 Key 也可以先用免 Key 演练沙盒熟悉流程。
+              </p>
             </div>
           )}
         </div>

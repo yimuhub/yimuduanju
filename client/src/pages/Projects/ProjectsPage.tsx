@@ -70,6 +70,13 @@ const formatTimeAgo = (dateStr: string): string => {
   return new Date(dateStr).toLocaleDateString('zh-CN');
 };
 
+/** 无 thumbnailUrl 的项目按标题 hash 稳定取 8 张静态生成的通用封面之一 */
+const projCoverUrl = (title: string): string => {
+  let h = 0;
+  for (let i = 0; i < title.length; i++) h = (h * 31 + title.charCodeAt(i)) >>> 0;
+  return `/covers/proj-${(h % 8) + 1}.svg`;
+};
+
 const ProjectsPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -314,6 +321,19 @@ const ProjectsPage = () => {
                 onClick={() => navigate(`/project/${project.id}`)}
                 className="group flex cursor-pointer items-center gap-4 border-b border-border px-4 py-3.5 transition-colors last:border-b-0 hover:bg-muted/50"
               >
+                {/* 项目封面：有 thumbnail 用实图，否则用生成的通用封面小图 */}
+                <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
+                  <img
+                    src={project.thumbnailUrl || projCoverUrl(project.title)}
+                    alt=""
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                </div>
+
                 {/* 状态小圆点徽章 */}
                 <span
                   className={`flex shrink-0 items-center gap-1.5 rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium text-foreground/70`}

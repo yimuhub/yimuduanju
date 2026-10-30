@@ -280,6 +280,10 @@ export class ProvidersService {
     if (!provider.enabled) {
       return { success: false, message: 'Provider 未启用' };
     }
+    // P2-3 mock 通道（免 Key 演练沙盒）：跳过 Key 校验，直接返回连通成功
+    if ((provider.formatType as string) === 'mock' || /\/\/(localhost|127\.0\.0\.1)(:\d+)?\/mock(\/|$)/.test(provider.baseUrl ?? '')) {
+      return { success: true, message: 'Mock 演练沙盒连通成功（免 Key）', latencyMs: 1 };
+    }
     const apiKey = await this.resolveEffectiveKey(provider);
     if (!apiKey) {
       return { success: false, message: '未配置 API Key（主 Key 与多 Key 均为空，请先添加）' };

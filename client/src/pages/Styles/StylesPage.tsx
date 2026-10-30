@@ -24,20 +24,24 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'stylized', label: '赛博朋克' },
 ];
 
-/** 渐变封面：风格双色 + 大字水印（与模板中心占位语言一致） */
-const StyleCover = ({ style }: { style: StylePreset }) => (
+/** 封面：优先用静态生成的 /covers/styles-<id>.svg（3:4），加载失败回退纯渐变底 */
+const StyleCover = ({ style, className = 'aspect-[3/4]' }: { style: StylePreset; className?: string }) => (
   <div
-    className="relative flex aspect-[16/10] items-center justify-center overflow-hidden"
+    className={`relative overflow-hidden ${className}`}
     style={{
       background: `linear-gradient(135deg, ${style.gradient[0]}, ${style.gradient[1]})`,
     }}
   >
-    <div className="absolute -left-6 -top-6 h-24 w-24 rounded-full bg-white/15 blur-2xl" />
-    <div className="absolute -bottom-8 -right-4 h-28 w-28 rounded-full bg-black/10 blur-2xl" />
-    <span className="select-none text-3xl font-black tracking-widest text-white/40 drop-shadow">
-      {style.nameEn.split(' ')[0].toUpperCase()}
-    </span>
-    <div className="absolute bottom-2 left-3 flex gap-1">
+    <img
+      src={`/covers/styles-${style.id}.svg`}
+      alt={style.nameZh}
+      loading="lazy"
+      className="absolute inset-0 h-full w-full object-cover"
+      onError={(e) => {
+        e.currentTarget.style.display = 'none';
+      }}
+    />
+    <div className="absolute left-3 top-3 flex gap-1">
       {style.productLines.map((line) => (
         <span
           key={line}
@@ -149,9 +153,9 @@ const StylesPage = () => {
             className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* 头图 */}
+            {/* 头图（横版裁切展示，避免 3:4 竖图撑爆弹窗） */}
             <div className="relative shrink-0">
-              <StyleCover style={selected} />
+              <StyleCover style={selected} className="aspect-[16/10]" />
               <button
                 onClick={() => setSelected(null)}
                 className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg bg-black/30 text-white backdrop-blur hover:bg-black/50"

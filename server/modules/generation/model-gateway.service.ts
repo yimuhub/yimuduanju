@@ -9,6 +9,11 @@ import { modelProviders } from '@server/database/schema';
 import { providerApiKeys } from '@server/database/billing.schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
+import { deflateSync } from 'zlib';
+import { spawn } from 'child_process';
+import { mkdir } from 'fs/promises';
+import { join } from 'path';
+import { uploadDir } from '../assets/uploads.controller';
 import type { ProviderType, FormatType, ModelCapabilities } from '@shared/api.interface';
 // W1 安全修复：API Key 落库为 AES-256-GCM 密文，使用前解密（存量明文兼容）
 import { decryptApiKey } from '../../common/crypto.util';
@@ -62,6 +67,23 @@ interface VideoPollResult {
   outputData?: Record<string, unknown>;
   errorMessage?: string;
 }
+
+/** mock PNG 编码用：CRC32 查表（模块级懒加载，仅首次生成） */
+const MockPngCrc = {
+  _table: null as number[] | null,
+  table(): number[] {
+    if (!this._table) {
+      const t: number[] = [];
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        t[n] = c >>> 0;
+      }
+      this._table = t;
+    }
+    return this._table;
+  },
+};
 
 interface ProviderRecord {
   id: string;
@@ -132,12 +154,25 @@ export class ModelGatewayService {
     usage: { model: string; inputTokens: number; outputTokens: number } | null;
   }> {
     const provider = await this.getProvider(providerName, 'text');
+    // P2-3 mock 通道（免 Key）：文本按规则产出可解析的剧本 JSON，
+    // 与 story-skills.parseScriptJson 对齐，让"无 Key 演练"能真实走通全流程
+    const model = params.model ?? provider.textModel;
+    if (this.isMockProvider(provider)) {
+      const text = this.mockTextResponse(params.prompt, model);
+      return {
+        text,
+        usage: {
+          model: model ?? 'mock-text',
+          inputTokens: Math.ceil(params.prompt.length / 2),
+          outputTokens: Math.ceil(text.length / 2),
+        },
+      };
+    }
     const apiKey = provider.apiKey;
     if (!apiKey) {
       throw new BadRequestException('Provider 未配置 API Key');
     }
 
-    const model = params.model ?? provider.textModel;
     if (!model) {
       throw new BadRequestException('未配置文本模型');
     }
@@ -211,6 +246,17 @@ export class ModelGatewayService {
     providerName?: string,
   ): Promise<{ url: string; width?: number; height?: number }[]> {
     const provider = await this.getProvider(providerName, 'image');
+    // P2-3 mock 通道（免 Key）：按 prompt 生成确定性占位 PNG（data URL）
+    if (this.isMockProvider(provider)) {
+      const n = Math.max(1, Math.min(4, params.n ?? 1));
+      const images = Array.from({ length: n }, (_, i) => ({
+        url: this.mockPngDataUrl(`${params.prompt}#${i}`, 384, 384),
+        width: 384,
+        height: 384,
+      }));
+      this.logger.log(`mock 图片生成 ${images.length} 张（占位 PNG，不消费 Key）`);
+      return images;
+    }
     const apiKey = provider.apiKey;
     if (!apiKey) {
       throw new BadRequestException('Provider 未配置 API Key');
@@ -305,14 +351,17 @@ export class ModelGatewayService {
     const formatType = provider.formatType as FormatType;
     if (formatType === 'mock') {
       const taskId = `mock-${randomUUID()}`;
-      // 占位输出：白模/首帧（调用方按 references[1]/[0] 传入 imageUrl 亦可，直传亦可）
+      // 占位输出：优先用首帧合成本地 mp4（静音轨，ffmpeg 可直接拼接进成片）；
+      // ffmpeg 不可用/无首帧时回退白模/首帧 URL（调用方按 references[1]/[0] 传入亦可）
       const standIn = params.referenceVideoUrl || params.imageUrl || '';
-      this.mockVideoTasks.set(taskId, { url: standIn, at: Date.now() });
+      const mp4Url = await this.mockVideoMp4(taskId, params).catch(() => null);
+      const url = mp4Url ?? standIn;
+      this.mockVideoTasks.set(taskId, { url, at: Date.now() });
       if (this.mockVideoTasks.size > 200) {
         const oldest = [...this.mockVideoTasks.keys()][0];
         this.mockVideoTasks.delete(oldest);
       }
-      this.logger.log(`mock 视频任务已创建 ${taskId}（占位输出，不消费 Key）`);
+      this.logger.log(`mock 视频任务已创建 ${taskId}（${mp4Url ? '占位 mp4' : '占位 URL'}，不消费 Key）`);
       return { taskId, status: 'running' };
     }
     const apiKey = provider.apiKey;
@@ -659,6 +708,14 @@ export class ModelGatewayService {
     providerName?: string,
   ): Promise<{ audioUrl?: string; audioBase64?: string }> {
     const provider = await this.getProvider(providerName, 'tts');
+    // P2-3 mock 通道（免 Key）：按文本长度合成一段占位 WAV（正弦音，含停顿）
+    if (this.isMockProvider(provider)) {
+      const audioBase64 = this.mockWavBase64(params.text);
+      this.logger.log(
+        `mock TTS 生成（${Math.ceil(params.text.length / 12)}s 占位 WAV，不消费 Key）`,
+      );
+      return { audioBase64 };
+    }
     const apiKey = provider.apiKey;
     if (!apiKey) {
       throw new BadRequestException('Provider 未配置 API Key');
@@ -734,6 +791,10 @@ export class ModelGatewayService {
     if (!provider.enabled) {
       return { success: false, message: 'Provider 未启用' };
     }
+    // P2-3 mock 通道（免 Key）：直接返回连通成功（本地演练沙盒）
+    if (this.isMockProvider(provider as unknown as ProviderRecord)) {
+      return { success: true, message: 'Mock 演练沙盒连通成功（免 Key）', latencyMs: 1 };
+    }
     if (!provider.apiKey) {
       return { success: false, message: '未配置 API Key' };
     }
@@ -768,6 +829,230 @@ export class ModelGatewayService {
         latencyMs: Date.now() - startTime,
       };
     }
+  }
+
+  /**
+   * mock 视频占位 mp4：首帧循环 + 静音轨（libx264，按镜头时长）。
+   * 只接受本地 /uploads 首帧（http 拉取与 data: 解码交给调用方的归档链）。
+   * 失败返回 null（回退占位 URL），绝不让 mock 通道把流水线打挂。
+   */
+  private async mockVideoMp4(taskId: string, params: VideoGenerateParams): Promise<string | null> {
+    const src = params.imageUrl ?? '';
+    if (!src.startsWith('/uploads/')) return null;
+    const localSrc = join(uploadDir(), src.replace(/^\/uploads\//, ''));
+    const dir = join(uploadDir(), 'mock');
+    await mkdir(dir, { recursive: true });
+    const out = join(dir, `${taskId}.mp4`);
+    const duration = Math.max(1, Math.min(15, Math.round(params.duration ?? 5)));
+    const ok = await new Promise<boolean>((resolve) => {
+      const child = spawn(
+        'ffmpeg',
+        [
+          '-y', '-loop', '1', '-i', localSrc,
+          '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+          '-t', String(duration),
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
+          '-c:a', 'aac', '-shortest', out,
+        ],
+        { stdio: ['ignore', 'ignore', 'ignore'] },
+      );
+      child.on('error', () => resolve(false));
+      child.on('close', (code) => resolve(code === 0));
+    });
+    if (!ok) return null;
+    return `/uploads/mock/${taskId}.mp4`;
+  }
+
+  // ========== Mock（免 Key 演练沙盒）生成实现 ==========
+
+  /** mock 通道判定：formatType='mock' 或基址指向本地 mock 端点 */
+  private isMockProvider(provider: ProviderRecord): boolean {
+    return (
+      (provider.formatType as FormatType) === 'mock' ||
+      /\/\/(localhost|127\.0\.0\.1)(:\d+)?\/mock(\/|$)/.test(provider.baseUrl ?? '')
+    );
+  }
+
+  /** 文本 mock：规则文案——产出 parseScriptJson 可解析的剧本 JSON（题材按 prompt 关键词映射） */
+  private mockTextResponse(prompt: string, model?: string): string {
+    // 从提示词里提取"核心创意"：优先取【一句话创意】/【小说原文】等输入标记之后的段落，
+    // 否则剔除 JSON 契约等脚手架，取可读文本
+    const marked = prompt.split(
+      /【一句话创意】|【小说原文】|【待改剧本】|【剧本原文】|【产品卖点】/,
+    )[1];
+    let motif = (marked
+      ? marked
+      : prompt
+          .replace(/```[\s\S]*?```/g, ' ')
+          .replace(/[{["}]/g, '\n')
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l.length > 8 && !/[:：]\s*$/.test(l))
+          .join(' '));
+    motif = motif
+      .replace(/\s+/g, ' ')
+      .replace(/\\["nrt]/g, ' ')
+      .trim()
+      .slice(0, 160);
+    if (!motif) motif = '一个关于勇气与救赎的故事';
+    // 题材按"核心创意"判定（motif 未命中再退回整个 prompt，避免风格块关键词误判）
+    const theme = /科幻|未来|太空|宇航/.test(motif)
+      ? '科幻'
+      : /悬疑|犯罪|刑侦/.test(motif)
+        ? '悬疑'
+        : /都市|职场|爱情/.test(motif)
+          ? '都市'
+          : /奇幻|玄幻|魔法|书店|记忆/.test(motif)
+            ? '奇幻'
+            : '剧情';
+    const scenes = [
+      {
+        heading: '第一场 城市街头·黄昏',
+        summary: `（Mock 规则文案 · ${theme}）开场交代背景：${motif.slice(0, 60)}`,
+        dialogues: [
+          { character: '林晚', text: '这座城市每天都有人在告别，今天轮到我了。' },
+          { character: '陆沉', text: '别急着走，事情还没完——你手里握着的，正是所有人都想要的答案。' },
+        ],
+      },
+      {
+        heading: '第二场 出租屋内·深夜',
+        summary: `矛盾升级：${motif.slice(0, 60)}`,
+        dialogues: [
+          { character: '林晚', text: '我以为放下就能解脱，可它偏偏在深夜里长出了牙齿。' },
+          { character: '陆沉', text: `那就正面它一次。${motif.slice(0, 30)}——从今晚开始，换我们追它。` },
+        ],
+      },
+      {
+        heading: '第三场 天台·黎明',
+        summary: `收束与和解：${motif.slice(0, 60)}`,
+        dialogues: [
+          { character: '林晚', text: '原来我要找的东西，一直都在出发的地方。' },
+          { character: '陆沉', text: '天亮了。去吧，这次为自己活一回。' },
+        ],
+      },
+    ];
+    const script = {
+      title: `《${theme}·演练剧本》`,
+      logline: motif.slice(0, 80),
+      scenes,
+    };
+    return JSON.stringify(script);
+  }
+
+  /** 简单字符串哈希（确定性占位颜色用） */
+  private mockHash(input: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+      h ^= input.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  /** PNG chunk：len + type + data + crc32 */
+  private mockPngChunk(type: string, data: Buffer): Buffer {
+    const crcTable = MockPngCrc.table();
+    let crc = 0xffffffff;
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    for (const byte of body) {
+      crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+    }
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const crcBuf = Buffer.alloc(4);
+    crcBuf.writeUInt32BE(crc, 0);
+    return Buffer.concat([len, body, crcBuf]);
+  }
+
+  /**
+   * 图片 mock：确定性占位 PNG（data URL）。
+   * 纯 Node（zlib）手写 PNG 编码，不需要 canvas 原生依赖：
+   * 按 prompt 哈希取双色渐变 + 对角色块 + 边框，肉眼可辨、逐镜不同。
+   */
+  private mockPngDataUrl(prompt: string, w: number, h: number): string {
+    const hash = this.mockHash(prompt);
+    const hue1 = hash % 360;
+    const hue2 = (hue1 + 60 + (hash % 120)) % 360;
+    const rgb = (hue: number, l: number): [number, number, number] => {
+      // 简化 HSL→RGB（s 固定 0.55）
+      const s = 0.55;
+      const c = (1 - Math.abs(2 * l - 1)) * s;
+      const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+      const m = l - c / 2;
+      const seg = Math.floor(hue / 60) % 6;
+      const table: [number, number, number][] = [
+        [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
+      ];
+      const [r, g, b] = table[seg];
+      return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+    };
+    const c1 = rgb(hue1, 0.55);
+    const c2 = rgb(hue2, 0.3);
+    const raw = Buffer.alloc(h * (1 + w * 4));
+    for (let y = 0; y < h; y++) {
+      const rowStart = y * (1 + w * 4);
+      raw[rowStart] = 0; // filter: none
+      for (let x = 0; x < w; x++) {
+        const t = (x + y) / (w + h);
+        const stripe = Math.floor((x * y) / 64) % 2 === 0 ? 1 : 0.82;
+        const border = x < 4 || y < 4 || x >= w - 4 || y >= h - 4 ? 0.15 : 1;
+        const o = rowStart + 1 + x * 4;
+        raw[o] = Math.round((c1[0] * (1 - t) + c2[0] * t) * stripe * border);
+        raw[o + 1] = Math.round((c1[1] * (1 - t) + c2[1] * t) * stripe * border);
+        raw[o + 2] = Math.round((c1[2] * (1 - t) + c2[2] * t) * stripe * border);
+        raw[o + 3] = 255;
+      }
+    }
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(w, 0);
+    ihdr.writeUInt32BE(h, 4);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 6; // color type RGBA
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      this.mockPngChunk('IHDR', ihdr),
+      this.mockPngChunk('IDAT', deflateSync(raw, { level: 6 })),
+      this.mockPngChunk('IEND', Buffer.alloc(0)),
+    ]);
+    return `data:image/png;base64,${png.toString('base64')}`;
+  }
+
+  /**
+   * TTS mock：按文本长度合成占位 WAV（16kHz 单声道正弦音，句读停顿）。
+   * 返回完整 data:audio/wav;base64 URL，job-worker.ensureLocalAudioUrl 会落盘成 /uploads/ 文件。
+   */
+  private mockWavBase64(text: string): string {
+    const sampleRate = 16000;
+    const seconds = Math.min(6, Math.max(1, Math.ceil(text.length / 12)));
+    const total = sampleRate * seconds;
+    const pcm = Buffer.alloc(total * 2);
+    for (let i = 0; i < total; i++) {
+      const t = i / sampleRate;
+      // 0.9s 发声 + 0.15s 停顿的节奏，结尾淡出
+      const beat = t % 1.05;
+      const env = beat < 0.9 ? Math.min(1, beat * 8) * Math.min(1, (0.9 - beat) * 8) : 0;
+      const fade = Math.min(1, (total - i) / (sampleRate * 0.3));
+      const sample =
+        Math.sin(2 * Math.PI * 220 * t) * 0.5 +
+        Math.sin(2 * Math.PI * 440 * t) * 0.25;
+      pcm.writeInt16LE(Math.round(sample * env * fade * 12000), i * 2);
+    }
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + pcm.length, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20); // PCM
+    header.writeUInt16LE(1, 22); // mono
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(sampleRate * 2, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(pcm.length, 40);
+    return `data:audio/wav;base64,${Buffer.concat([header, pcm]).toString('base64')}`;
   }
 
   // ========== Internal Helpers ==========

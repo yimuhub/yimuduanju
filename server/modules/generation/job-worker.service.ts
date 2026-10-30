@@ -1471,9 +1471,18 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       // 现在 ready 仅由图/视频回写触发，纯配音回写不改状态。
       if (
         typeof input.variantGroup !== 'string' &&
-        (urls.imageUrl || (urls.videoUrl && typeof input.variantGroup !== 'string'))
+        (urls.imageUrl || urls.videoUrl)
       ) {
         patch.status = 'ready';
+      } else if (typeof input.variantGroup !== 'string' && urls.voiceUrl) {
+        // 配音回写：任务开跑时镜头被置 generating，成片已在（视频早于配音完成）时
+        // 必须恢复 ready，否则镜头永久卡在 generating（状态机卡死修复）
+        const shotRows = await this.db
+          .select({ videoUrl: shots.videoUrl })
+          .from(shots)
+          .where(eq(shots.id, job.targetId))
+          .limit(1);
+        if (shotRows[0]?.videoUrl) patch.status = 'ready';
       }
       if (Object.keys(patch).length <= 1) return;
       const conditions = [eq(shots.id, job.targetId)];

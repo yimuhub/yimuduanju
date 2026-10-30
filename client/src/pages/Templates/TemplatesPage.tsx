@@ -41,6 +41,24 @@ const DURATION_OPTIONS = [
   { value: '120', label: '2分钟以上' },
 ];
 
+/**
+ * 内置模板封面：与 scripts/db-init.sql 种子一一对应（模板 id 是运行时 uuid，
+ * 静态 SVG 按内置模板序号命名）。未匹配的自定义模板按名称 hash 复用 6 张封面。
+ */
+const BUILTIN_TPL_COVERS: Record<string, number> = {
+  都市情感: 1,
+  古风仙侠: 2,
+  悬疑推理: 3,
+  热血动漫: 4,
+  三分钟成片: 5,
+  九宫格漫剧: 6,
+};
+const tplCoverUrl = (name: string): string => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return `/covers/tpl-${BUILTIN_TPL_COVERS[name] ?? (h % 6) + 1}.svg`;
+};
+
 const TemplatesPage = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>('all');
@@ -285,17 +303,19 @@ const TemplatesPage = () => {
                   tpl.artStyle,
                 )} flex items-center justify-center`}
               >
-                {/* 无封面时的雅致占位：题材首字大水印 + 装饰光斑，替代刺眼的"未获取" */}
+                {/* 无封面时用静态生成的 SVG 封面；SVG 缺失再回退渐变占位 */}
                 {tpl.thumbnailUrl ? (
                   <img src={tpl.thumbnailUrl} alt={tpl.name} className="absolute inset-0 h-full w-full object-cover" />
                 ) : (
-                  <>
-                    <div className="absolute -left-8 -top-8 h-32 w-32 rounded-full bg-white/15 blur-2xl" />
-                    <div className="absolute -bottom-10 -right-6 h-40 w-40 rounded-full bg-black/10 blur-2xl" />
-                    <span className="select-none text-5xl font-black tracking-widest text-white/35 drop-shadow">
-                      {tpl.name.slice(0, 2)}
-                    </span>
-                  </>
+                  <img
+                    src={tplCoverUrl(tpl.name)}
+                    alt={tpl.name}
+                    loading="lazy"
+                    className="absolute inset-0 h-full w-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
                 )}
                 <span
                   className={`absolute left-3 top-3 rounded-full bg-white/85 px-2.5 py-1 text-xs font-medium backdrop-blur ${getTypeColor(
