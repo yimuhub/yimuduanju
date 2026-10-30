@@ -20,6 +20,7 @@ import { assets as assetsApi, assistant as assistantApi, generation as generatio
 import type { Template } from '@shared/api.interface';
 import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
 import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
+import TriPane from '@client/src/components/TriPane';
 
 /**
  * 创作作战室（首页 · Agent 三段式）
@@ -510,10 +511,16 @@ const AgentStudio = () => {
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden">
+    <>
       {heroMode && pendingPlan && renderPlanGate()}
-      {/* ============ 左：会话列表（hero 模式隐藏） ============ */}
-      <aside className={`hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex ${heroMode ? 'lg:hidden' : ''}`}>
+      {/* TriPane 三栏：左=会话列表 | 中=对话流 | 右=产出面板（宽度可拖拽，localStorage 持久） */}
+      <TriPane
+        leftKey="agentstudio.left"
+        rightKey="agentstudio.right"
+        defaultLeftWidth={280}
+        defaultRightWidth={320}
+        left={heroMode ? null : (
+        <aside className="hidden h-full w-full min-h-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
         <div className="border-b border-sidebar-border p-3">
           <button
             onClick={createSession}
@@ -554,10 +561,9 @@ const AgentStudio = () => {
             </button>
           ))}
         </div>
-      </aside>
-
-      {/* ============ 中：hero 极简首页 / 对话流 ============ */}
-      {heroMode ? (
+        </aside>
+        )}
+        center={heroMode ? (
         <section className="flex min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto bg-background px-6 py-10">
           <div className="w-full max-w-2xl">
             {/* 无 Provider 配置引导横幅（火宝式：配置完成后自动消失） */}
@@ -779,9 +785,8 @@ const AgentStudio = () => {
         </div>
       </section>
       )}
-
-      {/* ============ 右：产出面板（hero 模式隐藏） ============ */}
-      <aside className={`hidden w-[300px] shrink-0 flex-col border-l border-sidebar-border bg-sidebar lg:flex ${heroMode ? 'xl:hidden' : ''}`}>
+        right={heroMode ? null : (
+        <aside className="hidden h-full w-full min-h-0 flex-col border-l border-sidebar-border bg-sidebar lg:flex">
         <div className="flex shrink-0 gap-1 border-b border-sidebar-border p-2">
           {([['jobs', '生成任务', ListTodo], ['assets', '产出资产', ImageIcon]] as const).map(([id, label, Icon]) => (
             <button
@@ -871,8 +876,10 @@ const AgentStudio = () => {
             </div>
           )}
         </div>
-      </aside>
-    </div>
+        </aside>
+        )}
+      />
+    </>
   );
 };
 

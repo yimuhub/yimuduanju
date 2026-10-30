@@ -27,7 +27,8 @@ const ratioOptions: { label: string; value: AspectRatio }[] = [
   { label: '1:1 方形', value: '1:1' },
 ];
 
-const styleOptions: { label: string; value: ArtStyle; gradient: string; desc: string; image: string }[] = [
+// export：供一键创作页右栏「实时摘要」读取画风/预算中文名（TriPane 工作台）
+export const styleOptions: { label: string; value: ArtStyle; gradient: string; desc: string; image: string }[] = [
   { label: '写实仿真人', value: 'realistic', gradient: 'from-rose-400/30 to-orange-400/30', desc: '真人质感，都市情感/悬疑首选', image: '/styles/realistic.png' },
   { label: '真人实景', value: 'live_action', gradient: 'from-stone-400/30 to-amber-400/30', desc: '实拍感强代入，家庭伦理/职场首选', image: '/styles/live_action.png' },
   { label: '2D 日漫', value: 'anime_2d', gradient: 'from-blue-400/30 to-indigo-400/30', desc: '经典二维，校园青春/奇幻', image: '/styles/anime_2d.png' },
@@ -51,7 +52,8 @@ const styleOptions: { label: string; value: ArtStyle; gradient: string; desc: st
   { label: '甜宠真人', value: 'urban_sweet_real', gradient: 'from-rose-300/30 to-pink-300/30', desc: '直球温暖现代生活', image: '/styles/urban_sweet_real.png' },
 ];
 
-const budgetOptions: { label: string; value: BudgetMode; desc: string }[] = [
+// export：供一键创作页右栏「实时摘要」读取预算档中文名
+export const budgetOptions: { label: string; value: BudgetMode; desc: string }[] = [
   { label: '质量优先', value: 'quality_first', desc: '最佳画质，成本较高' },
   { label: '均衡', value: 'balanced', desc: '质量与成本平衡' },
   { label: '成本优先', value: 'cost_first', desc: '控制预算，质量可控' },

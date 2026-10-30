@@ -41,40 +41,41 @@ const RoutesComponent = () => {
   }, []);
   return (
     <Routes>
-      {/* 无限画布 v2 · Pavo 式交互（节点即工具箱 / 分支创作 / 3D 导演台 / @ 引用） */}
-      <Route
-        path="project/:id/canvas"
-        element={
-          <RouteErrorGuard>
-            <Suspense fallback={<CanvasLoading tip="无限画布加载中..." />}>
-              <PavoCanvas />
-            </Suspense>
-          </RouteErrorGuard>
-        }
-      />
-      {/* 一键成片独立流水线页（已拆分为 8 步可视化确认与批量全自动投递工作台） */}
-      <Route
-        path="project/:id/canvas-auto"
-        element={
-          <RouteErrorGuard>
-            <Suspense fallback={<CanvasLoading tip="一键成片流水线加载中..." />}>
-              <CanvasAutoPage />
-            </Suspense>
-          </RouteErrorGuard>
-        }
-      />
-      {/* 自由画布 3 · 1:1 对标 Pavo（开发中：Pavo 逐项实测取证后重做） */}
-      <Route
-        path="project/:id/canvas-free3"
-        element={
-          <RouteErrorGuard>
-            <Suspense fallback={<CanvasLoading tip="自由画布加载中..." />}>
-              <FreeCanvas3Page />
-            </Suspense>
-          </RouteErrorGuard>
-        }
-      />
       <Route element={<Layout />}>
+        {/* 画布三兄弟：Layout 检测 canvas 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
+            并在左上角挂品牌悬浮导航按钮（见 Layout isCanvasRoute） */}
+        <Route
+          path="project/:id/canvas"
+          element={
+            <RouteErrorGuard>
+              <Suspense fallback={<CanvasLoading tip="无限画布加载中..." />}>
+                <PavoCanvas />
+              </Suspense>
+            </RouteErrorGuard>
+          }
+        />
+        {/* 一键成片独立流水线页（已拆分为 8 步可视化确认与批量全自动投递工作台） */}
+        <Route
+          path="project/:id/canvas-auto"
+          element={
+            <RouteErrorGuard>
+              <Suspense fallback={<CanvasLoading tip="一键成片流水线加载中..." />}>
+                <CanvasAutoPage />
+              </Suspense>
+            </RouteErrorGuard>
+          }
+        />
+        {/* 自由画布 3 · 1:1 对标 Pavo（开发中：Pavo 逐项实测取证后重做） */}
+        <Route
+          path="project/:id/canvas-free3"
+          element={
+            <RouteErrorGuard>
+              <Suspense fallback={<CanvasLoading tip="自由画布加载中..." />}>
+                <FreeCanvas3Page />
+              </Suspense>
+            </RouteErrorGuard>
+          }
+        />
         {/* 首页 = 创作作战室（Agent 三段式）；数据看板移至 /dashboard */}
         <Route index element={<AgentStudio />} />
         <Route path="dashboard" element={<DashboardPage />} />

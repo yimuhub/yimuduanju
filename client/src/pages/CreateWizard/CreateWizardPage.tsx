@@ -9,6 +9,8 @@ import {
   Check,
   Upload,
   Loader2,
+  ChevronRight,
+  ChevronLeft,
 } from 'lucide-react';
 import { projects, providers as providersApi, storyboard, templates as templatesApi, billing as billingApi, generation as generationApi } from '@client/src/api';
 import type {
@@ -25,7 +27,8 @@ import type {
 import { CONTENT_MODES, contentModeById } from '@shared/content-modes';
 import { toast } from 'sonner';
 import GenerationProgressView from './GenerationProgressView';
-import WizardSettings from './WizardSettings';
+import WizardSettings, { budgetOptions, styleOptions } from './WizardSettings';
+import TriPane from '@client/src/components/TriPane';
 import { loadGenDefaults } from '../Settings/GenerationSection';
 
 const modeTabs: { key: CreationMode; label: string; icon: typeof Zap }[] = [
@@ -33,6 +36,17 @@ const modeTabs: { key: CreationMode; label: string; icon: typeof Zap }[] = [
   { key: 'script', label: '剧本模式', icon: FileText },
   { key: 'professional', label: '专业模式', icon: Sliders },
 ];
+
+// 时长展示：整分钟显示「N 分钟」，否则显示秒
+const fmtDuration = (s: number) => (s % 60 === 0 ? `${s / 60} 分钟` : `${s} 秒`);
+
+// 右栏摘要行
+const SummaryRow = ({ label, value }: { label: string; value: string }) => (
+  <div className="flex items-center justify-between gap-3 text-xs">
+    <span className="shrink-0 text-muted-foreground">{label}</span>
+    <span className="truncate text-right font-medium text-foreground">{value}</span>
+  </div>
+);
 
 const CreateWizardPage = () => {
   const navigate = useNavigate();
@@ -425,131 +439,150 @@ const CreateWizardPage = () => {
 
   const modeConfig = getModeIcon();
 
-  return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      {/* Header */}
-      <div className="text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary via-orange-500 to-purple-500 text-white shadow-lg">
-          <Wand2 className="h-7 w-7" />
+  // ---- TriPane Agent 工作台派生值（纯展示，不改业务逻辑） ----
+  // 展示用步骤：生成中固定第 3 步；失败/完成后回到可编辑步骤（不改 currentStep 状态）
+  const activeStep = generating ? 3 : Math.min(currentStep, 2);
+  const modeMeta = modeTabs.find((t) => t.key === mode);
+  const artStyleLabel = styleOptions.find((o) => o.value === artStyle)?.label ?? artStyle;
+  const budgetLabel = budgetOptions.find((o) => o.value === budgetMode)?.label ?? budgetMode;
+  // 步骤门禁：第 1 步可点回退；第 2 步需输入通过校验（与 canGenerate 同口径）；第 3 步仅随生成进入
+  const canJumpToStep = (n: number) => !generating && (n === 1 || (n === 2 && canGenerate));
+
+  // ---- 左栏：三模式选择 + 步骤 1-2-3 指示器（当前步高亮、可点回退） ----
+  const stepNav = (
+    <div className="flex h-full min-h-0 flex-col gap-6 overflow-y-auto p-4">
+      {/* 品牌头 */}
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-md">
+          <Wand2 className="h-5 w-5" />
         </div>
-        <h1 className="mt-4 text-2xl font-bold text-foreground">一键创作</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          输入创意，AI 自动完成从剧本到成片的全流程
-        </p>
+        <div className="min-w-0">
+          <div className="text-sm font-bold text-foreground">一键创作</div>
+          <div className="truncate text-[11px] text-muted-foreground">AI 全流程创作工作台</div>
+        </div>
       </div>
 
-      {/* Mode tabs */}
-      <div className="flex justify-center">
-        <div className="inline-flex rounded-xl border bg-white p-1 shadow-sm">
+      {/* 创作模式（原顶部 Mode tabs 移入左栏） */}
+      <div>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">创作模式</div>
+        <div className="space-y-1.5">
           {modeTabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => handleModeChange(tab.key)}
               disabled={generating}
-              className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium transition-all ${
+              className={`flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
                 mode === tab.key
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-foreground/70 hover:text-foreground'
+                  ? 'border-primary/40 bg-primary/10 text-primary shadow-sm'
+                  : 'border-border bg-white text-foreground/70 hover:border-primary/30 hover:text-foreground'
               }`}
             >
-              <tab.icon className="h-4 w-4" />
+              <tab.icon className="h-4 w-4 shrink-0" />
               {tab.label}
+              {mode === tab.key && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
             </button>
           ))}
         </div>
       </div>
 
-      {/* 内容模式（通用/短剧/广告）：决定时长画幅默认值与后续技能/QC口径 */}
-      <div className="flex justify-center">
-        <div className="inline-flex items-center gap-1 rounded-xl border bg-white p-1 shadow-sm">
-          <span className="px-2 text-xs text-muted-foreground">内容</span>
-          {CONTENT_MODES.map((m) => (
-            <button
-              key={m.id}
-              title={m.description}
-              onClick={() => handleContentModeChange(m.id)}
-              disabled={generating}
-              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
-                contentMode === m.id
-                  ? 'bg-foreground text-background shadow-sm'
-                  : 'text-foreground/70 hover:text-foreground'
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Stepper（连接线随进度着色，完成后打勾） */}
-      <div className="flex items-center justify-center rounded-xl border bg-white px-5 py-3 shadow-sm">
-        {steps.map((step, idx) => (
-          <div key={step.num} className="flex items-center">
-            <div className="flex items-center gap-2">
-              <div
-                className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
-                  currentStep > step.num
-                    ? 'bg-emerald-500 text-white'
-                    : currentStep === step.num
-                    ? 'bg-primary text-white shadow-sm shadow-primary/30'
-                    : 'bg-muted text-muted-foreground'
+      {/* 步骤指示器（原 Stepper 移入左栏；当前步高亮，已完成步可点回退） */}
+      <div>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">创作步骤</div>
+        <div className="space-y-1">
+          {steps.map((step) => {
+            const done = activeStep > step.num;
+            const current = activeStep === step.num;
+            const clickable = canJumpToStep(step.num) && !current;
+            return (
+              <button
+                key={step.num}
+                onClick={() => clickable && setCurrentStep(step.num)}
+                disabled={!clickable}
+                title={clickable ? `回到「${step.label}」` : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all ${
+                  current
+                    ? 'border border-primary/40 bg-primary/10 font-semibold text-primary shadow-sm'
+                    : done
+                      ? 'text-foreground/70 hover:bg-muted'
+                      : 'cursor-default text-muted-foreground/60'
                 }`}
               >
-                {currentStep > step.num ? <Check className="h-4 w-4" /> : step.num}
-              </div>
-              <span
-                className={`text-sm ${
-                  currentStep >= step.num
-                    ? 'font-medium text-foreground'
-                    : 'text-muted-foreground'
-                }`}
-              >
+                <span
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                    done
+                      ? 'bg-emerald-500 text-white'
+                      : current
+                        ? 'bg-brand-gradient text-white'
+                        : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {done ? <Check className="h-3.5 w-3.5" /> : step.num}
+                </span>
                 {step.label}
-              </span>
-            </div>
-            {idx < steps.length - 1 && (
-              <div
-                className={`mx-4 h-0.5 w-20 rounded-full transition-colors sm:w-32 ${
-                  currentStep > step.num ? 'bg-emerald-400' : 'bg-border'
-                }`}
-              />
-            )}
-          </div>
-        ))}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {error && !generating && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      <p className="mt-auto rounded-xl bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+        左侧切模式与步骤，中间填写内容，右侧实时摘要确认后一键开拍。
+      </p>
+    </div>
+  );
 
-      {/* Generation progress view */}
-      {generating && progress && (
-        <GenerationProgressView
-          steps={progress.steps}
-          currentStep={progress.currentStep}
-          overallProgress={progress.overallProgress}
-          currentMessage={
-            progress.steps.find((s) => s.status === 'running')?.message
-          }
-        />
-      )}
+  // ---- 中栏：当前步骤的表单内容（全部逻辑/状态/校验复用，仅重排位置） ----
+  const centerContent = (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+        {error && !generating && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
 
-      {generating && !progress && (
-        <div className="flex flex-col items-center justify-center rounded-xl border bg-white p-16 shadow-sm">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          <p className="mt-4 text-sm text-muted-foreground">正在创建项目...</p>
-        </div>
-      )}
+        {/* Generation progress view（步骤 3：生成中） */}
+        {generating && progress && (
+          <GenerationProgressView
+            steps={progress.steps}
+            currentStep={progress.currentStep}
+            overallProgress={progress.overallProgress}
+            currentMessage={
+              progress.steps.find((s) => s.status === 'running')?.message
+            }
+          />
+        )}
 
-      {/* Form views */}
-      {!generating && (
-        <>
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* Main content */}
-          <div className="space-y-6 lg:col-span-2">
-            <div className="rounded-xl border bg-white p-6 shadow-sm">
+        {generating && !progress && (
+          <div className="flex flex-col items-center justify-center rounded-xl border bg-white p-16 shadow-sm">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            <p className="mt-4 text-sm text-muted-foreground">正在创建项目...</p>
+          </div>
+        )}
+
+        {/* 步骤 1：输入创意 */}
+        {!generating && activeStep === 1 && (
+          <>
+          {/* 内容模式（通用/短剧/广告）：决定时长画幅默认值与后续技能/QC口径 */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">内容类型</span>
+            {CONTENT_MODES.map((m) => (
+              <button
+                key={m.id}
+                title={m.description}
+                onClick={() => handleContentModeChange(m.id)}
+                disabled={generating}
+                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                  contentMode === m.id
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'border border-border bg-white text-foreground/70 hover:text-foreground'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="rounded-xl border bg-white p-6 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
                 <div className={`flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br ${modeConfig.gradient} text-white`}>
                   <modeConfig.icon className="h-4 w-4" />
@@ -667,10 +700,33 @@ const CreateWizardPage = () => {
                 </>
               )}
             </div>
-          </div>
 
-          {/* Right settings panel：参数分组卡片（WizardSettings 内部按时长/画幅/画风/导演分组） */}
-          <div className="space-y-5">
+            {/* 步骤 1 底部导航：创意校验通过后进入参数设置 */}
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <span className="text-xs text-muted-foreground">
+                {mode === 'script'
+                  ? parseResult
+                    ? '剧本已解析，可继续设置参数'
+                    : '粘贴剧本并完成「解析预览」后继续'
+                  : canGenerate
+                    ? '创意就绪，继续设置参数'
+                    : '输入创意后继续'}
+              </span>
+              <button
+                onClick={() => setCurrentStep(2)}
+                disabled={!canGenerate}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                下一步：参数设置
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* 步骤 2：参数设置（WizardSettings 全量复用，按时长/画幅/画风/导演分组） */}
+        {!generating && activeStep === 2 && (
+          <>
             <WizardSettings
               duration={duration}
               setDuration={setDuration}
@@ -700,65 +756,112 @@ const CreateWizardPage = () => {
               genreId={genreId}
               setGenreId={setGenreId}
             />
-          </div>
-        </div>
-
-        {/* 底部固定操作条：预估 / 无 Key 提示 / 生成，滚动到哪里都在手边 */}
-        <div className="sticky bottom-4 z-30 mt-2">
-          <div className="flex flex-col gap-3 rounded-2xl border bg-white/95 p-3 shadow-lg shadow-black/5 backdrop-blur sm:flex-row sm:items-center">
-            <div className="min-w-0 flex-1">
-              {/* W2 生成前预估：本次约扣多少、对比市场省多少，下单前确定 */}
-              {estimate ? (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                  <span className="font-medium">本次预估</span>
-                  <span className="text-base font-bold">¥{estimate.total.toFixed(2)}</span>
-                  <span className="text-emerald-700/80">
-                    市场参考 ¥{estimate.marketTotal.toFixed(2)} · 省 ¥{estimate.saved.toFixed(2)}
-                  </span>
-                  <button
-                    onClick={() => setEstimate(null)}
-                    className="underline hover:text-emerald-900"
-                  >
-                    重新预估
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={handleEstimate}
-                  disabled={estimating || !canGenerate}
-                  className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {estimating ? '预估中...' : '预估本次费用'}
-                </button>
-              )}
-              {hasUsableProvider === false && (
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="mt-2 flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-800 hover:bg-amber-100 sm:max-w-md"
-                >
-                  <span className="font-medium">尚未配置模型服务，任务将排队等待</span>
-                  <span className="ml-auto shrink-0 underline">去配置</span>
-                </button>
-              )}
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <button
-                onClick={handleStartGenerate}
-                disabled={!canGenerate}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary via-orange-500 to-purple-500 px-8 py-3 text-sm font-semibold text-white shadow-lg shadow-primary/20 transition-all hover:shadow-xl hover:shadow-primary/30 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                onClick={() => setCurrentStep(1)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-white px-4 py-2 text-sm font-medium text-foreground/70 transition-colors hover:bg-muted"
               >
-                <Sparkles className="h-4 w-4" />
-                {mode === 'script' ? '确认并生成' : '开始生成'}
+                <ChevronLeft className="h-4 w-4" />
+                上一步：修改创意
               </button>
-              <p className="hidden text-[11px] text-muted-foreground sm:block">
-                剧本解析约数十秒；图片/视频按 Provider 排队执行
-              </p>
+              <span className="text-xs text-muted-foreground">确认参数后，点右栏「开始生成」开拍 →</span>
             </div>
-          </div>
-        </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </div>
+  );
+
+  // ---- 右栏：实时摘要面板（已选参数卡 + 费用预估 + 常驻生成按钮） ----
+  const summaryPanel = (
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-primary" />
+        <span className="text-sm font-semibold text-foreground">实时摘要</span>
+      </div>
+
+      {/* 已选参数卡 */}
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">已选参数</div>
+        <div className="space-y-2">
+          <SummaryRow label="模式" value={modeMeta?.label ?? mode} />
+          <SummaryRow label="内容" value={contentModeById(contentMode).label} />
+          <SummaryRow label="时长" value={fmtDuration(duration)} />
+          <SummaryRow label="画幅" value={aspectRatio} />
+          <SummaryRow label="画风" value={artStyleLabel} />
+          <SummaryRow label="预算" value={budgetLabel} />
+          {mode === 'professional' && (
+            <SummaryRow label="分镜" value={`${shotCount} 个 · 每镜 ${shotDuration} 秒`} />
+          )}
+        </div>
+      </div>
+
+      {/* W2 费用预估：本次约扣多少、对比市场省多少（原底部操作条移入右栏常驻） */}
+      <div className="mt-3">
+        {estimate ? (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-emerald-800">本次预估</span>
+              <button
+                onClick={() => setEstimate(null)}
+                className="text-[11px] text-emerald-700 underline hover:text-emerald-900"
+              >
+                重新预估
+              </button>
+            </div>
+            <div className="mt-1 text-xl font-bold text-emerald-900">¥{estimate.total.toFixed(2)}</div>
+            <p className="mt-0.5 text-[11px] text-emerald-700/80">
+              市场参考 ¥{estimate.marketTotal.toFixed(2)} · 省 ¥{estimate.saved.toFixed(2)}
+            </p>
+          </div>
+        ) : (
+          <button
+            onClick={handleEstimate}
+            disabled={estimating || !canGenerate}
+            className="w-full rounded-xl border border-primary/40 bg-primary/5 px-4 py-2.5 text-xs font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {estimating ? '预估中...' : '预估本次费用'}
+          </button>
+        )}
+      </div>
+
+      {/* 常驻操作区（钉底）：无 Key 提示 + 生成按钮 */}
+      <div className="mt-auto space-y-2 pt-4">
+        {hasUsableProvider === false && (
+          <button
+            onClick={() => navigate('/settings')}
+            className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[11px] text-amber-800 hover:bg-amber-100"
+          >
+            <span className="font-medium">尚未配置模型服务，任务将排队等待</span>
+            <span className="ml-auto shrink-0 underline">去配置</span>
+          </button>
+        )}
+        <button
+          onClick={handleStartGenerate}
+          disabled={!canGenerate || generating}
+          className="btn-brand flex w-full items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold shadow-lg"
+        >
+          {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {generating ? '生成中...' : mode === 'script' ? '确认并生成' : '开始生成'}
+        </button>
+        <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
+          剧本解析约数十秒；图片/视频按 Provider 排队执行
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <TriPane
+      className="mx-auto max-w-[1500px]"
+      leftKey="createwizard.left"
+      rightKey="createwizard.right"
+      defaultLeftWidth={250}
+      maxLeftWidth={360}
+      left={stepNav}
+      center={centerContent}
+      right={summaryPanel}
+    />
   );
 };
 
