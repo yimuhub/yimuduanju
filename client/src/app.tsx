@@ -25,6 +25,8 @@ import ProjectQcTab from './pages/ProjectWorkspace/tabs/ProjectQcTab';
 import ProjectExportTab from './pages/ProjectWorkspace/tabs/ProjectExportTab';
 // P1 性能：画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
+// 无限画布（v5 旧旗舰）：恢复保留，老板最爱的画布形态（节点即工具箱）
+const PavoCanvas = lazy(() => import('./pages/CanvasStudioV2/PavoCanvas'));
 
 // 经典模式整页路由：与极客模式右栏签共用同一批懒加载 chunk（Vite 按 module 去重，不重复打包）
 const ClassicPages = {
@@ -48,8 +50,18 @@ const RoutesComponent = () => {
   return (
     <Routes>
       <Route element={<Layout />}>
-        {/* 画布：Layout 检测 canvas-free3 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
+        {/* 画布：Layout 检测 canvas / canvas-free3 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
             并在左上角挂品牌悬浮导航按钮（见 Layout isCanvasRoute） */}
+        <Route
+          path="project/:id/canvas"
+          element={
+            <RouteErrorGuard>
+              <Suspense fallback={<CanvasLoading tip="无限画布加载中..." />}>
+                <PavoCanvas />
+              </Suspense>
+            </RouteErrorGuard>
+          }
+        />
         <Route
           path="project/:id/canvas-free3"
           element={

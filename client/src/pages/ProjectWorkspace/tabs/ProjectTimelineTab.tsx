@@ -226,7 +226,7 @@ const ProjectTimelineTab = () => {
                   <button onClick={() => navigate(`/project/${id}/storyboard?shot=${sel.id}`)} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
                     <ChevronLeft className="h-3 w-3" /> 编辑
                   </button>
-                  <button onClick={() => navigate(`/project/${id}/canvas-free3`)} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
+                  <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary hover:text-primary">
                     画布 <ChevronRight className="h-3 w-3" />
                   </button>
                 </div>

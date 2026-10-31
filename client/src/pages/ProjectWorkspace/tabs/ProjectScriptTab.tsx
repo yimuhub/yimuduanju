@@ -189,7 +189,7 @@ const ProjectScriptTab = () => {
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground">{content.length} 字</span>
               <button
-                onClick={() => navigate(`/project/${id}/canvas-free3`)}
+                onClick={() => navigate(`/project/${id}/canvas`)}
                 className="flex items-center gap-1.5 rounded-md border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
               >
                 <Sparkles className="h-3.5 w-3.5" /> 去无限画布编排
