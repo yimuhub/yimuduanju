@@ -37,7 +37,7 @@ const GeekLayout = () => {
   const pathParts = location.pathname.split('/').filter(Boolean);
   const isCanvasRoute =
     pathParts[0] === 'project' &&
-    ['canvas', 'canvas-free3', 'canvas-auto'].includes(pathParts[2] ?? '');
+    ['canvas-free3'].includes(pathParts[2] ?? '');
 
   return (
     <WorkspaceTabsProvider>

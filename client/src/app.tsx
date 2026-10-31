@@ -23,9 +23,7 @@ import ProjectAgentsTab from './pages/ProjectWorkspace/tabs/ProjectAgentsTab';
 import ProjectTasksTab from './pages/ProjectWorkspace/tabs/ProjectTasksTab';
 import ProjectQcTab from './pages/ProjectWorkspace/tabs/ProjectQcTab';
 import ProjectExportTab from './pages/ProjectWorkspace/tabs/ProjectExportTab';
-// P1 性能：三个画布（含 three/xyflow 重依赖与一键成片流水线）懒加载，首屏不再背全量包
-const PavoCanvas = lazy(() => import('./pages/CanvasStudioV2/PavoCanvas'));
-const CanvasAutoPage = lazy(() => import('./pages/CanvasStudioV2/CanvasAutoPage'));
+// P1 性能：画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
 
 // 经典模式整页路由：与极客模式右栏签共用同一批懒加载 chunk（Vite 按 module 去重，不重复打包）
@@ -50,30 +48,8 @@ const RoutesComponent = () => {
   return (
     <Routes>
       <Route element={<Layout />}>
-        {/* 画布三兄弟：Layout 检测 canvas 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
+        {/* 画布：Layout 检测 canvas-free3 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
             并在左上角挂品牌悬浮导航按钮（见 Layout isCanvasRoute） */}
-        <Route
-          path="project/:id/canvas"
-          element={
-            <RouteErrorGuard>
-              <Suspense fallback={<CanvasLoading tip="无限画布加载中..." />}>
-                <PavoCanvas />
-              </Suspense>
-            </RouteErrorGuard>
-          }
-        />
-        {/* 一键成片独立流水线页（已拆分为 8 步可视化确认与批量全自动投递工作台） */}
-        <Route
-          path="project/:id/canvas-auto"
-          element={
-            <RouteErrorGuard>
-              <Suspense fallback={<CanvasLoading tip="一键成片流水线加载中..." />}>
-                <CanvasAutoPage />
-              </Suspense>
-            </RouteErrorGuard>
-          }
-        />
-        {/* 自由画布 3 · 1:1 对标 Pavo（开发中：Pavo 逐项实测取证后重做） */}
         <Route
           path="project/:id/canvas-free3"
           element={

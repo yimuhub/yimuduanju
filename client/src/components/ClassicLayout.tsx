@@ -81,8 +81,6 @@ const breadcrumbMap: Record<string, string> = {
   styles: '风格中心',
   settings: '设置',
   project: '项目工作台',
-  canvas: '无限画布',
-  'canvas-auto': '一键成片',
   'canvas-free3': '自由画布 3',
   script: '剧本',
   bible: '圣经',
@@ -107,7 +105,7 @@ const ClassicLayout = () => {
   const pathParts = location.pathname.split('/').filter(Boolean);
   const isCanvasRoute =
     pathParts[0] === 'project' &&
-    ['canvas', 'canvas-free3', 'canvas-auto'].includes(pathParts[2] ?? '');
+    ['canvas-free3'].includes(pathParts[2] ?? '');
   // 创作作战室（/）为全高三栏屏：内容区不加内边距，其余整页导航页面带标准内边距
   const isStudioHome = pathParts.length === 0;
 
