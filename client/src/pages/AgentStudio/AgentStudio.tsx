@@ -30,6 +30,13 @@ import {
 } from '@client/src/components/workspace/WorkspaceTabsContext';
 import { OPEN_SESSION_EVENT } from '@client/src/components/workspace/CommandPalette';
 import { readUIMode, switchUIMode } from '@client/src/lib/uiMode';
+import {
+  getAvatarInitial,
+  getNickname,
+  NICKNAME_CHANGE_EVENT,
+  TIER_LABEL,
+} from '@client/src/lib/identity';
+import { APP_VERSION } from '@client/src/lib/version';
 
 /**
  * 创作作战室（首页 · Agent 三段式 · AI-EOS 极客模式结构）
@@ -138,14 +145,21 @@ const AgentStudio = () => {
   const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  // 用户卡昵称（与 Dashboard 一致：yimu.account.nickname）
-  const [nickname] = useState(() => localStorage.getItem('yimu.account.nickname') || '一幕用户');
+  // 用户卡昵称：单一来源 lib/identity（AccountPage 改昵称后通过事件同步）
+  const [nickname, setNickname] = useState(getNickname);
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? sessions[0],
     [sessions, activeId],
   );
   useEffect(() => { if (!active) setActiveId(sessions[0]?.id ?? ''); }, [active, sessions]);
+
+  // 昵称变更广播：AccountPage 保存后实时同步本页用户卡
+  useEffect(() => {
+    const onNicknameChange = () => setNickname(getNickname());
+    window.addEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
+    return () => window.removeEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
+  }, []);
 
   // 风格中心「以此风格开拍」深链：携带 stylePrompt 落地后回填输入框并清掉 state（防刷新重复回填）
   useEffect(() => {
@@ -621,11 +635,11 @@ const AgentStudio = () => {
           {/* 用户卡 + 界面模式切换（仅极客模式显示「经典模式」入口） */}
           <div className="mt-1.5 flex items-center gap-2.5 rounded-lg px-2 py-2">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-xs font-semibold text-white">
-              {(nickname || '一').slice(0, 1)}
+              {getAvatarInitial(nickname)}
             </div>
             <div className="min-w-0">
               <div className="truncate text-xs font-medium text-sidebar-foreground">{nickname}</div>
-              <div className="truncate text-[10px] text-sidebar-foreground/50">老板 · 一人公司</div>
+              <div className="truncate text-[10px] text-sidebar-foreground/50">{TIER_LABEL}</div>
             </div>
             <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="在线" />
           </div>
@@ -637,6 +651,11 @@ const AgentStudio = () => {
             >
               <PanelLeft className="h-3.5 w-3.5 shrink-0" /> 经典模式
             </button>
+          )}
+          {APP_VERSION && (
+            <div className="pt-1 text-center text-[10px] text-sidebar-foreground/30" title={APP_VERSION}>
+              v{APP_VERSION}
+            </div>
           )}
         </div>
         </aside>

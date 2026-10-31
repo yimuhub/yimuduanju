@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, Clapperboard, Coins, Film, FolderKanban, Images,
-  Loader2, Send, Sparkles, Clock,
+  Loader2, Clock,
 } from 'lucide-react';
 import { dashboard as dashboardApi, generation as generationApi } from '@client/src/api';
 import type { DashboardStats, GenerationJob, ProjectListItem } from '@shared/api.interface';
+import { getNickname } from '@client/src/lib/identity';
 
 /**
  * 数据看板（3.0 生产力工作台版）：
@@ -47,10 +48,9 @@ const DashboardPage = () => {
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [recent, setRecent] = useState<ProjectListItem[]>([]);
   const [activity, setActivity] = useState<{ id: string; type: string; message: string; createdAt: string }[]>([]);
-  const [quickPrompt, setQuickPrompt] = useState('');
   const [loading, setLoading] = useState(true);
-  // 问候语使用本地昵称（与账户页 yimu.account.nickname 保持一致），默认「一幕用户」
-  const [nickname] = useState(() => localStorage.getItem('yimu.account.nickname') || '一幕用户');
+  // 问候语昵称：单一来源 lib/identity（挂载时读取，切页即最新）
+  const [nickname] = useState(getNickname);
 
   const load = useCallback(async () => {
     const [s, j, r, a] = await Promise.all([
@@ -84,7 +84,7 @@ const DashboardPage = () => {
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
-      {/* 顶栏：问候 + 快速开拍条（生产力导向，无营销横幅） */}
+      {/* 顶栏：问候（去掉了原「快速开拍」假输入条：输入不落地、仅跳转，与侧栏导航重复） */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">
@@ -95,23 +95,6 @@ const DashboardPage = () => {
               ? `${stats.runningJobs} 个任务正在生成 · 今日完成 ${stats.completedToday}`
               : '流水线空闲，适合开一部新剧'}
           </p>
-        </div>
-        <div className="flex w-full max-w-md items-center gap-2 rounded-xl border border-input bg-card p-1.5 pl-3.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
-          <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-          <input
-            value={quickPrompt}
-            onChange={(e) => setQuickPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && quickPrompt.trim()) navigate('/'); }}
-            onFocus={() => navigate('/')}
-            placeholder="一句话开拍，回车进入创作作战室…"
-            className="h-8 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-          />
-          <button
-            onClick={() => navigate('/')}
-            className="btn-gradient flex h-8 shrink-0 items-center gap-1 rounded-lg px-3 text-xs font-semibold"
-          >
-            开拍 <Send className="h-3 w-3" />
-          </button>
         </div>
       </div>
 

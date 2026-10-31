@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ConfirmHost } from '@client/src/components/ui/confirm';
 import CommandPalette from '@client/src/components/workspace/CommandPalette';
@@ -8,6 +8,13 @@ import {
   WORKSPACE_PAGES,
 } from '@client/src/components/workspace/WorkspaceTabsContext';
 import { switchUIMode } from '@client/src/lib/uiMode';
+import {
+  getAvatarInitial,
+  getNickname,
+  TIER_LABEL,
+  NICKNAME_CHANGE_EVENT,
+} from '@client/src/lib/identity';
+import { APP_VERSION } from '@client/src/lib/version';
 import {
   LayoutDashboard,
   FolderKanban,
@@ -108,6 +115,15 @@ const ClassicLayout = () => {
     pathParts[2] === 'canvas-free3';
   // 创作作战室（/）为全高三栏屏：内容区不加内边距，其余整页导航页面带标准内边距
   const isStudioHome = pathParts.length === 0;
+  // /projects 页内已有搜索（工具条），顶栏搜索同视图重复 → 该路由下隐藏
+  const isProjectsRoute = pathParts[0] === 'projects';
+  // 用户身份单一来源（lib/identity）；Layout 不随路由重挂载，监听昵称变更事件实时同步
+  const [nickname, setNickname] = useState(getNickname);
+  useEffect(() => {
+    const onNicknameChange = () => setNickname(getNickname());
+    window.addEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
+    return () => window.removeEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
+  }, []);
 
   // P1 移动端：抽屉式侧边栏，小屏默认收起
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -209,19 +225,24 @@ const ClassicLayout = () => {
         </button>
         <button
           onClick={() => navigate('/account')}
-          title={sidebarCollapsed ? '一幕用户' : undefined}
+          title={sidebarCollapsed ? nickname : undefined}
           className={`mt-1 flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-sidebar-accent ${sidebarCollapsed ? 'justify-center' : ''}`}
         >
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-sm font-semibold text-primary-foreground">
-            YM
+            {getAvatarInitial(nickname)}
           </div>
           {!sidebarCollapsed && (
             <div className="flex-1 overflow-hidden">
-              <div className="truncate text-sm font-medium text-sidebar-foreground">一幕用户</div>
-              <div className="truncate text-xs text-sidebar-foreground/60">专业版</div>
+              <div className="truncate text-sm font-medium text-sidebar-foreground">{nickname}</div>
+              <div className="truncate text-xs text-sidebar-foreground/60">{TIER_LABEL}</div>
             </div>
           )}
         </button>
+        {!sidebarCollapsed && APP_VERSION && (
+          <div className="mt-1 text-center text-[10px] text-sidebar-foreground/30" title={APP_VERSION}>
+            v{APP_VERSION}
+          </div>
+        )}
         <button
           onClick={toggleSidebar}
           className={`mt-1 hidden w-full items-center gap-3 rounded-lg px-2 py-2 text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground lg:flex ${sidebarCollapsed ? 'justify-center' : ''}`}
@@ -297,48 +318,52 @@ const ClassicLayout = () => {
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-                  <div className="relative hidden sm:block">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      type="search"
-                      placeholder="搜索项目、资产、模板..."
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') submitSearch();
-                      }}
-                      className="h-9 w-48 rounded-lg border border-input bg-muted/50 pl-9 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 xl:w-72"
-                    />
-                  </div>
+                  {!isProjectsRoute && (
+                    <div className="relative hidden sm:block">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <input
+                        type="search"
+                        placeholder="搜索项目、资产、模板..."
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') submitSearch();
+                        }}
+                        className="h-9 w-48 rounded-lg border border-input bg-muted/50 pl-9 pr-4 text-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 xl:w-72"
+                      />
+                    </div>
+                  )}
                   <button className="hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 sm:flex" aria-label="通知">
                     <Bell className="h-[18px] w-[18px] text-foreground/70" />
                     <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />
                   </button>
-                  <button
-                    onClick={toggleDock}
-                    className={`hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 xl:flex ${
-                      dockOpen ? 'border-primary/40 text-primary' : 'text-foreground/70'
-                    }`}
-                    aria-label={dockOpen ? '收起助手坞' : '展开助手坞'}
-                    title={dockOpen ? '收起助手坞' : '展开助手坞'}
-                  >
-                    <PanelRightOpen className="h-[18px] w-[18px]" />
-                  </button>
+                  {!isStudioHome && (
+                    <button
+                      onClick={toggleDock}
+                      className={`hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 xl:flex ${
+                        dockOpen ? 'border-primary/40 text-primary' : 'text-foreground/70'
+                      }`}
+                      aria-label={dockOpen ? '收起助手坞' : '展开助手坞'}
+                      title={dockOpen ? '收起助手坞' : '展开助手坞'}
+                    >
+                      <PanelRightOpen className="h-[18px] w-[18px]" />
+                    </button>
+                  )}
                   <div className="relative">
                     <button
                       onClick={() => setUserMenuOpen((v) => !v)}
                       className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-gradient text-sm font-semibold text-primary-foreground transition-transform hover:scale-105"
                       aria-label="用户菜单"
                     >
-                      YM
+                      {getAvatarInitial(nickname)}
                     </button>
                     {userMenuOpen && (
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
                         <div className="absolute right-0 top-11 z-50 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-2xl">
                           <div className="border-b border-border px-4 py-2.5">
-                            <div className="text-sm font-medium text-foreground">一幕用户</div>
-                            <div className="text-xs text-muted-foreground">专业版</div>
+                            <div className="text-sm font-medium text-foreground">{nickname}</div>
+                            <div className="text-xs text-muted-foreground">{TIER_LABEL}</div>
                           </div>
                           <button
                             onClick={() => {
@@ -376,7 +401,8 @@ const ClassicLayout = () => {
                 >
                   <Outlet />
                 </main>
-                {dockOpen && <ClassicRightDock onClose={toggleDock} />}
+                {/* 作战室页自带功能签右坞（WorkspaceRightDock），经典助手坞在首页不开，避免同屏双右坞 */}
+                {dockOpen && !isStudioHome && <ClassicRightDock onClose={toggleDock} />}
               </div>
             </div>
           </>

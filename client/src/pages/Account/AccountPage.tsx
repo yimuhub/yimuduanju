@@ -19,8 +19,12 @@ import { toast } from 'sonner';
 import { dashboard } from '@client/src/api';
 import type { CostSummary, DashboardStats } from '@shared/api.interface';
 import PageHeader from '@client/src/components/PageHeader';
-
-const NICKNAME_KEY = 'yimu.account.nickname';
+import {
+  getAvatarInitial,
+  getNickname,
+  setNickname,
+  TIER_LABEL,
+} from '@client/src/lib/identity';
 
 interface PlanCard {
   key: string;
@@ -45,7 +49,7 @@ const PLANS: PlanCard[] = [
   },
   {
     key: 'pro',
-    name: '专业版',
+    name: TIER_LABEL,
     price: '¥99',
     period: '/月',
     desc: '个人创作者主力档',
@@ -66,9 +70,7 @@ const PLANS: PlanCard[] = [
 
 const AccountPage = () => {
   const navigate = useNavigate();
-  const [nickname, setNickname] = useState(
-    () => localStorage.getItem(NICKNAME_KEY) || '一幕用户',
-  );
+  const [nickname, setNicknameState] = useState(getNickname);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(nickname);
   const [cost, setCost] = useState<CostSummary | null>(null);
@@ -85,8 +87,8 @@ const AccountPage = () => {
       toast.error('昵称不能为空');
       return;
     }
-    setNickname(trimmed);
-    localStorage.setItem(NICKNAME_KEY, trimmed);
+    setNicknameState(trimmed);
+    setNickname(trimmed); // 单一来源保存 + 全站广播（lib/identity）
     setEditingName(false);
     toast.success('昵称已保存');
   };
@@ -116,7 +118,7 @@ const AccountPage = () => {
         <div className="rounded-xl border bg-card p-5 shadow-sm lg:col-span-2">
           <div className="flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-gradient text-lg font-semibold text-primary-foreground">
-              YM
+              {getAvatarInitial(nickname)}
             </div>
             <div className="min-w-0 flex-1">
               {editingName ? (
@@ -152,9 +154,6 @@ const AccountPage = () => {
                   </button>
                 </div>
               )}
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                user@yimu.studio
-              </p>
             </div>
           </div>
           <div className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
@@ -177,13 +176,10 @@ const AccountPage = () => {
         <div className="relative overflow-hidden rounded-xl bg-brand-gradient p-5 text-white shadow-sm lg:col-span-3">
           <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-card/15 blur-2xl" />
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Crown className="h-5 w-5 text-white" />
-              <span className="text-base font-semibold">专业版会员</span>
-            </div>
-            <span className="rounded-full bg-card/10 px-3 py-1 text-xs text-white/80 backdrop-blur">
-              2026-12-31 到期
-            </span>
+          <div className="flex items-center gap-2">
+            <Crown className="h-5 w-5 text-white" />
+            <span className="text-base font-semibold">{TIER_LABEL}会员</span>
+          </div>
           </div>
           <p className="mt-3 text-xs leading-relaxed text-white/70">
             权益：无限生成任务 · 全风格库 · 剧本技能 · 1080P 去水印导出 · 优先排队
