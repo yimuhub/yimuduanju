@@ -1,6 +1,6 @@
 import { axiosForBackend } from '@client/src/api/http';
 
-/** 自由画布 3 · 三通道 API 真实生成（后端代理：火山方舟 / OpenAI 兼容中转 / 自定义） */
+/** 自由画布 · 三通道 API 真实生成（后端代理：火山方舟 / OpenAI 兼容中转 / 自定义） */
 export interface P3RefInput {
   id?: string;
   title?: string;

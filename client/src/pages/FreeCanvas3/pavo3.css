@@ -1,4 +1,4 @@
-/* 自由画布 3 · 1:1 复刻 Pavo AI Canvas 样式
+/* 自由画布 · 1:1 复刻 Pavo AI Canvas 样式
    配色统一走 P3 token（与 pavo3Constants.P3 一致），圆角/阴影统一变量，避免散落硬编码 */
 
 .p3-canvas-root {
@@ -339,18 +339,82 @@
   overflow: hidden;
 }
 
-/* 自定义小地图（Pavo：右下角） */
-.p3-minimap {
-  position: absolute;
-  right: 18px;
-  bottom: 76px;
-  left: auto;
-  z-index: 25;
-  background: #ffffff;
+/* xyflow 官方小地图（右下角，可拖拽 / 滚轮缩放） */
+.p3-canvas .react-flow__minimap.p3-minimap-flow {
+  right: 16px;
+  bottom: 96px;
   border: 1px solid var(--p3-border);
   border-radius: 12px;
   box-shadow: var(--p3-shadow-md);
+  overflow: hidden;
+}
+
+/* xyflow 缩放控件组（右下角，小地图下方自动堆叠） */
+.p3-canvas .react-flow__controls {
+  border: 1px solid var(--p3-border);
+  border-radius: var(--p3-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--p3-shadow-md);
+}
+.p3-canvas .react-flow__controls-button {
+  background: #ffffff;
+  border: none;
+  border-bottom: 1px solid var(--p3-card-border);
+  width: 28px;
+  height: 28px;
+  color: var(--p3-text);
+}
+.p3-canvas .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.p3-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+.p3-canvas .react-flow__controls-button:hover {
+  background: var(--p3-hover);
+}
+
+/* 节点右键上下文菜单 */
+.p3-ctx-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 176px;
   padding: 6px;
+  background: #ffffff;
+  border: 1px solid var(--p3-border);
+  border-radius: var(--p3-radius-lg);
+  box-shadow: var(--p3-shadow-lg);
+}
+.p3-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--p3-radius-md);
+  font-size: 13px;
+  color: var(--p3-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.p3-ctx-item:hover {
+  background: var(--p3-hover);
+}
+.p3-ctx-danger {
+  color: var(--p3-error);
+}
+.p3-ctx-danger:hover {
+  background: #fdf0f0;
+}
+.p3-ctx-kbd {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--p3-faint);
+}
+.p3-ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--p3-border);
 }
 
 /* 富文本工具栏（自己编写） */

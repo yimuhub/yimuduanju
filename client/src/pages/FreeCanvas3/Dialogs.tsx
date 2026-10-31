@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 弹窗合集：添加节点菜单 / 模型选择 / 风格库 / 历史资产 / 快捷键 / 整理画布确认
  */
 import React, { useEffect, useRef, useState } from 'react';

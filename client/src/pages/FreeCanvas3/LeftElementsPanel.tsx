@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 左侧面板：项目名 / 创建新项目 / 画布元素列表 / 全部筛选
  */
 import React, { useState } from 'react';

@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 节点卡片：端口 / 标题行 / 空态尝试 / 内容态 / 执行中（6 类节点共用结构）
  */
 import React, { memo, useCallback } from 'react';
@@ -167,6 +167,14 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
       <div className="p3-node-title-row">
         {TYPE_ICON[kind]}
         <span>{data.title}</span>
+        {data.isReference && (
+          <span
+            title="已设为参考素材（右键可取消标记）"
+            style={{ marginLeft: 6, fontSize: 11, color: P3.text, background: P3.hover, border: `1px solid ${P3.border}`, borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap' }}
+          >
+            参考
+          </span>
+        )}
         {refCount > 0 && (
           <span
             title={`引用 ${refCount} 个上游/手动参考，生成时自动注入`}

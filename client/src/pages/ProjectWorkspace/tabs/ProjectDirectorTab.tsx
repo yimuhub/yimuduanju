@@ -612,7 +612,7 @@ const WhitemodelCard = ({  projectId,
           {showAssets && (
             <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg bg-muted/40 p-2">
               {assetOptions.length === 0 && (
-                <div className="text-[10px] text-muted-foreground">暂无白模资产（去自由画布 3D 导演台录制后上传）</div>
+                <div className="text-[10px] text-muted-foreground">暂无白模资产（去「自由画布」3D 导演台录制后上传）</div>
               )}
               {assetOptions.map((a) => (
                 <button

@@ -1,5 +1,5 @@
 /**
- * 一幕·YIMU AI 短剧创作平台 · 自由画布 3 —— 真实生成代理服务（已收敛接入统一计费与预算守卫）
+ * 一幕·YIMU AI 短剧创作平台 · 自由画布 —— 真实生成代理服务（已收敛接入统一计费与预算守卫）
  * 三通道 API（火山方舟 / OpenAI 兼容中转 / 自定义）统一调用：
  *   text  → POST {baseUrl}/chat/completions
  *   image → POST {baseUrl}/images/generations（参考图走 image 字段，dataURL 直传）

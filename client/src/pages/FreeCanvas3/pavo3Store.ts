@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * zustand 全局状态 + 画布动作（生成演示闭环 / 三通道 API hook 预留）
  */
 import { create } from 'zustand';
@@ -72,6 +72,10 @@ interface FreeCanvas3State {
   onConnect: (conn: Connection) => void;
   createNode: (type: PavoNodeType, pos: XYPosition, opts?: { source?: string; target?: string; autoOpen?: boolean }) => void;
   removeNode: (id: string) => void;
+  /** 批量删除选中节点与选中连线（一次历史快照；大数量删除前由调用方确认） */
+  deleteSelection: () => void;
+  /** 复制选中节点（偏移 28px）并克隆副本之间的内部连线（⌘D） */
+  duplicateNodes: (ids: string[]) => void;
   updateNodeData: (id: string, patch: Partial<PavoNodeData>) => void;
   undo: () => void;
   redo: () => void;
@@ -228,6 +232,58 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
       history: pushHistory(get()),
       future: [],
     }),
+
+  deleteSelection: () => {
+    const s = get();
+    const nodeIds = new Set(s.selectedNodeIds ?? []);
+    if (nodeIds.size > 5 && !window.confirm(`即将删除选中的 ${nodeIds.size} 个节点及其连线，确认删除？`)) return;
+    if (nodeIds.size === 0 && !s.edges.some((e) => e.selected)) return;
+    set({
+      nodes: s.nodes.filter((n) => !nodeIds.has(n.id)),
+      edges: s.edges.filter((e) => !nodeIds.has(e.source) && !nodeIds.has(e.target) && !e.selected),
+      selectedNodeIds: [],
+      history: pushHistory(s),
+      future: [],
+    });
+  },
+
+  duplicateNodes: (ids) => {
+    const s = get();
+    if (!ids.length) return;
+    const stamp = Date.now();
+    const idMap = new Map<string, string>();
+    const clones = ids
+      .map((id) => s.nodes.find((n) => n.id === id))
+      .filter((n): n is PavoFlowNode => Boolean(n))
+      .map((n) => {
+        const newId = `copy-${n.id}-${stamp}`;
+        idMap.set(n.id, newId);
+        return {
+          ...n,
+          id: newId,
+          selected: true,
+          position: { x: n.position.x + 28, y: n.position.y + 28 },
+          data: { ...n.data },
+        };
+      });
+    if (!clones.length) return;
+    // 副本之间的内部连线一并克隆（⌘D 复制节点和连线，Pavo 同款）
+    const clonedEdges = s.edges
+      .filter((e) => idMap.has(e.source) && idMap.has(e.target))
+      .map((e) => ({
+        ...e,
+        id: `e-${idMap.get(e.source)!}-${idMap.get(e.target)!}-${stamp}`,
+        source: idMap.get(e.source)!,
+        target: idMap.get(e.target)!,
+      }));
+    set({
+      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...clones],
+      edges: [...s.edges, ...clonedEdges],
+      selectedNodeIds: clones.map((c) => c.id),
+      history: pushHistory(s),
+      future: [],
+    });
+  },
 
   undo: () => {
     const s = get();

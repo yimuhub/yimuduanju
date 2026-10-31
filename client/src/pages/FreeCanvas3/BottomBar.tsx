@@ -1,8 +1,8 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 底部工具栏：整理画布 / 画布小地图 / 网格吸附 / 缩放选项 / 添加节点 / 历史资产 / 快捷键
  */
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Panel, useReactFlow, useStore } from '@xyflow/react';
 import {
   LayoutGrid,
@@ -160,88 +160,5 @@ export const BottomBar = () => {
         </div>
       </Panel>
     </>
-  );
-};
-
-/* ---------------- 画布小地图（自绘，Pavo 风格 165×125） ---------------- */
-export const CanvasMinimap = () => {
-  const minimap = useP3Store((s) => s.minimap);
-  const nodes = useP3Store((s) => s.nodes);
-  const { setViewport, getViewport } = useReactFlow();
-  const viewport = useStore((s) => s.transform);
-  const flowBounds = useStore((s) => {
-    const b = s.nodeLookup;
-    if (!b.size) return { x: 0, y: 0, w: 400, h: 300 };
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    b.forEach((n) => {
-      minX = Math.min(minX, n.internals.positionAbsolute.x);
-      minY = Math.min(minY, n.internals.positionAbsolute.y);
-      maxX = Math.max(maxX, n.internals.positionAbsolute.x + n.measured.width);
-      maxY = Math.max(maxY, n.internals.positionAbsolute.y + n.measured.height);
-    });
-    return { x: minX - 40, y: minY - 40, w: maxX - minX + 80, h: maxY - minY + 80 };
-  });
-
-  const W = 165;
-  const H = 125;
-
-  const mm = useMemo(() => {
-    if (!flowBounds.w || !flowBounds.h) return null;
-    const scale = Math.min(W / flowBounds.w, H / flowBounds.h);
-    const ox = (W - flowBounds.w * scale) / 2 - flowBounds.x * scale;
-    const oy = (H - flowBounds.h * scale) / 2 - flowBounds.y * scale;
-    return { scale, ox, oy };
-  }, [flowBounds]);
-
-  if (!minimap) return null;
-  if (!mm) return null;
-
-  // 视口框
-  const vx = viewport[0] * mm.scale + mm.ox;
-  const vy = viewport[1] * mm.scale + mm.oy;
-  const vw = (window.innerWidth / viewport[2]) * mm.scale;
-  const vh = (window.innerHeight / viewport[2]) * mm.scale;
-
-  return (
-    <div
-      className="p3-minimap"
-      onClick={(e) => {
-        const r = e.currentTarget.getBoundingClientRect();
-        const px = e.clientX - r.left;
-        const py = e.clientY - r.top;
-        const fx = (px - mm.ox) / mm.scale;
-        const fy = (py - mm.oy) / mm.scale;
-        setViewport(
-          {
-            x: window.innerWidth / 2 - fx * viewport[2],
-            y: window.innerHeight / 2 - fy * viewport[2],
-            zoom: viewport[2],
-          },
-          { duration: 300 },
-        );
-      }}
-    >
-      <svg width={W} height={H} style={{ display: 'block' }}>
-        <rect width={W} height={H} rx={8} fill="#F7F7F7" />
-        {/* 节点 */}
-        {nodes.map((n) => {
-          const nx = (n.position.x + (n.measured?.width ?? 280) / 2) * mm.scale + mm.ox;
-          const ny = (n.position.y + (n.measured?.height ?? 120) / 2) * mm.scale + mm.oy;
-          const c = n.data.nodeType === 'text' ? '#0ABCCF' : n.data.nodeType === 'image' ? '#7FB8FF' : '#9C9C9C';
-          return <rect key={n.id} x={nx - 3} y={ny - 3} width={6} height={6} rx={1.5} fill={c} />;
-        })}
-        {/* 视口框 */}
-        <rect
-          x={vx}
-          y={vy}
-          width={vw}
-          height={vh}
-          fill="rgba(10,188,207,0.08)"
-          stroke="#0ABCCF"
-          strokeWidth={1}
-          rx={2}
-        />
-      </svg>
-    </div>
   );
 };

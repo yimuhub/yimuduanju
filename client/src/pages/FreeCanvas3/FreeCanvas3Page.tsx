@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 主页面：React Flow 画布 / 双击建节点 / 端口拖线 / 连线剪刀 / 快捷键 / 参考模式拾取
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -8,9 +8,12 @@ import {
   ReactFlowProvider,
   BaseEdge,
   ConnectionMode,
+  Controls,
   EdgeLabelRenderer,
+  MiniMap,
   getBezierPath,
   Position,
+  useReactFlow,
   type Connection,
   type ConnectionState,
   type Edge,
@@ -21,12 +24,12 @@ import {
   type OnSelectionChangeParams,
   type XYPosition,
 } from '@xyflow/react';
-import { Scissors } from 'lucide-react';
+import { Anchor, Copy, Image as ImageIcon, Pencil, Scissors, Trash2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useP3Store } from './pavo3Store';
 import { Pavo3Node } from './Pavo3Node';
 import { LeftElementsPanel } from './LeftElementsPanel';
-import { BottomBar, CanvasMinimap } from './BottomBar';
+import { BottomBar } from './BottomBar';
 import { ModelDialog } from './ModelDialog';
 import {
   AddNodeMenu,
@@ -100,6 +103,23 @@ function PavoEdge({
 
 const edgeTypes: EdgeTypes = { pavoEdge: PavoEdge };
 
+/** 小地图节点配色（按节点类型，与节点徽标一致） */
+const miniNodeColor = (node: Node): string => {
+  const kind = (node.data as { nodeType?: string }).nodeType;
+  if (kind === 'text') return '#0ABCCF';
+  if (kind === 'image') return '#7FB8FF';
+  if (kind === 'video') return '#E5484D';
+  if (kind === 'audio') return '#34C759';
+  return '#9C9C9C';
+};
+
+/** 节点右键菜单状态（视口像素定位） */
+interface CtxMenuState {
+  x: number;
+  y: number;
+  nodeId: string;
+}
+
 const CanvasInner = () => {
   const {
     nodes,
@@ -114,10 +134,11 @@ const CanvasInner = () => {
     dialogKind,
     undo,
     redo,
-    removeNode,
     setReorganizeConfirm,
+    minimap,
   } = useP3Store();
-  const lastPaneClick = useRef<{ x: number; y: number; t: number } | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
+  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const flowWrapRef = useRef<HTMLDivElement>(null);
 
   /* ---- 持久化：按项目读/写 localStorage（Pavo 同款：画布自动保存）+ 后端数据库实体自动同步 ---- */
@@ -154,7 +175,7 @@ const CanvasInner = () => {
     }
   }, [nodes, edges, projectName, persistKey]);
 
-  /* ---- 双击画布空白 → 添加节点菜单（原生 dblclick，可靠） ---- */
+  /* ---- 双击画布空白 → 快速创建文本节点（对标 FigJam/tldraw：双击即写；其他类型走工具栏 / 拖线） ---- */
   useEffect(() => {
     const el = flowWrapRef.current;
     if (!el) return;
@@ -164,14 +185,13 @@ const CanvasInner = () => {
       if (t.closest('.react-flow__node')) return;
       if (t.closest('.p3-dialog-mask')) return;
       if (t.closest('.p3-tool-panel')) return;
-      const x = e.clientX;
-      const y = e.clientY;
       closeDialog();
-      openAddMenu({ visible: true, x, y });
+      setCtxMenu(null);
+      useP3Store.getState().createNode('text', screenToFlowPosition({ x: e.clientX, y: e.clientY }));
     };
     el.addEventListener('dblclick', onDbl);
     return () => el.removeEventListener('dblclick', onDbl);
-  }, [openAddMenu, closeDialog]);
+  }, [closeDialog, screenToFlowPosition]);
 
   /* ---- 单击画布空白：关闭弹窗 ---- */
   const onPaneClick = useCallback(() => {
@@ -212,25 +232,34 @@ const CanvasInner = () => {
     [],
   );
 
-  /* ---- 全局快捷键 ---- */
+  /* ---- 全局快捷键（输入控件聚焦时不劫持按键） ---- */
   const onKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
       const meta = e.metaKey || e.ctrlKey;
+      const st = useP3Store.getState();
       if (meta && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (meta && e.key === 'z' && e.shiftKey) { e.preventDefault(); redo(); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && !meta) {
-        // 删除选中节点
-        const sel = useP3Store.getState().selectedNodeIds ?? [];
-        sel.forEach((id) => removeNode(id));
+        // 删除选中节点 + 选中连线（批量删除带确认）
+        e.preventDefault();
+        st.deleteSelection();
+      } else if (meta && (e.key === 'd' || e.key === 'D')) {
+        // ⌘D / Ctrl+D：复制选中节点（含副本间连线）
+        e.preventDefault();
+        st.duplicateNodes(st.selectedNodeIds ?? []);
       } else if (meta && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
         e.preventDefault();
         setReorganizeConfirm(true);
       } else if (e.key === 'Escape') {
         closeAddMenu();
         closeDialog();
+        setCtxMenu(null);
       }
+      // Space 平移：xyflow 默认 panActivationKeyCode='Space' 已支持，无需额外处理
     },
-    [undo, redo, removeNode, setReorganizeConfirm, closeAddMenu, closeDialog],
+    [undo, redo, setReorganizeConfirm, closeAddMenu, closeDialog],
   );
 
   React.useEffect(() => {
@@ -238,10 +267,52 @@ const CanvasInner = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onKeyDown]);
 
-  /* ---- 选中变化（用于删除） ---- */
+  /* ---- 选中变化（用于删除 / 复制） ---- */
   const onSelectionChange = useCallback(({ nodes: sel }: OnSelectionChangeParams) => {
     useP3Store.setState({ selectedNodeIds: sel.map((n) => n.id) });
   }, []);
+
+  /* ---- 节点右键上下文菜单（对标 Figma/tldraw） ---- */
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+  }, []);
+
+  // 右键菜单外点击 / 滚动即关闭
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('wheel', close, { passive: true });
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('wheel', close);
+    };
+  }, [ctxMenu]);
+
+  const ctxNode = ctxMenu ? nodes.find((n) => n.id === ctxMenu.nodeId) : null;
+
+  const ctxAction = useCallback((action: 'rename' | 'duplicate' | 'delete' | 'toggle-ref' | 'pick-ref') => {
+    if (!ctxMenu) return;
+    const st = useP3Store.getState();
+    const id = ctxMenu.nodeId;
+    const node = st.nodes.find((n) => n.id === id);
+    setCtxMenu(null);
+    if (action === 'rename' && node) {
+      const next = window.prompt('重命名节点', node.data.title);
+      if (next && next.trim() && next.trim() !== node.data.title) st.updateNodeData(id, { title: next.trim() });
+    } else if (action === 'duplicate') {
+      st.duplicateNodes([id]);
+    } else if (action === 'delete') {
+      // 右键目标在选中集内 → 批量删除；否则只删该节点
+      if ((st.selectedNodeIds ?? []).includes(id)) st.deleteSelection();
+      else st.removeNode(id);
+    } else if (action === 'toggle-ref' && node) {
+      st.updateNodeData(id, { isReference: !node.data.isReference });
+    } else if (action === 'pick-ref') {
+      window.dispatchEvent(new CustomEvent('p3-pick-ref', { detail: id }));
+    }
+  }, [ctxMenu]);
 
   return (
     <div className="p3-canvas-root" style={{ display: 'flex' }}>
@@ -258,6 +329,7 @@ const CanvasInner = () => {
           onConnectEnd={onConnectEnd}
           onPaneClick={onPaneClick}
           onNodeClick={onNodeClick}
+          onNodeContextMenu={onNodeContextMenu}
           onSelectionChange={onSelectionChange}
           snapToGrid={snapGrid}
           snapGrid={[12, 12]}
@@ -276,10 +348,49 @@ const CanvasInner = () => {
         >
           {/* 底部工具栏 */}
           <BottomBar />
+
+          {/* 右下：xyflow 缩放控件组 + 官方小地图（可拖拽 / 滚轮缩放） */}
+          <Controls showInteractive={false} position="bottom-right" />
+          {minimap && (
+            <MiniMap
+              position="bottom-right"
+              pannable
+              zoomable
+              className="p3-minimap-flow"
+              nodeColor={miniNodeColor}
+              nodeStrokeColor="transparent"
+              maskColor="rgba(18, 18, 18, 0.06)"
+            />
+          )}
         </ReactFlow>
 
-        {/* 画布小地图（画布外绝对定位） */}
-        <CanvasMinimap />
+        {/* 节点右键上下文菜单 */}
+        {ctxMenu && ctxNode && (
+          <div
+            className="p3-ctx-menu"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {dialogKind === 'image' && (
+              <button className="p3-ctx-item" onClick={() => ctxAction('pick-ref')}>
+                <ImageIcon size={14} /> 选为图片参考
+              </button>
+            )}
+            <button className="p3-ctx-item" onClick={() => ctxAction('rename')}>
+              <Pencil size={14} /> 重命名
+            </button>
+            <button className="p3-ctx-item" onClick={() => ctxAction('duplicate')}>
+              <Copy size={14} /> 复制节点 <kbd className="p3-ctx-kbd">⌘D</kbd>
+            </button>
+            <button className="p3-ctx-item" onClick={() => ctxAction('toggle-ref')}>
+              <Anchor size={14} /> {ctxNode.data.isReference ? '取消参考标记' : '设为参考'}
+            </button>
+            <div className="p3-ctx-sep" />
+            <button className="p3-ctx-item p3-ctx-danger" onClick={() => ctxAction('delete')}>
+              <Trash2 size={14} /> 删除 <kbd className="p3-ctx-kbd">Del</kbd>
+            </button>
+          </div>
+        )}
 
       </div>
 

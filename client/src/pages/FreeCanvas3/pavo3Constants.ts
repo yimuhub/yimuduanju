@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 常量：节点元数据 / 模型列表 / 风格库 / 快捷键 / 姿势预设
  */
 import type { ModelItem, PavoNodeType } from './pavo3Types';
@@ -366,12 +366,12 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string; desc: stri
   {
     title: '创作',
     items: [
-      { keys: '⌘G', desc: '成组' },
-      { keys: '⌘⇧G', desc: '解组' },
-      { keys: '⌘L', desc: '连线' },
-      { keys: '⌘D', desc: '复制节点和连线' },
-      { keys: '⌘Enter', desc: '生成' },
+      { keys: '双击空白', desc: '新建文本节点' },
       { keys: 'Tab', desc: '新建节点' },
+      { keys: '⌘D', desc: '复制节点和连线' },
+      { keys: 'Delete', desc: '删除选中节点 / 连线' },
+      { keys: '右键节点', desc: '节点菜单（重命名/复制/删除/设为参考）' },
+      { keys: '⌘Enter', desc: '生成' },
       { keys: '⌥拖动', desc: '节点复制' },
       { keys: '⌘⌥拖动', desc: '创建副本' },
     ],

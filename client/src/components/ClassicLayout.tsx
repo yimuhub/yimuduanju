@@ -81,7 +81,7 @@ const breadcrumbMap: Record<string, string> = {
   styles: '风格中心',
   settings: '设置',
   project: '项目工作台',
-  'canvas-free3': '自由画布 3',
+  'canvas-free3': '自由画布',
   script: '剧本',
   bible: '圣经',
   characters: '人物',

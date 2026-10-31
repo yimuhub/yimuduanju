@@ -35,7 +35,7 @@ const tabs = [
   { to: 'storyboard', label: '分镜', group: '镜头', icon: Film, hint: '结构化分镜表：逐镜生成首帧、视频与配音' },
   { to: 'director', label: '导演台', group: '镜头', icon: Video, hint: '三栏导演监视器：实时调节景别、机位、焦段与运镜' },
   { to: 'timeline', label: '时间线', group: '镜头', icon: Clock, hint: '五轨时间线：按秒拖拽调整镜头时长与音画节奏' },
-  { to: 'canvas-free3', label: '自由画布 3 ★', fullscreen: true, group: '画布', icon: PenTool, hint: '旗舰无限画布（1:1 Pavo 交互 + 3D 导演台 + 自动同步项目分镜）' },
+  { to: 'canvas-free3', label: '自由画布 ★', fullscreen: true, group: '画布', icon: PenTool, hint: '旗舰无限画布（1:1 Pavo 交互 + 3D 导演台 + 自动同步项目分镜）' },
   { to: 'agents', label: 'AI助手', group: '交付', icon: Bot, hint: '8 大影视工种智能体协同对话' },
   { to: 'tasks', label: '任务队列', group: '交付', icon: ListTodo, hint: '查看后台生成队列进度、重试或取消任务' },
   { to: 'qc', label: '质检', group: '交付', icon: ShieldCheck, hint: '成片完整性、角色一致性与钩子/CTA 规则质检' },
@@ -147,7 +147,7 @@ const ProjectWorkspacePage = () => {
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/15 px-4 py-3 text-xs text-amber-300">
           <div>
             <span className="font-semibold">🎬 创作流水线进行中：</span>
-            剧本与分镜已拆解就绪！系统正在后台队列生成分镜首帧图。你可以在「分镜」或「自由画布 3 ★」中预览画面、为镜头一键生成视频与角色配音，最后在「导出」页合成为带配音与字幕的完整 MP4。
+            剧本与分镜已拆解就绪！系统正在后台队列生成分镜首帧图。你可以在「分镜」或「自由画布 ★」中预览画面、为镜头一键生成视频与角色配音，最后在「导出」页合成为带配音与字幕的完整 MP4。
           </div>
           <div className="flex items-center gap-2">
             <button

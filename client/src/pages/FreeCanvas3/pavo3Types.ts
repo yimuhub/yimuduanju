@@ -1,5 +1,5 @@
 /**
- * 自由画布 3 · 1:1 复刻 Pavo AI Canvas
+ * 自由画布 · 1:1 复刻 Pavo AI Canvas
  * 类型定义
  */
 import type { Node, Edge } from '@xyflow/react';
@@ -54,6 +54,8 @@ export interface PavoNodeData {
   gen?: GenPanelState;
   /** 导演台：最近导出截图 */
   directorShot?: string;
+  /** 右键菜单「设为参考」：视觉标记该节点为参考素材（角色定妆/场景基准等） */
+  isReference?: boolean;
   /** xyflow v12 Node 约束 data extends Record<string, unknown>，加索引签名 */
   [key: string]: unknown;
 }
