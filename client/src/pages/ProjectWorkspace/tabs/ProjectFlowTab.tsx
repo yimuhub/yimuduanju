@@ -11,6 +11,7 @@ import {
   Film,
   Download,
   Grid3X3,
+  PenTool,
   RefreshCw,
 } from 'lucide-react';
 import { projects } from '@client/src/api';
@@ -115,6 +116,7 @@ const ProjectFlowTab = () => {
   const jumpButtons = [
     { to: `/project/${id}/script`, label: '去剧本', icon: ScrollText },
     { to: `/project/${id}/storyboard`, label: '去分镜', icon: Grid3X3 },
+    { to: `/project/${id}/canvas-free3`, label: '在画布查看', icon: PenTool },
     { to: `/project/${id}/tasks`, label: '任务队列', icon: ListTodo },
     { to: `/project/${id}/export`, label: '去导出', icon: Download },
   ];
@@ -242,7 +244,7 @@ const ProjectFlowTab = () => {
       </div>
 
       {/* 快速跳转 */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {jumpButtons.map((b) => (
           <button
             key={b.to}

@@ -111,6 +111,12 @@ interface FreeCanvas3State {
   runTryAction: (nodeId: string, action: string) => void;
   /** 从后端 PostgreSQL 项目实体（剧本/角色/场景/分镜）同步构建画布节点，打破 localStorage 数据孤岛 */
   syncFromBackend: (projectId: string) => Promise<void>;
+  /**
+   * 「分镜上画布」：拉取后端分镜表全量镜头，在画布右侧生成竖排流水线
+   * （每镜一行：首帧图 → 视频，链式连线，对标 LocalMiniDrama 画布工作流）。
+   * 已在画布上的镜头节点只刷新媒体与状态，不重复创建、不移动；返回本次新增节点数。
+   */
+  pullStoryboard: (projectId: string) => Promise<number>;
 }
 
 /** 简单中文→英文演示翻译（演示模式；对接 API 后由后端翻译） */
@@ -785,6 +791,121 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
       }
     } catch {
       /* 后端不可达时静默跳过 */
+    }
+  },
+
+  /** 「分镜上画布」：全量镜头 → 竖排流水线节点（刷新已有、追加未有，不动用户手动布局） */
+  pullStoryboard: async (projectId: string) => {
+    if (!projectId) return 0;
+    try {
+      const { projects, storyboard } = await import('@client/src/api');
+      const [proj, shotsList] = await Promise.all([
+        projects.getProject(projectId).catch(() => null),
+        storyboard.listAllShots(projectId).catch(() => []),
+      ]);
+      if (!shotsList.length) return 0;
+      const s = get();
+      const ratio = (proj?.aspectRatio as string) || '9:16';
+      const nodes = [...s.nodes];
+      const edges = [...s.edges];
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      // 新增节点排布：画布现有内容最右侧再开一列竖排流水线（每镜一行，行内 首帧→视频）
+      const baseX = nodes.reduce((m, n) => Math.max(m, n.position.x), 0) + 420;
+      const baseY = nodes.reduce((m, n) => Math.min(m, n.position.y), Infinity);
+      const topY = Number.isFinite(baseY) ? Math.max(60, baseY) : 80;
+      let added = 0;
+
+      shotsList.slice(0, 60).forEach((sh, idx) => {
+        const imgNodeId = `shot-img-${sh.id.slice(0, 8)}`;
+        const vidNodeId = `shot-vid-${sh.id.slice(0, 8)}`;
+        const rowY = topY + idx * 420;
+        const promptText = sh.visualPrompt || sh.dialogue || `镜头 #${sh.shotNumber}`;
+        const imgNode = byId.get(imgNodeId);
+        if (imgNode) {
+          // 已在画布：只刷新媒体与状态（分镜表可能有新产物），保留用户拖放的位置（本地合并，最后一次性 set）
+          byId.set(imgNodeId, {
+            ...imgNode,
+            data: {
+              ...imgNode.data,
+              mediaUrl: sh.startFrameUrl,
+              mediaKind: sh.startFrameUrl ? 'image' : undefined,
+              status: sh.startFrameUrl ? 'done' : imgNode.data.status === 'running' ? 'running' : 'idle',
+              progress: sh.startFrameUrl ? 100 : 0,
+            },
+          });
+          nodes.splice(nodes.indexOf(imgNode), 1, byId.get(imgNodeId)!);
+        } else {
+          nodes.push({
+            id: imgNodeId,
+            type: 'pavo',
+            position: { x: baseX, y: rowY },
+            data: {
+              nodeType: 'image',
+              title: `镜 #${sh.shotNumber} 首帧`,
+              status: sh.startFrameUrl ? 'done' : 'idle',
+              progress: sh.startFrameUrl ? 100 : 0,
+              mediaUrl: sh.startFrameUrl,
+              mediaKind: sh.startFrameUrl ? 'image' : undefined,
+              backendShotId: sh.id,
+              gen: { prompt: promptText, refs: [], refMode: false, ratio, res: '1K', preset: '通用', count: 1 },
+            },
+          });
+          byId.set(imgNodeId, nodes[nodes.length - 1]);
+          added++;
+        }
+        const vidNode = byId.get(vidNodeId);
+        if (vidNode) {
+          byId.set(vidNodeId, {
+            ...vidNode,
+            data: {
+              ...vidNode.data,
+              mediaUrl: sh.videoUrl,
+              mediaKind: sh.videoUrl ? 'video' : undefined,
+              status: sh.videoUrl ? 'done' : vidNode.data.status === 'running' ? 'running' : 'idle',
+              progress: sh.videoUrl ? 100 : 0,
+            },
+          });
+          nodes.splice(nodes.indexOf(vidNode), 1, byId.get(vidNodeId)!);
+        } else {
+          nodes.push({
+            id: vidNodeId,
+            type: 'pavo',
+            position: { x: baseX + 400, y: rowY },
+            data: {
+              nodeType: 'video',
+              title: `镜 #${sh.shotNumber} 视频 (${Math.round(Number(sh.duration) || 4)}s)`,
+              status: sh.videoUrl ? 'done' : 'idle',
+              progress: sh.videoUrl ? 100 : 0,
+              mediaUrl: sh.videoUrl,
+              mediaKind: sh.videoUrl ? 'video' : undefined,
+              backendShotId: sh.id,
+              gen: {
+                prompt: promptText,
+                refs: [imgNodeId],
+                refMode: false,
+                ratio,
+                res: '720P',
+                preset: '通用',
+                count: 1,
+                mode: '全能参考',
+                duration: `${Math.round(Number(sh.duration) || 4)}s`,
+              },
+            },
+          });
+          byId.set(vidNodeId, nodes[nodes.length - 1]);
+          added++;
+        }
+        // 行内连线 首帧→视频；行间镜头顺序链（上下衔接，LocalMiniDrama chain 同款语义）
+        const eImgVid = `e-${imgNodeId}-${vidNodeId}`;
+        if (!edges.some((e) => e.id === eImgVid)) {
+          edges.push({ id: eImgVid, source: imgNodeId, target: vidNodeId, type: 'pavoEdge' });
+        }
+      });
+
+      set({ nodes, edges, projectName: proj?.title || s.projectName });
+      return added;
+    } catch {
+      return 0;
     }
   },
 }));

@@ -25,14 +25,15 @@ import {
   type OnSelectionChangeParams,
   type XYPosition,
 } from '@xyflow/react';
-import { Anchor, Copy, Image as ImageIcon, Pencil, Scissors, Trash2 } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { Anchor, Copy, ExternalLink, Image as ImageIcon, Pencil, Scissors, Trash2 } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useP3Store } from './pavo3Store';
 import { Pavo3Node } from './Pavo3Node';
 import { LeftElementsPanel } from './LeftElementsPanel';
 import { BottomBar } from './BottomBar';
 import { ModelDialog } from './ModelDialog';
 import { AssistantPanel } from './AssistantPanel';
+import { useJobCanvasSync } from './useJobCanvasSync';
 import {
   AddNodeMenu,
   AssetLibraryDialog,
@@ -173,6 +174,7 @@ const CanvasInner = () => {
     minimap,
   } = useP3Store();
   const { screenToFlowPosition } = useReactFlow();
+  const navigate = useNavigate();
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const flowWrapRef = useRef<HTMLDivElement>(null);
 
@@ -231,6 +233,9 @@ const CanvasInner = () => {
       /* 容量不足忽略 */
     }
   }, [nodes, edges, projectName]);
+
+  /* ---- 任务流 ↔ 画布实时联动：任务进度徽章 + 生成产物自动落画布 ---- */
+  useJobCanvasSync(projectId);
 
   /* ---- 双击画布空白 → 快速创建文本节点（对标 FigJam/tldraw：双击即写；其他类型走工具栏 / 拖线） ---- */
   useEffect(() => {
@@ -349,12 +354,27 @@ const CanvasInner = () => {
 
   const ctxNode = ctxMenu ? nodes.find((n) => n.id === ctxMenu.nodeId) : null;
 
-  const ctxAction = useCallback((action: 'rename' | 'duplicate' | 'delete' | 'toggle-ref' | 'pick-ref') => {
+  const ctxAction = useCallback((action: 'rename' | 'duplicate' | 'delete' | 'toggle-ref' | 'pick-ref' | 'open-workbench') => {
     if (!ctxMenu) return;
     const st = useP3Store.getState();
     const id = ctxMenu.nodeId;
     const node = st.nodes.find((n) => n.id === id);
     setCtxMenu(null);
+    if (action === 'open-workbench' && node && projectId) {
+      // 深链：节点 ↔ 工作台实体双向打通（分镜带 shot 参数定位到具体镜头）
+      const d = node.data as { backendShotId?: string; backendCharId?: string; nodeType?: string };
+      const tab = d.backendShotId
+        ? `storyboard${typeof d.backendShotId === 'string' ? `?shot=${d.backendShotId}` : ''}`
+        : d.backendCharId
+          ? 'characters'
+          : d.nodeType === 'script'
+            ? 'script'
+            : d.nodeType === 'scene'
+              ? 'scenes'
+              : null;
+      if (tab) navigate(`/project/${projectId}/${tab}`);
+      return;
+    }
     if (action === 'rename' && node) {
       const next = window.prompt('重命名节点', node.data.title);
       if (next && next.trim() && next.trim() !== node.data.title) st.updateNodeData(id, { title: next.trim() });
@@ -369,7 +389,7 @@ const CanvasInner = () => {
     } else if (action === 'pick-ref') {
       window.dispatchEvent(new CustomEvent('p3-pick-ref', { detail: id }));
     }
-  }, [ctxMenu]);
+  }, [ctxMenu, navigate, projectId]);
 
   return (
     <div className="p3-canvas-root" style={{ display: 'flex' }}>
@@ -442,6 +462,15 @@ const CanvasInner = () => {
             <button className="p3-ctx-item" onClick={() => ctxAction('duplicate')}>
               <Copy size={14} /> 复制节点 <kbd className="p3-ctx-kbd">⌘D</kbd>
             </button>
+            {projectId && ctxNode && (() => {
+              const d = ctxNode.data as { backendShotId?: string; backendCharId?: string; nodeType?: string };
+              const linked = Boolean(d.backendShotId || d.backendCharId || d.nodeType === 'script' || d.nodeType === 'scene');
+              return linked ? (
+                <button className="p3-ctx-item" onClick={() => ctxAction('open-workbench')}>
+                  <ExternalLink size={14} /> 在工作台打开
+                </button>
+              ) : null;
+            })()}
             <button className="p3-ctx-item" onClick={() => ctxAction('toggle-ref')}>
               <Anchor size={14} /> {ctxNode.data.isReference ? '取消参考标记' : '设为参考'}
             </button>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Grid3X3,
   List,
@@ -51,6 +51,8 @@ const shotSizeLabels: Record<string, string> = {
 const ProjectStoryboardTab = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 画布「在工作台打开」深链：/storyboard?shot=<id> 自动展开并定位该镜头（画布 ↔ 工作台双向打通）
+  const [searchParams] = useSearchParams();
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [shots, setShots] = useState<Shot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,6 +159,14 @@ const ProjectStoryboardTab = () => {
         try {
           const allShots = await storyboard.listAllShots(id);
           setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));
+          // 画布深链 ?shot=<id>：展开并滚动定位到该镜头
+          const targetShot = searchParams.get('shot');
+          if (targetShot && allShots.some((s) => s.id === targetShot)) {
+            setExpandedId(targetShot);
+            setTimeout(() => {
+              document.getElementById(`shot-card-${targetShot}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 300);
+          }
         } catch {
           // skip
         }
@@ -166,6 +176,7 @@ const ProjectStoryboardTab = () => {
         setError('加载分镜失败');
       })
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const filteredShots = selectedScene === 'all'
@@ -329,7 +340,10 @@ const ProjectStoryboardTab = () => {
             return (
               <div
                 key={shot.id}
-                className="overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md"
+                id={`shot-card-${shot.id}`}
+                className={`overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md ${
+                  searchParams.get('shot') === shot.id ? 'ring-2 ring-primary/50' : ''
+                }`}
               >
                 {/* Thumbnail */}
                 <div

@@ -4,6 +4,7 @@
  */
 import React, { useState } from 'react';
 import { Panel, useReactFlow, useStore } from '@xyflow/react';
+import { useParams } from 'react-router-dom';
 import {
   LayoutGrid,
   Map,
@@ -17,7 +18,9 @@ import {
   ChevronDown,
   Undo2,
   Redo2,
+  Film,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useP3Store } from './pavo3Store';
 import { P3 } from './pavo3Constants';
 
@@ -44,6 +47,24 @@ export const BottomBar = () => {
     openAddMenu,
   } = useP3Store();
   const [zoomOpen, setZoomOpen] = useState(false);
+  const { id: routeProjectId } = useParams<{ id: string }>();
+  const projectId = routeProjectId === 'free' ? undefined : routeProjectId;
+  const [pulling, setPulling] = useState(false);
+
+  // 「分镜上画布」：后端分镜表全量镜头一键落画布（竖排流水线，已有节点仅刷新媒体）
+  const pullStoryboard = async () => {
+    if (!projectId || pulling) return;
+    setPulling(true);
+    try {
+      const added = await useP3Store.getState().pullStoryboard(projectId);
+      if (added > 0) toast.success(`已把后端分镜落上画布：新增 ${added} 个节点`);
+      else toast.success('分镜已与画布同步（无新增节点，已有镜头媒体已刷新）');
+    } catch {
+      toast.error('分镜同步失败，请确认后端服务可达');
+    } finally {
+      setPulling(false);
+    }
+  };
 
   const pct = Math.round(zoom * 100);
 
@@ -151,6 +172,17 @@ export const BottomBar = () => {
           <button style={toolBtn(false)} title="添加节点" onClick={openCentralAddMenu}>
             <Plus size={18} />
           </button>
+          {projectId && (
+            <button
+              style={{ ...toolBtn(pulling), width: 'auto', padding: '0 10px', gap: 5, fontSize: 12.5, fontWeight: 500 }}
+              title="拉取后端分镜表：全量镜头按「首帧 → 视频」竖排流水线上画布（已在画布的镜头仅刷新媒体）"
+              onClick={pullStoryboard}
+              disabled={pulling}
+            >
+              <Film size={15} className={pulling ? 'p3-spin' : undefined} />
+              {pulling ? '同步中…' : '分镜上画布'}
+            </button>
+          )}
           <button style={toolBtn(false)} title="历史资产" onClick={() => setAssetsOpen(true)}>
             <Clock size={16} />
           </button>
