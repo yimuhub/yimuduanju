@@ -148,8 +148,8 @@ const ProjectDirectorTab = () => {
           <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
             共 {shots.length} 个镜头 · {scenes.length} 场
           </span>
-          <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary">
-            <Layers className="h-3.5 w-3.5" /> 打开无限画布
+          <button onClick={() => navigate(`/project/${id}/canvas-free3`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary">
+            <Layers className="h-3.5 w-3.5" /> 打开自由画布
           </button>
         </div>
       </div>

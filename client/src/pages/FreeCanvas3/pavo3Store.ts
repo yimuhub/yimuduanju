@@ -13,7 +13,7 @@ import {
   type XYPosition,
 } from '@xyflow/react';
 import type { DialogKind, ModelItem, PavoFlowEdge, PavoFlowNode, PavoNodeData, PavoNodeType } from './pavo3Types';
-import { DEMO_AUDIO, DEMO_IMAGE, DEMO_VIDEO, MODELS, NODE_TYPES, type StyleItem } from './pavo3Constants';
+import { DEMO_AUDIO, DEMO_IMAGE, DEMO_VIDEO, EMPTY_COUNTERS, MODELS, NODE_TYPES, type StyleItem } from './pavo3Constants';
 import { pavo3 as pavo3Api } from '@client/src/api';
 
 interface AddMenuState {
@@ -46,6 +46,9 @@ interface FreeCanvas3State {
   nodes: PavoFlowNode[];
   edges: PavoFlowEdge[];
   counters: Record<PavoNodeType, number>;
+  /** 当前集数（画布状态按集分存 localStorage -epN） */
+  episode: number;
+  setEpisode: (ep: number) => void;
   filter: string;
   addMenu: AddMenuState | null;
   dialogNodeId: string | null;
@@ -125,7 +128,8 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
   projectName: '未命名项目',
   nodes: [],
   edges: [],
-  counters: { text: 0, image: 0, video: 0, audio: 0, composite: 0, director: 0 },
+  counters: { ...EMPTY_COUNTERS },
+  episode: 1,
   filter: 'all',
   addMenu: null,
   dialogNodeId: null,
@@ -317,6 +321,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
     }),
 
   setProjectName: (name) => set({ projectName: name }),
+  setEpisode: (ep) => set({ episode: Math.min(3, Math.max(1, ep)) }),
   restoreCanvas: (snap) => {
     const nodes = (snap.nodes ?? []).map((n) => ({
       ...n,
@@ -325,7 +330,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
         y: Number.isFinite(n.position.y) ? n.position.y : 0,
       },
     }));
-    const counters = { text: 0, image: 0, video: 0, audio: 0, composite: 0, director: 0 } as Record<PavoNodeType, number>;
+    const counters = { ...EMPTY_COUNTERS } as Record<PavoNodeType, number>;
     nodes.forEach((n) => {
       const k = n.data.nodeType;
       const m = n.data.title?.match(/(\d+)\s*$/);
@@ -671,7 +676,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
         existingIds.add(scriptNodeId);
       }
 
-      // 2. 角色参考图节点
+      // 2. 角色参考图节点（专属「角色」节点：定妆图 + 人设属性）
       charsList.slice(0, 8).forEach((ch, idx) => {
         const cid = `char-img-${ch.id.slice(0, 8)}`;
         if (existingIds.has(cid)) return;
@@ -681,13 +686,14 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
           type: 'pavo',
           position: { x: 60, y: 420 + idx * 360 },
           data: {
-            nodeType: refUrl ? 'image' : 'text',
+            nodeType: 'character',
             title: `角色 · ${ch.name}`,
             status: refUrl || ch.canonicalDescription ? 'done' : 'idle',
             progress: 100,
             mediaUrl: refUrl,
             mediaKind: refUrl ? 'image' : undefined,
-            markdown: !refUrl ? (ch.canonicalDescription || ch.personality || ch.name) : undefined,
+            profile: ch.canonicalDescription || ch.personality || '',
+            markdown: !refUrl && !ch.canonicalDescription && !ch.personality ? ch.name : undefined,
             backendCharId: ch.id,
           },
         });

@@ -4,14 +4,24 @@
  */
 import type { Node, Edge } from '@xyflow/react';
 
-/** 节点类型：7 类画布节点 */
+/** 节点类型：11 类画布节点（媒体 6 类 + 短剧创作 5 类） */
 export type PavoNodeType =
   | 'text'
   | 'image'
   | 'video'
   | 'audio'
   | 'composite'
-  | 'director';
+  | 'director'
+  /** 剧本节点：全剧 / 分集剧本文本 */
+  | 'script'
+  /** 角色节点：人设、定妆参考与生成入口 */
+  | 'character'
+  /** 场景节点：场地设定与场景概念图 */
+  | 'scene'
+  /** 分镜节点：单镜头（首帧 / 视频 / 台词） */
+  | 'storyboard'
+  /** 备注节点：创作便签 */
+  | 'note';
 
 /** 节点执行状态 */
 export type NodeStatus = 'idle' | 'running' | 'done' | 'error';
@@ -43,6 +53,8 @@ export interface PavoNodeData {
   markdown?: string;
   /** 自己编写富文本内容（纯文本） */
   richText?: string;
+  /** 创作类节点专属属性（角色人设 / 场景设定 / 镜头信息等），属性面板读写 */
+  profile?: string;
   /** 图片/视频/音频产物 URL（演示模式为占位） */
   mediaUrl?: string;
   mediaKind?: 'image' | 'video' | 'audio';
@@ -71,7 +83,13 @@ export type DialogKind =
   | 'audio'
   | 'composite'
   | 'director'
-  | 'write'; // 自己编写：Slate 富文本
+  | 'write' // 自己编写：Slate 富文本
+  /** 创作类节点属性面板（富文本编辑：人设 / 场景 / 剧本 / 分镜 / 备注） */
+  | 'character'
+  | 'scene'
+  | 'script'
+  | 'storyboard'
+  | 'note';
 
 /** 模型条目（对接三通道 API 的展示结构） */
 export interface ModelItem {

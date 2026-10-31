@@ -17,9 +17,14 @@ import {
   Search,
   Keyboard,
   Check,
+  ScrollText,
+  UserRound,
+  Mountain,
+  Film,
+  StickyNote,
 } from 'lucide-react';
 import { useP3Store } from './pavo3Store';
-import { NODE_TYPES, P3, SHORTCUT_GROUPS, STYLE_CATS, STYLE_LIBRARY } from './pavo3Constants';
+import { NODE_COLORS, NODE_GROUPS, NODE_TYPES, P3, SHORTCUT_GROUPS, STYLE_CATS, STYLE_LIBRARY } from './pavo3Constants';
 import { useCanvasModels } from './pavo3DynamicModels';
 import type { PavoNodeType } from './pavo3Types';
 
@@ -30,6 +35,11 @@ const MENU_ICON: Record<string, React.ReactNode> = {
   audio: <AudioLines size={16} strokeWidth={1.8} />,
   composite: <Combine size={16} strokeWidth={1.8} />,
   director: <Box size={16} strokeWidth={1.8} />,
+  script: <ScrollText size={16} strokeWidth={1.8} />,
+  character: <UserRound size={16} strokeWidth={1.8} />,
+  scene: <Mountain size={16} strokeWidth={1.8} />,
+  storyboard: <Film size={16} strokeWidth={1.8} />,
+  note: <StickyNote size={16} strokeWidth={1.8} />,
 };
 
 /* ---------------- 添加节点菜单（双击画布 / 端口拖线 / 左右加号 / 底部按钮） ---------------- */
@@ -94,16 +104,26 @@ export const AddNodeMenu = () => {
       : addMenu.side === 'right'
         ? Math.min(addMenu.x, window.innerWidth - menuW - 8)
         : Math.min(addMenu.x, window.innerWidth - menuW - 8);
-  const menuY = Math.min(Math.max(addMenu.y - 90, 8), window.innerHeight - 400);
+  const menuY = Math.min(Math.max(addMenu.y - 90, 8), Math.max(8, window.innerHeight - 560));
 
   return (
     <div ref={ref} className="p3-add-menu" style={{ left: menuX, top: menuY }}>
       <div className="p3-add-menu-section">添加节点</div>
-      {NODE_TYPES.map((t) => (
-        <button key={t.type} className="p3-add-menu-item" onClick={() => pick(t.type)}>
-          <span style={{ color: P3.helper }}>{MENU_ICON[t.type]}</span>
-          {t.label}
-        </button>
+      {NODE_GROUPS.map((g) => (
+        <React.Fragment key={g.title}>
+          <div style={{ fontSize: 10.5, color: P3.faint, padding: '5px 14px 1px', fontWeight: 600, letterSpacing: 1 }}>
+            {g.title}
+          </div>
+          {g.types.map((type) => {
+            const t = NODE_TYPES.find((x) => x.type === type)!;
+            return (
+              <button key={t.type} className="p3-add-menu-item" onClick={() => pick(t.type)}>
+                <span style={{ color: NODE_COLORS[t.type] ?? P3.helper }}>{MENU_ICON[t.type]}</span>
+                {t.label}
+              </button>
+            );
+          })}
+        </React.Fragment>
       ))}
       <div className="p3-add-menu-section" style={{ marginTop: 4 }}>添加资源</div>
       <button className="p3-add-menu-item" onClick={() => { closeAddMenu(); }}>

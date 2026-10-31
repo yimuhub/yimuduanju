@@ -5,9 +5,9 @@
 import React, { useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, Plus, FileText, Image as ImageIcon, Clapperboard, AudioLines, Combine, Box, ArrowLeft } from 'lucide-react';
+import { ChevronDown, Plus, FileText, Image as ImageIcon, Clapperboard, AudioLines, Combine, Box, ArrowLeft, ScrollText, UserRound, Mountain, Film, StickyNote } from 'lucide-react';
 import { useP3Store } from './pavo3Store';
-import { FILTERS, P3 } from './pavo3Constants';
+import { EMPTY_COUNTERS, FILTERS, NODE_COLORS, NODE_GROUPS, P3 } from './pavo3Constants';
 import type { PavoNodeType } from './pavo3Types';
 
 const TYPE_ICON: Record<string, React.ReactNode> = {
@@ -17,6 +17,11 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
   audio: <AudioLines size={15} strokeWidth={1.8} />,
   composite: <Combine size={15} strokeWidth={1.8} />,
   director: <Box size={15} strokeWidth={1.8} />,
+  script: <ScrollText size={15} strokeWidth={1.8} />,
+  character: <UserRound size={15} strokeWidth={1.8} />,
+  scene: <Mountain size={15} strokeWidth={1.8} />,
+  storyboard: <Film size={15} strokeWidth={1.8} />,
+  note: <StickyNote size={15} strokeWidth={1.8} />,
 };
 
 export const LeftElementsPanel = () => {
@@ -105,7 +110,7 @@ export const LeftElementsPanel = () => {
       <button
         onClick={() => {
           // 重置为空白画布（演示：清空节点）
-          useP3Store.setState({ nodes: [], edges: [], counters: { text: 0, image: 0, video: 0, audio: 0, composite: 0, director: 0 } });
+          useP3Store.setState({ nodes: [], edges: [], counters: { ...EMPTY_COUNTERS } });
           setProjectName('未命名项目');
         }}
         style={{
@@ -164,25 +169,37 @@ export const LeftElementsPanel = () => {
         </div>
       </div>
 
-      {/* 节点列表 */}
+      {/* 节点列表（按 媒体 / 短剧创作 分组） */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
-        {visible.map((n) => (
-          <button
-            key={n.id}
-            onClick={() => focusNode(n.id, n.position.x, n.position.y)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '7px 8px', borderRadius: 8, fontSize: 13, color: P3.text,
-              cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = P3.hover)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <span style={{ color: P3.helper }}>{TYPE_ICON[n.data.nodeType]}</span>
-            {n.data.title}
-            {n.data.status === 'running' && <span style={{ marginLeft: 'auto', fontSize: 11, color: P3.primary }}>生成中</span>}
-          </button>
-        ))}
+        {NODE_GROUPS.map((g) => {
+          const groupNodes = visible.filter((n) => g.types.includes(n.data.nodeType));
+          if (groupNodes.length === 0) return null;
+          return (
+            <div key={g.title}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: P3.faint, padding: '8px 8px 2px', letterSpacing: 1 }}>
+                {g.title}
+              </div>
+              {groupNodes.map((n) => (
+                <button
+                  key={n.id}
+                  onClick={() => focusNode(n.id, n.position.x, n.position.y)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 8px', borderRadius: 8, fontSize: 13, color: P3.text,
+                    cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
+                    width: '100%',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = P3.hover)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={{ color: NODE_COLORS[n.data.nodeType] ?? P3.helper }}>{TYPE_ICON[n.data.nodeType]}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.data.title}</span>
+                  {n.data.status === 'running' && <span style={{ marginLeft: 'auto', fontSize: 11, color: P3.primary }}>生成中</span>}
+                </button>
+              ))}
+            </div>
+          );
+        })}
         {visible.length === 0 && (
           <div style={{ fontSize: 13, color: P3.faint, padding: '16px 8px', textAlign: 'center' }}>
             暂无节点

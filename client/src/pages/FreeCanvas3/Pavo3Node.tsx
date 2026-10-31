@@ -13,10 +13,16 @@ import {
   Box,
   Play,
   Plus,
+  ScrollText,
+  UserRound,
+  Mountain,
+  Film,
+  StickyNote,
+  Pencil,
 } from 'lucide-react';
 import type { PavoFlowNode } from './pavo3Types';
 import { useP3Store } from './pavo3Store';
-import { AUDIO_TRY, P3, TEXT_TRY } from './pavo3Constants';
+import { AUDIO_TRY, NODE_COLORS, NODE_TYPES, P3, TEXT_TRY } from './pavo3Constants';
 
 const TYPE_ICON: Record<string, React.ReactNode> = {
   text: <FileText size={16} strokeWidth={1.8} />,
@@ -25,7 +31,15 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
   audio: <AudioLines size={16} strokeWidth={1.8} />,
   composite: <Combine size={16} strokeWidth={1.8} />,
   director: <Box size={16} strokeWidth={1.8} />,
+  script: <ScrollText size={16} strokeWidth={1.8} />,
+  character: <UserRound size={16} strokeWidth={1.8} />,
+  scene: <Mountain size={16} strokeWidth={1.8} />,
+  storyboard: <Film size={16} strokeWidth={1.8} />,
+  note: <StickyNote size={16} strokeWidth={1.8} />,
 };
+
+/** 短剧创作类节点（属性面板 = 富文本编辑） */
+const CREATION_KINDS = new Set<string>(['script', 'character', 'scene', 'storyboard', 'note']);
 
 /** 端口连接图标（Pavo 同款：紧贴节点框两侧的圆形「+」） */
 function ConnIcon() {
@@ -165,8 +179,19 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
 
       {/* 标题行 */}
       <div className="p3-node-title-row">
-        {TYPE_ICON[kind]}
+        <span style={{ display: 'inline-flex', color: NODE_COLORS[kind] ?? P3.helper }}>{TYPE_ICON[kind]}</span>
         <span>{data.title}</span>
+        {CREATION_KINDS.has(kind) && (
+          <span
+            style={{
+              marginLeft: 6, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap',
+              color: NODE_COLORS[kind], background: `${NODE_COLORS[kind]}1A`,
+              borderRadius: 999, padding: '1px 7px',
+            }}
+          >
+            {NODE_TYPES.find((t) => t.type === kind)?.label}
+          </span>
+        )}
         {data.isReference && (
           <span
             title="已设为参考素材（右键可取消标记）"
@@ -293,6 +318,17 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
                 <div style={{ textAlign: 'center', color: P3.helper, fontSize: 13, padding: '4px 0 8px' }}>
                   双击打开视频生成（文生视频 / 全能参考 / 首尾帧）
                 </div>
+              ) : CREATION_KINDS.has(kind) ? (
+                <>
+                  <div style={{ textAlign: 'center', color: P3.helper, fontSize: 13, padding: '4px 0 8px' }}>
+                    {NODE_TYPES.find((t) => t.type === kind)?.hint}
+                  </div>
+                  <TryButton
+                    label="编辑属性"
+                    icon={<Pencil size={15} strokeWidth={1.8} />}
+                    onClick={() => openDialog(id, kind)}
+                  />
+                </>
               ) : (
                 <>
                   <div style={{ color: P3.faint, fontSize: 13, padding: '2px 2px 6px' }}>尝试：</div>

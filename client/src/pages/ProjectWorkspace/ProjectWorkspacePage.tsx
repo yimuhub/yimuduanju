@@ -14,7 +14,6 @@ import {
   Video,
   Clock,
   PenTool,
-  GitBranch,
   Bot,
   ListTodo,
   ShieldCheck,
@@ -36,8 +35,7 @@ const tabs = [
   { to: 'storyboard', label: '分镜', group: '镜头', icon: Film, hint: '结构化分镜表：逐镜生成首帧、视频与配音' },
   { to: 'director', label: '导演台', group: '镜头', icon: Video, hint: '三栏导演监视器：实时调节景别、机位、焦段与运镜' },
   { to: 'timeline', label: '时间线', group: '镜头', icon: Clock, hint: '五轨时间线：按秒拖拽调整镜头时长与音画节奏' },
-  { to: 'canvas-free3', label: '自由画布 ★', fullscreen: true, group: '画布', icon: PenTool, hint: '旗舰无限画布（1:1 Pavo 交互 + 3D 导演台 + 自动同步项目分镜）' },
-  { to: 'canvas', label: '无限画布', fullscreen: true, group: '画布', icon: GitBranch, hint: '节点即工具箱模式：支持分支创作与多会话智能体（v5 旧旗舰，老板最爱）' },
+  { to: 'canvas-free3', label: '自由画布', fullscreen: true, group: '画布', icon: PenTool, hint: '旗舰自由画布（1:1 Pavo 交互 + 角色/场景/剧本/分镜节点 + AI 助手 + 集数切换 + 3D 导演台）' },
   { to: 'agents', label: 'AI助手', group: '交付', icon: Bot, hint: '8 大影视工种智能体协同对话' },
   { to: 'tasks', label: '任务队列', group: '交付', icon: ListTodo, hint: '查看后台生成队列进度、重试或取消任务' },
   { to: 'qc', label: '质检', group: '交付', icon: ShieldCheck, hint: '成片完整性、角色一致性与钩子/CTA 规则质检' },
@@ -124,7 +122,7 @@ const ProjectWorkspacePage = () => {
             onClick={() => navigate(`/project/${id}/canvas-free3`)}
             className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3.5 py-2 text-sm font-medium text-primary hover:bg-primary/10"
           >
-            打开无限画布
+            打开自由画布
           </button>
           <button
             onClick={() => navigate(`/project/${id}/export`)}

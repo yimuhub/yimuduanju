@@ -11,6 +11,7 @@ import {
   Controls,
   EdgeLabelRenderer,
   MiniMap,
+  Panel,
   getBezierPath,
   Position,
   useReactFlow,
@@ -31,6 +32,7 @@ import { Pavo3Node } from './Pavo3Node';
 import { LeftElementsPanel } from './LeftElementsPanel';
 import { BottomBar } from './BottomBar';
 import { ModelDialog } from './ModelDialog';
+import { AssistantPanel } from './AssistantPanel';
 import {
   AddNodeMenu,
   AssetLibraryDialog,
@@ -40,7 +42,7 @@ import {
   StyleLibraryDialog,
 } from './Dialogs';
 import { Director3D } from './Director3D';
-import { P3 } from './pavo3Constants';
+import { NODE_COLORS, P3 } from './pavo3Constants';
 import './pavo3.css';
 import '@xyflow/react/dist/style.css';
 
@@ -103,14 +105,47 @@ function PavoEdge({
 
 const edgeTypes: EdgeTypes = { pavoEdge: PavoEdge };
 
+/** 顶栏集数选择器（画布状态按集分存 localStorage -epN，沿用画布自动保存机制） */
+const EpisodeBar = ({ projectId }: { projectId?: string }) => {
+  const episode = useP3Store((s) => s.episode);
+  const setEpisode = useP3Store((s) => s.setEpisode);
+  const pick = (ep: number) => {
+    setEpisode(ep);
+    try {
+      localStorage.setItem(`yimu-free3-${projectId ?? 'default'}-last-ep`, String(ep));
+    } catch {
+      /* 忽略 */
+    }
+  };
+  return (
+    <Panel position="top-center">
+      <div className="p3-tool-panel" style={{ gap: 6, padding: '4px 8px' }}>
+        <span style={{ fontSize: 12, color: P3.helper, padding: '0 2px' }}>集数</span>
+        {[1, 2, 3].map((ep) => (
+          <button
+            key={ep}
+            onClick={() => pick(ep)}
+            title={`切换到第 ${ep} 集（独立画布）`}
+            style={{
+              width: 30, height: 26, borderRadius: 7, fontSize: 12, cursor: 'pointer',
+              fontWeight: 600, transition: 'background 0.12s',
+              background: episode === ep ? P3.primary : '#fff',
+              color: episode === ep ? '#fff' : P3.text,
+              border: episode === ep ? 'none' : `1px solid ${P3.border}`,
+            }}
+          >
+            {ep}
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+};
+
 /** 小地图节点配色（按节点类型，与节点徽标一致） */
 const miniNodeColor = (node: Node): string => {
   const kind = (node.data as { nodeType?: string }).nodeType;
-  if (kind === 'text') return '#0ABCCF';
-  if (kind === 'image') return '#7FB8FF';
-  if (kind === 'video') return '#E5484D';
-  if (kind === 'audio') return '#34C759';
-  return '#9C9C9C';
+  return NODE_COLORS[kind] ?? '#9C9C9C';
 };
 
 /** 节点右键菜单状态（视口像素定位） */
@@ -141,39 +176,61 @@ const CanvasInner = () => {
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const flowWrapRef = useRef<HTMLDivElement>(null);
 
-  /* ---- 持久化：按项目读/写 localStorage（Pavo 同款：画布自动保存）+ 后端数据库实体自动同步 ---- */
-  const { projectName, restoreCanvas, syncFromBackend } = useP3Store();
+  /* ---- 持久化：按项目 + 集数分存 localStorage（-epN 后缀，沿用画布自动保存机制）+ 后端实体同步 ---- */
+  const { projectName, restoreCanvas, syncFromBackend, episode, setEpisode } = useP3Store();
   // 路由参数名为 id（project/:id/canvas-free3），之前误读 projectId 导致恒为 undefined、
   // 画布持久化与白模上传都拿不到项目归属；此处修正（白模产线需要真实 projectId）。
   const { id: routeProjectId } = useParams<{ id: string }>();
   const projectId = routeProjectId === 'free' ? undefined : routeProjectId;
-  const persistKey = `yimu-free3-${projectId ?? 'default'}`;
+  const baseKey = `yimu-free3-${projectId ?? 'default'}`;
+  const persistKey = `${baseKey}-ep${episode}`;
+  // 当前写入键（ref）：切换集数时先由加载 effect 恢复新集画布并更新键，
+  // 保存 effect 依赖节点引用，未变化时不触发，避免把上一集内容误写入新集键
+  const persistKeyRef = useRef(persistKey);
+  // 首次加载完成前禁止写入（last-ep 重定向期间 persistKeyRef 尚未就位，防止空状态覆盖存档）
+  const loadedRef = useRef(false);
+  // 后端实体每个项目只同步一次（切集不重复注入）
+  const syncedProjectRef = useRef<string | null>(null);
   useEffect(() => {
     try {
-      // 兼容旧数据：修复前 projectId 恒为 undefined，画布全落在 default 键下；
-      // 项目键无数据时回落到 default，避免用户旧画布“丢失”
+      // 记忆用户上次的集数选择
+      const savedEp = Number(localStorage.getItem(`${baseKey}-last-ep`) || '1');
+      if (Number.isFinite(savedEp) && savedEp >= 1 && savedEp <= 3 && savedEp !== episode) {
+        setEpisode(savedEp);
+        return; // 下一次 effect 随 persistKey 变化重新执行
+      }
+      // 兼容旧数据：修复前画布存在 yimu-free3-<projectId> / yimu-free3-default 单键下，
+      // 第 1 集无数据时回落旧键，避免用户旧画布“丢失”
       const raw = localStorage.getItem(persistKey)
-        ?? (projectId ? localStorage.getItem('yimu-free3-default') : null);
+        ?? (episode === 1 ? localStorage.getItem(baseKey) : null)
+        ?? (episode === 1 && projectId ? localStorage.getItem('yimu-free3-default') : null);
       if (raw) {
         const snap = JSON.parse(raw);
         if (snap && Array.isArray(snap.nodes)) restoreCanvas(snap);
+      } else {
+        // 该集无存档：清空画布（保留项目名），避免上一集节点串到新集
+        restoreCanvas({ nodes: [], edges: [], projectName: useP3Store.getState().projectName });
       }
     } catch {
       /* 损坏数据忽略 */
     }
-    if (projectId) {
+    persistKeyRef.current = persistKey;
+    loadedRef.current = true;
+    if (projectId && syncedProjectRef.current !== projectId) {
+      syncedProjectRef.current = projectId;
       void syncFromBackend(projectId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistKey, projectId]);
   useEffect(() => {
+    if (!loadedRef.current) return;
     try {
       const snap = { nodes, edges, projectName };
-      localStorage.setItem(persistKey, JSON.stringify(snap));
+      localStorage.setItem(persistKeyRef.current, JSON.stringify(snap));
     } catch {
       /* 容量不足忽略 */
     }
-  }, [nodes, edges, projectName, persistKey]);
+  }, [nodes, edges, projectName]);
 
   /* ---- 双击画布空白 → 快速创建文本节点（对标 FigJam/tldraw：双击即写；其他类型走工具栏 / 拖线） ---- */
   useEffect(() => {
@@ -346,6 +403,9 @@ const CanvasInner = () => {
           zoomOnDoubleClick={false}
           panOnScroll
         >
+          {/* 顶栏：集数切换 */}
+          <EpisodeBar projectId={projectId} />
+
           {/* 底部工具栏 */}
           <BottomBar />
 
@@ -396,6 +456,7 @@ const CanvasInner = () => {
 
       {/* 弹窗层 */}
       <ModelDialog />
+      <AssistantPanel projectId={projectId} />
       <AddNodeMenu />
       <ModelSelectDialog />
       <StyleLibraryDialog />

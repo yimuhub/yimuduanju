@@ -86,8 +86,8 @@ const ProjectBibleTab = () => {
             世界观与风格定义，确保全片角色、场景、镜头的一致性
           </p>
         </div>
-        <button onClick={() => navigate(`/project/${id}/canvas`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3.5 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary">
-          <Sparkles className="h-4 w-4" /> 去无限画布
+        <button onClick={() => navigate(`/project/${id}/canvas-free3`)} className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3.5 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary">
+          <Sparkles className="h-4 w-4" /> 去自由画布
         </button>
       </div>
 

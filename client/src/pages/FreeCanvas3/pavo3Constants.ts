@@ -32,7 +32,48 @@ export const NODE_TYPES: NodeTypeMeta[] = [
   { type: 'audio', label: '音频', hint: '' },
   { type: 'composite', label: '视频合成', hint: '请连接视频节点后操作' },
   { type: 'director', label: '导演台', hint: '在3D空间中搭建场景并进行多视角截图' },
+  { type: 'script', label: '剧本', hint: '全剧 / 分集剧本文本，双击编辑' },
+  { type: 'character', label: '角色', hint: '角色人设与定妆参考，双击编辑属性' },
+  { type: 'scene', label: '场景', hint: '场地设定与场景概念，双击编辑属性' },
+  { type: 'storyboard', label: '分镜', hint: '单镜头信息（景别 / 台词 / 时长），双击编辑' },
+  { type: 'note', label: '备注', hint: '创作便签，双击记录想法' },
 ];
+
+/** 创作类节点专属配色（节点徽标 / 小地图 / 左侧面板共用） */
+export const NODE_COLORS: Record<string, string> = {
+  text: '#0ABCCF',
+  image: '#7FB8FF',
+  video: '#E5484D',
+  audio: '#34C759',
+  composite: '#9C9C9C',
+  director: '#121212',
+  script: '#F5A623',
+  character: '#E85D75',
+  scene: '#8E6FE8',
+  storyboard: '#5B8DEF',
+  note: '#FFC53D',
+};
+
+/** 左侧元素面板 / 添加菜单的分组结构 */
+export const NODE_GROUPS: { title: string; types: PavoNodeType[] }[] = [
+  { title: '媒体', types: ['text', 'image', 'video', 'audio', 'composite', 'director'] },
+  { title: '短剧创作', types: ['script', 'character', 'scene', 'storyboard', 'note'] },
+];
+
+/** 全类型空计数器（重置 / 恢复画布共用，避免漏掉新增类型） */
+export const EMPTY_COUNTERS: Record<PavoNodeType, number> = {
+  text: 0,
+  image: 0,
+  video: 0,
+  audio: 0,
+  composite: 0,
+  director: 0,
+  script: 0,
+  character: 0,
+  scene: 0,
+  storyboard: 0,
+  note: 0,
+};
 
 /** 空文本节点的「尝试」按钮 */
 export const TEXT_TRY = ['自己编写', '一句话生成剧本', '文生图', '文生视频', '图片反推提示词'];
@@ -52,6 +93,11 @@ export const FILTERS: { key: string; label: string }[] = [
   { key: 'audio', label: '音频' },
   { key: 'composite', label: '视频合成' },
   { key: 'director', label: '导演台' },
+  { key: 'script', label: '剧本' },
+  { key: 'character', label: '角色' },
+  { key: 'scene', label: '场景' },
+  { key: 'storyboard', label: '分镜' },
+  { key: 'note', label: '备注' },
 ];
 
 /* ---------------- 模型列表（对接三通道 API 的展示结构；数据后续由后台配置） ---------------- */
