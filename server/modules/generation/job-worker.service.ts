@@ -16,7 +16,9 @@ import {
   scenes,
   shots,
 } from '@server/database/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+// 修复：新增 isNull / lt / notInArray / or，供「陈旧 queued 回收」与
+// 「按 provider 维度限流冷却」的条件构造使用
+import { and, eq, inArray, isNull, lt, notInArray, or } from 'drizzle-orm';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { mkdir, stat, writeFile } from 'fs/promises';
@@ -32,9 +34,60 @@ import { StorySkillsService } from '../story-skills/story-skills.service';
 import { StoryboardService } from '../storyboard/storyboard.service';
 import { ExportService } from '../export/export.service';
 import { QcService } from '../qc/qc.service';
-import { uploadDir } from '../assets/uploads.controller';
+// 修复（分层）：uploadDir 直接从工具模块导入。
+// 旧写法依赖 uploads.controller 里的再导出，使消费器在模块加载期
+// 就被迫拉起整条 Controller → Service → DI 依赖链。
+import { uploadDir } from '../assets/upload-dir';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
+
+/** 上游限流冷却时长（按 provider 维度，见 providerHoldUntil） */
+const RATE_LIMIT_COOLDOWN_MS = 20_000;
+/** 未被路由到具体 provider 的任务在冷却表里的占位键 */
+const DEFAULT_PROVIDER_KEY = '__default__';
+/**
+ * queued 滞留回收阈值。
+ * 修复：claimForQueue 先置 status='queued' 再 queue.add()，两步之间崩溃、
+ * 或 Redis 启动后掉线，任务会永远停在 queued —— tick() 只认领 pending，
+ * 而 running 回收原本只在 onModuleInit 跑一次，queued 态没有任何回收路径。
+ */
+const STALE_QUEUED_MS = 5 * 60 * 1000;
+
+/**
+ * 上游限流 / 瞬时故障判定。
+ * 说明：这仍是基于错误文案的匹配 —— 网关抛的是 BadRequestException(message)，
+ * 没有携带结构化 code。彻底修复需要让 ModelGatewayService 抛带 code 的类型化错误，
+ * 那是一次跨模块重构；此处先把判定集中到一处并收紧正则：
+ * 旧的 /\b503\b/ 会命中被回显的用户 prompt 文本（例如剧本里出现「503」），
+ * 把一次真实的业务失败误判成限流，从而无限重试且不消耗重试次数。
+ */
+const RATE_LIMIT_PATTERNS: RegExp[] = [
+  /pool saturated/i,
+  /rate[_\s-]?limit/i,
+  /too many requests/i,
+  /\b429\b/,
+  /\(\s*503\s*[,)]/, // 网关错误文案形如「视频生成失败 (503, https://…)」
+  /HTTP\s*503\b/i,
+  /status(?:\s*code)?[:=]?\s*503\b/i,
+];
+
+function isRateLimitMessage(message: string): boolean {
+  return RATE_LIMIT_PATTERNS.some((re) => re.test(message));
+}
+
+/**
+ * Provider / API Key 未配置：确定性配置缺失，重试不会改变结果，
+ * 保持 pending 等人工配置，且不消耗重试次数。
+ */
+const MISSING_PROVIDER_PATTERNS: RegExp[] = [
+  /API Key/i,
+  /未配置/,
+  /不存在或已禁用/,
+];
+
+function isMissingProviderMessage(message: string): boolean {
+  return MISSING_PROVIDER_PATTERNS.some((re) => re.test(message));
+}
 
 /**
  * 任务消费器（W5：BullMQ 队列版，Redis 不可用时自动降级为进程内串行）。
@@ -51,8 +104,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   private running = false;
   /** 已提示过“等 Key”的任务，避免每轮刷日志 */
   private readonly awaitingProvider = new Set<string>();
-  /** 上游限流冷却截止时间（ms epoch）；期间不认领新任务 */
-  private holdUntil = 0;
+  /**
+   * 按 provider 维度的上游限流冷却截止时间（ms epoch）。
+   * 修复：旧实现是单例上的一个全局 `holdUntil`，
+   * 某个供应商限流会把所有项目、所有任务类型一起冻 20s。
+   */
+  private readonly providerHoldUntil = new Map<string, number>();
   private budgetWarned = false;
   private queue: Queue | null = null;
   private worker: Worker | null = null;
@@ -146,6 +203,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       this.worker.on('failed', (job, err) => {
         this.logger.warn(`队列任务失败 ${job?.data?.jobId}: ${err.message}`);
       });
+      // 修复（Redis 掉线不降级）：retryStrategy: () => null 意味着不重连，
+      // 'end' 会在连接彻底断开时触发。此时必须切到进程内串行，
+      // 否则 tick() 继续把 pending 翻成 queued，任务全部滞留
+      // （要等 recoverStaleQueued 5 分钟后才捞回）。
+      redis.on('error', (err: Error) => {
+        this.logger.warn(`Redis 错误：${err.message}`);
+      });
+      redis.on('end', () => this.degradeToInline('连接已结束且不会重连'));
       this.logger.log(`任务消费器已启动（BullMQ 队列模式，并发 ${concurrency}）`);
     } catch (e) {
       this.inlineMode = true;
@@ -172,28 +237,100 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     if (this.redis) this.redis.disconnect();
   }
 
-  /** 启动回收：崩溃残留的 running（无远端任务）回到 pending 等待重领 */
+  /**
+   * 启动回收：崩溃残留的 running（无远端任务）回到 pending 等待重领。
+   * 有 externalTaskId 的视频任务由轮询继续推进，不回收。
+   *
+   * 修复（N+1）：旧实现先 select 全部 running，再在循环里逐行 UPDATE
+   * （还内联了 eslint-disable no-await-in-loop）。改为单条带谓词的
+   * UPDATE … RETURNING，一次往返完成。
+   *
+   * 注意：本方法只能在启动时调用。consumeQueuedJob 会把任务置为 running，
+   * 而此时 externalTaskId 仍为空，周期性调用会把正在执行的任务抽回 pending。
+   * 周期性回收请用 recoverStaleQueued()。
+   */
   private async recoverOrphanedRunning(): Promise<void> {
     try {
-      // 有 externalTaskId 的视频任务由轮询继续推进，不回收；其余 running 回 pending
-      const others = await this.db
-        .select({ id: generationJobs.id, externalTaskId: generationJobs.externalTaskId })
-        .from(generationJobs)
-        .where(eq(generationJobs.status, 'running'));
-      let recovered = 0;
-      for (const r of others) {
-        if (r.externalTaskId) continue;
-        // eslint-disable-next-line no-await-in-loop
-        await this.db
-          .update(generationJobs)
-          .set({ status: 'pending', updatedAt: new Date() })
-          .where(eq(generationJobs.id, r.id));
-        recovered += 1;
+      const recovered = await this.db
+        .update(generationJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(
+          and(
+            eq(generationJobs.status, 'running'),
+            isNull(generationJobs.externalTaskId),
+          ),
+        )
+        .returning({ id: generationJobs.id });
+      if (recovered.length > 0) {
+        this.logger.log(`崩溃恢复：${recovered.length} 个残留 running 任务回到 pending`);
       }
-      if (recovered > 0) this.logger.log(`崩溃恢复：${recovered} 个残留 running 任务回到 pending`);
     } catch (e) {
       this.logger.warn(`崩溃恢复失败: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * 周期性回收滞留的 queued 任务。
+   * 修复（queued 无人回收）：claimForQueue 先置 status='queued' 再 queue.add()。
+   * 两步之间崩溃、或 Redis 启动后掉线，任务就永远停在 queued ——
+   * tick() 只认领 pending，recoverOrphanedRunning() 只处理 running 且只在启动跑一次，
+   * consumeQueuedJob() 也不会被触发（消息根本没进队列）。
+   * 这里按 updatedAt 加 STALE_QUEUED_MS 阈值捞回；正常几秒内就被消费的任务不受影响。
+   */
+  private async recoverStaleQueued(): Promise<void> {
+    try {
+      const staleBefore = new Date(Date.now() - STALE_QUEUED_MS);
+      const stale = await this.db
+        .update(generationJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(
+          and(
+            eq(generationJobs.status, 'queued'),
+            lt(generationJobs.updatedAt, staleBefore),
+          ),
+        )
+        .returning({ id: generationJobs.id });
+      if (stale.length > 0) {
+        this.logger.warn(
+          `队列回收：${stale.length} 个滞留超过 ${STALE_QUEUED_MS / 1000}s 的 queued 任务回到 pending` +
+            `（${stale.slice(0, 5).map((r) => r.id).join(', ')}${stale.length > 5 ? ' …' : ''}）`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(`queued 回收失败: ${(e as Error).message}`);
+    }
+  }
+
+  /** 当前仍在冷却中的 provider 名称；顺手清理过期项，防止 Map 无界增长 */
+  private coolingProviders(): string[] {
+    const now = Date.now();
+    const out: string[] = [];
+    for (const [key, until] of this.providerHoldUntil) {
+      if (until <= now) {
+        this.providerHoldUntil.delete(key);
+        continue;
+      }
+      if (key !== DEFAULT_PROVIDER_KEY) out.push(key);
+    }
+    return out;
+  }
+
+  /**
+   * Redis 中途不可用时降级为进程内串行消费。
+   * 修复：IORedis 用 retryStrategy: () => null（不重连），而 inlineMode
+   * 原本只在 onModuleInit 的 catch 里设置。启动后 Redis 挂掉 → BullMQ 静默死亡，
+   * tick() 仍把 pending 翻成 queued，queue.add 的拒绝只被打日志，没有任何降级。
+   */
+  private degradeToInline(reason: string): void {
+    if (this.inlineMode) return;
+    this.logger.error(`Redis 不可用（${reason}），降级为进程内串行消费`);
+    this.inlineMode = true;
+    const worker = this.worker;
+    const queue = this.queue;
+    this.worker = null;
+    this.queue = null;
+    void worker?.close().catch(() => {});
+    void queue?.close().catch(() => {});
   }
 
   private async tick(): Promise<void> {
@@ -221,9 +358,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.drivePipeline().catch((e: Error) =>
         this.logger.warn(`流水线自动链驱动失败: ${e.message}`),
       );
+      // 修复：queued 滞留回收必须周期性执行，不能只在启动时跑一次
+      await this.recoverStaleQueued();
+
       if (this.queue && !this.inlineMode) {
-        // 上游限流冷却：期间不认领新任务（在途轮询继续）
-        if (this.holdUntil && Date.now() < this.holdUntil) return;
+        // 上游限流冷却改为按 provider 维度（见 claimForQueue 的过滤），
+        // 不再用全局 holdUntil 整轮 return —— 旧实现会让一个供应商的限流
+        // 冻住所有项目、所有任务类型。
         // 队列模式：认领 pending → queued → 入队（Worker 并发执行）
         for (let i = 0; i < 5; i += 1) {
           // eslint-disable-next-line no-await-in-loop
@@ -232,16 +373,31 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           // BullMQ 按 jobId 去重：完成过的同 id 再 add 会被静默忽略 →
           // 重试任务永远卡 queued。带 retryCount+时间戳保证唯一。
           // 注意：BullMQ jobId 禁止冒号，分隔符必须用下划线。
-          // eslint-disable-next-line no-await-in-loop
-          await this.queue.add(
-            'execute',
-            { jobId: claimed.id },
-            {
-              jobId: `${claimed.id}_r${claimed.retryCount ?? 0}_${Date.now()}`,
-              removeOnComplete: 100,
-              removeOnFail: 200,
-            },
-          );
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await this.queue.add(
+              'execute',
+              { jobId: claimed.id },
+              {
+                jobId: `${claimed.id}_r${claimed.retryCount ?? 0}_${Date.now()}`,
+                removeOnComplete: 100,
+                removeOnFail: 200,
+              },
+            );
+          } catch (addErr) {
+            // 修复（任务滞留）：入队失败时任务已停在 queued，旧实现只把异常抛给
+            // tick 外层的 catch，任务要等 5 分钟才被 recoverStaleQueued 捞回。
+            // 这里立即降级并就地执行，保证不丢任务、不白等。
+            this.logger.error(
+              `入队失败 ${claimed.id}：${(addErr as Error).message}`,
+            );
+            this.degradeToInline('queue.add 失败');
+            // eslint-disable-next-line no-await-in-loop
+            await this.consumeQueuedJob(claimed.id).catch((e: Error) =>
+              this.logger.error(`降级执行失败 ${claimed.id}：${e.message}`),
+            );
+            break;
+          }
         }
       } else {
         // 降级模式：进程内串行直接执行（旧行为）
@@ -255,10 +411,25 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   /** 认领一个 pending 并置 queued（队列模式专用，与 claimNextPendingJob 语义一致） */
   private async claimForQueue(): Promise<GenerationJob | null> {
+    // 修复（按 provider 冷却）：冷却中的 provider 对应的任务本轮不认领。
+    // 既不继续打爆对端池，也不会像旧的全局 holdUntil 那样冻住所有通道。
+    // providerName 为 NULL 的任务（路由决策尚未落盘）必须放行，
+    // 否则 NOT IN 遇 NULL 结果为 NULL，会把全部未路由任务一起排除掉。
+    const cooling = this.coolingProviders();
+    const where =
+      cooling.length > 0
+        ? and(
+            eq(generationJobs.status, 'pending'),
+            or(
+              isNull(generationJobs.providerName),
+              notInArray(generationJobs.providerName, cooling),
+            ),
+          )
+        : eq(generationJobs.status, 'pending');
     const rows = await this.db
       .select()
       .from(generationJobs)
-      .where(eq(generationJobs.status, 'pending'))
+      .where(where)
       .orderBy(generationJobs.createdAt)
       .limit(1);
     if (rows.length === 0) return null;
@@ -280,6 +451,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   private async consumeQueuedJob(jobId: string): Promise<void> {
     const job = await this.generationService.getJob(jobId);
     if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+      // 修复（缓慢泄漏）：awaitingProvider 原本只在「非限流错误」分支里删除，
+      // 任务后来成功或被用户删除，它的 id 会永远留在 Set 里。终态即清理。
+      this.awaitingProvider.delete(jobId);
       return;
     }
     if (job.status === 'queued' || job.status === 'pending' || job.status === 'retrying') {
@@ -322,6 +496,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           eq(generationJobs.jobType, 'video'),
         ),
       )
+      // 修复（在途视频饿死）：旧实现 .limit(5) 但没有 ORDER BY，
+      // 每 tick 可能反复选中同 5 行，其余在途视频任务永远轮不到推进。
+      // 按 updatedAt 升序 = 最久未推进的优先，天然形成轮转。
+      .orderBy(generationJobs.updatedAt)
       .limit(5);
     for (const row of rows) {
       if (!row.externalTaskId) continue;
@@ -362,6 +540,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const stage = await this.applyStageBinding(job, routedName);
     const providerName = stage.providerName;
     const modelOpts = { model: stage.model, temperature: stage.temperature };
+    // 修复（按 provider 冷却）：冷却期内不触碰该通道，直接放回 pending 等下一轮，
+    // 避免继续打爆对端池；其他 provider 的任务不受影响。
+    const holdKey = providerName ?? DEFAULT_PROVIDER_KEY;
+    const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
+    if (holdUntil > Date.now()) {
+      await this.releaseToPending(job.id);
+      return;
+    }
+    this.providerHoldUntil.delete(holdKey);
     try {
       switch (job.jobType) {
         case 'parse_script':
@@ -392,32 +579,48 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           await this.processQc(job);
           break;
         default:
-          // storyboard 等类型当前无生产方创建，保留 pending 并提示，避免误判失败
-          this.logger.warn(`暂不支持的任务类型 ${job.jobType}（${job.id}），跳过执行`);
-          await this.releaseToPending(job.id);
+          // 修复（无限循环 + 队头阻塞）：旧实现把不支持的类型 releaseToPending，
+          // 下一个 tick 又被认领，如此反复 —— 死循环 + 每轮刷一条日志。
+          // 更糟的是 claimForQueue 按 createdAt 取最老的一条 pending，
+          // 一个古老的不支持任务会永久占住认领名额，把后面所有正常任务堵死。
+          // 不支持的类型是确定性错误，重试不会改变结果，直接终结并写明原因。
+          this.logger.error(
+            `不支持的任务类型 ${job.jobType}（${job.id}），已终结；请检查生产方或升级消费器`,
+          );
+          await this.generationService.settleJobFailure(
+            job.id,
+            `消费器不支持的任务类型：${job.jobType}`,
+          );
           break;
       }
+      // 修复（缓慢泄漏）：执行成功即从 awaitingProvider 移除，
+      // 避免任务后来成功或被删除时 id 永远留在 Set 里。
+      this.awaitingProvider.delete(job.id);
     } catch (e) {
       const message = (e as Error)?.message ?? '未知错误';
       // 未配置 Provider：保持 pending 等待配置，不消耗重试次数
-      if (message.includes('API Key') || message.includes('未配置')) {
+      if (isMissingProviderMessage(message)) {
         if (!this.awaitingProvider.has(job.id)) {
           this.logger.warn(`任务 ${job.id} 等待 Provider 配置：${message}`);
           this.awaitingProvider.add(job.id);
+          // 兜底上限：即使某条清理路径漏了，也不会无界增长
+          if (this.awaitingProvider.size > 5000) this.awaitingProvider.clear();
         }
         await this.releaseToPending(job.id);
         return;
       }
       this.awaitingProvider.delete(job.id);
-      // 上游限流（pool saturated / rate_limit / 503）：不消耗重试次数，
-      // 冷却 20s 后由 tick 重新认领，避免打爆对端池
-      if (
-        message.includes('pool saturated') ||
-        message.includes('rate_limit') ||
-        /\b503\b/.test(message)
-      ) {
-        this.logger.warn(`任务 ${job.id} 上游限流，冷却后重试：${message.slice(0, 160)}`);
-        this.holdUntil = Date.now() + 20_000;
+      // 上游限流（pool saturated / rate_limit / 429 / 503）：不消耗重试次数，
+      // 冷却后由 tick 重新认领，避免打爆对端池。
+      // 修复（全局冻结）：旧实现 `this.holdUntil = Date.now() + 20_000` 是单例上的
+      // 一个全局值，某个供应商限流会把所有项目、所有任务类型一起冻 20s。
+      // 改为按 provider 维度冷却，未受影响的通道继续跑。
+      if (isRateLimitMessage(message)) {
+        const key = providerName ?? DEFAULT_PROVIDER_KEY;
+        this.providerHoldUntil.set(key, Date.now() + RATE_LIMIT_COOLDOWN_MS);
+        this.logger.warn(
+          `任务 ${job.id} 上游限流（provider=${key}），冷却 ${RATE_LIMIT_COOLDOWN_MS / 1000}s 后重试：${message.slice(0, 160)}`,
+        );
         await this.releaseToPending(job.id);
         return;
       }
@@ -1593,14 +1796,28 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** data:/远程 → 稳定本地 /uploads/ 路径；失败原样返回 http(s)。 */
-  private async ensureLocalUrl(projectId: string | null, url: string): Promise<string> {
+  private async ensureLocalUrl(
+    projectId: string | null,
+    url: string,
+    assetType: 'image' | 'video' | 'audio' = 'image',
+  ): Promise<string> {
     if (!projectId || url.startsWith('/uploads/')) return url;
     if (!url.startsWith('data:') && !url.startsWith('http')) return url;
+    // 修复（扩展名错配）：旧实现对所有 URL 硬传 'image' / 'image/png'，
+    // 于是归档出来的视频会带 .png 名字 —— archiveLocalFile 的 ext 由入参 mime 猜，
+    // 而不是由实际内容决定，资产库里点开就是个打不开的文件。
+    // 现在由调用方声明真实类型；data: URL 仍优先用它自带的 MIME。
+    const fallbackMime =
+      assetType === 'video'
+        ? 'video/mp4'
+        : assetType === 'audio'
+          ? 'audio/mpeg'
+          : 'image/png';
     const local = await this.archiveLocalFile(
       projectId,
       url,
-      'image',
-      url.startsWith('data:') ? (url.slice(5, url.indexOf(';')) || 'image/png') : 'image/png',
+      assetType,
+      url.startsWith('data:') ? (url.slice(5, url.indexOf(';')) || fallbackMime) : fallbackMime,
     );
     return local?.fileUrl ?? url;
   }
@@ -1634,7 +1851,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         await writeFile(dest, buf);
         return { fileUrl: `/uploads/${projectId}/${name}`, filePath: dest, fileSize: buf.length };
       }
-      if (remoteUrl.startsWith('data:') || remoteUrl.startsWith('/uploads/')) return null;
+      // 修复（死代码）：删除原本的
+      // `if (remoteUrl.startsWith('data:') || remoteUrl.startsWith('/uploads/')) return null;`
+      // —— data: 已在上面分支处理并 return，/uploads/ 在方法开头就已 return，
+      // 这一行永远不可能为真，只会误导读者以为还存在第三种情况。
       const ok = await this.curlTo(remoteUrl, dest, 90_000, 4);
       if (!ok) return null;
       const st = await stat(dest).catch(() => null);
@@ -1657,27 +1877,51 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     const unique = [...new Set(candidates)];
     const timeoutSec = Math.max(15, Math.ceil(timeoutMs / 1000));
+    // 修复（重试预算被镜像吃掉）：旧实现 `unique[attempt % unique.length]`
+    // 让原域与镜像共用同一个 retries 预算，retries=1 时镜像根本没机会试。
+    // 改为每个候选各自拥有 retries 次机会。
+    const maxAttempts = Math.max(1, retries) * unique.length;
     return new Promise((resolve) => {
       let attempt = 0;
       const tryOnce = (): void => {
         const target = unique[attempt % unique.length];
+        // 修复：不再硬编码 /usr/bin/curl。Alpine / distroless / 非标准前缀下
+        // 该路径不存在，而 child.on('error') 会把「curl 没装」和网络抖动
+        // 同等对待地重试 maxAttempts 次，最后只留一句「下载产出失败」。
+        // 交给 PATH 解析；确实没装时下面单独识别 ENOENT 并立刻放弃。
         const child = spawn(
-          '/usr/bin/curl',
+          'curl',
           ['-sS', '-f', '-L', '--connect-timeout', '10', '--max-time', String(timeoutSec), '-o', dest, target],
           { stdio: ['ignore', 'ignore', 'pipe'] },
         );
         let err = '';
-        child.stderr.on('data', (d: Buffer) => { err += d.toString(); });
-        const fail = (): void => {
-          attempt += 1;
-          if (attempt >= retries) {
-            this.logger.warn(`下载产出失败（${attempt} 次）: ${err.slice(0, 160)}`);
+        // 修复（无界累积）：stderr 原本 `err += d.toString()` 不设上限，
+        // 一个持续报错的重定向循环可以把它撑得很大；排障只需要一小段。
+        child.stderr.on('data', (d: Buffer) => {
+          if (err.length < 4096) err += d.toString();
+        });
+        const fail = (spawnError?: Error): void => {
+          // curl 不存在属于环境问题，重试无意义，立刻失败并给出可操作的提示
+          if ((spawnError as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+            this.logger.error(
+              '未找到 curl 可执行文件（PATH 中不可用），本地产出归档已跳过；' +
+                '请安装 curl，否则资产库只能回退远程 CDN 链接',
+            );
             resolve(false);
             return;
           }
-          setTimeout(tryOnce, 400 * attempt);
+          attempt += 1;
+          if (attempt >= maxAttempts) {
+            this.logger.warn(
+              `下载产出失败（${attempt} 次，${unique.length} 个候选）: ${err.slice(-160)}`,
+            );
+            resolve(false);
+            return;
+          }
+          // 退避封顶：旧的 400*attempt 在候选变多后会线性涨到数秒
+          setTimeout(tryOnce, 400 * Math.min(attempt, 5));
         };
-        child.on('error', fail);
+        child.on('error', (e: Error) => fail(e));
         child.on('close', (code) => {
           if (code === 0) resolve(true);
           else fail();

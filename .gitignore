@@ -10,9 +10,10 @@ backups/
 uploads/
 
 # 真实密钥（绝不提交；示例文件除外）
+# 注意：必须用 .env.* 通配，否则 .env.enterprise 这类真实密钥文件会被提交。
+# 下面两条 ! 例外规则必须保持在最后，才能让示例模板正常进仓库。
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
 !.env.enterprise.example
 

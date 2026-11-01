@@ -14,7 +14,10 @@ import {
   qcReports,
 } from '@server/database/schema';
 import { eq, desc, asc } from 'drizzle-orm';
-import { uploadDir } from '../assets/uploads.controller';
+// 修复（分层）：uploadDir 直接从工具模块导入。
+// 旧写法依赖 uploads.controller 里的再导出，而该再导出已删除
+// （它逼着导出服务在模块加载期拉起整条 Controller → Service → DI 依赖链）。
+import { uploadDir } from '../assets/upload-dir';
 import { isSafeExternalUrl, isSafeExternalUrlStatic } from '../../common/url-guard';
 import type { Asset } from '@shared/api.interface';
 

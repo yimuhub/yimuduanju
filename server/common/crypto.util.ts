@@ -18,6 +18,15 @@ import {
 const PREFIX = 'enc:v1:';
 const ALGORITHM = 'aes-256-gcm';
 
+/**
+ * 密钥缓存。
+ * 修复：旧实现每次 encrypt/decrypt 都重读并重校验 process.env，热路径上纯属浪费；
+ * 更关键的是配置错误只在「第一次真正用到密钥」时才暴露，表现为供应商列表接口莫名 500，
+ * 运维难以定位。现在缓存解析结果，并提供 validateCryptoConfig() 供启动期自检。
+ */
+let cachedKey: Buffer | null = null;
+let cachedKeyHex: string | null = null;
+
 function getKeySecret(): Buffer {
   const hex = process.env.YIMU_KEY_SECRET;
   if (!hex) {
@@ -28,7 +37,43 @@ function getKeySecret(): Buffer {
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
     throw new Error('YIMU_KEY_SECRET 格式非法：应为 64 位 hex（32 字节）');
   }
-  return Buffer.from(hex, 'hex');
+  // 仅在环境变量未变化时复用缓存（保留测试中改写 env 的能力）
+  if (cachedKey && cachedKeyHex === hex) return cachedKey;
+  cachedKey = Buffer.from(hex, 'hex');
+  cachedKeyHex = hex;
+  return cachedKey;
+}
+
+/**
+ * 启动期自检：把「密钥缺失 / 格式非法」从首次调用时的 500 提前到启动日志。
+ * 返回问题描述数组，空数组表示就绪。本函数不抛异常，由调用方决定是否 fail-fast。
+ */
+export function validateCryptoConfig(): string[] {
+  const problems: string[] = [];
+  try {
+    getKeySecret();
+  } catch (e) {
+    problems.push((e as Error).message);
+  }
+  return problems;
+}
+
+/**
+ * 读路径安全解密：密钥缺失或 GCM 认证失败（密钥轮换 / 密文损坏）时返回 null，
+ * 而不是抛出未捕获异常。
+ * 修复：decryptApiKey 处在供应商列表等读路径上（model-gateway 的 enrich），
+ * 一次配置疏漏或一次密钥轮换会让所有 Provider 接口 500，且错误信息不可读。
+ * 写路径与真正要拿密钥发请求的路径仍应使用会抛异常的 decryptApiKey。
+ */
+export function tryDecryptApiKey(
+  value: string | null | undefined,
+): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  try {
+    return decryptApiKey(value) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Controller,
   Headers,
+  Inject,
   Logger,
   NotFoundException,
   Param,
@@ -10,14 +11,17 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { projects } from '@server/database/schema';
 import { eq } from 'drizzle-orm';
 import { createWriteStream } from 'fs';
-import { mkdir } from 'fs/promises';
+// 修复：unlink 原本在两个分支里各写一次 `await import('fs/promises')` 动态导入，
+// 而顶部已静态导入了 mkdir。统一为静态导入，去掉重复的运行时解析。
+import { mkdir, unlink } from 'fs/promises';
 import { createHash, randomUUID } from 'crypto';
-import { join, resolve } from 'path';
+// 修复：`resolve` 从未被使用，noUnusedLocals 下会直接编译失败；
+// 同时把重复的第二条 '@nestjs/common' import 合并进上面那条。
+import { join } from 'path';
 import type { Request } from 'express';
 import type { Asset } from '@shared/api.interface';
 import { AssetsService } from './assets.service';
@@ -37,6 +41,8 @@ import { uploadDir } from './upload-dir';
  * 直喂需要公网可拉取 URL——Key 到位做 R2V 联调时，需换 S3/OSS 公网地址。
  */
 const MAX_BYTES = 25 * 1024 * 1024;
+/** 请求体接收超时：旧实现的 Promise 没有任何超时，客户端只连不发就会挂死一个请求 */
+const UPLOAD_TIMEOUT_MS = 60_000;
 const ALLOWED: Record<string, string> = {
   'video/webm': 'webm',
   'video/mp4': 'mp4',
@@ -49,7 +55,10 @@ const ALLOWED: Record<string, string> = {
   'audio/mp4': 'm4a',
 };
 
-export { uploadDir } from './upload-dir';
+// 修复（分层）：删除原本的 `export { uploadDir } from './upload-dir';`。
+// 这个再导出写在 Controller 里，逼着 main.ts 与 model-gateway.service.ts
+// 都去 import 一个 Controller 模块，形成「启动入口 → Controller → Service → DI」
+// 的无谓依赖链。两处调用方已改为直接 import './upload-dir'。
 
 @Controller('api/projects/:projectId/uploads')
 export class UploadsController {
@@ -75,6 +84,15 @@ export class UploadsController {
         `不支持的 Content-Type，仅允许 ${Object.keys(ALLOWED).join('、')}`,
       );
     }
+    // 修复（无 Content-Length 预检）：旧实现要等客户端把 25MB 全部灌满才拒绝。
+    // 声明长度已超限时立刻拒绝，不建目录、不落盘、不浪费带宽。
+    const declaredLength = Number(req.headers['content-length']);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
+      throw new BadRequestException(
+        `文件超过 ${MAX_BYTES / 1024 / 1024}MB 上限（Content-Length: ${declaredLength}）`,
+      );
+    }
+
     const projRows = await this.db
       .select({ id: projects.id })
       .from(projects)
@@ -88,35 +106,83 @@ export class UploadsController {
     const absPath = join(dir, fileName);
 
     const size = await new Promise<number>((resolveSize, reject) => {
+      // 修复（监听器挂得太晚）：'data' 原本在两次 await（项目查询、mkdir）之后才注册。
+      // 若 configureApp 为该 Content-Type 装了 body parser，'end' 早已触发，
+      // 下面的 req.on('end') 永远不会再回调 → Promise 永不 settle，请求挂死。
+      if (req.readableEnded) {
+        reject(
+          new BadRequestException(
+            '请求体已被上游中间件消费，无法直接落盘（请勿对 octet-stream 启用 body parser）',
+          ),
+        );
+        return;
+      }
+
       let received = 0;
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
       const stream = createWriteStream(absPath);
+
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        fn();
+      };
+
+      // 修复（无超时）：客户端只连不发就会永久占用一个请求与一个文件句柄
+      timer = setTimeout(() => {
+        settle(() => {
+          stream.destroy();
+          req.destroy();
+          reject(
+            new BadRequestException(
+              `上传超时：${UPLOAD_TIMEOUT_MS / 1000}s 内未收完请求体`,
+            ),
+          );
+        });
+      }, UPLOAD_TIMEOUT_MS);
+
       req.on('data', (chunk: Buffer) => {
         received += chunk.length;
         if (received > MAX_BYTES) {
           stream.destroy();
-          req.destroy();
-          reject(new BadRequestException('文件超过 25MB 上限'));
+          // 修复（413 永远发不出去）：旧实现先 req.destroy() 再 reject，
+          // socket 已销毁，Nest 没有连接可写，客户端只看到 ECONNRESET，
+          // 拿不到「文件超过 25MB 上限」这句提示。
+          // 改为：停止读取 → 抛异常让 Nest 正常写 4xx → 响应 flush 完再销毁 socket。
+          req.pause();
+          req.removeAllListeners('data');
+          const res = req.res;
+          if (res && !res.headersSent) {
+            res.once('finish', () => req.destroy());
+          }
+          settle(() =>
+            reject(
+              new BadRequestException(
+                `文件超过 ${MAX_BYTES / 1024 / 1024}MB 上限`,
+              ),
+            ),
+          );
           return;
         }
         if (!stream.write(chunk)) req.pause();
       });
       stream.on('drain', () => req.resume());
       req.on('end', () => {
-        stream.end(() => resolveSize(received));
+        stream.end(() => settle(() => resolveSize(received)));
       });
       req.on('error', (e) => {
         stream.destroy();
-        reject(e);
+        settle(() => reject(e));
       });
-      stream.on('error', (e) => reject(e));
+      stream.on('error', (e) => settle(() => reject(e)));
     }).catch(async (e) => {
-      // 超限/失败：删除残留空文件，不留脏数据
-      const { unlink } = await import('fs/promises');
+      // 超限/失败：删除残留文件，不留脏数据
       await unlink(absPath).catch(() => {});
       throw e;
     });
     if (size === 0) {
-      const { unlink } = await import('fs/promises');
       await unlink(absPath).catch(() => {});
       throw new BadRequestException('空文件，上传被拒绝');
     }

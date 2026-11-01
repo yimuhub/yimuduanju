@@ -13,10 +13,16 @@ import { deflateSync } from 'zlib';
 import { spawn } from 'child_process';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
-import { uploadDir } from '../assets/uploads.controller';
+// 修复（分层）：uploadDir 直接从工具模块导入。
+// 旧写法 '../assets/uploads.controller' 依赖 Controller 里的再导出，
+// 使网关在模块加载期就被迫拉起整条 Controller → Service → DI 依赖链。
+import { uploadDir } from '../assets/upload-dir';
 import type { ProviderType, FormatType, ModelCapabilities } from '@shared/api.interface';
-// W1 安全修复：API Key 落库为 AES-256-GCM 密文，使用前解密（存量明文兼容）
-import { decryptApiKey } from '../../common/crypto.util';
+// W1 安全修复：API Key 落库为 AES-256-GCM 密文，使用前解密（存量明文兼容）。
+// 修复：本文件全部改用 tryDecryptApiKey —— 它处在供应商列表 / 连通性测试等读路径上，
+// 密钥缺失或 GCM 认证失败（密钥轮换、密文损坏）时应返回 null 让调用方给出
+// 「未配置 API Key」这类可读错误，而不是抛未捕获异常把所有 Provider 接口打成 500。
+import { tryDecryptApiKey } from '../../common/crypto.util';
 
 interface TextGenerateParams {
   prompt: string;
@@ -105,6 +111,19 @@ interface ProviderRecord {
   modelParams: { videoDurations?: number[]; videoSizes?: string[]; imageSizes?: string[] } | null;
 }
 
+/**
+ * 外部 HTTP 超时上限。
+ * P0 修复：网关原本所有 fetch 都没有任何超时（全文件 grep AbortSignal /
+ * AbortController / setTimeout 为 0 命中），而 export.service 与 pavo3.service
+ * 都已经用了 AbortSignal.timeout —— 正确写法项目里有，网关漏了。
+ * 后果：上游半开连接或假死时请求永久悬挂；BullMQ 并发默认只有 2
+ * （JOB_WORKER_CONCURRENCY），两个挂死请求就能把整条产线堵死，
+ * 且任务停在 running 无人回收（recoverOrphanedRunning 只在启动时跑一次）。
+ */
+const DEFAULT_HTTP_TIMEOUT_MS = 60_000;
+/** 视频建任务/轮询：上游排队时间较长，单独给更宽的上限 */
+const VIDEO_HTTP_TIMEOUT_MS = 120_000;
+
 @Injectable()
 export class ModelGatewayService {
   private readonly logger = new Logger(ModelGatewayService.name);
@@ -117,6 +136,31 @@ export class ModelGatewayService {
    * 先按原样打，404 且基址不以 /v1 结尾则补 /v1 再打一次。
    * 404 不产生费用，重试安全；返回最终 response 与实际 URL。
    */
+  /**
+   * 统一的外部 HTTP 入口：带超时的 fetch。
+   * P0 修复见 DEFAULT_HTTP_TIMEOUT_MS 处的说明。
+   */
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit = {},
+    timeoutMs: number = DEFAULT_HTTP_TIMEOUT_MS,
+  ): Promise<Response> {
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) {
+      // 把超时翻译成可读错误：原生 TimeoutError 的 message 只有
+      // "The operation was aborted due to timeout"，不含 URL 与上限，
+      // 排障时看不出是哪一跳挂了。
+      if ((e as { name?: string } | null)?.name === 'TimeoutError') {
+        throw new Error(`请求超时（>${timeoutMs}ms）：${url}`);
+      }
+      throw e;
+    }
+  }
+
   private async postWithV1Fallback(
     baseUrl: string,
     endpoint: string,
@@ -124,24 +168,27 @@ export class ModelGatewayService {
   ): Promise<{ response: Response; url: string }> {
     const first = `${baseUrl}${endpoint}`;
     // eslint-disable-next-line no-await-in-loop
-    let response = await fetch(first, init);
+    let response = await this.fetchWithTimeout(first, init);
     if (response.status !== 404 || /\/v1$/.test(baseUrl)) {
       return { response, url: first };
     }
+    // 修复（连接泄漏）：重发前必须取消第一个响应的 body，
+    // 否则 undici 不会把连接归还连接池，404 回退每走一次就漏一条连接。
+    await response.body?.cancel().catch(() => {});
     const second = `${baseUrl}/v1${endpoint}`;
     this.logger.log(`接口 404，自动补 /v1 重试：${second}`);
+    // 说明：这里重试的是非幂等 POST。404 表示路由未命中、请求体未被业务处理，
+    // 因此正常情况下不会重复下单；但若 404 由中间代理产生而源站已受理，
+    // 仍可能重复扣费。上游若支持幂等键，请在 init.headers 带 Idempotency-Key。
     // eslint-disable-next-line no-await-in-loop
-    response = await fetch(second, init);
+    response = await this.fetchWithTimeout(second, init);
     return { response, url: second };
   }
-  /** F6：上一次文本调用的用量（兼容旧调用方；并发 Worker 请用 generateTextWithUsage 消除竞态） */
-  private lastTextUsage: { model: string; inputTokens: number; outputTokens: number } | null = null;
 
-  takeLastTextUsage(): { model: string; inputTokens: number; outputTokens: number } | null {
-    const u = this.lastTextUsage;
-    this.lastTextUsage = null;
-    return u;
-  }
+  // 修复（死代码 + 竞态）：删除 lastTextUsage 字段与 takeLastTextUsage()。
+  // 全仓 grep 确认 takeLastTextUsage 零调用方（唯一命中就是它自己的定义），
+  // 而 lastTextUsage 是单例上的可变状态，generateTextWithUsage 每次都写它，
+  // 并发 >1 时用量会串到别的任务上。调用方一律使用返回的 { text, usage } 元组。
 
   /**
    * 并发安全的文本生成方法：直接返回 { text, usage }，不在单例上共享可变状态。
@@ -219,7 +266,6 @@ export class ModelGatewayService {
           inputTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0,
           outputTokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0,
         };
-        this.lastTextUsage = usageObj;
       }
       const text =
         data.choices?.[0]?.message?.content ??
@@ -382,7 +428,15 @@ export class ModelGatewayService {
     const wantDuration = params.duration ?? 5;
     if (Array.isArray(vparams.videoDurations) && vparams.videoDurations.length > 0) {
       const allowed = vparams.videoDurations.map(Number).filter(Number.isFinite);
-      if (allowed.length > 0 && !allowed.includes(wantDuration)) {
+      // 修复（fail-open）：声明了 videoDurations 但条目全部非数字时 allowed 为空，
+      // 旧实现的 `allowed.length > 0 &&` 会直接跳过校验 —— 配置写错等于没有白名单。
+      // 现在显式记 error 日志，让「白名单失效」可见，而不是静默放行任意时长。
+      if (allowed.length === 0) {
+        this.logger.error(
+          `Provider ${provider.name} 的 modelParams.videoDurations 全部非法` +
+            `（${JSON.stringify(vparams.videoDurations).slice(0, 120)}），本次不做时长校验`,
+        );
+      } else if (!allowed.includes(wantDuration)) {
         throw new BadRequestException(
           `该供应商视频时长仅支持 ${allowed.join('/')}s，当前 ${wantDuration}s（请改镜头时长或换供应商）`,
         );
@@ -458,7 +512,11 @@ export class ModelGatewayService {
     if (formatType === 'volcengine_ark') {
       // 方舟基址固定为 .../api/v3，不做 /v1 回退
       finalUrl = url;
-      response = await fetch(url, { method: 'POST', headers, body: payload });
+      response = await this.fetchWithTimeout(
+        url,
+        { method: 'POST', headers, body: payload },
+        VIDEO_HTTP_TIMEOUT_MS,
+      );
     } else {
       const ret = await this.postWithV1Fallback(baseUrl, '/video/generations', {
         method: 'POST',
@@ -576,10 +634,14 @@ export class ModelGatewayService {
     const root = this.normalizeBaseUrl(provider.baseUrl).replace(/\/v1$/, '');
     const url = `${root}/agnesapi?video_id=${encodeURIComponent(videoId)}&model_name=${encodeURIComponent(model)}`;
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
+      const response = await this.fetchWithTimeout(
+        url,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` },
+        },
+        VIDEO_HTTP_TIMEOUT_MS,
+      );
       if (!response.ok) {
         const errText = await response.text();
         return { status: 'failed', errorMessage: `Agnes 查询失败 (${response.status}): ${errText.slice(0, 200)}` };
@@ -647,12 +709,16 @@ export class ModelGatewayService {
     }
 
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
+      const response = await this.fetchWithTimeout(
+        url,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
         },
-      });
+        VIDEO_HTTP_TIMEOUT_MS,
+      );
 
       if (!response.ok) {
         // P1 修复：4xx（401/403/404/欠费等）不会自愈，转 failed 并写明原因，
@@ -811,10 +877,14 @@ export class ModelGatewayService {
       } else {
         // 否则 ping base url
         const url = this.normalizeBaseUrl(provider.baseUrl);
-        const response = await fetch(url, {
+        const response = await this.fetchWithTimeout(url, {
           method: 'GET',
-          // W1 安全修复：密文出库即解密后再用
-          headers: { Authorization: `Bearer ${decryptApiKey(provider.apiKey)}` },
+          // W1 安全修复：密文出库即解密后再用。
+          // 改用 tryDecryptApiKey：连通性测试是读路径，密钥缺失/损坏时应给出
+          // 「API Key 解密失败」这类可读结果，而不是抛未捕获异常把接口打成 500。
+          headers: {
+            Authorization: `Bearer ${tryDecryptApiKey(provider.apiKey) ?? ''}`,
+          },
         });
         if (!response.ok && response.status >= 500) {
           throw new Error(`HTTP ${response.status}`);
@@ -1090,7 +1160,15 @@ export class ModelGatewayService {
     }
 
     if (rows.length === 0) {
-      throw new BadRequestException('未配置模型 Provider，请在设置中添加');
+      // 修复（误导性错误）：显式指定 providerName 却查不到时，旧实现抛的是
+      // 「未配置模型 Provider，请在设置中添加」，而真实原因是该 Provider
+      // 不存在或已被禁用。两种情况处置完全不同（一个要去添加，一个要去启用），
+      // 必须区分，否则用户会照着错误提示白忙一场。
+      throw new BadRequestException(
+        providerName
+          ? `指定的模型 Provider「${providerName}」不存在或已禁用`
+          : '未配置模型 Provider，请在设置中添加',
+      );
     }
 
     const provider = rows[0];
@@ -1113,16 +1191,20 @@ export class ModelGatewayService {
       )
       .orderBy(desc(providerApiKeys.createdAt))
       .limit(1);
-    // W1 安全修复：出库即解密（存量明文行灰度兼容）
+    // W1 安全修复：出库即解密（存量明文行灰度兼容）。
+    // 修复：改用 tryDecryptApiKey —— 本方法处在供应商列表等读路径上，
+    // 密钥缺失或 GCM 认证失败（密钥轮换/密文损坏）时返回 null，
+    // 由调用方给出「Provider 未配置 API Key」这类可读错误，
+    // 而不是抛未捕获异常把所有 Provider 接口打成 500。
     if (keyRows.length > 0 && keyRows[0].apiKey) {
       return {
         ...(provider as unknown as ProviderRecord),
-        apiKey: decryptApiKey(keyRows[0].apiKey) ?? null,
+        apiKey: tryDecryptApiKey(keyRows[0].apiKey) ?? null,
       };
     }
     return {
       ...(provider as unknown as ProviderRecord),
-      apiKey: decryptApiKey(provider.apiKey) ?? null,
+      apiKey: tryDecryptApiKey(provider.apiKey) ?? null,
     };
   }
 

@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { generationJobs, projects, shots, modelProviders } from '@server/database/schema';
-import { eq, desc, and, count, sql } from 'drizzle-orm';
+import { eq, desc, and, count, sql, notInArray } from 'drizzle-orm';
 import { isFreeAgnesModel } from '@shared/agnes';
 import { stageOfJobType } from '@shared/stage-bindings';
 import { StageBindingsService } from '../providers/stage-bindings.service';
@@ -22,6 +22,31 @@ import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
 import { BillingService } from '../billing/billing.service';
 import { RoutingService } from './routing.service';
+
+/**
+ * 终态集合。所有状态写入都必须带「非终态」谓词：
+ * generation.service 的 settleJobSuccess / noteJobError / cancelJob 与
+ * job-worker 的完成路径、SSE 轮询会并发触碰同一行，仅靠内存里的状态检查
+ * 无法阻止重复计费与终态被翻转。
+ */
+const TERMINAL_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
+
+function isTerminal(status: string | null | undefined): boolean {
+  if (status === null || status === undefined) return false;
+  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
+/** 可选时间列 → ISO 字符串；null/非法值返回 undefined（不再无保护调用 toISOString） */
+function iso(value: Date | string | null | undefined): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+/** 必填时间列 → ISO 字符串；缺失/非法时退回 fallback，避免整条列表接口 500 */
+function isoOr(value: Date | string | null | undefined, fallback: Date): string {
+  return iso(value) ?? fallback.toISOString();
+}
 
 @Injectable()
 export class GenerationService {
@@ -144,23 +169,37 @@ export class GenerationService {
   async createJob(
     dto: Partial<GenerationJob> & { jobType: JobType },
   ): Promise<GenerationJob> {
-    // P1 超预算拦截：落库前检查月度预算
-    await this.budgetCap.assertAllowed();
-    const rows = await this.db
-      .insert(generationJobs)
-      .values({
-        projectId: dto.projectId,
-        jobType: dto.jobType,
-        targetType: dto.targetType,
-        targetId: dto.targetId,
-        status: 'pending',
-        priority: dto.priority ?? 50,
-        providerName: dto.providerName,
-        modelName: dto.modelName,
-        inputData: dto.inputData as Record<string, unknown>,
-        maxRetries: dto.maxRetries ?? 3,
-      })
-      .returning();
+    // P1 超预算拦截：落库前检查月度预算。
+    // 修复（TOCTOU）：旧实现是 assertAllowed() 读 SUM，随后才 insert，
+    // 两步之间没有互斥 —— 并发创建可以全部通过检查，一起把上限冲穿。
+    // 现在把「检查 + 插入」放进同一个事务并持月度咨询锁（BudgetCapService.runGuarded）。
+    // 未配置 MONTHLY_BUDGET_CAP_CNY 时 runGuarded 直接执行、不加锁，无额外开销。
+    //
+    // 修复（priority 无钳制）：旧实现只有 `dto.priority ?? 50` 兜底。
+    // DTO 上的 @Min/@Max 只作用于 HTTP 入口，而本服务还被流水线自动链、
+    // storyboard 等内部路径直接调用，可以写入任意整数扰乱认领顺序。
+    const rawPriority = Number(dto.priority ?? 50);
+    const priority = Number.isFinite(rawPriority)
+      ? Math.min(100, Math.max(0, Math.trunc(rawPriority)))
+      : 50;
+
+    const rows = await this.budgetCap.runGuarded(async (tx) =>
+      tx
+        .insert(generationJobs)
+        .values({
+          projectId: dto.projectId,
+          jobType: dto.jobType,
+          targetType: dto.targetType,
+          targetId: dto.targetId,
+          status: 'pending',
+          priority,
+          providerName: dto.providerName,
+          modelName: dto.modelName,
+          inputData: dto.inputData as Record<string, unknown>,
+          maxRetries: dto.maxRetries ?? 3,
+        })
+        .returning(),
+    );
     return this.mapJob(rows[0]);
   }
 
@@ -204,15 +243,22 @@ export class GenerationService {
     const finalCost = agnesFree ? 0 : finalCostPre;
     const accrue = Math.max(0, finalCost - (job.cost ?? 0));
 
+    // P0 修复（重复计费）：WHERE 必须带非终态谓词。
+    // 旧实现只按 id 更新，pollJob 与 worker 完成路径并发调用时，两者都能通过上面的
+    // 内存终态检查 → totalCost 被累加两次、outputData.billing 被写两次。
+    // 现在由数据库保证只有第一个把任务推进终态的调用能拿到返回行，
+    // 也只有拿到行才允许累加项目成本。
     const rows = await this.db
       .update(generationJobs)
       .set({
         status: 'succeeded',
         progress: 100,
         // F6 调用明细规范化（移植 ArcReel api_calls 思想的轻量版）：
-        // outputData.billing 记录价格表单价与实扣，预估/结算分离展示有据可查
+        // outputData.billing 记录价格表单价与实扣，预估/结算分离展示有据可查。
+        // 修复：不再回落到 job.inputData。把输入当输出会把用户 prompt 发布成镜头产物，
+        // 也会让 adoptJob / writeback 读到伪造的 output.url。
         outputData: {
-          ...((outputData ?? job.inputData) as Record<string, unknown>),
+          ...((outputData ?? {}) as Record<string, unknown>),
           billing: {
             unitPrice: agnesFree ? 0 : tablePrice,
             charged: finalCost,
@@ -224,8 +270,19 @@ export class GenerationService {
         completedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(generationJobs.id, id))
+      .where(
+        and(
+          eq(generationJobs.id, id),
+          notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
+        ),
+      )
       .returning();
+
+    // 并发中已被另一条路径结算：直接返回当前行，绝不二次累加成本
+    if (rows.length === 0) {
+      this.logger.warn(`任务 ${id} 已被并发结算，跳过重复计费`);
+      return this.getJob(id);
+    }
 
     if (job.projectId && accrue > 0) {
       await this.db
@@ -279,23 +336,41 @@ export class GenerationService {
    */
   async noteJobError(id: string, errorMessage: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
+    // P0 修复（终态被翻转）：旧实现没有任何终态保护，一条迟到的错误回调能把
+    // succeeded / cancelled 的任务翻回 pending，触发重跑并二次扣费。
+    if (isTerminal(job.status)) {
+      this.logger.warn(
+        `忽略对终态任务 ${id}（${job.status}）的错误回报：${errorMessage.slice(0, 120)}`,
+      );
+      return job;
+    }
     const nextRetry = (job.retryCount ?? 0) + 1;
-    if (nextRetry >= (job.maxRetries ?? 3)) {
+    // 修复（重试预算差一）：maxRetries=N 意为「最多自动重试 N 次」，即第 N+1 次失败才终结。
+    // 旧条件 nextRetry >= maxRetries 在第 N 次失败就放弃，实际只重试了 N-1 次。
+    const budget = job.maxRetries ?? 3;
+    if (nextRetry > budget) {
       return this.settleJobFailure(
         id,
-        `${errorMessage}（已重试 ${nextRetry} 次，放弃）`,
+        `${errorMessage}（已重试 ${budget} 次，放弃）`,
       );
     }
     const rows = await this.db
       .update(generationJobs)
       .set({
         status: 'pending',
-        retryCount: nextRetry,
+        // 原子自增：并发错误回报不会互相覆盖成同一个值（旧实现是读-改-写）
+        retryCount: sql`${generationJobs.retryCount} + 1`,
         errorMessage: errorMessage.slice(0, 500),
         updatedAt: new Date(),
       })
-      .where(eq(generationJobs.id, id))
+      .where(
+        and(
+          eq(generationJobs.id, id),
+          notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
+        ),
+      )
       .returning();
+    if (rows.length === 0) return this.getJob(id);
     return this.mapJob(rows[0]);
   }
 
@@ -333,16 +408,32 @@ export class GenerationService {
     if (job.status === 'succeeded') {
       throw new BadRequestException('任务已成功，无需重试');
     }
+    // 修复（预算绕过）：createJob 落库前会过 budgetCap.assertAllowed()，
+    // 手动重试同样会真实调用上游并产生花费，必须走同一道闸门。
+    await this.budgetCap.assertAllowed();
     const rows = await this.db
       .update(generationJobs)
       .set({
         status: 'pending',
         retryCount: job.retryCount + 1,
         errorMessage: null,
+        // 修复（脏状态残留）：旧实现只重置 status / retryCount / errorMessage，
+        // 却保留 progress、outputData、startedAt、completedAt、externalTaskId。后果：
+        // 1) progress 仍是上次的 95，pollJob 一进演示分支立刻封顶，看不出真的重跑了；
+        // 2) externalTaskId 还在，pollJob 会拿旧的外部任务 ID 去结算上一次的结果，
+        //    把上次失败的产物当成本次成功输出；
+        // 3) outputData 残留会让前端继续展示上一次的结果。
+        // 手动重试必须是一次干净起跑。
+        progress: 0,
+        outputData: null,
+        startedAt: null,
+        completedAt: null,
+        externalTaskId: null,
         updatedAt: new Date(),
       })
       .where(eq(generationJobs.id, id))
       .returning();
+    if (rows.length === 0) throw new NotFoundException('任务不存在');
     return this.mapJob(rows[0]);
   }
 
@@ -374,13 +465,11 @@ export class GenerationService {
   async cancelJob(id: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
     // P1 修复：终态任务取消改为幂等直接返回，避免已完成任务被误标 cancelled
-    if (
-      job.status === 'succeeded' ||
-      job.status === 'failed' ||
-      job.status === 'cancelled'
-    ) {
+    if (isTerminal(job.status)) {
       return job;
     }
+    // 修复（竞态覆盖）：与 settleJobSuccess 并发时，取消不能覆盖已结算的终态。
+    // WHERE 加非终态谓词，由数据库裁决谁先落地；抢不到就返回当前行。
     const rows = await this.db
       .update(generationJobs)
       .set({
@@ -388,10 +477,27 @@ export class GenerationService {
         updatedAt: new Date(),
         completedAt: new Date(),
       })
-      .where(eq(generationJobs.id, id))
+      .where(
+        and(
+          eq(generationJobs.id, id),
+          notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
+        ),
+      )
       .returning();
-    if (rows.length === 0) throw new NotFoundException('任务不存在');
-    return this.mapJob(rows[0]);
+    if (rows.length === 0) return this.getJob(id);
+    const cancelled = this.mapJob(rows[0]);
+    // 已知限制（显式记录，不再静默）：取消只改本地状态，不会通知上游。
+    // externalTaskId 已存在时供应商仍在生成并照收费用，而随后的 settleJobSuccess
+    // 会因终态直接 no-op —— 这笔花费连记录都留不下。
+    // 彻底修复需要网关提供 cancelVideoTask（当前 ModelGatewayService 未实现），
+    // 在此之前至少把事实写进日志，便于对账时定位差额来源。
+    if (cancelled.externalTaskId) {
+      this.logger.warn(
+        `任务 ${id} 已本地取消，但上游任务 ${cancelled.externalTaskId} 未取消，` +
+          '可能继续产生费用且不会被记账（网关暂无取消接口）',
+      );
+    }
+    return cancelled;
   }
 
   async deleteJob(id: string): Promise<void> {
@@ -440,26 +546,36 @@ export class GenerationService {
       }
     }
 
-    // 演示性进度推进：任务消费器接管后，pending/running 任务会在数秒内被认领并真实执行；
-    // 此分支仅覆盖“消费器关闭/消费中”的等待期展示，永远不会将任务标为 succeeded（封顶 95），避免误判完成
+    // 演示性进度推进：仅覆盖「消费器关闭/消费中」的等待期展示，永远不会将任务标为
+    // succeeded（封顶 95），避免误判完成。
+    // P0 修复：pending 任务绝不能被改写成 running。
+    // 两条认领路径都只认 pending —— claimNextPendingJob() 是 where(status='pending')，
+    // job-worker 的 claimForQueue 也只认领 pending 并置 queued；而 recoverOrphanedRunning()
+    // 仅在 onModuleInit 执行一次。旧实现把 pending 改成 running 后，该任务再也不会被认领，
+    // UI 永远停在 ≤95%，只能重启服务才能恢复。
+    // 因此这里对 pending 只推进进度、不改状态，也不写 startedAt（startedAt 由认领方负责）。
     if (job.status === 'running' || job.status === 'pending') {
       const newProgress = Math.min(job.progress + 10, 95);
-      const newStatus: JobStatus =
-        newProgress >= 95 ? 'running' : job.status === 'pending' ? 'running' : job.status;
 
       const patch: Record<string, unknown> = {
-        status: newStatus,
         progress: newProgress,
         updatedAt: new Date(),
       };
-      // P1 修复：startedAt 首次推进时显式落库，不再依赖 undefined 跳过语义
-      if (!job.startedAt) patch.startedAt = new Date();
+      // P1 修复：startedAt 首次推进时显式落库，不再依赖 undefined 跳过语义；
+      // 仅对已被认领的 running 任务补写，pending 任务的 startedAt 由认领路径负责
+      if (job.status === 'running' && !job.startedAt) patch.startedAt = new Date();
 
       const rows = await this.db
         .update(generationJobs)
         .set(patch)
-        .where(eq(generationJobs.id, id))
+        .where(
+          and(
+            eq(generationJobs.id, id),
+            notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
+          ),
+        )
         .returning();
+      if (rows.length === 0) return this.getJob(id);
       return this.mapJob(rows[0]);
     }
 
@@ -485,11 +601,13 @@ export class GenerationService {
       retryCount: row.retryCount ?? 0,
       maxRetries: row.maxRetries ?? 3,
       cost: Number(row.cost ?? 0),
-      startedAt: row.startedAt ? row.startedAt.toISOString() : undefined,
-      completedAt: row.completedAt ? row.completedAt.toISOString() : undefined,
+      startedAt: iso(row.startedAt),
+      completedAt: iso(row.completedAt),
       externalTaskId: row.externalTaskId ?? undefined,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
+      // 修复：customTimestamptz 在驱动/迁移差异下可能返回 null 或字符串，
+      // 无保护调用 .toISOString() 会让整个任务列表接口 500。
+      createdAt: isoOr(row.createdAt, new Date(0)),
+      updatedAt: isoOr(row.updatedAt, new Date(0)),
     };
   }
 }
