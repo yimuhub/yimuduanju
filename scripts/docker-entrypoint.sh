@@ -20,6 +20,8 @@ echo "[entrypoint] 后端已启动（pid=$SERVER_PID）"
 # 3. 收到退出信号时，优雅关闭后端
 trap 'echo "[entrypoint] 收到退出信号，正在关闭后端…"; kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null' TERM INT
 
-# 4. 前台启动网关：容器内必须监听 0.0.0.0，由 compose 把端口映射到宿主机；
+# 4. 前台启动网关：容器内必须监听 0.0.0.0，暴露面由 compose 的端口映射决定
+#    （本仓 compose 只发布到宿主 127.0.0.1）。YIMU_ALLOW_LAN 是对网关 fail-closed
+#    检查的显式确认：非回环监听必须声明，避免本机裸跑时无声暴露。
 #    网关取 process.cwd() 为工程根，因此 cwd 保持 /app。
-GATEWAY_HOST=0.0.0.0 node /app/scripts/gateway.js
+GATEWAY_HOST=0.0.0.0 YIMU_ALLOW_LAN=true node /app/scripts/gateway.js

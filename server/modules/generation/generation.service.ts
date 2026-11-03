@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { generationJobs, projects, shots, modelProviders } from '@server/database/schema';
-import { eq, desc, and, count, sql, notInArray } from 'drizzle-orm';
+import { eq, desc, and, count, sql, inArray } from 'drizzle-orm';
 import { isFreeAgnesModel } from '@shared/agnes';
 import { stageOfJobType } from '@shared/stage-bindings';
 import { StageBindingsService } from '../providers/stage-bindings.service';
@@ -24,17 +24,10 @@ import { BillingService } from '../billing/billing.service';
 import { RoutingService } from './routing.service';
 
 /**
- * 终态集合。所有状态写入都必须带「非终态」谓词：
- * generation.service 的 settleJobSuccess / noteJobError / cancelJob 与
- * job-worker 的完成路径、SSE 轮询会并发触碰同一行，仅靠内存里的状态检查
- * 无法阻止重复计费与终态被翻转。
+ * 未终结的任务状态。结算/失败/重试都只允许从这些状态出发，
+ * 用「带状态条件的 UPDATE」做 CAS，避免并发写把终态改回去。
  */
-const TERMINAL_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
-
-function isTerminal(status: string | null | undefined): boolean {
-  if (status === null || status === undefined) return false;
-  return (TERMINAL_STATUSES as readonly string[]).includes(status);
-}
+const OPEN_JOB_STATUSES: JobStatus[] = ['pending', 'queued', 'running', 'retrying'];
 
 /** 可选时间列 → ISO 字符串；null/非法值返回 undefined（不再无保护调用 toISOString） */
 function iso(value: Date | string | null | undefined): string | undefined {
@@ -62,39 +55,48 @@ export class GenerationService {
   ) {}
 
   /**
+   * 供应商解析与网关 getProvider 同口径：任务自带 → 默认 → 首个启用。
+   * 结算判定（免费/演练）必须看「实际执行的那个供应商」，否则会算错钱。
+   */
+  private async resolveProviderForJob(
+    job: GenerationJob,
+  ): Promise<typeof modelProviders.$inferSelect | null> {
+    let providerName = job.providerName;
+    if (!providerName) {
+      const defaults = await this.db
+        .select()
+        .from(modelProviders)
+        .where(and(eq(modelProviders.isDefault, true), eq(modelProviders.enabled, true)))
+        .limit(1);
+      if (defaults.length > 0) {
+        providerName = defaults[0].name;
+      } else {
+        const first = await this.db
+          .select()
+          .from(modelProviders)
+          .where(eq(modelProviders.enabled, true))
+          .orderBy(desc(modelProviders.routingPriority))
+          .limit(1);
+        if (first.length > 0) providerName = first[0].name;
+      }
+    }
+    if (!providerName) return null;
+    const rows = await this.db
+      .select()
+      .from(modelProviders)
+      .where(eq(modelProviders.name, providerName))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
    * Agnes 免费判定：供应商 formatType 为 agnes 且本次使用的模型在免费白名单内。
    * 模型解析：环节绑定优先，否则按任务类型取供应商默认模型。
    */
   private async isAgnesFreeJob(job: GenerationJob): Promise<boolean> {
     try {
-      // 供应商解析与网关 getProvider 同口径：任务自带 → 默认 → 首个启用
-      let providerName = job.providerName;
-      if (!providerName) {
-        const defaults = await this.db
-          .select()
-          .from(modelProviders)
-          .where(and(eq(modelProviders.isDefault, true), eq(modelProviders.enabled, true)))
-          .limit(1);
-        if (defaults.length > 0) {
-          providerName = defaults[0].name;
-        } else {
-          const first = await this.db
-            .select()
-            .from(modelProviders)
-            .where(eq(modelProviders.enabled, true))
-            .orderBy(desc(modelProviders.routingPriority))
-            .limit(1);
-          if (first.length > 0) providerName = first[0].name;
-        }
-      }
-      if (!providerName) return false;
-      const rows = await this.db
-        .select()
-        .from(modelProviders)
-        .where(eq(modelProviders.name, providerName))
-        .limit(1);
-      if (rows.length === 0 || rows[0].formatType !== 'agnes') return false;
-      const provider = rows[0];
+      const provider = await this.resolveProviderForJob(job);
+      if (!provider || provider.formatType !== 'agnes') return false;
       let model: string | undefined;
       const stage = stageOfJobType(job.jobType ?? '');
       if (stage) {
@@ -114,6 +116,33 @@ export class GenerationService {
       return isFreeAgnesModel(model);
     } catch {
       // 判定失败按收费处理（宁可多记，不漏记）
+      return false;
+    }
+  }
+
+  /**
+   * mock 演练判定：产物来自免 Key 的占位通道，不产生任何上游费用，一律不计费。
+   * 判定与网关 isMockProvider 同口径：
+   * - 任务产物自报 mock（视频轮询结果已置 outputData.mock=true）；
+   * - 或实际执行的供应商 formatType='mock' / 基址指向本地 mock 端点。
+   * 注意：这里必须是「实际执行供应商」，不能用默认供应商猜——否则把真实调用误判成免费。
+   */
+  async isMockJob(
+    job: GenerationJob,
+    outputData?: Record<string, unknown>,
+  ): Promise<boolean> {
+    try {
+      if (outputData?.mock === true) return true;
+      const stored = (job.outputData ?? {}) as Record<string, unknown>;
+      if (stored.mock === true) return true;
+      const provider = await this.resolveProviderForJob(job);
+      if (!provider) return false;
+      return (
+        provider.formatType === 'mock' ||
+        /\/\/(localhost|127\.0\.0\.1)(:\d+)?\/mock(\/|$)/.test(provider.baseUrl ?? '')
+      );
+    } catch {
+      // 判定失败按收费处理（宁可多记，不漏记；宁可不误标成免费）
       return false;
     }
   }
@@ -204,7 +233,11 @@ export class GenerationService {
   }
 
   /**
-   * 成功结算（幂等）：终态任务直接返回，不重复结算、不重复累加项目成本。
+   * 成功结算（幂等 + 并发安全）：
+   * 1) 状态迁移用 CAS（`status IN 未终结态`）——两个消费器/轮询同时完成同一任务时，
+   *    只有一个能命中 UPDATE，另一个拿 0 行后按当前库内状态返回，不会重复记账；
+   * 2) 任务置成功与项目累计费用放在同一事务里，避免「任务已成功但费用没累加」的半写；
+   * 3) 累计用 `COALESCE(total_cost,0) + delta` 原子自增，靠行锁串行化同一项目的并发结算。
    * 由 pollJob（视频远端完成）与任务消费器（本地同步完成）共用。
    */
   async settleJobSuccess(
@@ -213,8 +246,7 @@ export class GenerationService {
     actualCost?: number,
   ): Promise<GenerationJob> {
     const job = await this.getJob(id);
-    if (job.status === 'succeeded') return job;
-    if (job.status === 'failed' || job.status === 'cancelled') return job;
+    if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
 
     // P1 计费 + W1 价格表单一可信源 + W2 智能路由：成功即结算。
     // 上游真实费用优先；否则按项目预算模式取档位单价（映射见 RoutingService.tierFor）
@@ -238,74 +270,75 @@ export class GenerationService {
         : job.cost > 0
           ? job.cost
           : tablePrice;
+    // mock 演练产物（占位图/占位视频/规则文案）不产生任何上游费用：一律不计费。
+    // 必须在 Agnes 判定之前短路——否则占位产物会按价格表照价扣费。
+    const mock = await this.isMockJob(job, outputData);
     // Agnes 免费模型：官方现价 $0，直接记 0（2.5-flash 限时免费，到期按下文注释处理）
-    const agnesFree = await this.isAgnesFreeJob(job);
-    const finalCost = agnesFree ? 0 : finalCostPre;
+    const agnesFree = mock ? false : await this.isAgnesFreeJob(job);
+    const freeReason = mock
+      ? 'mock 演练产物（占位内容，不计费）'
+      : agnesFree
+        ? 'agnes 免费模型'
+        : undefined;
+    const finalCost = mock || agnesFree ? 0 : finalCostPre;
     const accrue = Math.max(0, finalCost - (job.cost ?? 0));
 
-    // P0 修复（重复计费）：WHERE 必须带非终态谓词。
-    // 旧实现只按 id 更新，pollJob 与 worker 完成路径并发调用时，两者都能通过上面的
-    // 内存终态检查 → totalCost 被累加两次、outputData.billing 被写两次。
-    // 现在由数据库保证只有第一个把任务推进终态的调用能拿到返回行，
-    // 也只有拿到行才允许累加项目成本。
-    const rows = await this.db
-      .update(generationJobs)
-      .set({
-        status: 'succeeded',
-        progress: 100,
-        // F6 调用明细规范化（移植 ArcReel api_calls 思想的轻量版）：
-        // outputData.billing 记录价格表单价与实扣，预估/结算分离展示有据可查。
-        // 修复：不再回落到 job.inputData。把输入当输出会把用户 prompt 发布成镜头产物，
-        // 也会让 adoptJob / writeback 读到伪造的 output.url。
-        outputData: {
-          ...((outputData ?? {}) as Record<string, unknown>),
-          billing: {
-            unitPrice: agnesFree ? 0 : tablePrice,
-            charged: finalCost,
-            currency: 'CNY',
-            ...(agnesFree ? { free: 'agnes 免费模型' } : {}),
-          },
-        } as Record<string, unknown>,
-        cost: finalCost.toFixed(4),
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(generationJobs.id, id),
-          notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
-        ),
-      )
-      .returning();
-
-    // 并发中已被另一条路径结算：直接返回当前行，绝不二次累加成本
-    if (rows.length === 0) {
-      this.logger.warn(`任务 ${id} 已被并发结算，跳过重复计费`);
-      return this.getJob(id);
-    }
-
-    if (job.projectId && accrue > 0) {
-      await this.db
-        .update(projects)
+    // 修复：outputData 不回落 job.inputData。把输入当输出会把用户 prompt 发布成镜头产物，
+    // 也会让 adoptJob / writeback 读到伪造的 output.url（我方的增量，补到 main 事务版上）。
+    const settled = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .update(generationJobs)
         .set({
-          totalCost: sql`${projects.totalCost} + ${accrue.toFixed(4)}`,
+          status: 'succeeded',
+          progress: 100,
+          // F6 调用明细规范化（移植 ArcReel api_calls 思想的轻量版）：
+          // outputData.billing 记录价格表单价与实扣，预估/结算分离展示有据可查
+          // 修复（我方增量）：outputData 不回落 job.inputData —— 把输入当输出会把用户 prompt
+          // 发布成镜头产物，也会让 adoptJob / writeback 读到伪造的 output.url。
+          outputData: {
+            ...((outputData ?? {}) as Record<string, unknown>),
+            // mock 标记是产物可信度的唯一凭据：任务页/资产库/分镜页据此打「演示」标签
+            ...(mock ? { mock: true } : {}),
+            billing: {
+              unitPrice: mock || agnesFree ? 0 : tablePrice,
+              charged: finalCost,
+              currency: 'CNY',
+              ...(freeReason ? { free: freeReason } : {}),
+            },
+          } as Record<string, unknown>,
+          cost: finalCost.toFixed(4),
+          completedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(projects.id, job.projectId));
-    }
-    return this.mapJob(rows[0]);
+        // CAS：只有仍处于未终结态的任务才允许被结算，重复/并发结算在此被拦下
+        .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
+        .returning();
+
+      // 0 行 = 已被另一条结算路径处理（或期间被取消）：本次事务不写任何东西，直接按库内状态返回
+      if (rows.length === 0) return null;
+
+      if (job.projectId && accrue > 0) {
+        await tx
+          .update(projects)
+          .set({
+            // 历史行可能为 NULL（建表默认值不回溯），必须 COALESCE 否则整列变 NULL
+            totalCost: sql`COALESCE(${projects.totalCost}, 0) + ${accrue.toFixed(4)}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(projects.id, job.projectId));
+      }
+      return rows[0];
+    });
+
+    // 未抢到结算权：以库内当前状态为准（幂等语义不变，调用方无需区分）
+    if (!settled) return this.getJob(id);
+    return this.mapJob(settled);
   }
 
-  /** 失败结算（幂等）：写失败原因与完成时间 */
+  /** 失败结算（幂等 + 并发安全）：只允许从未终结态迁移，绝不覆盖已成功的结算结果 */
   async settleJobFailure(id: string, errorMessage: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
-    if (
-      job.status === 'succeeded' ||
-      job.status === 'failed' ||
-      job.status === 'cancelled'
-    ) {
-      return job;
-    }
+    if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
     const rows = await this.db
       .update(generationJobs)
       .set({
@@ -314,8 +347,10 @@ export class GenerationService {
         completedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(generationJobs.id, id))
+      // CAS：若同一瞬间成功结算先到，这里拿 0 行，不会把 succeeded 改回 failed
+      .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
       .returning();
+    if (rows.length === 0) return this.getJob(id);
     // V5 每镜状态机：任务终结失败 → 镜头 failed（变体不碰主状态）
     const input = (job.inputData ?? {}) as Record<string, unknown>;
     if (job.targetType === 'shot' && job.targetId && typeof input.variantGroup !== 'string') {
@@ -336,14 +371,8 @@ export class GenerationService {
    */
   async noteJobError(id: string, errorMessage: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
-    // P0 修复（终态被翻转）：旧实现没有任何终态保护，一条迟到的错误回调能把
-    // succeeded / cancelled 的任务翻回 pending，触发重跑并二次扣费。
-    if (isTerminal(job.status)) {
-      this.logger.warn(
-        `忽略对终态任务 ${id}（${job.status}）的错误回报：${errorMessage.slice(0, 120)}`,
-      );
-      return job;
-    }
+    // 已经是终态（含并发结算抢先成功）：不再改状态，避免把 succeeded 拖回 pending
+    if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
     const nextRetry = (job.retryCount ?? 0) + 1;
     // 修复（重试预算差一）：maxRetries=N 意为「最多自动重试 N 次」，即第 N+1 次失败才终结。
     // 旧条件 nextRetry >= maxRetries 在第 N 次失败就放弃，实际只重试了 N-1 次。
@@ -363,12 +392,8 @@ export class GenerationService {
         errorMessage: errorMessage.slice(0, 500),
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(generationJobs.id, id),
-          notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
-        ),
-      )
+      // CAS：同状态的并发终态写入（成功/取消）优先，重试不得覆盖
+      .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
       .returning();
     if (rows.length === 0) return this.getJob(id);
     return this.mapJob(rows[0]);
@@ -376,10 +401,12 @@ export class GenerationService {
 
   /** 认领一个待处理任务（worker 用；无可领返回 null） */
   async claimNextPendingJob(): Promise<GenerationJob | null> {
+    // 有 blockedReason 的视频仍在等待首帧，必须在 SQL 层排除，避免 limit(1) 队头阻塞。
+    const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
     const rows = await this.db
       .select()
       .from(generationJobs)
-      .where(eq(generationJobs.status, 'pending'))
+      .where(and(eq(generationJobs.status, 'pending'), dependencyReady))
       .orderBy(desc(generationJobs.priority), generationJobs.createdAt)
       .limit(1);
     if (rows.length === 0) return null;
@@ -390,6 +417,7 @@ export class GenerationService {
         and(
           eq(generationJobs.id, rows[0].id),
           eq(generationJobs.status, 'pending'),
+          dependencyReady,
         ),
       )
       .returning();
@@ -465,11 +493,7 @@ export class GenerationService {
   async cancelJob(id: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
     // P1 修复：终态任务取消改为幂等直接返回，避免已完成任务被误标 cancelled
-    if (isTerminal(job.status)) {
-      return job;
-    }
-    // 修复（竞态覆盖）：与 settleJobSuccess 并发时，取消不能覆盖已结算的终态。
-    // WHERE 加非终态谓词，由数据库裁决谁先落地；抢不到就返回当前行。
+    if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
     const rows = await this.db
       .update(generationJobs)
       .set({
@@ -477,13 +501,10 @@ export class GenerationService {
         updatedAt: new Date(),
         completedAt: new Date(),
       })
-      .where(
-        and(
-          eq(generationJobs.id, id),
-          notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
-        ),
-      )
+      // CAS：取消与成功结算并发时，谁先写到状态谁生效；后到者不会覆盖终态
+      .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
       .returning();
+    // 0 行 = 期间已被结算成终态（成功/失败），按当前状态返回，不再抛「任务不存在」
     if (rows.length === 0) return this.getJob(id);
     const cancelled = this.mapJob(rows[0]);
     // 已知限制（显式记录，不再静默）：取消只改本地状态，不会通知上游。
@@ -571,7 +592,7 @@ export class GenerationService {
         .where(
           and(
             eq(generationJobs.id, id),
-            notInArray(generationJobs.status, [...TERMINAL_STATUSES]),
+            inArray(generationJobs.status, OPEN_JOB_STATUSES),
           ),
         )
         .returning();

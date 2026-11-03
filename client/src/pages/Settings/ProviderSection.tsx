@@ -721,7 +721,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     {editingId ? '编辑模型服务' : '添加模型服务'}
                   </h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {formData.formatType === 'mock' ? '本地 Mock 通道（免 Key 调试）' : formData.formatType === 'volcengine_ark' ? '火山方舟格式' : formData.formatType === 'agnes' ? 'Agnes 专用（测试版）' : 'OpenAI 兼容格式'} · 配好 Key 后可一键拉模型
+                    {formData.formatType === 'mock' ? '本地 Mock 通道（免 Key 演练：产物为占位内容、不计费）' : formData.formatType === 'volcengine_ark' ? '火山方舟格式' : formData.formatType === 'agnes' ? 'Agnes 专用（测试版）' : 'OpenAI 兼容格式'} · 配好 Key 后可一键拉模型
                   </p>
                 </div>
               </div>
@@ -792,7 +792,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         },
                       },
                       {
-                        label: '🧪 免 Key 演练沙盒（Mock）',
+                        label: '🧪 免 Key 演练沙盒（Mock · 占位内容/不计费）',
                         patch: {
                           name: '本地免 Key 演练沙盒',
                           providerType: 'custom' as ProviderType,
@@ -814,7 +814,11 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         onClick={() => {
                           setFormData((prev) => ({ ...prev, ...preset.patch }));
                           setCustomFields(new Set(['textModel', 'imageModel', 'videoModel', 'ttsModel']));
-                          toast.success(`已套用「${preset.patch.name}」预设，请粘贴 API Key 后保存`);
+                          toast.success(
+                            preset.patch.formatType === 'mock'
+                              ? `已套用「${preset.patch.name}」：免 Key 可用，产物是占位内容且不计费，不能当正式出片`
+                              : `已套用「${preset.patch.name}」预设，请粘贴 API Key 后保存`,
+                          );
                         }}
                         className="rounded-lg border border-primary/30 bg-card px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary hover:bg-primary/10"
                       >

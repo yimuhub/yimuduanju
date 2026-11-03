@@ -216,9 +216,17 @@ const ClassicLayout = () => {
       {/* 底部：界面模式切换 + 用户 + 折叠 */}
       <div className="border-t border-sidebar-border p-3">
         <button
+          onClick={() => switchUIMode('studio', '/')}
+          title="切换到 Studio 模式（方案 F：导航轨 + 舞台 + 产出坞 + 时间线）"
+          className={`flex w-full items-center gap-3 rounded-lg border border-border px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground ${sidebarCollapsed ? 'justify-center' : ''}`}
+        >
+          <Sparkles className="h-4 w-4 shrink-0" />
+          {!sidebarCollapsed && <span>Studio 模式</span>}
+        </button>
+        <button
           onClick={() => switchUIMode('geek', '/')}
           title="切换到极客模式（三栏作战室 + 功能标签页）"
-          className={`flex w-full items-center gap-3 rounded-lg border border-border px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground ${sidebarCollapsed ? 'justify-center' : ''}`}
+          className={`mt-1 flex w-full items-center gap-3 rounded-lg border border-border px-2 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground ${sidebarCollapsed ? 'justify-center' : ''}`}
         >
           <MonitorCog className="h-4 w-4 shrink-0" />
           {!sidebarCollapsed && <span>极客模式</span>}

@@ -1,16 +1,21 @@
 /**
- * 双界面模式（参照 AI-EOS ui-mode 实现）
+ * 三界面模式（参照 AI-EOS ui-mode 实现）
  * ─────────────────────────────────────────────
- * - geek    = 极客模式：/ 路由三栏作战室（会话 | 对话 | 功能签右栏），旧路由重定向开签
+ * - studio  = Studio Graphite（方案 F）：左导航轨 + 中舞台（对话 / 无限画布 / 内容页）
+ *            + 右产出坞（7 Tab）+ 底时间线 + IDE 状态栏。**默认模式**。
+ * - geek    = 极客模式：/ 三栏作战室（会话 | 对话 | 功能签右栏），旧路由重定向开签
  * - classic = 经典模式：固定侧边栏 + 顶栏 + 整页导航 + RightDock 助手坞
  *
- * 选择持久化 localStorage（key: yimu.uiMode），默认 geek。
+ * 选择持久化 localStorage（key: yimu.uiMode），默认 studio。
  * 切换采用「写档 + 整页跳转/刷新」策略：简单可靠，所有挂载组件无需订阅对齐。
  */
 
-export type UIMode = 'classic' | 'geek';
+export type UIMode = 'classic' | 'geek' | 'studio';
 
-export const UI_MODE_KEY = 'yimu.uiMode';
+/** 新档（方案 F 上线后写这里） */
+export const UI_MODE_KEY = 'yimu.uiMode.v2';
+/** 旧档（双模式时代） */
+const UI_MODE_KEY_LEGACY = 'yimu.uiMode';
 
 /** 应用路由 basename（与 index.tsx 一致；网关以 /app/yimu/ 前缀伺服 SPA） */
 const APP_BASE = process.env.CLIENT_BASE_PATH || '/app/yimu';
@@ -18,10 +23,16 @@ const APP_BASE = process.env.CLIENT_BASE_PATH || '/app/yimu';
 export function readUIMode(): UIMode {
   try {
     const v = localStorage.getItem(UI_MODE_KEY);
-    return v === 'classic' ? 'classic' : 'geek';
+    if (v === 'classic' || v === 'geek' || v === 'studio') return v;
+    // 旧档迁移：classic 是用户主动选过的，保留；geek 只是旧默认，升级为方案 F
+    const legacy = localStorage.getItem(UI_MODE_KEY_LEGACY);
+    const migrated: UIMode = legacy === 'classic' ? 'classic' : 'studio';
+    localStorage.setItem(UI_MODE_KEY, migrated);
+    return migrated;
   } catch {
-    return 'geek';
+    /* 隐私模式读不到：本次会话仍生效 */
   }
+  return 'studio';
 }
 
 export function writeUIMode(mode: UIMode) {

@@ -60,6 +60,7 @@ React 19 · Vite 7 · Tailwind CSS 4 · NestJS 10 · Drizzle ORM · PostgreSQL 1
 | [docs/功能列表.md](docs/功能列表.md) | 全部页面/功能/API/数据表清单 |
 | [docs/操作说明书.md](docs/操作说明书.md) | 启动停止、创作流程、API 三通道配置、FAQ |
 | [docs/开发说明.md](docs/开发说明.md) | 架构、目录、运行机制、开发命令、排查 |
+| [docs/本地开源与质量优先实施蓝图.md](docs/本地开源与质量优先实施蓝图.md) | 本地优先、官方模型服务、异步质量链与画布架构的实施基线 |
 
 ## 🛠 常用命令
 
@@ -68,7 +69,14 @@ React 19 · Vite 7 · Tailwind CSS 4 · NestJS 10 · Drizzle ORM · PostgreSQL 1
 ./scripts/stop.sh      # 停止
 npm install --ignore-scripts   # 安装依赖
 NODE_ENV=production npx vite build --config vite.config.ts   # 前端生产构建
+node scripts/recalc-cost.js    # 项目费用对账（默认只读，--apply 写回）
 ```
+
+## 🔒 默认只听本机
+
+网关默认绑定 `127.0.0.1`，`/api/*` 没有登录鉴权（本地单用户，身份由网关注入）。
+监听非回环地址会被拒绝启动，确需局域网/容器访问必须显式设置 `YIMU_ALLOW_LAN=true`；
+Docker 端口只发布到宿主回环，企业版用 `SERVER_BIND_HOST` 显式放开。
 
 ## ⚠️ 注意事项
 

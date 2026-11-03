@@ -374,6 +374,15 @@ const AssetsPage = () => {
                     {TYPE_LABELS[asset.assetType] || asset.assetType}
                   </span>
 
+                  {asset.mock && (
+                    <span
+                      className="absolute right-2 top-2 rounded-full bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                      title="mock 演练占位产物：未计费，请勿当作成片交付"
+                    >
+                      演示
+                    </span>
+                  )}
+
                   {asset.durationSeconds && isMedia && (
                     <span className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
                       {formatDuration(asset.durationSeconds)}

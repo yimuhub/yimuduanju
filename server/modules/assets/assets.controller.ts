@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { readFile } from 'fs/promises';
-import { relative, resolve, isAbsolute } from 'path';
+import { relative, resolve, isAbsolute, sep } from 'path';
 import type {
   Asset,
   AssetListResponse,
@@ -24,14 +24,17 @@ import { AssetListQueryDto, CreateAssetDto, UpdateAssetDto } from './dto';
 import { isSafeExternalUrl } from '../../common/url-guard';
 
 /**
- * /uploads/ 相对路径 → 上传目录内绝对路径，并做包含性校验。
+ * /uploads/ 相对地址或服务端绝对路径 → 上传目录内绝对路径，并做包含性校验。
  * 用 path.relative 判定而不是 startsWith 前缀（后者放行 data/uploads-backup 等兄弟目录）。
  */
-function resolveUnderUploads(fileUrl: string): string {
-  const rel = fileUrl.replace(/^\/uploads\//, '');
+function resolveUnderUploads(fileUrlOrPath: string): string {
+  const input = fileUrlOrPath.replace(/^\/uploads\//, '');
   const base = resolve(uploadDir());
-  const abs = resolve(base, rel);
-  if (isAbsolute(rel) || relative(base, abs).startsWith('..')) {
+  // fileUrl 通常是 /uploads/ 相对地址，服务端归档则会写绝对 filePath；
+  // 两种形式都允许，但最终路径必须仍在上传目录内。
+  const abs = isAbsolute(input) ? resolve(input) : resolve(base, input);
+  const rel = relative(base, abs);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new BadRequestException('非法路径');
   }
   return abs;
@@ -81,7 +84,8 @@ export class AssetsController {
     }
     if (asset.filePath) {
       try {
-        const buf = await readFile(asset.filePath);
+        // filePath 也可由资产 DTO 写入，绝不能直接信任并读取任意服务器路径。
+        const buf = await readFile(resolveUnderUploads(asset.filePath));
         res.setHeader('Content-Length', String(buf.length));
         res.end(buf);
         return;
@@ -108,6 +112,25 @@ export class AssetsController {
     return this.assetsService.listByProject(projectId);
   }
 
+  @Get('shot/:shotId/history')
+  async listShotHistory(
+    @Param('shotId', ParseUUIDPipe) shotId: string,
+    @Query('assetType') assetType?: string,
+  ): Promise<Asset[]> {
+    return this.assetsService.listShotHistory(shotId, { assetType });
+  }
+
+  @Post('shot/:shotId/revert')
+  async revertShotAsset(
+    @Param('shotId', ParseUUIDPipe) shotId: string,
+    @Body() body: { assetId: string; assetType: 'video' | 'image' },
+  ): Promise<Asset> {
+    if (!body.assetId || !body.assetType) {
+      throw new BadRequestException('assetId 与 assetType 为必填项');
+    }
+    return this.assetsService.revertShotAsset(shotId, body.assetId, body.assetType);
+  }
+
   @Get(':id')
   async get(
     @Param('id', ParseUUIDPipe) id: string,
@@ -119,7 +142,10 @@ export class AssetsController {
 
   @Post()
   async create(@Body() body: CreateAssetDto): Promise<Asset> {
-    return this.assetsService.create(body);
+    // filePath 仅允许服务端上传/归档流程写入；公共 API 即使收到该字段也忽略。
+    const input = { ...body };
+    delete input.filePath;
+    return this.assetsService.create(input);
   }
 
   @Patch(':id')
@@ -128,7 +154,9 @@ export class AssetsController {
     @Body() body: UpdateAssetDto,
     @Query('projectId') projectId?: string,
   ): Promise<Asset> {
-    return this.assetsService.update(id, body, projectId);
+    const input = { ...body };
+    delete input.filePath;
+    return this.assetsService.update(id, input, projectId);
   }
 
   @Delete(':id')

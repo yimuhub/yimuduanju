@@ -9,6 +9,7 @@ import type {
   StorySkillInfo,
   StoryStylePreset,
   StoryGenreInfo,
+  BlockedVideoSummary,
 } from '@shared/api.interface';
 
 export const parseScript = (data: ParseScriptRequest) =>
@@ -90,6 +91,22 @@ export const generateShotImageAt = (projectId: string, shotId: string) =>
   axiosForBackend
     .post<{ jobId: string }>(
       `/api/projects/${projectId}/storyboard/shots/${shotId}/generate-image`,
+    )
+    .then((res) => res.data);
+
+/** 因首帧未就绪被暂停的视频（按镜头聚合），用于分镜页恢复提示 */
+export const listBlockedVideos = (projectId: string) =>
+  axiosForBackend
+    .get<BlockedVideoSummary>(
+      `/api/projects/${projectId}/storyboard/blocked-videos`,
+    )
+    .then((res) => res.data);
+
+/** 一键为首帧失败/缺失的镜头重新发起首帧 */
+export const recoverBlockedVideos = (projectId: string) =>
+  axiosForBackend
+    .post<{ retried: number; skipped: number; failed: number }>(
+      `/api/projects/${projectId}/storyboard/blocked-videos/recover`,
     )
     .then((res) => res.data);
 

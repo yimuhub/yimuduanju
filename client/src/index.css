@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./styles/graphite.css";
 @import "./tailwind-theme.css";
 @import "./typography.css";
 

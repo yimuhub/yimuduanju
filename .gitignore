@@ -4,10 +4,17 @@ dist/
 *.tsbuildinfo
 
 # 本地运行数据（不进仓库）
-data/
+# 注意：必须用前导斜杠锚定仓库根，否则 "data/" 会把源码目录 client/src/data/ 一并排除，
+# 导致新 clone / 新 worktree 缺少 styleLibrary 等前端常量而构建失败。
+/data/
+/data-test/
 logs/
 backups/
 uploads/
+dump.rdb
+
+# WorkBuddy 项目记忆（本地协作数据，不进仓库）
+.workbuddy/
 
 # 真实密钥（绝不提交；示例文件除外）
 # 注意：必须用 .env.* 通配，否则 .env.enterprise 这类真实密钥文件会被提交。

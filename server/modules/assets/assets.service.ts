@@ -1,6 +1,6 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { assets } from '@server/database/schema';
+import { assets, shots } from '@server/database/schema';
 import { eq, desc, and, count, ilike } from 'drizzle-orm';
 import { spawn } from 'child_process';
 import { mkdir, stat, writeFile } from 'fs/promises';
@@ -185,6 +185,69 @@ export class AssetsService {
     return rows.map((r) => this.mapAsset(r));
   }
 
+  /**
+   * 镜头历史版本：按稳定 sourceId（shot:<shotId>:<type>）归组，返回该镜头所有产物版本，
+   * 按 version 倒序（最新在前），前端据此展示「历史版本 / 回退」。
+   */
+  async listShotHistory(
+    shotId: string,
+    opts?: { assetType?: string },
+  ): Promise<Asset[]> {
+    const rows = await this.db
+      .select()
+      .from(assets)
+      .where(and(eq(assets.sourceId, `shot:${shotId}:${opts?.assetType ?? 'video'}`)))
+      .orderBy(desc(assets.version));
+    return rows.map((r) => this.mapAsset(r));
+  }
+
+  /**
+   * 回退镜头产物：把指定历史版本的 URL 写回 shots 的主产物字段。
+   * assetType 决定写 videoUrl 还是 startFrameUrl；回退不删资产、不改版本链，可再回退回来。
+   */
+  async revertShotAsset(
+    shotId: string,
+    assetId: string,
+    assetType: 'video' | 'image',
+  ): Promise<Asset> {
+    const assetRows = await this.db
+      .select()
+      .from(assets)
+      .where(eq(assets.id, assetId))
+      .limit(1);
+    if (assetRows.length === 0) throw new NotFoundException('历史版本不存在');
+    const asset = assetRows[0];
+    if (!asset.fileUrl) throw new BadRequestException('该历史版本无可回退的产物地址');
+    if (asset.assetType !== assetType) {
+      throw new BadRequestException('历史版本类型与回退目标不一致');
+    }
+    // 完整性校验：只能回退本镜头的产物，防止用任意资产覆盖镜头
+    if (asset.sourceId !== `shot:${shotId}:${assetType}`) {
+      throw new BadRequestException('该版本不属于指定镜头');
+    }
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (assetType === 'video') {
+      patch.videoUrl = asset.fileUrl;
+      // 回退成片即代表该镜有可用产物，顺带把失败/生成中状态收敛回 ready
+      patch.status = 'ready';
+    } else {
+      patch.startFrameUrl = asset.fileUrl;
+    }
+
+    const conditions = [eq(shots.id, shotId)];
+    if (asset.projectId) conditions.push(eq(shots.projectId, asset.projectId));
+    const updated = await this.db
+      .update(shots)
+      .set(patch)
+      .where(and(...conditions))
+      .returning({ id: shots.id });
+    if (updated.length === 0) throw new NotFoundException('镜头不存在或不属于该项目');
+
+    this.logger.log(`镜头 ${shotId} 回退到历史版本 ${assetId}（${assetType} v${asset.version ?? 1}）`);
+    return this.mapAsset(asset);
+  }
+
   private mapAsset(row: typeof assets.$inferSelect): Asset {
     // P1 修复：DB 可空列兜底，保证契约必填字段永不为 null
     return {
@@ -209,6 +272,8 @@ export class AssetsService {
       parentAssetId: row.parentAssetId ?? undefined,
       status: row.status ?? 'ready',
       locked: row.locked ?? false,
+      // mock 演练产物：归档时写 metadata.mock，前端据此显示「演示」标签
+      mock: (row.metadata as Record<string, unknown> | null)?.mock === true || undefined,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };

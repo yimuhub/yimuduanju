@@ -44,12 +44,22 @@ async function bootstrap() {
 
   const host = process.env.SERVER_HOST || 'localhost';
   // 修复：Number('abc') === NaN，app.listen(NaN) 行为不可预期（可能随机端口或直接抛错）。
-  // 另外 SERVER_HOST 默认 'localhost' 在容器里只绑回环，不显式设 0.0.0.0 外部访问不到 —— 
+  // 另外 SERVER_HOST 默认 'localhost' 在容器里只绑回环，不显式设 0.0.0.0 外部访问不到 ——
   // 这是有意保留的默认（安全优先），部署时请按环境显式设置。
   const port = Number.parseInt(process.env.SERVER_PORT ?? '3000', 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(
       `SERVER_PORT 非法：${JSON.stringify(process.env.SERVER_PORT)}（应为 1-65535 的整数）`,
+    );
+  }
+
+  // 安全提示：/api/* 没有登录鉴权（本地单用户，身份由网关注入）。
+  // 一旦后端监听非回环地址，同网段任何人都能直接读写数据、消耗模型额度，
+  // 因此这里必须显式告警，避免「以为只有网关对外」的误判。
+  if (!['localhost', '127.0.0.1', '::1'].includes(host)) {
+    logger.warn(
+      `后端监听 ${host}：/api/* 无鉴权，仅应在反向代理或容器网络后使用；` +
+        '宿主机直连场景请保持 SERVER_HOST=localhost。',
     );
   }
 

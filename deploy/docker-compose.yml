@@ -59,7 +59,11 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
     ports:
-      - '${SERVER_PORT:-3000}:3000'
+      # 默认只发布到宿主回环：本栈没有内置网关，3000 端口就是无认证的业务 API，
+      # 写 3000:3000 等于把「读写全部项目 + 消耗模型额度」开放给同网段。
+      # 反向代理在别的容器里时，显式设置 SERVER_BIND_HOST=0.0.0.0，
+      # 并用防火墙/网络策略保证只有该代理能连。
+      - '${SERVER_BIND_HOST:-127.0.0.1}:${SERVER_PORT:-3000}:3000'
     volumes:
       - serverlogs:/app/logs
 
