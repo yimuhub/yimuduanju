@@ -185,31 +185,41 @@ const server = http.createServer((req, res) => {
   }
 
   const headers = { ...req.headers, host: target.host };
-  // 支持多租户/多用户身份头：若客户端携带 x-yimu-user-id 则构造对应租户上下文，否则回落本地默认用户
-  const customUserId = typeof req.headers['x-yimu-user-id'] === 'string' ? req.headers['x-yimu-user-id'].trim() : '';
-  const customTenantId = typeof req.headers['x-yimu-tenant-id'] === 'string' ? req.headers['x-yimu-tenant-id'].trim() : '';
-  if (customUserId && /^[a-zA-Z0-9_-]{1,64}$/.test(customUserId)) {
+  // 安全加固：身份头只能由网关构造，客户端自带的一律剥掉。
+  // 旧实现 `else if (!headers['x-larkgw-suda-webuser'])` 会原样转发客户端伪造的身份头，
+  // 使 x-yimu-user-id 的白名单校验形同虚设（直连 curl 即可冒充任意用户）。
+  delete headers['x-larkgw-suda-webuser'];
+  delete headers['x-yimu-user-id'];
+  delete headers['x-yimu-tenant-id'];
+
+  const remoteAddr = (req.socket && req.socket.remoteAddress) || '';
+  const isLoopback =
+    remoteAddr === '127.0.0.1' ||
+    remoteAddr === '::1' ||
+    remoteAddr === '::ffff:127.0.0.1';
+
+  // 多租户接缝：仅在本机回环部署时接受 x-yimu-user-id 覆盖（前端当前未使用）。
+  // 一旦网关绑定到非回环地址（别人也能连），身份覆盖必须关闭，否则等于开放冒充。
+  const identityOverrideAllowed = LOOPBACK_HOSTS.has(GATEWAY_HOST);
+  const rawUserId = typeof req.headers['x-yimu-user-id'] === 'string' ? req.headers['x-yimu-user-id'].trim() : '';
+  const rawTenantId = typeof req.headers['x-yimu-tenant-id'] === 'string' ? req.headers['x-yimu-tenant-id'].trim() : '';
+  if (identityOverrideAllowed && rawUserId && /^[a-zA-Z0-9_-]{1,64}$/.test(rawUserId)) {
     headers['x-larkgw-suda-webuser'] = encodeURIComponent(
       JSON.stringify({
-        user_id: customUserId,
-        tenant_id: customTenantId && /^[a-zA-Z0-9_-]{1,64}$/.test(customTenantId) ? customTenantId : 'local',
+        user_id: rawUserId,
+        tenant_id: /^[a-zA-Z0-9_-]{1,64}$/.test(rawTenantId) ? rawTenantId : 'local',
         app_id: 'yimu',
         user_type: 'user',
-        user_name: { zh_cn: customUserId },
+        user_name: { zh_cn: rawUserId },
       }),
     );
-  } else if (!headers['x-larkgw-suda-webuser']) {
+  } else {
     headers['x-larkgw-suda-webuser'] = WEBUSER_HEADER;
   }
   // 安全加固（修复网关代填提权风险）：
   // 仅当客户端未显式携带 x-admin-token、且请求严格来自本机回环地址（127.0.0.1 / ::1）、
   // 且未设置 GATEWAY_AUTO_ADMIN_TOKEN=false 时，才为本机开发自动注入管理员令牌；
   // 局域网/公网（GATEWAY_HOST=0.0.0.0）访问管理接口必须由客户端自行携带合法 x-admin-token。
-  const remoteAddr = (req.socket && req.socket.remoteAddress) || '';
-  const isLoopback =
-    remoteAddr === '127.0.0.1' ||
-    remoteAddr === '::1' ||
-    remoteAddr === '::ffff:127.0.0.1';
   const needAdminToken =
     pathname === '/api/admin' ||
     pathname.startsWith('/api/admin/') ||
@@ -249,7 +259,7 @@ const server = http.createServer((req, res) => {
       // 导致 CSRF 校验全站 403。仅本机回环部署时改写属性（安全语义不变：仅 127.0.0.1 可达）。
       const outHeaders = { ...proxyRes.headers };
       const rawCookies = proxyRes.headers['set-cookie'];
-      if (rawCookies && GATEWAY_HOST === '127.0.0.1') {
+      if (rawCookies && LOOPBACK_HOSTS.has(GATEWAY_HOST)) {
         outHeaders['set-cookie'] = rawCookies.map((c) =>
           c
             .replace(/;\s*Secure/gi, '')
@@ -284,12 +294,25 @@ const server = http.createServer((req, res) => {
 
 // W4 安全加固：默认仅监听 127.0.0.1（本机回环），安全语义不变。
 // 网关代理的 /api/* 包含无认证的业务接口，绑定 0.0.0.0 暴露到局域网/公网
-// 即意味着同网段任意设备可读写本地数据 —— 如确需暴露请先评估风险。
-// Docker Compose 下可通过环境变量 GATEWAY_HOST=0.0.0.0 开放容器端口。
+// 即意味着同网段任意设备可读写本地数据、消耗你的模型额度。
+// 因此改为 fail-closed：确需暴露（Docker / 局域网）时必须显式 YIMU_ALLOW_LAN=true，
+// 否则启动即退出，避免"以为只有自己能访问"的默认趟雷。
 const GATEWAY_HOST = process.env.GATEWAY_HOST || '127.0.0.1';
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+if (!LOOPBACK_HOSTS.has(GATEWAY_HOST) && process.env.YIMU_ALLOW_LAN !== 'true') {
+  console.error(
+    `[gateway] 拒绝启动：监听地址 ${GATEWAY_HOST} 会暴露到本机之外，` +
+      '而 /api/* 没有登录校验（身份头由网关注入，后端不做用户隔离）。\n' +
+      '[gateway] 仅本机使用请删除 GATEWAY_HOST；确需局域网/容器访问请显式设置 YIMU_ALLOW_LAN=true。',
+  );
+  process.exit(1);
+}
 server.listen(PORT, GATEWAY_HOST, () => {
   console.log(`[gateway] 一幕·YIMU AI 短剧创作平台本地网关已启动：http://${GATEWAY_HOST}:${PORT}`);
-  console.log(`[gateway] 监听地址：${GATEWAY_HOST}${GATEWAY_HOST === '127.0.0.1' ? '（仅本机访问）' : '（已开放，请评估风险）'}`);
+  console.log(
+    `[gateway] 监听地址：${GATEWAY_HOST}` +
+      (LOOPBACK_HOSTS.has(GATEWAY_HOST) ? '（仅本机访问）' : '（已对外开放，同网段可直接读写数据）'),
+  );
   console.log(`[gateway] 静态资源目录：${DIST_DIR}`);
   console.log(`[gateway] 动态请求转发：${TARGET}`);
 });

@@ -45,11 +45,15 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      # 容器内必须监听 0.0.0.0 才能被宿主访问；暴露面由下方 ports 的回环绑定收口，
+      # YIMU_ALLOW_LAN 是对网关 fail-closed 检查的显式确认（非本机监听需手动声明）
       GATEWAY_HOST: 0.0.0.0
+      YIMU_ALLOW_LAN: 'true'
       DATABASE_URL: postgres://yimu:yimu@postgres:5432/yimu
       REDIS_URL: redis://redis:6379
     ports:
-      - '5173:5173'
+      # 只发布到宿主回环：/api/* 无登录校验，写 5173:5173 会让同网段设备直接读写数据
+      - '127.0.0.1:5173:5173'
 
 volumes:
   pgdata:

@@ -23,6 +23,15 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const host = process.env.SERVER_HOST || 'localhost';
   const port = Number(process.env.SERVER_PORT || '3000');
+  // 安全提示：/api/* 没有登录鉴权（本地单用户，身份由网关注入）。
+  // 一旦后端监听非回环地址，同网段任何人都能直接读写数据、消耗模型额度，
+  // 因此这里必须显式告警，避免「以为只有网关对外」的误判。
+  if (!['localhost', '127.0.0.1', '::1'].includes(host)) {
+    logger.warn(
+      `后端监听 ${host}：/api/* 无鉴权，仅应在反向代理或容器网络后使用；` +
+        '宿主机直连场景请保持 SERVER_HOST=localhost。',
+    );
+  }
 
   // 注册视图引擎, 渲染 client 目录下的 html 文件
   app.setBaseViewsDir(join(process.cwd(), 'dist/client'));

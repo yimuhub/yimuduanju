@@ -332,6 +332,8 @@ export interface Shot {
   locked: boolean;
   status: string;
   sortOrder: number;
+  /** 当前首帧/成片是否来自 mock 演练通道（占位内容，不计费，导出前需替换） */
+  mock?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -343,6 +345,26 @@ export interface WhitemodelMeta {
   source?: string;
   assetId?: string;
   createdAt?: string;
+}
+
+/** 因首帧未就绪而被暂停的视频任务（按镜头聚合，供分镜页「一键修复」展示） */
+export interface BlockedVideoShot {
+  shotId: string;
+  shotNumber: number;
+  /** waiting=首帧仍在生成；failed=首帧任务失败；missing=首帧任务缺失或产物不可用 */
+  reason: 'waiting_first_frame' | 'first_frame_failed' | 'first_frame_missing';
+  /** 该镜被暂停的视频任务数 */
+  jobCount: number;
+  /** 该镜是否已有在途的首帧图片任务（有则不重复发起，避免重复扣费） */
+  hasActiveImageJob: boolean;
+}
+
+export interface BlockedVideoSummary {
+  items: BlockedVideoShot[];
+  /** 被暂停的视频任务总数 */
+  totalJobs: number;
+  /** 需要用户介入（首帧失败/缺失）的镜头数；纯等待中的不计入 */
+  needAction: number;
 }
 
 export interface Asset {
@@ -367,6 +389,8 @@ export interface Asset {
   parentAssetId?: string;
   status: string;
   locked: boolean;
+  /** 来自 mock 演练通道的占位产物（不计费，不应作为成片交付） */
+  mock?: boolean;
   createdAt: string;
   updatedAt: string;
 }

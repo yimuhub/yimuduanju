@@ -16,7 +16,7 @@ import {
   scenes,
   shots,
 } from '@server/database/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { mkdir, stat, writeFile } from 'fs/promises';
@@ -35,6 +35,10 @@ import { QcService } from '../qc/qc.service';
 import { uploadDir } from '../assets/uploads.controller';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
+
+type FirstFrameDependencyResult =
+  | { ready: true; imageUrl?: string }
+  | { ready: false; reason: 'waiting_first_frame' | 'first_frame_failed' | 'first_frame_missing' };
 
 /**
  * 任务消费器（W5：BullMQ 队列版，Redis 不可用时自动降级为进程内串行）。
@@ -196,6 +200,165 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * 首帧质量门：仅一键成片显式绑定 dependsOnJobId 的视频受此约束。
+   * 依赖必须是同项目、同镜头的图片任务；成功且能取得真实图片后才放行。
+   */
+  private async readShotStartFrame(job: GenerationJob): Promise<string | undefined> {
+    if (job.targetType !== 'shot' || !job.targetId) return undefined;
+    const shotRows = await this.db
+      .select({ startFrameUrl: shots.startFrameUrl })
+      .from(shots)
+      .where(eq(shots.id, job.targetId))
+      .limit(1);
+    return shotRows[0]?.startFrameUrl ?? undefined;
+  }
+
+  private async checkFirstFrameDependency(job: GenerationJob): Promise<FirstFrameDependencyResult> {
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    const dependsOnJobId = typeof input.dependsOnJobId === 'string' ? input.dependsOnJobId : undefined;
+    if (job.jobType !== 'video' || !dependsOnJobId) return { ready: true };
+
+    const rows = await this.db
+      .select({
+        status: generationJobs.status,
+        jobType: generationJobs.jobType,
+        projectId: generationJobs.projectId,
+        targetId: generationJobs.targetId,
+        outputData: generationJobs.outputData,
+      })
+      .from(generationJobs)
+      .where(eq(generationJobs.id, dependsOnJobId))
+      .limit(1);
+    const dependency = rows[0];
+    if (
+      !dependency ||
+      dependency.jobType !== 'image' ||
+      dependency.targetId !== job.targetId ||
+      (dependency.projectId ?? null) !== (job.projectId ?? null)
+    ) {
+      // 依赖记录缺失/不匹配（如历史任务被清理）：只要镜头已有可用首帧就放行，
+      // 否则会给「首帧其实已就绪」的镜头造成永久阻断。
+      const existing = await this.readShotStartFrame(job);
+      if (existing) return { ready: true, imageUrl: existing };
+      return { ready: false, reason: 'first_frame_missing' };
+    }
+    if (dependency.status === 'failed' || dependency.status === 'cancelled') {
+      return { ready: false, reason: 'first_frame_failed' };
+    }
+    if (dependency.status !== 'succeeded') {
+      return { ready: false, reason: 'waiting_first_frame' };
+    }
+
+    const output = (dependency.outputData ?? {}) as Record<string, unknown>;
+    const images = Array.isArray(output.images) ? output.images : [];
+    const firstImage = images[0] as Record<string, unknown> | undefined;
+    let imageUrl =
+      (typeof output.url === 'string' && output.url) ||
+      (typeof firstImage?.url === 'string' && firstImage.url) ||
+      undefined;
+    // 镜头已回写的首帧优先；若回写失败，仍可使用依赖任务的真实输出，避免误阻断。
+    const written = await this.readShotStartFrame(job);
+    if (written) imageUrl = written;
+    if (!imageUrl) return { ready: false, reason: 'first_frame_missing' };
+    return { ready: true, imageUrl };
+  }
+
+  /** 阻断只改调度原因并释放为 pending，不进入成功/失败结算，因此不会产生视频费用。 */
+  private async setFirstFrameBlock(
+    jobId: string,
+    reason: 'waiting_first_frame' | 'first_frame_failed' | 'first_frame_missing',
+  ): Promise<void> {
+    await this.db
+      .update(generationJobs)
+      .set({
+        status: 'pending',
+        progress: 0,
+        startedAt: null,
+        externalTaskId: null,
+        inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{blockedReason}', to_jsonb(${reason}::text), true)`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(generationJobs.id, jobId),
+          inArray(generationJobs.status, ['pending', 'queued', 'running', 'retrying']),
+        ),
+      );
+  }
+
+  private async clearFirstFrameBlock(jobId: string): Promise<void> {
+    await this.db
+      .update(generationJobs)
+      .set({
+        inputData: sql`coalesce(${generationJobs.inputData}, '{}'::jsonb) - 'blockedReason'`,
+        updatedAt: new Date(),
+      })
+      .where(eq(generationJobs.id, jobId));
+  }
+
+  /**
+   * 首帧成功回写后解除该镜头所有等待首帧的视频阻断，并把依赖重指向本次成功任务。
+   * 必须重指向：重试会新建图片任务，视频仍绑在旧的失败任务上，只清 blockedReason
+   * 会在下一轮 process 检查时被重新阻断（依赖永远处于 failed）。
+   */
+  private async unblockVideosForShot(
+    job: GenerationJob,
+    imageJobId: string,
+  ): Promise<void> {
+    if (!job.targetId) return;
+    const conditions = [
+      eq(generationJobs.jobType, 'video'),
+      eq(generationJobs.targetId, job.targetId),
+      eq(generationJobs.status, 'pending'),
+      sql`${generationJobs.inputData} ->> 'blockedReason' IS NOT NULL`,
+    ];
+    if (job.projectId) conditions.push(eq(generationJobs.projectId, job.projectId));
+    await this.db
+      .update(generationJobs)
+      .set({
+        inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb) - 'blockedReason', '{dependsOnJobId}', to_jsonb(${imageJobId}::text), true)`,
+        updatedAt: new Date(),
+      })
+      .where(and(...conditions))
+      .catch((e: Error) =>
+        this.logger.warn(`解除首帧阻断失败（镜 ${job.targetId}）：${e.message}`),
+      );
+  }
+
+  /** 每轮先对账：首帧成功自动解封；首帧重试失败/取消则保持阻断，不裸跑视频。 */
+  private async reconcileFirstFrameDependencies(): Promise<void> {
+    const rows = await this.db
+      .select({ id: generationJobs.id })
+      .from(generationJobs)
+      .where(
+        and(
+          eq(generationJobs.status, 'pending'),
+          eq(generationJobs.jobType, 'video'),
+          sql`${generationJobs.inputData} ->> 'blockedReason' IS NOT NULL`,
+        ),
+      )
+      .orderBy(generationJobs.createdAt)
+      .limit(50);
+    for (const row of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      const job = await this.generationService.getJob(row.id);
+      // eslint-disable-next-line no-await-in-loop
+      const dependency = await this.checkFirstFrameDependency(job);
+      // 显式相等判断：strict 模式下 if (dependency.ready) 不会收窄判别联合，dependency.reason 会编译报错
+      if (dependency.ready === true) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.clearFirstFrameBlock(job.id);
+        continue;
+      }
+      const input = (job.inputData ?? {}) as Record<string, unknown>;
+      if (input.blockedReason !== dependency.reason) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.setFirstFrameBlock(job.id, dependency.reason);
+      }
+    }
+  }
+
   private async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -217,6 +380,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       await this.driveInflightVideoJobs();
+      // 首帧依赖对账：首帧成功后解封视频；失败/取消则维持阻断（每轮扫描少量，避免全表）
+      await this.reconcileFirstFrameDependencies().catch((e: Error) =>
+        this.logger.warn(`首帧依赖对账失败: ${e.message}`),
+      );
       // 流水线自动链驱动（P0 断链修复）：图→视频→配音→剪辑→质检 段内自动连跑
       await this.drivePipeline().catch((e: Error) =>
         this.logger.warn(`流水线自动链驱动失败: ${e.message}`),
@@ -255,10 +422,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   /** 认领一个 pending 并置 queued（队列模式专用，与 claimNextPendingJob 语义一致） */
   private async claimForQueue(): Promise<GenerationJob | null> {
+    // 有 blockedReason 的视频在等首帧，必须跳过，避免队头阻塞整条队列。
+    const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
     const rows = await this.db
       .select()
       .from(generationJobs)
-      .where(eq(generationJobs.status, 'pending'))
+      .where(and(eq(generationJobs.status, 'pending'), dependencyReady))
       .orderBy(generationJobs.createdAt)
       .limit(1);
     if (rows.length === 0) return null;
@@ -269,6 +438,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         and(
           eq(generationJobs.id, rows[0].id),
           eq(generationJobs.status, 'pending'),
+          dependencyReady,
         ),
       )
       .returning();
@@ -342,6 +512,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private async process(job: GenerationJob): Promise<void> {
     this.logger.log(`认领任务 ${job.id}（${job.jobType}，目标 ${job.targetType ?? '-'}）`);
+    // 首帧质量门：一键成片的视频必须等本镜首帧成功，否则释放回 pending 并阻断，不调用模型、不计费。
+    const dep = await this.checkFirstFrameDependency(job);
+    // 显式相等判断：strict 模式下 if (!dep.ready) 不会收窄判别联合，dep.reason 会编译报错
+    if (dep.ready === false) {
+      await this.setFirstFrameBlock(job.id, dep.reason);
+      this.logger.log(`任务 ${job.id} 首帧依赖未满足（${dep.reason}），释放回队列等待`);
+      return;
+    }
     // W2 智能路由：按项目预算模式选档位与通道（任务自带 providerName 优先，显式指定不受路由覆盖）
     const decision = await this.routing.resolve(
       job.jobType,
@@ -361,6 +539,17 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // B1 环节覆盖：绑定优先于任务自带与路由决策
     const stage = await this.applyStageBinding(job, routedName);
     const providerName = stage.providerName;
+    // 环节绑定可能再次改供应商：必须把「实际执行的供应商」落盘。
+    // 否则结算只看路由供应商，会算错钱（mock 演练被照价收费，真实调用被误判免费）。
+    if (providerName && providerName !== routedName) {
+      await this.db
+        .update(generationJobs)
+        .set({ providerName, updatedAt: new Date() })
+        .where(eq(generationJobs.id, job.id))
+        .catch((e: Error) => this.logger.warn(`实际供应商落盘失败 ${job.id}：${e.message}`));
+    }
+    // 内存对象同步：后续 writeback 判定 mock 用的是这个对象，不跟着改会按旧供应商误判
+    if (providerName) job.providerName = providerName;
     const modelOpts = { model: stage.model, temperature: stage.temperature };
     try {
       switch (job.jobType) {
@@ -546,13 +735,19 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // （只填空不覆盖已有引用；变体任务同样受益）
     let imageUrl = refs[0];
     let lastFrameUrl = refs[2];
-    if ((!imageUrl || !lastFrameUrl) && job.targetType === 'shot' && job.targetId) {
+    // 带首帧依赖的任务（一键成片）必须以镜头当前首帧为准：
+    // 建单时快照的 references 可能是旧帧或空值，重试后新帧会被旧值挡住。
+    const dependsOnJobId =
+      typeof input.dependsOnJobId === 'string' ? input.dependsOnJobId : undefined;
+    if ((dependsOnJobId || !imageUrl || !lastFrameUrl) && job.targetType === 'shot' && job.targetId) {
       const shotRows = await this.db
         .select({ startFrameUrl: shots.startFrameUrl, endFrameUrl: shots.endFrameUrl })
         .from(shots)
         .where(eq(shots.id, job.targetId))
         .limit(1);
-      if (!imageUrl && shotRows[0]?.startFrameUrl) imageUrl = shotRows[0].startFrameUrl;
+      if (shotRows[0]?.startFrameUrl && (dependsOnJobId || !imageUrl)) {
+        imageUrl = shotRows[0].startFrameUrl;
+      }
       if (!lastFrameUrl && shotRows[0]?.endFrameUrl) lastFrameUrl = shotRows[0].endFrameUrl;
     }
     // 白模选填：references[1] 为白模位（generateShotVideo 约定：首帧/白模/尾帧/角色图）。
@@ -721,6 +916,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           targetId: generationJobs.targetId,
           targetType: generationJobs.targetType,
           projectId: generationJobs.projectId,
+          // providerName 必带：补写回时据此判定产物是否 mock，缺了会退回默认供应商误判
+          providerName: generationJobs.providerName,
           inputData: generationJobs.inputData,
           outputData: generationJobs.outputData,
         })
@@ -1455,6 +1652,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const projectGuard = job.projectId
       ? { projectId: job.projectId }
       : undefined;
+    // 本次产物是否来自 mock 演练通道：归档时打标，资产库/分镜页据此显示「演示」而非当真片
+    const mock = await this.generationService.isMockJob(job);
 
     if (job.targetType === 'shot') {
       const patch: Record<string, unknown> = { updatedAt: new Date() };
@@ -1491,8 +1690,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         .update(shots)
         .set(patch)
         .where(and(...conditions));
+      // 首帧回写成功：解除同镜视频的首帧阻断，并把依赖指向本次成功任务。
+      // 少了这步，用户重试首帧成功后视频仍会因旧依赖任务失败而永久卡住。
+      if (urls.imageUrl) await this.unblockVideosForShot(job, job.id);
       // 项目资产归档：生成的图/视频/配音同步登记 assets，「项目资产」页可见
-      await this.archiveOutputAssets(job, urls);
+      await this.archiveOutputAssets(job, urls, { mock });
       return;
     }
 
@@ -1514,17 +1716,20 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           updatedAt: new Date(),
         })
         .where(eq(table.id, job.targetId));
-      await this.archiveOutputAssets(job, urls);
+      await this.archiveOutputAssets(job, urls, { mock });
     }
   }
 
   /**
    * 项目资产归档：镜头产出（首帧图/成片/配音）写入 assets，
    * 「项目资产」页（listByProject）直接可见。sourceId=job.id 幂等去重。
+   * opts.mock：该产物来自演练通道时为 true —— 写 metadata.mock 打标，
+   * 资产库与分镜页据此显示「演示」，避免占位内容被当成真片。
    */
   private async archiveOutputAssets(
     job: GenerationJob,
     urls: { imageUrl?: string; videoUrl?: string; voiceUrl?: string },
+    opts?: { mock?: boolean },
   ): Promise<void> {
     if (!job.projectId) return;
     const input = (job.inputData ?? {}) as Record<string, unknown>;
@@ -1543,7 +1748,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     if (entries.length === 0) return;
 
     let shotLabel = '';
+    let shotId: string | undefined;
     if (job.targetType === 'shot' && job.targetId) {
+      shotId = job.targetId;
       const shotRows = await this.db
         .select({ shotNumber: shots.shotNumber, duration: shots.duration })
         .from(shots)
@@ -1573,18 +1780,47 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         const local = await this.archiveLocalFile(job.projectId, e.url, e.assetType, e.mime);
         // data: 未落盘时不入库（浏览器也打不开无路径的 data 行）；http 回退远程
         if (e.url.startsWith('data:') && !local) continue;
+
+        // 镜头产物的版本链：同一镜同一类型多次生成，用稳定 sourceId 归组，
+        // 新版本 parentAssetId 指向上一版本、version 递增，供「历史版本/回退」使用。
+        let version = 1;
+        let parentAssetId: string | undefined;
+        let stableSourceId = job.id;
+        if (shotId) {
+          stableSourceId = `shot:${shotId}:${e.assetType}`;
+          const chain = await this.db
+            .select({ id: assets.id, version: assets.version })
+            .from(assets)
+            .where(
+              and(
+                eq(assets.sourceId, stableSourceId),
+                eq(assets.assetType, e.assetType),
+              ),
+            )
+            .orderBy(desc(assets.version))
+            .limit(1);
+          if (chain.length > 0) {
+            parentAssetId = chain[0].id;
+            version = (chain[0].version ?? 1) + 1;
+          }
+        }
+
         await this.db.insert(assets).values({
           projectId: job.projectId,
           assetType: e.assetType,
-          name: e.name.slice(0, 120),
+          // 名称前缀是资产库最直观的兜底标识（列表卡片即使不认 metadata 也不会误读成真片）
+          name: `${opts?.mock ? '[演示] ' : ''}${e.name}`.slice(0, 120),
           fileUrl: local?.fileUrl ?? e.url,
           filePath: local?.filePath,
           fileSize: local?.fileSize,
           mimeType: e.mime,
           sourceType: 'generated',
-          sourceId: job.id,
+          sourceId: stableSourceId,
           generationPrompt: prompt.slice(0, 2000) || undefined,
+          version,
+          parentAssetId,
           status: 'ready',
+          ...(opts?.mock ? { metadata: { mock: true } } : {}),
         });
       } catch (err) {
         this.logger.warn(`资产归档失败 job=${job.id} type=${e.assetType}: ${(err as Error).message}`);

@@ -1,7 +1,7 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { scenes, shots, characters, generationJobs, projects, assets } from '@server/database/schema';
-import { eq, desc, and, count, inArray, lt } from 'drizzle-orm';
+import { eq, desc, and, count, inArray, lt, sql } from 'drizzle-orm';
 import type {
   Scene,
   Shot,
@@ -11,6 +11,8 @@ import type {
   ParseScriptResponse,
   ScriptJobResponse,
   StorySkillId,
+  BlockedVideoShot,
+  BlockedVideoSummary,
 } from '@shared/api.interface';
 import {
   CAMERA_ANGLE_LABELS,
@@ -151,7 +153,49 @@ export class StoryboardService {
       .from(shots)
       .where(and(...conditions))
       .orderBy(shots.shotNumber, desc(shots.createdAt));
-    return rows.map((r) => this.mapShot(r));
+    // mock 演练产物标注：分镜页是用户「看到了什么」的地方，
+    // 占位首帧/成片必须在这里就能看出来，不能等到资产库才发现是假的。
+    const mockUrls = await this.collectMockUrls(projectId);
+    return rows.map((r) => {
+      const shot = this.mapShot(r);
+      if (
+        this.isMockProductUrl(r.startFrameUrl, mockUrls) ||
+        this.isMockProductUrl(r.videoUrl, mockUrls)
+      ) {
+        shot.mock = true;
+      }
+      return shot;
+    });
+  }
+
+  /**
+   * 是否 mock 演练产物。除了 assets.metadata 标注，还兜住改造前已存在的占位视频：
+   * 网关把占位 mp4 统一写在 /uploads/mock/ 下，前缀即可识别，无需数据迁移。
+   */
+  private isMockProductUrl(url: string | null | undefined, mockUrls: Set<string>): boolean {
+    if (!url) return false;
+    return url.startsWith('/uploads/mock/') || mockUrls.has(url);
+  }
+
+  /** 项目内 mock 演练产物的 URL 集合（assets.metadata.mock=true），一次查询覆盖全量镜头 */
+  private async collectMockUrls(projectId: string): Promise<Set<string>> {
+    try {
+      const rows = await this.db
+        .select({ fileUrl: assets.fileUrl })
+        .from(assets)
+        .where(
+          and(
+            eq(assets.projectId, projectId),
+            sql`${assets.metadata} ->> 'mock' = 'true'`,
+          ),
+        );
+      return new Set(
+        rows.map((r) => r.fileUrl).filter((u): u is string => typeof u === 'string' && u.length > 0),
+      );
+    } catch {
+      // 标注失败不能阻断分镜页读取
+      return new Set();
+    }
   }
 
   async getShot(projectId: string, id: string): Promise<Shot> {
@@ -292,6 +336,123 @@ export class StoryboardService {
       .returning({ id: generationJobs.id });
     await this.markShotQueued(projectId, shot.id);
     return { jobId: rows[0].id };
+  }
+
+  /**
+   * 首帧依赖受阻汇总：列出本项目所有因首帧未就绪而被暂停的视频任务（按镜头聚合）。
+   * 分镜页据此给出「视频已暂停 → 重试首帧」的明确恢复入口，
+   * 避免用户只看到镜头「失败」却不知道该修哪一步。
+   */
+  async listBlockedVideos(projectId: string): Promise<BlockedVideoSummary> {
+    const rows = await this.db
+      .select({
+        shotId: generationJobs.targetId,
+        reason: sql<string>`${generationJobs.inputData} ->> 'blockedReason'`,
+      })
+      .from(generationJobs)
+      .where(
+        and(
+          eq(generationJobs.projectId, projectId),
+          eq(generationJobs.jobType, 'video'),
+          eq(generationJobs.status, 'pending'),
+          sql`${generationJobs.inputData} ->> 'blockedReason' IS NOT NULL`,
+        ),
+      );
+
+    const byShot = new Map<string, { reasons: string[]; count: number }>();
+    for (const r of rows) {
+      if (!r.shotId) continue;
+      const cur = byShot.get(r.shotId) ?? { reasons: [], count: 0 };
+      cur.count += 1;
+      if (r.reason) cur.reasons.push(r.reason);
+      byShot.set(r.shotId, cur);
+    }
+    if (byShot.size === 0) return { items: [], totalJobs: 0, needAction: 0 };
+
+    const shotIds = [...byShot.keys()];
+    const [shotRows, activeImageRows] = await Promise.all([
+      this.db
+        .select({ id: shots.id, shotNumber: shots.shotNumber })
+        .from(shots)
+        .where(and(eq(shots.projectId, projectId), inArray(shots.id, shotIds))),
+      this.db
+        .select({ targetId: generationJobs.targetId })
+        .from(generationJobs)
+        .where(
+          and(
+            eq(generationJobs.projectId, projectId),
+            eq(generationJobs.jobType, 'image'),
+            inArray(generationJobs.status, ['pending', 'queued', 'running', 'retrying']),
+            inArray(generationJobs.targetId, shotIds),
+          ),
+        ),
+    ]);
+    const shotNumberById = new Map(shotRows.map((s) => [s.id, s.shotNumber]));
+    const activeImageSet = new Set(
+      activeImageRows.map((r) => r.targetId).filter((v): v is string => Boolean(v)),
+    );
+
+    const items: BlockedVideoShot[] = [];
+    for (const [shotId, info] of byShot) {
+      // 失败优先于缺失，缺失优先于等待：一个镜头取最需要用户处理的原因
+      const reason: BlockedVideoShot['reason'] = info.reasons.includes('first_frame_failed')
+        ? 'first_frame_failed'
+        : info.reasons.includes('first_frame_missing')
+          ? 'first_frame_missing'
+          : 'waiting_first_frame';
+      items.push({
+        shotId,
+        shotNumber: shotNumberById.get(shotId) ?? 0,
+        reason,
+        jobCount: info.count,
+        hasActiveImageJob: activeImageSet.has(shotId),
+      });
+    }
+    items.sort((a, b) => a.shotNumber - b.shotNumber);
+
+    return {
+      items,
+      totalJobs: rows.length,
+      // 首帧仍在生成（含刚被重试）的属于正常排队，不需要用户再介入
+      needAction: items.filter(
+        (i) => i.reason !== 'waiting_first_frame' && !i.hasActiveImageJob,
+      ).length,
+    };
+  }
+
+  /**
+   * 一键恢复受阻视频：为「首帧失败/缺失」的镜头重新发起首帧任务。
+   * 已有在途首帧任务的镜头跳过，避免重复建单重复扣费；
+   * 首帧成功后消费器会自动解除对应视频的阻断（reconcileFirstFrameDependencies）。
+   */
+  async recoverBlockedVideos(
+    projectId: string,
+  ): Promise<{ retried: number; skipped: number; failed: number }> {
+    const summary = await this.listBlockedVideos(projectId);
+    let retried = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const item of summary.items) {
+      // 等待中的首帧无需重复发起；已有在途首帧任务也不重复建单
+      if (item.reason === 'waiting_first_frame' || item.hasActiveImageJob) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await this.generateShotImage(projectId, item.shotId);
+        retried += 1;
+      } catch (e) {
+        failed += 1;
+        this.logger.warn(
+          `恢复首帧失败（镜 ${item.shotNumber}）：${(e as Error).message}`,
+        );
+      }
+    }
+    this.logger.log(
+      `首帧恢复 ${projectId}：重试 ${retried}，跳过 ${skipped}，失败 ${failed}`,
+    );
+    return { retried, skipped, failed };
   }
 
   /**
@@ -612,8 +773,13 @@ export class StoryboardService {
   async batchGenerate(
     projectId: string,
     body: { type: 'image' | 'video' | 'voice'; shotIds?: string[] },
-    opts?: { basePriority?: number },
-  ): Promise<{ jobIds: string[]; groups: { empty: string[]; subject: string[] }; reused: string[] }> {
+    opts?: { basePriority?: number; dependsOnJobIdByShotId?: Record<string, string> },
+  ): Promise<{
+    jobIds: string[];
+    groups: { empty: string[]; subject: string[] };
+    reused: string[];
+    jobIdByShotId: Record<string, string>;
+  }> {
     await this.budgetCap.assertAllowed();
     let shotList: Shot[];
     if (body.shotIds && body.shotIds.length > 0) {
@@ -625,7 +791,7 @@ export class StoryboardService {
     }
 
     const jobType = body.type === 'image' ? 'image' : body.type === 'video' ? 'video' : 'tts';
-    // F7 批量幂等：同镜同类型已有在途任务（pending/running/retrying）则复用，
+    // F7 批量幂等：同镜同类型已有在途任务（pending/queued/running/retrying）则复用，
     // 重复点击不再建重复任务；返回 reused 供前端提示。
     const activeRows = await this.db
       .select({ targetId: generationJobs.targetId, id: generationJobs.id })
@@ -634,7 +800,7 @@ export class StoryboardService {
         and(
           eq(generationJobs.projectId, projectId),
           eq(generationJobs.jobType, jobType),
-          inArray(generationJobs.status, ['pending', 'running', 'retrying']),
+          inArray(generationJobs.status, ['pending', 'queued', 'running', 'retrying']),
         ),
       );
     const activeByTarget = new Map(
@@ -677,6 +843,9 @@ export class StoryboardService {
             : await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
         // eslint-disable-next-line no-await-in-loop
         const videoInput = jobType === 'video' ? await this.buildVideoJobInput(projectId, shot) : null;
+        const dependsOnJobId = jobType === 'video'
+          ? opts?.dependsOnJobIdByShotId?.[shot.id]
+          : undefined;
         prepared.push({
           shot,
           inputData: videoInput
@@ -685,6 +854,10 @@ export class StoryboardService {
                 duration: videoInput.duration,
                 references: videoInput.references,
                 ...(videoInput.chainedFrom ? { chainedFrom: videoInput.chainedFrom } : {}),
+                // 一键成片的视频与本次首帧任务硬绑定；priority 只决定顺序，不能保证依赖。
+                ...(dependsOnJobId
+                  ? { dependsOnJobId, blockedReason: 'waiting_first_frame' }
+                  : {}),
               }
             : jobType === 'image'
               ? {
@@ -699,6 +872,7 @@ export class StoryboardService {
         });
       }
     }
+    const jobIdByShotId: Record<string, string> = {};
     await this.db.transaction(async (tx) => {
       for (const group of [
         { shots: empty, priority: base, key: 'empty' as const },
@@ -708,6 +882,7 @@ export class StoryboardService {
           const existing = activeByTarget.get(shot.id);
           if (existing) {
             jobIds.push(existing);
+            jobIdByShotId[shot.id] = existing;
             reused.push(shot.id);
             groups[group.key].push(shot.id);
             continue;
@@ -727,6 +902,7 @@ export class StoryboardService {
             })
             .returning({ id: generationJobs.id });
           jobIds.push(rows[0].id);
+          jobIdByShotId[shot.id] = rows[0].id;
           groups[group.key].push(shot.id);
           // 同一事务内同步镜头状态（回滚时一起撤，不留脏 badge）
           // eslint-disable-next-line no-await-in-loop
@@ -738,12 +914,12 @@ export class StoryboardService {
       }
     });
 
-    return { jobIds, groups, reused };
+    return { jobIds, groups, reused, jobIdByShotId };
   }
 
   /**
-   * V6 一键成片编排：图批（75/70）→ 视频批（65/60）一次建完，
-   * 认领顺序天然先图后片；SSE 看进度，合成用导出页 wasm 按钮。
+   * V6 一键成片编排：图批与视频批一次建完，视频通过 dependsOnJobId 等待本镜首帧。
+   * priority 仅用于就绪任务的排序，不再承担正确性；SSE 看进度，合成用导出页 wasm 按钮。
    */
   async oneClick(
     projectId: string,
@@ -753,7 +929,11 @@ export class StoryboardService {
     video: { jobIds: string[]; reused: string[] };
   }> {
     const image = await this.batchGenerate(projectId, { type: 'image', shotIds: body.shotIds }, { basePriority: 75 });
-    const video = await this.batchGenerate(projectId, { type: 'video', shotIds: body.shotIds }, { basePriority: 65 });
+    const video = await this.batchGenerate(
+      projectId,
+      { type: 'video', shotIds: body.shotIds },
+      { basePriority: 65, dependsOnJobIdByShotId: image.jobIdByShotId },
+    );
     this.logger.log(
       `一键成片 ${projectId}：图 ${image.jobIds.length}（复用 ${image.reused.length}）+ 视频 ${video.jobIds.length}（复用 ${video.reused.length}）`,
     );

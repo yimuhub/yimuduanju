@@ -16,6 +16,24 @@ export const listByProject = (projectId: string) =>
     .get<Asset[]>(`/api/assets/by-project/${projectId}`)
     .then((res) => res.data);
 
+/** 镜头历史版本：同镜同类型多次生成的产物链（version 倒序，最新在前） */
+export const listShotHistory = (shotId: string, assetType?: string) =>
+  axiosForBackend
+    .get<Asset[]>(`/api/assets/shot/${shotId}/history`, {
+      params: assetType ? { assetType } : undefined,
+    })
+    .then((res) => res.data);
+
+/** 回退镜头产物到某个历史版本（写回 shots.videoUrl 或 startFrameUrl） */
+export const revertShotAsset = (
+  shotId: string,
+  assetId: string,
+  assetType: 'video' | 'image',
+) =>
+  axiosForBackend
+    .post<Asset>(`/api/assets/shot/${shotId}/revert`, { assetId, assetType })
+    .then((res) => res.data);
+
 /** 媒体展示地址：本地 /uploads 直连；远程走后端代理取流（可自动落盘） */
 export const mediaUrl = (asset: Pick<Asset, 'id' | 'fileUrl'>): string | undefined => {
   if (!asset.fileUrl) return undefined;

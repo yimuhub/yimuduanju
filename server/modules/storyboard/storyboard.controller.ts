@@ -14,6 +14,7 @@ import type {
   Shot,
   ParseScriptResponse,
   ScriptJobResponse,
+  BlockedVideoSummary,
 } from '@shared/api.interface';
 import type { RigRunResult } from '../story-skills/story-skills.service';
 import { StoryboardService } from './storyboard.service';
@@ -170,6 +171,22 @@ export class StoryboardController {
     @Body() body: BatchGenerateDto,
   ): Promise<{ jobIds: string[]; groups: { empty: string[]; subject: string[] }; reused: string[] }> {
     return this.storyboardService.batchGenerate(projectId, body);
+  }
+
+  /** 因首帧未就绪被暂停的视频（按镜头聚合），供分镜页展示恢复入口 */
+  @Get('blocked-videos')
+  async listBlockedVideos(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<BlockedVideoSummary> {
+    return this.storyboardService.listBlockedVideos(projectId);
+  }
+
+  /** 一键为「首帧失败/缺失」的镜头重新发起首帧，成功后消费器自动解除视频阻断 */
+  @Post('blocked-videos/recover')
+  async recoverBlockedVideos(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<{ retried: number; skipped: number; failed: number }> {
+    return this.storyboardService.recoverBlockedVideos(projectId);
   }
 
   @Post('one-click')
