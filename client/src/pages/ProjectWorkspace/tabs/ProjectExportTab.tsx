@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Circle,
   Music,
+  AlertTriangle,
 } from 'lucide-react';
 import { exportApi, storyboard, templates as templatesApi } from '@client/src/api';
 import type { Shot } from '@shared/api.interface';
@@ -212,6 +213,9 @@ const ProjectExportTab = () => {
     },
   ];
 
+  // mock 演练占位镜头：合成/导出前必须显式告知，避免把占位内容当成交付成片
+  const mockShots = shots.filter((s) => s.mock);
+
   return (
     <div className="space-y-6">
       <div>
@@ -220,6 +224,24 @@ const ProjectExportTab = () => {
           真实可下载的交付物由当前分镜数据生成；有视频片段时可在本机合成 MP4 成片
         </p>
       </div>
+
+      {!loading && !loadError && mockShots.length > 0 && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div>
+              <div className="text-sm font-medium text-amber-600">
+                本片含 {mockShots.length} 个演示占位镜头（未计费）
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                这些镜头的首帧/成片来自 mock 演练通道，是可播放的占位内容，不是真实生成结果。
+                镜头号：{mockShots.map((s) => `#${s.shotNumber}`).join('、')}。
+                请配置真实模型供应商并重新生成后再对外交付。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <div className="lg:col-span-3">

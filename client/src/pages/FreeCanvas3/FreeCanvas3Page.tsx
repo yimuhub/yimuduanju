@@ -3,6 +3,7 @@
  * 主页面：React Flow 画布 / 双击建节点 / 端口拖线 / 连线剪刀 / 快捷键 / 参考模式拾取
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -191,6 +192,8 @@ const CanvasInner = () => {
   const persistKeyRef = useRef(persistKey);
   // 首次加载完成前禁止写入（last-ep 重定向期间 persistKeyRef 尚未就位，防止空状态覆盖存档）
   const loadedRef = useRef(false);
+  // 存储写满等失败必须可见；同一次连续失败只提示一次，恢复写入后重置。
+  const persistWarningShownRef = useRef(false);
   // 后端实体每个项目只同步一次（切集不重复注入）
   const syncedProjectRef = useRef<string | null>(null);
   useEffect(() => {
@@ -229,8 +232,16 @@ const CanvasInner = () => {
     try {
       const snap = { nodes, edges, projectName };
       localStorage.setItem(persistKeyRef.current, JSON.stringify(snap));
-    } catch {
-      /* 容量不足忽略 */
+      persistWarningShownRef.current = false;
+    } catch (error) {
+      console.warn('[FreeCanvas3] 画布本地保存失败', error);
+      if (!persistWarningShownRef.current) {
+        persistWarningShownRef.current = true;
+        toast.error('画布修改未能保存', {
+          description: '本地存储空间可能不足。请先不要刷新页面；删除不再需要的大图节点后会自动重试保存。',
+          duration: 12000,
+        });
+      }
     }
   }, [nodes, edges, projectName]);
 

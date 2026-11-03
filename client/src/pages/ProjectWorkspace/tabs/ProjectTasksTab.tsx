@@ -248,7 +248,18 @@ const ProjectTasksTab = () => {
     ];
     if (job.errorMessage) rows.push({ label: '失败原因', value: job.errorMessage });
     if (job.inputData) {
-      const prompt = (job.inputData as Record<string, unknown>).prompt;
+      const input = job.inputData as Record<string, unknown>;
+      const blockedReason = typeof input.blockedReason === 'string' ? input.blockedReason : undefined;
+      if (blockedReason) {
+        const blockedText =
+          blockedReason === 'first_frame_failed'
+            ? '等待首帧重试成功（首帧生成失败，视频暂不运行、不计费）'
+            : blockedReason === 'first_frame_missing'
+              ? '缺少本镜首帧（首帧任务缺失，视频暂不运行、不计费）'
+              : '等待本镜首帧生成完成';
+        rows.push({ label: '等待原因', value: blockedText });
+      }
+      const prompt = input.prompt;
       if (typeof prompt === 'string' && prompt) {
         rows.push({ label: '输入', value: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt });
       }
@@ -256,7 +267,26 @@ const ProjectTasksTab = () => {
     if (job.outputData) {
       const out = job.outputData as Record<string, unknown>;
       const url = typeof out.url === 'string' ? out.url : undefined;
-      rows.push({ label: '产物', value: url ? url.slice(0, 120) : JSON.stringify(out).slice(0, 200) });
+      const isMock = out.mock === true;
+      rows.push({
+        label: '产物',
+        value: `${isMock ? '[演示占位] ' : ''}${url ? url.slice(0, 120) : JSON.stringify(out).slice(0, 200)}`,
+      });
+      if (isMock) {
+        rows.push({
+          label: '产物来源',
+          value: 'mock 演练通道（占位内容，不产生上游费用，未计费）',
+        });
+      }
+      const billing = (out.billing ?? {}) as Record<string, unknown>;
+      const charged = billing.charged;
+      if (typeof charged === 'number') {
+        const free = typeof billing.free === 'string' ? billing.free : undefined;
+        rows.push({
+          label: '实际计费',
+          value: `¥${charged.toFixed(4)}${free ? `（${free}）` : ''}`,
+        });
+      }
     }
     return (
       <div className="space-y-1.5 px-1 py-1">
@@ -383,6 +413,9 @@ const ProjectTasksTab = () => {
                   const isRunning = job.status === 'running';
                   const expanded = expandedId === job.id;
                   const polling = pollingIds.has(job.id);
+                  // mock 演练产物：占位内容、未计费，必须在列表里就能看出来
+                  const isMock =
+                    (job.outputData as Record<string, unknown> | undefined)?.mock === true;
                   return (
                     <Fragment key={job.id}>
                       <tr className="border-t border-border hover:bg-muted/20">
@@ -416,6 +449,14 @@ const ProjectTasksTab = () => {
                       </td>
                       <td className="px-4 py-3 text-foreground whitespace-nowrap">
                         ¥{job.cost?.toFixed(2) || '0.00'}
+                        {isMock && (
+                          <span
+                            className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600"
+                            title="占位产物（mock 演练通道），未计费，不能当作真实出片"
+                          >
+                            演示
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
                         {job.startedAt

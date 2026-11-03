@@ -13,9 +13,12 @@ import {
   Filter,
   Mic,
   Clapperboard,
+  History,
+  RotateCcw,
+  AlertTriangle,
 } from 'lucide-react';
-import { storyboard } from '@client/src/api';
-import type { Shot, Scene } from '@shared/api.interface';
+import { storyboard, assets } from '@client/src/api';
+import type { Shot, Scene, Asset, BlockedVideoSummary } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { toast } from 'sonner';
@@ -65,6 +68,59 @@ const ProjectStoryboardTab = () => {
   // P2 修复（方案断点7）：提示词编辑搬进行卡片展开区——改 prompt 与重跑单镜同处完成
   const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
   const [savingPromptIds, setSavingPromptIds] = useState<Set<string>>(new Set());
+  // 镜头历史版本：同镜多次生成的产物链，支持回退到旧版（解决主成片被覆盖不可回退）
+  const [historyMap, setHistoryMap] = useState<Record<string, Asset[]>>({});
+  const [historyLoading, setHistoryLoading] = useState<Set<string>>(new Set());
+  const [revertingIds, setRevertingIds] = useState<Set<string>>(new Set());
+  // 首帧受阻汇总：哪些镜头的视频因首帧未就绪被暂停，以及是否已有在途首帧任务
+  const [blocked, setBlocked] = useState<BlockedVideoSummary | null>(null);
+  const [recovering, setRecovering] = useState(false);
+
+  const loadHistory = async (shot: Shot) => {
+    setHistoryLoading((prev) => new Set(prev).add(shot.id));
+    try {
+      const video = await assets.listShotHistory(shot.id, 'video').catch(() => [] as Asset[]);
+      const image = await assets.listShotHistory(shot.id, 'image').catch(() => [] as Asset[]);
+      setHistoryMap((prev) => ({ ...prev, [shot.id]: [...video, ...image] }));
+    } catch (err) {
+      logger.error('Load shot history failed:', String(err));
+      setHistoryMap((prev) => ({ ...prev, [shot.id]: [] }));
+    } finally {
+      setHistoryLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(shot.id);
+        return next;
+      });
+    }
+  };
+
+  const revertTo = async (shot: Shot, asset: Asset) => {
+    if (!id) return;
+    const assetType = asset.assetType === 'image' ? 'image' : 'video';
+    setRevertingIds((prev) => new Set(prev).add(asset.id));
+    try {
+      await assets.revertShotAsset(shot.id, asset.id, assetType);
+      // 回退后本地产物引用即时更新，避免用户刷新才看到变化
+      setShots((prev) =>
+        prev.map((s) => {
+          if (s.id !== shot.id) return s;
+          return assetType === 'image'
+            ? { ...s, startFrameUrl: asset.fileUrl }
+            : { ...s, videoUrl: asset.fileUrl, status: 'ready' };
+        }),
+      );
+      toast.success(`已回退到 ${assetType === 'image' ? '首帧' : '成片'} v${asset.version ?? 1}`);
+    } catch (err) {
+      logger.error('Revert shot asset failed:', String(err));
+      toast.error('回退失败');
+    } finally {
+      setRevertingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(asset.id);
+        return next;
+      });
+    }
+  };
 
   const handleSavePrompt = async (shot: Shot, rerun?: 'image') => {
     if (!id) return;
@@ -149,9 +205,43 @@ const ProjectStoryboardTab = () => {
     }
   };
 
+  // 首帧受阻恢复：把「视频为什么不动」变成可操作入口，而不是让用户猜
+  const refreshBlocked = async () => {
+    if (!id) return;
+    try {
+      setBlocked(await storyboard.listBlockedVideos(id));
+    } catch (err) {
+      logger.error('Load blocked videos failed:', String(err));
+    }
+  };
+
+  const handleRecoverBlocked = async () => {
+    if (!id || recovering) return;
+    setRecovering(true);
+    try {
+      const res = await storyboard.recoverBlockedVideos(id);
+      if (res.retried > 0) {
+        toast.success(
+          `已为 ${res.retried} 个镜头重新生成首帧${res.skipped > 0 ? `，${res.skipped} 个已在排队中` : ''}${res.failed > 0 ? `，${res.failed} 个发起失败` : ''}`,
+        );
+      } else if (res.skipped > 0) {
+        toast.info('这些镜头的首帧已在生成中，请等待完成');
+      } else {
+        toast.info('没有需要恢复的镜头');
+      }
+      await refreshBlocked();
+    } catch (err) {
+      logger.error('Recover blocked videos failed:', String(err));
+      toast.error('恢复失败');
+    } finally {
+      setRecovering(false);
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    void refreshBlocked();
     storyboard.listScenes(id)
       .then(async (sceneData) => {
         setScenes(sceneData);
@@ -182,6 +272,8 @@ const ProjectStoryboardTab = () => {
   const filteredShots = selectedScene === 'all'
     ? shots
     : shots.filter((s) => s.sceneId === selectedScene);
+  // 受阻镜头查找表：卡片上直接标出「视频已暂停」，避免用户只看到「失败」不知道原因
+  const blockedByShot = new Map((blocked?.items ?? []).map((i) => [i.shotId, i]));
 
   const handleRerun = async (shot: Shot, type: 'image' | 'video') => {
     if (!id) return;
@@ -189,6 +281,8 @@ const ProjectStoryboardTab = () => {
     try {
       // P1 断链修复：rerun 签名已改为 (projectId, shotId, {type})
       await storyboard.rerunShot(id, shot.id, { type });
+      // 重跑首帧可能解除视频阻断，刷新面板块状态
+      void refreshBlocked();
     } catch (err) {
       logger.error('Rerun failed:', String(err));
       setError('重生成失败');
@@ -322,6 +416,44 @@ const ProjectStoryboardTab = () => {
         </div>
       </div>
 
+      {/* 首帧受阻恢复入口：把「视频为什么不动」变成可执行动作 */}
+      {blocked && blocked.totalJobs > 0 && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-sm font-medium text-amber-600">
+                <AlertTriangle className="h-4 w-4" />
+                {blocked.totalJobs} 个视频任务已暂停
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {blocked.needAction > 0 ? (
+                  <>
+                    其中 {blocked.needAction} 个镜头首帧生成失败或缺失，视频在首帧就绪前不会运行、也不会计费。
+                    受影响镜头：
+                    {blocked.items
+                      .filter((i) => i.reason !== 'waiting_first_frame' && !i.hasActiveImageJob)
+                      .map((i) => `#${i.shotNumber}`)
+                      .join('、')}
+                  </>
+                ) : (
+                  '首帧正在生成中，完成后视频会自动继续，无需操作。'
+                )}
+              </p>
+            </div>
+            {blocked.needAction > 0 && (
+              <button
+                onClick={handleRecoverBlocked}
+                disabled={recovering}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-500/90 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${recovering ? 'animate-spin' : ''}`} />
+                {recovering ? '恢复中…' : `重试首帧（${blocked.needAction} 镜）`}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Shots grid */}
       {loading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
@@ -332,11 +464,12 @@ const ProjectStoryboardTab = () => {
           </div>
         </div>
       ) : viewMode === 'grid' ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="cq-cols grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {filteredShots.map((shot, idx) => {
             const statusInfo = getStatusInfo(shot.status);
             const isExpanded = expandedId === shot.id;
             const isRegenerating = regeneratingIds.has(shot.id);
+            const blockedInfo = blockedByShot.get(shot.id);
             return (
               <div
                 key={shot.id}
@@ -368,6 +501,15 @@ const ProjectStoryboardTab = () => {
                   <div className="absolute left-2 top-2 rounded-md bg-black/50 px-1.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
                     #{shot.shotNumber}
                   </div>
+                  {shot.mock && (
+                    <div
+                      className="absolute bottom-2 left-2 flex items-center gap-1 rounded-md bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm"
+                      title="当前首帧/成片来自 mock 演练通道：占位内容、未计费，不能当作真实出片"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      演示
+                    </div>
+                  )}
                 </div>
 
                 {/* Info */}
@@ -381,6 +523,18 @@ const ProjectStoryboardTab = () => {
                         {shot.movement || '固定'}
                       </span>
                     </div>
+                    {blockedInfo && (
+                      <span
+                        title={
+                          blockedInfo.reason === 'waiting_first_frame'
+                            ? '首帧生成中，完成后视频自动继续'
+                            : '首帧失败/缺失，视频已暂停且未计费；重试首帧后自动继续'
+                        }
+                        className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600"
+                      >
+                        视频已暂停
+                      </span>
+                    )}
                     <span
                       className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusInfo.className}`}
                     >
@@ -519,6 +673,56 @@ const ProjectStoryboardTab = () => {
                           </button>
                         ) : (
                           <span className="text-muted-foreground">暂无（先填写对白）</span>
+                        )}
+                      </div>
+                      {/* 镜头历史版本：多次生成保留产物链，可回退到旧版（解决主成片被覆盖不可回退） */}
+                      <div>
+                        <span className="font-medium text-foreground">历史版本：</span>
+                        {!historyMap[shot.id] ? (
+                          <button
+                            onClick={() => loadHistory(shot)}
+                            disabled={historyLoading.has(shot.id)}
+                            className="ml-1 inline-flex items-center gap-1 rounded-md border border-input bg-card px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary disabled:opacity-50"
+                          >
+                            <History className="h-3 w-3" />
+                            {historyLoading.has(shot.id) ? '加载中…' : '查看历史版本'}
+                          </button>
+                        ) : historyMap[shot.id].length === 0 ? (
+                          <span className="text-muted-foreground">暂无历史版本（每次重生成后自动保留旧版）</span>
+                        ) : (
+                          <div className="mt-1.5 space-y-1">
+                            {historyMap[shot.id].map((asset) => (
+                              <div
+                                key={asset.id}
+                                className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2 py-1"
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                    {asset.assetType === 'image' ? '首帧' : '成片'} v{asset.version ?? 1}
+                                  </span>
+                                  <span className="truncate text-[11px] text-muted-foreground">
+                                    {asset.createdAt
+                                      ? new Date(asset.createdAt).toLocaleString('zh-CN', {
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                        })
+                                      : ''}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => revertTo(shot, asset)}
+                                  disabled={revertingIds.has(asset.id)}
+                                  title="回退到该版本"
+                                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  {revertingIds.has(asset.id) ? '回退中' : '回退'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>

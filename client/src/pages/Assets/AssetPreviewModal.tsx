@@ -223,6 +223,11 @@ const AssetPreviewModal = ({
             <div className="text-xs text-muted-foreground">来源</div>
             <div className="mt-1 text-sm font-medium text-foreground">
               {getSourceLabel(asset.sourceType)}
+              {asset.mock && (
+                <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                  演示占位
+                </span>
+              )}
             </div>
           </div>
           {asset.width && asset.height && (

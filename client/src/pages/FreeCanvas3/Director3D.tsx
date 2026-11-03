@@ -774,22 +774,24 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
 
   const confirmShots = () => {
     if (!shotDialog) return;
-    const st = useP3Store.getState();
     shotDialog.imgs.forEach((url, i) => {
       const pos = { x: 100 + Math.random() * 260, y: 100 + Math.random() * 220 };
-      st.createNode('image', pos);
-      const last = st.nodes[st.nodes.length - 1];
-      if (last) {
-        st.closeDialog();
-        st.updateNodeData(last.id, {
+      useP3Store.getState().createNode('image', pos);
+      // createNode 会替换整个 store 状态；必须重新读取，不能继续用创建前的 nodes 快照，
+      // 否则会把截图写进上一个已有节点（空画布时则完全丢失截图）。
+      const latest = useP3Store.getState();
+      const created = latest.nodes[latest.nodes.length - 1];
+      if (created) {
+        latest.closeDialog();
+        latest.updateNodeData(created.id, {
           title: shotDialog.mode === 'current' ? '导演台机位图' : `导演台${shotDialog.mode}方位图${i + 1}`,
           mediaUrl: url,
           mediaKind: 'image',
           status: 'done',
         });
       }
-      if (i === 0 && st.directorNodeId) {
-        st.updateNodeData(st.directorNodeId, { directorShot: url });
+      if (i === 0 && latest.directorNodeId) {
+        latest.updateNodeData(latest.directorNodeId, { directorShot: url });
       }
     });
     setShotDialog(null);

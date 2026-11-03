@@ -23,6 +23,11 @@ import ProjectAgentsTab from './pages/ProjectWorkspace/tabs/ProjectAgentsTab';
 import ProjectTasksTab from './pages/ProjectWorkspace/tabs/ProjectTasksTab';
 import ProjectQcTab from './pages/ProjectWorkspace/tabs/ProjectQcTab';
 import ProjectExportTab from './pages/ProjectWorkspace/tabs/ProjectExportTab';
+// 方案 F · Studio Graphite：新界面外壳（导航轨 / 舞台 / 产出坞 / 时间线 / 状态栏）
+import StudioLayout from './components/studio/StudioLayout';
+import StudioHomePage from './pages/Studio/StudioHomePage';
+import StudioProjectPage from './pages/Studio/StudioProjectPage';
+import StudioSectionPage from './pages/Studio/StudioSectionPage';
 // P1 性能：画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
 
@@ -38,81 +43,213 @@ const ClassicPages = {
   settings: lazy(() => import('./pages/Settings/SettingsPage')),
 } as const;
 
+/** JSX 不支持 `Foo['bar']` 成员表达式，这里取出带连字符的键 */
+const AiAssistantPage = ClassicPages['ai-assistant'];
+
 const RoutesComponent = () => {
   // 浏览器页签标题：平台渲染的 HTML 标题不可控，应用挂载后统一覆盖为品牌名
   useEffect(() => {
     document.title = '一幕·YIMU AI 短剧创作平台';
   }, []);
-  // 双模式：classic = 全部真实路由整页渲染；geek = / 三栏作战室 + 旧路由重定向开签
-  const isClassic = readUIMode() === 'classic';
+  // 三模式：studio = 方案 F（默认）；classic = 经典侧栏；geek = 极客三栏
+  const mode = readUIMode();
+  const isClassic = mode === 'classic';
+  const isStudio = mode === 'studio';
   return (
     <Routes>
-      <Route element={<Layout />}>
-        {/* 画布：Layout 检测 canvas-free3 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
-            并在左上角挂品牌悬浮导航按钮（见 Layout isCanvasRoute） */}
-        <Route
-          path="project/:id/canvas-free3"
-          element={
-            <RouteErrorGuard>
-              <Suspense fallback={<CanvasLoading tip="自由画布加载中..." />}>
-                <FreeCanvas3Page />
-              </Suspense>
-            </RouteErrorGuard>
-          }
-        />
-        {/* 首页 = 创作作战室；经典模式下作为侧栏「创作作战室」项对应的普通页面渲染 */}
-        <Route index element={<AgentStudio />} />
-        <Route path="create" element={<CreateWizardPage />} />
-        {isClassic ? (
-          <>
-            {/* 经典模式：所有真实路由直接整页渲染 */}
-            {(Object.keys(ClassicPages) as (keyof typeof ClassicPages)[]).map((key) => {
-              const Page = ClassicPages[key];
-              return (
-                <Route
-                  key={key}
-                  path={key}
-                  element={
-                    <RouteErrorGuard>
-                      <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
-                        <Page />
-                      </Suspense>
-                    </RouteErrorGuard>
-                  }
-                />
-              );
-            })}
-          </>
-        ) : (
-          <>
-            {/* 旧路由兼容（仅极客模式）：/dashboard 等直接访问 → 回首页并在右栏自动打开对应标签页 */}
-            <Route path="dashboard" element={<LegacyRedirect pageKey="dashboard" />} />
-            <Route path="projects" element={<LegacyRedirect pageKey="projects" />} />
-            <Route path="templates" element={<LegacyRedirect pageKey="templates" />} />
-            <Route path="styles" element={<LegacyRedirect pageKey="styles" />} />
-            <Route path="assets" element={<LegacyRedirect pageKey="assets" />} />
-            <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
-            <Route path="account" element={<LegacyRedirect pageKey="account" />} />
-            <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
-          </>
-        )}
-        <Route path="project/:id" element={<ProjectWorkspacePage />}>
-          <Route path="flow" element={<ProjectFlowTab />} />
-          <Route index element={<ProjectOverviewTab />} />
-          <Route path="script" element={<ProjectScriptTab />} />
-          <Route path="bible" element={<ProjectBibleTab />} />
-          <Route path="characters" element={<ProjectCharactersTab />} />
-          <Route path="scenes" element={<ProjectScenesTab />} />
-          <Route path="storyboard" element={<ProjectStoryboardTab />} />
-          <Route path="director" element={<ProjectDirectorTab />} />
-          <Route path="timeline" element={<ProjectTimelineTab />} />
-          <Route path="assets" element={<ProjectAssetsTab />} />
-          <Route path="agents" element={<ProjectAgentsTab />} />
-          <Route path="tasks" element={<ProjectTasksTab />} />
-          <Route path="qc" element={<ProjectQcTab />} />
-          <Route path="export" element={<ProjectExportTab />} />
+      {isStudio ? (
+        <>
+          {/* 画布沉浸全屏：独立于 Studio 外壳 */}
+          <Route
+            path="project/:id/canvas-free3"
+            element={
+              <RouteErrorGuard>
+                <Suspense fallback={<CanvasLoading tip="自由画布加载中..." />}>
+                  <FreeCanvas3Page />
+                </Suspense>
+              </RouteErrorGuard>
+            }
+          />
+          <Route element={<StudioLayout />}>
+            {/* 首页 = 工作台（对话 + 真实项目列表） */}
+            <Route index element={<StudioHomePage />} />
+            {/* 项目工作区：URL 片段决定「舞台视图 + 右坞 Tab」 */}
+            <Route path="project/:id/*" element={<StudioProjectPage />} />
+            {/* 既有整页：塞进 Studio 舞台，右坞与时间线自动隐藏 */}
+            <Route path="dashboard" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.dashboard />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="projects" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.projects />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="templates" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.templates />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="styles" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.styles />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="assets" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.assets />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="ai-assistant" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <AiAssistantPage />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="account" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.account />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route path="settings" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                      <ClassicPages.settings />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
+            <Route
+              path="create"
+              element={
+                <RouteErrorGuard>
+                  <CreateWizardPage />
+                </RouteErrorGuard>
+              }
+            />
+          </Route>
+        </>
+      ) : (
+        <Route element={<Layout />}>
+          {/* 画布：Layout 检测 canvas-free3 路径进入全屏沉浸模式（不渲染侧栏/顶栏/RightDock），
+              并在左上角挂品牌悬浮导航按钮（见 Layout isCanvasRoute） */}
+          <Route
+            path="project/:id/canvas-free3"
+            element={
+              <RouteErrorGuard>
+                <Suspense fallback={<CanvasLoading tip="自由画布加载中..." />}>
+                  <FreeCanvas3Page />
+                </Suspense>
+              </RouteErrorGuard>
+            }
+          />
+          {/* 首页 = 创作作战室；经典模式下作为侧栏「创作作战室」项对应的普通页面渲染 */}
+          <Route index element={<AgentStudio />} />
+          <Route path="create" element={<CreateWizardPage />} />
+          {isClassic ? (
+            <>
+              {/* 经典模式：所有真实路由直接整页渲染 */}
+              {(Object.keys(ClassicPages) as (keyof typeof ClassicPages)[]).map((key) => {
+                const Page = ClassicPages[key];
+                return (
+                  <Route
+                    key={key}
+                    path={key}
+                    element={
+                      <RouteErrorGuard>
+                        <Suspense fallback={<CanvasLoading tip="页面加载中..." />}>
+                          <Page />
+                        </Suspense>
+                      </RouteErrorGuard>
+                    }
+                  />
+                );
+              })}
+            </>
+          ) : (
+            <>
+              {/* 旧路由兼容（仅极客模式）：/dashboard 等直接访问 → 回首页并在右栏自动打开对应标签页 */}
+              <Route path="dashboard" element={<LegacyRedirect pageKey="dashboard" />} />
+              <Route path="projects" element={<LegacyRedirect pageKey="projects" />} />
+              <Route path="templates" element={<LegacyRedirect pageKey="templates" />} />
+              <Route path="styles" element={<LegacyRedirect pageKey="styles" />} />
+              <Route path="assets" element={<LegacyRedirect pageKey="assets" />} />
+              <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
+              <Route path="account" element={<LegacyRedirect pageKey="account" />} />
+              <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
+            </>
+          )}
+          <Route path="project/:id" element={<ProjectWorkspacePage />}>
+            <Route path="flow" element={<ProjectFlowTab />} />
+            <Route index element={<ProjectOverviewTab />} />
+            <Route path="script" element={<ProjectScriptTab />} />
+            <Route path="bible" element={<ProjectBibleTab />} />
+            <Route path="characters" element={<ProjectCharactersTab />} />
+            <Route path="scenes" element={<ProjectScenesTab />} />
+            <Route path="storyboard" element={<ProjectStoryboardTab />} />
+            <Route path="director" element={<ProjectDirectorTab />} />
+            <Route path="timeline" element={<ProjectTimelineTab />} />
+            <Route path="assets" element={<ProjectAssetsTab />} />
+            <Route path="agents" element={<ProjectAgentsTab />} />
+            <Route path="tasks" element={<ProjectTasksTab />} />
+            <Route path="qc" element={<ProjectQcTab />} />
+            <Route path="export" element={<ProjectExportTab />} />
+          </Route>
         </Route>
-      </Route>
+      )}
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

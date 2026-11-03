@@ -45,6 +45,18 @@ type Item =
   | { kind: 'session'; session: PaletteSession }
   | { kind: 'mode'; mode: UIMode };
 
+/** 三种界面模式的说明（Studio 方案 F 为默认） */
+const MODE_META: Record<UIMode, { label: string; desc: string }> = {
+  studio: {
+    label: 'Studio 模式（方案 F）',
+    desc: '导航轨 + 中舞台 + 产出坞 + 时间线 + 状态栏',
+  },
+  geek: { label: '极客模式', desc: '三栏作战室 + 功能标签页，对话不中断' },
+  classic: { label: '经典模式', desc: '左侧栏 + 整页导航，一页一件事' },
+};
+
+const ALL_MODES: UIMode[] = ['studio', 'geek', 'classic'];
+
 const CommandPalette = () => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -54,8 +66,8 @@ const CommandPalette = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { openTab } = useWorkspaceTabs();
-  // 双模式：极客模式回车=右栏开签；经典模式回车=整页导航。两个模式都提供「切换模式」项
-  const mode = open ? readUIMode() : 'geek';
+  // 三模式：studio = 方案 F（默认）；geek = 极客三栏；classic = 经典侧栏
+  const mode = open ? readUIMode() : 'studio';
 
   // ⌘K / Ctrl+K 呼出；Esc 关闭
   useEffect(() => {
@@ -84,17 +96,17 @@ const CommandPalette = () => {
 
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase();
-    // 首位固定：界面模式切换项（两种模式都可随时互切）
-    const modeItem: Item = {
-      kind: 'mode',
-      mode: mode === 'classic' ? 'geek' : 'classic',
-    };
-    const modeMatch =
-      !q ||
-      '模式'.includes(q) ||
-      'mode'.includes(q) ||
-      (mode === 'classic' ? '极客'.includes(q) : '经典'.includes(q));
-    const modeItems: Item[] = modeMatch ? [modeItem] : [];
+    // 首位固定：界面模式切换项（列出另外两种模式）
+    const modeItems: Item[] = ALL_MODES.filter((m) => m !== mode)
+      .filter(
+        (m) =>
+          !q ||
+          '模式'.includes(q) ||
+          'mode'.includes(q) ||
+          MODE_META[m].label.toLowerCase().includes(q) ||
+          MODE_META[m].desc.toLowerCase().includes(q),
+      )
+      .map((m): Item => ({ kind: 'mode', mode: m }));
     const pages = WORKSPACE_PAGES.filter(
       (p) =>
         !q ||
@@ -115,18 +127,19 @@ const CommandPalette = () => {
   const run = (item: Item | undefined) => {
     if (!item) return;
     if (item.kind === 'mode') {
-      // 切换界面模式：写档 + 整页刷新（极客 → /；经典 → 当前页面路由整页渲染）
-      if (item.mode === 'classic') {
-        switchUIMode('classic');
-      } else {
-        switchUIMode('geek', '/');
-      }
+      // 切换界面模式：写档 + 整页刷新（studio → /；其余保持当前路由）
+      switchUIMode(item.mode, item.mode === 'studio' ? '/' : undefined);
       return;
     }
     setOpen(false);
     if (item.kind === 'page') {
       if (mode === 'classic') {
         // 经典模式：整页导航到真实路由
+        navigate(`/${item.page.key}`);
+        return;
+      }
+      if (mode === 'studio') {
+        // Studio 模式：这些页面作为「内容页」渲染在舞台里
         navigate(`/${item.page.key}`);
         return;
       }
@@ -183,10 +196,10 @@ const CommandPalette = () => {
             items.map((item, i) => {
               const active = i === cursor;
               if (item.kind === 'mode') {
-                const toClassic = item.mode === 'classic';
+                const meta = MODE_META[item.mode];
                 return (
                   <button
-                    key="switch-mode"
+                    key={`switch-mode-${item.mode}`}
                     type="button"
                     onMouseEnter={() => setCursor(i)}
                     onClick={() => run(item)}
@@ -194,11 +207,15 @@ const CommandPalette = () => {
                       active ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted'
                     }`}
                   >
-                    {toClassic ? <MonitorCog className="h-4 w-4 shrink-0 text-muted-foreground" /> : <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                    {item.mode === 'classic' ? (
+                      <MonitorCog className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{toClassic ? '切换到经典模式' : '切换到极客模式'}</span>
+                      <span className="block truncate font-medium">切换到{meta.label}</span>
                       <span className="block truncate text-[11px] text-muted-foreground">
-                        {toClassic ? '左侧栏 + 整页导航，一页一件事' : '三栏作战室 + 功能标签页，对话不中断'}
+                        {meta.desc}
                       </span>
                     </span>
                     {active && <CornerDownLeft className="h-3 w-3 shrink-0 text-muted-foreground" />}

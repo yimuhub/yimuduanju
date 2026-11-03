@@ -564,7 +564,8 @@ const AgentStudio = () => {
 
   return (
     <>
-      {heroMode && pendingPlan && renderPlanGate()}
+      {/* 发送后会追加用户消息、退出 heroMode；开拍确认门不能随首屏状态一起消失。 */}
+      {pendingPlan && renderPlanGate()}
       {/* TriPane 三栏：左=会话列表 | 中=对话流 | 右=产出面板（宽度可拖拽，localStorage 持久） */}
       <TriPane
         leftKey="agentstudio.left"
