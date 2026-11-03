@@ -121,17 +121,15 @@ export const StudioRail = () => {
             undefined,
             stageView === 'chat',
           )}
-          {navItem(
-            'canvas',
-            <Network className="ico" />,
-            '无限画布',
-            () => {
-              setStageView('canvas');
-              if (!projectId && location.pathname !== '/') navigate('/');
-            },
-            data.shotStats.total ? { text: String(data.shotStats.total) } : undefined,
-            stageView === 'canvas',
-          )}
+          {projectId &&
+            navItem(
+              'canvas',
+              <Network className="ico" />,
+              '自由画布',
+              () => navigate(`/project/${projectId}/canvas-free3`),
+              data.shotStats.total ? { text: String(data.shotStats.total) } : undefined,
+              location.pathname === `/project/${projectId}/canvas-free3`,
+            )}
         </div>
 
         {/* ---------- 主导航 ---------- */}
@@ -154,6 +152,14 @@ export const StudioRail = () => {
             location.pathname === '/projects',
           )}
           {navItem('create', <Sparkles className="ico" />, '一键创作', () => navigate('/create'))}
+          {navItem(
+            'canvases',
+            <Network className="ico" />,
+            '画布模式',
+            () => navigate('/canvases'),
+            undefined,
+            location.pathname === '/canvases',
+          )}
           {navItem(
             'templates',
             <LayoutTemplate className="ico" />,

@@ -204,7 +204,12 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           break;
         case 'g':
         case 'G':
-          setStageView(stageView === 'canvas' ? 'chat' : 'canvas');
+          // 自由画布（原旗舰 canvas-free3，沉浸全屏）↔ 对话：按当前是否已在自由画布切换
+          if (projectId && location.pathname === `/project/${projectId}/canvas-free3`) {
+            navigate(`/project/${projectId}`);
+          } else if (projectId) {
+            navigate(`/project/${projectId}/canvas-free3`);
+          }
           break;
         case '-':
         case '_':

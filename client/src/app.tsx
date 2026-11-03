@@ -28,6 +28,7 @@ import StudioLayout from './components/studio/StudioLayout';
 import StudioHomePage from './pages/Studio/StudioHomePage';
 import StudioProjectPage from './pages/Studio/StudioProjectPage';
 import StudioSectionPage from './pages/Studio/StudioSectionPage';
+import { CanvasModePage } from './pages/CanvasMode/CanvasModePage';
 // P1 性能：画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
 
@@ -180,6 +181,8 @@ const RoutesComponent = () => {
                 </RouteErrorGuard>
               }
             />
+            {/* 画布模式：所有画布项目的卡片式展示 + 新建/编辑/删除 */}
+            <Route path="canvases" element={<CanvasModePage />} />
           </Route>
         </>
       ) : (

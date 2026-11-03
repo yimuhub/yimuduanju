@@ -2503,6 +2503,323 @@
   border-color: rgba(201, 154, 46, 0.22);
 }
 
+/* ---------- 画布模式 · 卡片式项目展示 ---------- */
+.canvasmode-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 22px 32px;
+  display: flex;
+  flex-direction: column;
+}
+.canvasmode-page::-webkit-scrollbar {
+  width: 9px;
+}
+.canvasmode-page::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+.canvasmode-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.canvasmode-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  margin: 0;
+}
+.canvasmode-sub {
+  font-size: 11px;
+  color: var(--fg-3);
+  font-family: var(--mono);
+}
+.canvasmode-err {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #ffb3b6;
+  margin-bottom: 14px;
+}
+.canvasmode-err button {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #ffb3b6;
+  cursor: pointer;
+  padding: 2px;
+}
+
+/* 卡片网格 */
+.canvasmode-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.canvasmode-card {
+  width: 184px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 140ms, border-color 140ms;
+  display: flex;
+  flex-direction: column;
+}
+.canvasmode-card:hover {
+  background: var(--bg-float);
+  border-color: var(--line-strong);
+}
+.canvasmode-card:focus-visible {
+  outline: 2px solid var(--brand-line);
+  outline-offset: 2px;
+}
+
+/* 新建卡片（最左侧最前方） */
+.canvasmode-card-new {
+  background: var(--bg-inset);
+  border: 1.5px dashed var(--line-strong);
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px 12px;
+  gap: 4px;
+  min-height: 230px;
+}
+.canvasmode-card-new:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+}
+.canvasmode-new-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  transition: background 120ms;
+}
+.canvasmode-new-btn:hover {
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+}
+.canvasmode-new-btn:disabled {
+  opacity: 0.4;
+  cursor: wait;
+}
+.canvasmode-new-btn svg {
+  width: 22px;
+  height: 22px;
+  color: var(--brand-hi);
+}
+.canvasmode-card-new input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--fg);
+  font-family: inherit;
+  outline: none;
+}
+.canvasmode-card-new input:focus {
+  border-color: var(--brand-line);
+}
+.canvasmode-new-hint {
+  font-size: 10px;
+  color: var(--fg-4);
+  margin-top: 2px;
+}
+
+/* 缩略图 */
+.canvasmode-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: var(--bg-inset);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.canvasmode-thumb img {
+  display: block;
+}
+.canvasmode-thumb-ph {
+  color: var(--fg-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+/* 标题行 */
+.canvasmode-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 0;
+  position: relative;
+}
+.canvasmode-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.canvasmode-actions {
+  display: none;
+  gap: 2px;
+}
+.canvasmode-card:hover .canvasmode-actions {
+  display: flex;
+}
+.cm-i {
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--r-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 100ms, background 100ms;
+}
+.cm-i:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.cm-i-danger:hover {
+  color: var(--brand-hi);
+  background: var(--brand-soft);
+}
+
+/* 元信息 */
+.canvasmode-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 10px;
+  font-size: 10.5px;
+  color: var(--fg-3);
+  font-family: var(--mono);
+}
+.canvasmode-meta-r {
+  color: var(--fg-4);
+}
+
+/* 加载中 / 空态 */
+.canvasmode-card-ghost {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  align-items: center;
+  justify-content: center;
+  min-height: 230px;
+  gap: 6px;
+  cursor: default;
+}
+.canvasmode-card-ghost:hover {
+  background: var(--bg-panel);
+  border-color: var(--line);
+}
+.canvasmode-ghost-label {
+  font-size: 13px;
+  color: var(--fg-2);
+}
+.canvasmode-ghost-sub {
+  font-size: 11px;
+  color: var(--fg-4);
+}
+
+/* 删除确认弹层 */
+.canvasmode-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.canvasmode-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  padding: 20px 24px;
+  width: 320px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.canvasmode-modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 6px;
+}
+.canvasmode-modal-body {
+  font-size: 12px;
+  color: var(--fg-2);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.canvasmode-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.cm-btn-ghost {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  font-size: 12px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.cm-btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.cm-btn-danger {
+  background: var(--brand);
+  border: none;
+  border-radius: var(--r-sm);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.cm-btn-danger:hover {
+  background: var(--brand-hi);
+}
+.cm-btn-danger:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
