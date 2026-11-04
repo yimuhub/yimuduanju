@@ -45,8 +45,23 @@ import {
 
 export type StageView = 'chat' | 'canvas' | 'page';
 
+/** 时间线收起态跨页持久（localStorage 键） */
+export const TL_COLLAPSED_KEY = 'yimu.timelineCollapsed';
+
+const readTlCollapsed = (): boolean => {
+  try {
+    return localStorage.getItem(TL_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
 export interface StudioContextValue {
   data: StudioData;
+  /** 底部时间线是否收起（细条模式），持久到 localStorage */
+  tlCollapsed: boolean;
+  setTlCollapsed: (v: boolean) => void;
+  toggleTlCollapsed: () => void;
   /** 当前项目 id；为空表示「未进入项目」的工作台态 */
   projectId?: string;
   /** 当前选中的镜头下标（画布 / 时间线 / 预览 / 分镜 四处同步） */
@@ -108,7 +123,20 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
 
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [dockCollapsed, setDockCollapsed] = useState(false);
-  const [tlCollapsed, setTlCollapsed] = useState(false);
+  const [tlCollapsed, setTlCollapsedState] = useState(readTlCollapsed);
+
+  const setTlCollapsed = useCallback((v: boolean) => {
+    setTlCollapsedState(v);
+    try {
+      localStorage.setItem(TL_COLLAPSED_KEY, v ? '1' : '0');
+    } catch {
+      /* 隐私模式等场景忽略写失败 */
+    }
+  }, []);
+
+  const toggleTlCollapsed = useCallback(() => {
+    setTlCollapsed(!tlCollapsed);
+  }, [tlCollapsed, setTlCollapsed]);
   const [dockTab, setDockTabState] = useState<DockTabKey>('preview');
   const [dockW, setDockW] = useState<number | null>(null);
   const [stageView, setStageViewState] = useState<StageView>('chat');
@@ -189,8 +217,16 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   // 快捷键
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
       if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+      if (el?.isContentEditable) return;
+      // ⌥T：切换时间线收起（输入框聚焦时不触发，已在上方拦截）
+      if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault();
+        toggleTlCollapsed();
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key) {
         case '[':
@@ -200,7 +236,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           setDockCollapsed((v) => !v);
           break;
         case '\\':
-          setTlCollapsed((v) => !v);
+          toggleTlCollapsed();
           break;
         case 'g':
         case 'G':
@@ -234,7 +270,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [canvasApi, stepShot, setStageView, stageView]);
+  }, [canvasApi, stepShot, setStageView, stageView, toggleTlCollapsed]);
 
   // 播放：按镜头真实时长推进播放头
   useEffect(() => {
@@ -282,6 +318,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     () => ({
       data,
       projectId,
+      tlCollapsed,
+      setTlCollapsed,
+      toggleTlCollapsed,
       sel,
       setSel,
       curT,
@@ -300,6 +339,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     [
       data,
       projectId,
+      tlCollapsed,
+      setTlCollapsed,
+      toggleTlCollapsed,
       sel,
       setSel,
       curT,

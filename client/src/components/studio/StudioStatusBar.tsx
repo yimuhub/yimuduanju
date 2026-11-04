@@ -9,6 +9,7 @@
  */
 import { useMemo } from 'react';
 import { useStudio } from './StudioShell';
+import { APP_VERSION } from '@client/src/lib/version';
 
 export const StudioStatusBar = () => {
   const { data } = useStudio();
@@ -76,7 +77,7 @@ export const StudioStatusBar = () => {
         <span className="kbd">\</span> <span className="kbd">G</span>{' '}
         <span className="kbd">←→</span>
       </span>
-      <span className="sb">v3.4.2</span>
+      <span className="sb">v{APP_VERSION || '3.4.3'}</span>
     </footer>
   );
 };

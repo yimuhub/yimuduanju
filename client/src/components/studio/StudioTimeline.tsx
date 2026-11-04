@@ -6,19 +6,35 @@
  *   V2 字幕  ← shot.subtitleText / dialogue
  *   A1 对白  ← shot.voiceUrl
  * 片段宽度 = 真实时长 × 像素密度，因此时间码与预览天然自洽。
+ *
+ * 收起/展开：
+ *   · 头部右侧「收起 / 展开」按钮（ChevronDown / ChevronUp）
+ *   · 最右缘垂直居中小把手，hover 高亮，同样可切换
+ *   · 状态持久 localStorage（yimu.timelineCollapsed），快捷键 ⌥T / \
  */
 import { useMemo } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useStudio } from './StudioShell';
 import { shotLabel, toTimecode } from './model';
 
 const PX_PER_S = 17;
 
 export const StudioTimeline = () => {
-  const { data, sel, setSel, curT, setCurT, playing } = useStudio();
+  const {
+    data,
+    sel,
+    setSel,
+    curT,
+    setCurT,
+    playing,
+    tlCollapsed,
+    setTlCollapsed,
+    toggleTlCollapsed,
+  } = useStudio();
   const shots = data.shots;
+  const collapsed = tlCollapsed;
 
   const total = useMemo(() => shots.reduce((s, x) => s + x.dur, 0), [shots]);
-  const width = Math.max(240, total * PX_PER_S);
 
   /** 刻度：每 5 秒一个，每 15 秒加粗 */
   const ticks = useMemo(() => {
@@ -34,6 +50,38 @@ export const StudioTimeline = () => {
     return out;
   }, [total]);
 
+  // ---------- 收起态：36px 细条（时间线 · N 项 + 展开按钮） ----------
+  if (collapsed) {
+    return (
+      <section className="tl tl-collapsed-bar" id="tl">
+        <div className="tl-head">
+          <h3>时间线</h3>
+          <span className="tl-count num">· {shots.length} 项</span>
+          <span className="sp" />
+          <span className="tl-tc">{toTimecode(total)}</span>
+          <button
+            type="button"
+            className="tl-toggle-btn"
+            title="展开时间线 (⌥T)"
+            onClick={() => setTlCollapsed(false)}
+          >
+            <ChevronUp size={13} strokeWidth={2.2} />
+            <span>展开</span>
+          </button>
+        </div>
+        <button
+          type="button"
+          className="tl-edge-grip"
+          aria-label="展开时间线"
+          title="展开时间线 (⌥T)"
+          onClick={toggleTlCollapsed}
+        >
+          <ChevronUp size={11} strokeWidth={2.4} />
+        </button>
+      </section>
+    );
+  }
+
   if (shots.length === 0) {
     return (
       <section className="tl" id="tl">
@@ -42,7 +90,25 @@ export const StudioTimeline = () => {
           <span className="chip num">0 镜</span>
           <span className="sp" />
           <span className="tl-tc">00:00:00:00 / —</span>
+          <button
+            type="button"
+            className="tl-toggle-btn"
+            title="收起时间线 (⌥T)"
+            onClick={() => setTlCollapsed(true)}
+          >
+            <ChevronDown size={13} strokeWidth={2.2} />
+            <span>收起</span>
+          </button>
         </div>
+        <button
+          type="button"
+          className="tl-edge-grip"
+          aria-label="收起时间线"
+          title="收起时间线 (⌥T)"
+          onClick={toggleTlCollapsed}
+        >
+          <ChevronDown size={11} strokeWidth={2.4} />
+        </button>
         <div className="tl-main">
           <div className="tl-labels">
             <div className="tl-lb">
@@ -78,7 +144,7 @@ export const StudioTimeline = () => {
           {data.project?.title ?? 'EP'} · {shots.length} 镜
         </span>
         <span className="tl-hint">
-          按 <span className="kbd">\</span> 展开
+          按 <span className="kbd">\</span> 或 <span className="kbd">⌥T</span> 收起
         </span>
         <span className="sp" />
         <span className="tl-tc">
@@ -106,7 +172,26 @@ export const StudioTimeline = () => {
             </svg>
           </button>
         </div>
+        <button
+          type="button"
+          className="tl-toggle-btn"
+          title="收起时间线 (⌥T)"
+          onClick={() => setTlCollapsed(true)}
+        >
+          <ChevronDown size={13} strokeWidth={2.2} />
+          <span>收起</span>
+        </button>
       </div>
+
+      <button
+        type="button"
+        className="tl-edge-grip"
+        aria-label="收起时间线"
+        title="收起时间线 (⌥T)"
+        onClick={toggleTlCollapsed}
+      >
+        <ChevronDown size={11} strokeWidth={2.4} />
+      </button>
 
       <div className="tl-main">
         <div className="tl-labels">

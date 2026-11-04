@@ -180,6 +180,20 @@ export function useStudioData(projectId?: string): StudioData {
   }, [projectId]);
 
   const shots = useMemo(() => normalizeShots(rawShots, scenes), [rawShots, scenes]);
+
+  // 任务状态变化（流水线物化镜头 / 出图 / 出片）后自动重拉镜头，
+  // 让时间线、预览、画布随之联动，无需手动刷新页面。
+  const jobSig = useMemo(
+    () => jobs.map((j) => `${j.id}:${j.status}`).join('|'),
+    [jobs],
+  );
+  useEffect(() => {
+    if (!projectId || !jobSig) return;
+    const t = setTimeout(() => {
+      void reloadShots();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [jobSig, projectId, reloadShots]);
   const shotScenes = useMemo(() => groupByScene(shots), [shots]);
   const shotStats = useMemo(() => countStates(shots), [shots]);
   const totalSec = useMemo(() => totalDuration(shots), [shots]);

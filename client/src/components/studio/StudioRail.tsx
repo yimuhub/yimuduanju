@@ -8,6 +8,7 @@
  */
 import { useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { APP_VERSION } from '@client/src/lib/version';
 import {
   Clock,
   Coins,
@@ -103,7 +104,7 @@ export const StudioRail = () => {
       <div className="rail-head">
         <div className="mark">幕</div>
         <div className="mark-txt">一幕</div>
-        <div className="mark-sub">v3.4.2</div>
+        <div className="mark-sub">v{APP_VERSION || '3.4.3'}</div>
       </div>
 
       <div className="rail-body">
