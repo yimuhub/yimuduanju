@@ -51,6 +51,26 @@ export class AssetsController {
     return this.assetsService.list(params);
   }
 
+  // 路由顺序修复：静态前缀路由必须声明在 `:id/content` / `:id` 之前。
+  // NestJS 按声明顺序匹配，GET /api/assets/by-project/<uuid> 是两段路径，
+  // 会被先声明的 `@Get(':id/content')` 捕获（id='by-project' → ParseUUIDPipe 400），
+  // 作战室产出面板的 listByProject 因此永远拿不到数据。
+
+  @Get('by-project/:projectId')
+  async listByProject(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<Asset[]> {
+    return this.assetsService.listByProject(projectId);
+  }
+
+  @Get('shot/:shotId/history')
+  async listShotHistory(
+    @Param('shotId', ParseUUIDPipe) shotId: string,
+    @Query('assetType') assetType?: string,
+  ): Promise<Asset[]> {
+    return this.assetsService.listShotHistory(shotId, { assetType });
+  }
+
   /**
    * 媒体取流：本地直接读盘返回；远程 CDN 由后端重试拉取并落盘缓存。
    * 前端资产库统一用 /api/assets/:id/content 做 img/video src。
@@ -103,21 +123,6 @@ export class AssetsController {
     const buf = await this.assetsService.fetchRemoteToBuffer(url, asset);
     res.setHeader('Content-Length', String(buf.length));
     res.end(buf);
-  }
-
-  @Get('by-project/:projectId')
-  async listByProject(
-    @Param('projectId', ParseUUIDPipe) projectId: string,
-  ): Promise<Asset[]> {
-    return this.assetsService.listByProject(projectId);
-  }
-
-  @Get('shot/:shotId/history')
-  async listShotHistory(
-    @Param('shotId', ParseUUIDPipe) shotId: string,
-    @Query('assetType') assetType?: string,
-  ): Promise<Asset[]> {
-    return this.assetsService.listShotHistory(shotId, { assetType });
   }
 
   @Post('shot/:shotId/revert')

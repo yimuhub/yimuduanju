@@ -36,7 +36,7 @@ const ProjectAgentsTab = () => {
     if (!id) return;
     setLoading(true);
     agents.listMessages(id)
-      .then((msgs) => setMessages(msgs))
+      .then((msgs) => { setMessages(msgs); setError(null); })
       .catch((err) => { logger.error('load msgs', String(err)); setError('加载对话失败'); })
       .finally(() => setLoading(false));
   };
@@ -54,6 +54,7 @@ const ProjectAgentsTab = () => {
     setInput('');
     try {
       const reply = await agents.sendMessage(id, { content, agentName: active });
+      setError(null);
       setMessages((prev) => [...prev, {
         id: `local-${Date.now()}`, projectId: id, role: 'user', content, agentName: active, createdAt: new Date().toISOString(),
       }, reply]);
@@ -71,8 +72,10 @@ const ProjectAgentsTab = () => {
     try {
       await agents.clearMessages(id);
       setMessages([]);
+      setError(null);
     } catch (err) {
       logger.error('clear failed', String(err));
+      setError('清空对话失败，请稍后重试');
     }
   };
 
@@ -108,7 +111,7 @@ const ProjectAgentsTab = () => {
             <span className="text-sm font-semibold text-foreground">{active}</span>
             <span className="text-xs text-muted-foreground">· 项目专属 AI 智能体</span>
           </div>
-          <button onClick={handleClear} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-3000">
+          <button onClick={handleClear} className="flex items-center gap-1 rounded-md border border-input bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-300">
             <Trash2 className="h-3.5 w-3.5" /> 清空
           </button>
         </div>

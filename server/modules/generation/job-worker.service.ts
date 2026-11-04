@@ -1247,8 +1247,17 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     // 6) 全段完成 → editing + 建 edit 任务（服务端合成，幂等去重）
+    // 边界守卫：没有任何镜头成片（空分镜 / 视频全部失败）时不建 edit 任务、不推进
+    // editing —— assembleFinalVideo 对空片必然抛「暂无镜头成片」，旧逻辑会白建一个
+    // 必败任务并把项目推进 editing 死区；停在 audio_generating 让用户重试失败镜头。
+    const hasAnyVideo = shotRows.some((s) => s.videoUrl);
     const activeEdit = jobRows.some((j) => j.jobType === 'edit' && isActive(j.status));
     const doneEdit = jobRows.some((j) => j.jobType === 'edit' && j.status === 'succeeded');
+    if (!hasAnyVideo && !doneEdit && !activeEdit) {
+      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
+      await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
+      return;
+    }
     if (!doneEdit && !activeEdit) {
       await this.db.insert(generationJobs).values({
         projectId,

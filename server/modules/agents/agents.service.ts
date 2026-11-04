@@ -28,18 +28,25 @@ export class AgentsService implements OnModuleInit {
       const have = new Set(existing.map((r) => r.name));
       const missing = BUILTIN_AGENTS.filter((a) => !have.has(a.name));
       if (missing.length > 0) {
-        await this.db.insert(agentRegistry).values(
-          missing.map((a) => ({
-            name: a.name,
-            avatar: a.avatar,
-            persona: a.persona,
-            skillSlugs: a.skillSlugs,
-            tools: a.tools,
-            sort: a.sort,
-            source: 'builtin' as const,
-          })),
-        );
-        this.logger.log(`Agent 注册表补种 ${missing.length} 个内置智能体`);
+        // onConflictDoNothing：并发启动竞态下撞 name 唯一约束不再整批回滚
+        const inserted = await this.db
+          .insert(agentRegistry)
+          .values(
+            missing.map((a) => ({
+              name: a.name,
+              avatar: a.avatar,
+              persona: a.persona,
+              skillSlugs: a.skillSlugs,
+              tools: a.tools,
+              sort: a.sort,
+              source: 'builtin' as const,
+            })),
+          )
+          .onConflictDoNothing({ target: agentRegistry.name })
+          .returning({ id: agentRegistry.id });
+        if (inserted.length > 0) {
+          this.logger.log(`Agent 注册表补种 ${inserted.length} 个内置智能体`);
+        }
       }
     } catch (e) {
       this.logger.warn(`Agent 补种跳过：${(e as Error).message}`);
@@ -160,10 +167,13 @@ export class AgentsService implements OnModuleInit {
     return lines.join('\n');
   }
 
-  async clearMessages(projectId: string): Promise<void> {
-    await this.db
+  /** 清空项目消息，返回删除条数（前端提示「已清空 N 条」） */
+  async clearMessages(projectId: string): Promise<{ cleared: number }> {
+    const rows = await this.db
       .delete(agentMessages)
-      .where(eq(agentMessages.projectId, projectId));
+      .where(eq(agentMessages.projectId, projectId))
+      .returning({ id: agentMessages.id });
+    return { cleared: rows.length };
   }
 
   private mapMessage(row: typeof agentMessages.$inferSelect): AgentMessage {

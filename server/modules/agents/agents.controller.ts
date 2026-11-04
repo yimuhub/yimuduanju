@@ -8,11 +8,9 @@ import {
   Query,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import type {
-  AgentMessage,
-  SendAgentMessageRequest,
-} from '@shared/api.interface';
+import type { AgentMessage } from '@shared/api.interface';
 import { AgentsService } from './agents.service';
+import { AgentMessagesQueryDto, SendAgentMessageDto } from './dto';
 
 @Controller('api')
 export class AgentsController {
@@ -27,15 +25,16 @@ export class AgentsController {
   @Get('projects/:projectId/agents/messages')
   async listMessages(
     @Param('projectId', ParseUUIDPipe) projectId: string,
-    @Query('limit') limit?: string,
+    @Query() query: AgentMessagesQueryDto,
   ): Promise<AgentMessage[]> {
-    return this.agentsService.listMessages(projectId, limit ? parseInt(limit, 10) : undefined);
+    // limit 经 DTO 校验/转换（旧实现 parseInt 无 NaN 兜底，非法值直达 SQL）
+    return this.agentsService.listMessages(projectId, query.limit);
   }
 
   @Post('projects/:projectId/agents/messages')
   async sendMessage(
     @Param('projectId', ParseUUIDPipe) projectId: string,
-    @Body() body: SendAgentMessageRequest,
+    @Body() body: SendAgentMessageDto,
   ): Promise<AgentMessage> {
     return this.agentsService.sendMessage(projectId, body);
   }
@@ -43,7 +42,8 @@ export class AgentsController {
   @Delete('projects/:projectId/agents/messages')
   async clearMessages(
     @Param('projectId', ParseUUIDPipe) projectId: string,
-  ): Promise<void> {
+  ): Promise<{ cleared: number }> {
+    // 契约对齐：前端 clearMessages 期望 { cleared: number }，旧实现返回 void（body 为空）
     return this.agentsService.clearMessages(projectId);
   }
 }

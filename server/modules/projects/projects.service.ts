@@ -453,6 +453,23 @@ export class ProjectsService {
     const approvals = {
       ...((pipeline.approvals as Record<string, string> | undefined) ?? {}),
     };
+    // 三道门顺序校验（方案 v2）：script → storyboard → final 必须依次通过。
+    // 乱序确认（如未过剧本门直接确认分镜、或回退重开前面的门）一律 400，
+    // 否则门 1/2 的放行逻辑（物化分镜、批量首帧）会被绕过，自动链在半成品上空转。
+    // 同一门重复确认保持幂等（仅刷新通过时间，不报错）。
+    if (stage === 'storyboard' && !approvals.script) {
+      throw new BadRequestException(
+        '确认门顺序错误：请先通过「剧本确认」再确认分镜（script → storyboard → final）',
+      );
+    }
+    if (stage === 'final' && !approvals.storyboard) {
+      throw new BadRequestException(
+        '确认门顺序错误：请先通过「分镜确认」再确认成片（script → storyboard → final）',
+      );
+    }
+    if (stage === 'script' && (approvals.storyboard || approvals.final)) {
+      throw new BadRequestException('确认门顺序错误：分镜/成片门已通过，不能回退重新确认剧本门');
+    }
     approvals[stage] = new Date().toISOString();
     pipeline.approvals = approvals;
     meta.pipeline = pipeline;

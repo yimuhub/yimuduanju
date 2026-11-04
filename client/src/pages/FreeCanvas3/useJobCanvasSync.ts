@@ -69,6 +69,13 @@ export const useJobCanvasSync = (projectId: string | undefined) => {
     if (!projectId || typeof EventSource === 'undefined') return;
 
     const applyJob = (job: GenerationJob) => {
+      // 多项目串扰防护：SSE 免 projectId 订阅时为平台级全量流（降级轮询同理）。
+      // 当前画布绑定项目 → 只消费该项目任务；自由画布（projectId=undefined，路由 /project/free）
+      // → 只消费未绑定项目的任务（画布内发起的生成），防止其他项目产物被落到本画布。
+      const belongs = projectId
+        ? (job.projectId ?? undefined) === projectId
+        : !job.projectId;
+      if (!belongs) return;
       const key = `${job.id}:${job.status}:${job.updatedAt}`;
       if (seenRef.current.has(key)) return;
       seenRef.current.add(key);

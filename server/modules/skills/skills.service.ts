@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, OnModuleInit, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Logger, OnModuleInit, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { eq, and, asc } from 'drizzle-orm';
 import { skills } from '@server/database/schema';
@@ -25,18 +25,27 @@ export class SkillsService implements OnModuleInit {
       const ALL_SKILLS = [...BUILTIN_SKILLS, ...EXTENDED_SKILLS];
       const missing = ALL_SKILLS.filter((s) => !have.has(s.slug));
       if (missing.length > 0) {
-        await this.db.insert(skills).values(
-          missing.map((s) => ({
-            slug: s.slug,
-            name: s.name,
-            line: s.line,
-            slot: s.slot,
-            description: s.description,
-            body: s.body,
-            source: 'builtin' as const,
-          })),
-        );
-        this.logger.log(`skill 注册表补种 ${missing.length} 个内置技能`);
+        // onConflictDoNothing：多实例并发启动时 select→insert 存在竞态窗口，
+        // 撞 slug 唯一约束会让整批补种（含尚未插入的）一起失败回滚；
+        // 冲突行跳过、其余照插，保证补种最终完整。
+        const inserted = await this.db
+          .insert(skills)
+          .values(
+            missing.map((s) => ({
+              slug: s.slug,
+              name: s.name,
+              line: s.line,
+              slot: s.slot,
+              description: s.description,
+              body: s.body,
+              source: 'builtin' as const,
+            })),
+          )
+          .onConflictDoNothing({ target: skills.slug })
+          .returning({ id: skills.id });
+        if (inserted.length > 0) {
+          this.logger.log(`skill 注册表补种 ${inserted.length} 个内置技能`);
+        }
       }
     } catch (e) {
       // 表尚未迁移时静默——迁移脚本 0013 会建表
@@ -87,7 +96,12 @@ export class SkillsService implements OnModuleInit {
     const rows = await this.db
       .insert(skills)
       .values({ ...input, source: 'user' })
+      .onConflictDoNothing({ target: skills.slug })
       .returning();
+    // 唯一约束冲突（slug 重复）不抛 500，给出业务化 400
+    if (rows.length === 0) {
+      throw new BadRequestException(`slug 已存在：${input.slug}`);
+    }
     return rows[0];
   }
 

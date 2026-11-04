@@ -276,6 +276,14 @@ const ClassicLayout = () => {
           />
         )}
 
+        {/* 画布全屏沉浸：只渲染画布路由本体（Outlet），不渲染侧栏 / 顶栏 / 助手坞。
+            P1 修复：此前画布路由下直接跳过 Outlet，经典模式进入 /project/:id/canvas-free3 白屏。 */}
+        {isCanvasRoute && (
+          <main className="h-screen w-screen overflow-hidden">
+            <Outlet />
+          </main>
+        )}
+
         {!isCanvasRoute && (
           <>
             {/* Sidebar（桌面端固定，小屏抽屉） */}
@@ -341,9 +349,14 @@ const ClassicLayout = () => {
                       />
                     </div>
                   )}
-                  <button className="hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 sm:flex" aria-label="通知">
+                  {/* P2 诚信修复：删除写死的「未读红点」假状态；通知中心暂未开放，按钮降级为禁用占位 */}
+                  <button
+                    className="hidden h-9 w-9 cursor-not-allowed items-center justify-center rounded-lg border border-input bg-background opacity-60 sm:flex"
+                    aria-label="通知（暂未开放）"
+                    title="通知中心暂未开放"
+                    disabled
+                  >
                     <Bell className="h-[18px] w-[18px] text-foreground/70" />
-                    <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />
                   </button>
                   {!isStudioHome && (
                     <button

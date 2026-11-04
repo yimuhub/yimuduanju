@@ -59,7 +59,7 @@ export const deleteAsset = (id: string) =>
     .then((res) => res.data);
 
 // 白模产线 · 本地二进制上传（白模 webm/照片落盘，octet-stream，复用 axios CSRF 链路）
-// 注意：listProjectAssets 调用的旧路由后端不存在，请用 listAssets({ projectId })。
+// 注：listProjectAssets 走 projects 控制器的 GET api/projects/:id/assets（已存在），项目维度的全量资产用 listAssets({ projectId }) 分页版。
 export const uploadLocalFile = (
   projectId: string,
   blob: Blob,
