@@ -9,6 +9,8 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   X, Eye, EyeOff, Lock, Unlock, Search, Camera, User, Plus, Download, Trash2,
@@ -216,46 +218,6 @@ function buildBody(kind: BodyKind, color: string): THREE.Group {
   return g;
 }
 
-/* ---------------- 变换 Gizmo ---------------- */
-function buildGizmo(mode: TransformMode): THREE.Group {
-  const giz = new THREE.Group();
-  const AXES: { dir: THREE.Vector3; color: string; axis: string }[] = [
-    { dir: new THREE.Vector3(1, 0, 0), color: '#E5484D', axis: 'x' },
-    { dir: new THREE.Vector3(0, 1, 0), color: '#46A758', axis: 'y' },
-    { dir: new THREE.Vector3(0, 0, 1), color: '#4F8EF7', axis: 'z' },
-  ];
-  if (mode === 'move') {
-    for (const a of AXES) {
-      const arrow = new THREE.ArrowHelper(a.dir, new THREE.Vector3(0, 0.02, 0), 0.62, a.color, 0.16, 0.08);
-      arrow.traverse((o) => { o.userData.axis = a.axis; });
-      giz.add(arrow);
-    }
-  } else if (mode === 'rotate') {
-    for (const a of AXES) {
-      const torus = new THREE.Mesh(
-        new THREE.TorusGeometry(0.55, 0.018, 8, 48),
-        new THREE.MeshBasicMaterial({ color: a.color }),
-      );
-      if (a.axis === 'x') torus.rotation.y = Math.PI / 2;
-      else if (a.axis === 'z') torus.rotation.x = Math.PI / 2;
-      torus.position.y = 0.02;
-      torus.userData.axis = a.axis;
-      giz.add(torus);
-    }
-  } else {
-    for (const a of AXES) {
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(0.09, 0.09, 0.09),
-        new THREE.MeshBasicMaterial({ color: a.color }),
-      );
-      box.position.set(a.dir.x * 0.62, 0.02 + a.dir.y * 0.62, a.dir.z * 0.62);
-      box.userData.axis = a.axis;
-      giz.add(box);
-    }
-  }
-  return giz;
-}
-
 /* ---------------- 主组件 ---------------- */
 export const Director3D = ({ projectId }: { projectId?: string }) => {
   const { director3DOpen, setDirector3DOpen } = useP3Store();
@@ -323,15 +285,42 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const charGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
   const camGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
-  const gizmoRef = useRef<THREE.Group | null>(null);
+  const orbitRef = useRef<OrbitControls | null>(null);
+  const transformRef = useRef<TransformControls | null>(null);
+  const transformHelperRef = useRef<THREE.Object3D | null>(null);
+  const hoverHelperRef = useRef<THREE.BoxHelper | null>(null);
   const importedRef = useRef<THREE.Group[]>([]);
-  const dragRef = useRef<{ mode: 'orbit' | 'moveChar' | 'gizmo'; charId: string | null; axis: string | null; px: number; py: number; velX: number; velY: number; inDrag: boolean }>({
-    mode: 'orbit', charId: null, axis: null, px: 0, py: 0, velX: 0, velY: 0, inDrag: false,
-  });
   const stateRef = useRef({ chars, cams, selected, transformMode, sensitivity, view });
   stateRef.current = { chars, cams, selected, transformMode, sensitivity, view };
 
-  /* ---------------- 场景基础设施（一次） ---------------- */
+  /** 把 TransformControls 挂到当前选中对象（录制结束后恢复用） */
+  const attachSelectedRef = useRef<() => void>(() => {});
+  attachSelectedRef.current = () => {
+    const transform = transformRef.current;
+    if (!transform) return;
+    const st = stateRef.current;
+    const isChar = st.chars.some((c) => c.id === st.selected);
+    const data = isChar ? st.chars.find((x) => x.id === st.selected) : st.cams.find((x) => x.id === st.selected);
+    const obj = isChar ? charGroupsRef.current.get(st.selected) : camGroupsRef.current.get(st.selected);
+    if (!obj || !data || data.visible === false || data.locked) {
+      transform.detach();
+      return;
+    }
+    // move→translate；摄像机没有缩放字段，scale 模式回落到 translate，避免出现拖了没反应的死 gizmo
+    const modeMap = { move: 'translate', rotate: 'rotate', scale: 'scale' } as const;
+    transform.setMode(st.transformMode === 'scale' && !isChar ? 'translate' : modeMap[st.transformMode]);
+    transform.attach(obj);
+  };
+
+  /** 拾取角色/摄像机（含子对象递归；只测可见组） */
+  const pickAtRef = useRef<(clientX: number, clientY: number) => { kind: 'char' | 'cam'; id: string | null }>(() => ({ kind: 'char', id: null }));
+
+  /* ---------------- 场景基础设施（一次） ----------------
+   * 标准配置（对齐 three.js 官方 editor）：
+   * - OrbitControls 接管相机：enableDamping 阻尼、左键旋转 / 右键·中键平移 / 滚轮缩放
+   * - TransformControls 做角色移动/旋转/缩放 gizmo，dragging-changed 暂停 OrbitControls
+   * - Raycaster.setFromCamera(正确 NDC) + intersectObjects(组, true) 递归拾取，hover 高亮 + cursor
+   */
   useEffect(() => {
     if (!director3DOpen || !mountRef.current) return;
     const mount = mountRef.current;
@@ -339,7 +328,7 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
     scene.background = new THREE.Color(0xf5f6f8);
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 200);
+    const camera = new THREE.PerspectiveCamera(45, mount.clientWidth / Math.max(1, mount.clientHeight), 0.1, 200);
     camera.position.copy(DEFAULT_VIEW);
     camera.lookAt(0, 1, 0);
     cameraRef.current = camera;
@@ -365,13 +354,69 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
     const axes = new THREE.AxesHelper(2.5);
     scene.add(axes);
 
-    /* 交互 */
+    /* 相机控制：OrbitControls（官方 editor 同款） */
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.enableDamping = true;
+    orbit.dampingFactor = 0.08;
+    orbit.rotateSpeed = 0.6;
+    orbit.zoomSpeed = 0.9;
+    orbit.panSpeed = 0.8;
+    orbit.target.set(0, 1, 0);
+    orbit.minDistance = 0.8;
+    orbit.maxDistance = 60;
+    orbit.minPolarAngle = 0.05;
+    orbit.maxPolarAngle = 1.55; // 允许贴地平视，不允许钻到地面以下
+    orbit.update();
+    orbitRef.current = orbit;
+
+    /* gizmo：TransformControls（替代手写拖拽），gizmo 本体经 getHelper() 入场景 */
+    const transform = new TransformControls(camera, renderer.domElement);
+    transform.size = 0.85;
+    const transformHelper = transform.getHelper();
+    scene.add(transformHelper);
+    transformRef.current = transform;
+    transformHelperRef.current = transformHelper;
+
+    /* gizmo 拖动期间暂停 OrbitControls（官方 editor 标准写法） */
+    const onDraggingChanged = (e: { value: unknown }) => {
+      const dragging = e.value === true;
+      orbit.enabled = !dragging && !recordingRef.current;
+      if (!dragging) orbit.update();
+    };
+    transform.addEventListener('dragging-changed', onDraggingChanged);
+
+    /* 拖完把变换写回数据（x/z 保留 2 位精度，与原数据结构一致） */
+    const onObjectChange = () => {
+      const obj = transform.object;
+      if (!obj) return;
+      const st = stateRef.current;
+      const charId = obj.userData.charId as string | undefined;
+      const camId = obj.userData.camId as string | undefined;
+      const r2 = (v: number) => Math.round(v * 100) / 100;
+      if (charId) {
+        setChars((arr) => arr.map((c) => (c.id === charId ? {
+          ...c,
+          x: r2(obj.position.x),
+          y: Math.max(0, r2(obj.position.y)),
+          z: r2(obj.position.z),
+          rx: r2(obj.rotation.x), ry: r2(obj.rotation.y), rz: r2(obj.rotation.z),
+          sx: Math.min(8, Math.max(0.1, r2(obj.scale.x))),
+          sy: Math.min(8, Math.max(0.1, r2(obj.scale.y))),
+          sz: Math.min(8, Math.max(0.1, r2(obj.scale.z))),
+        } : c)));
+      } else if (camId) {
+        setCams((arr) => arr.map((c) => (c.id === camId ? {
+          ...c,
+          x: r2(obj.position.x), y: r2(obj.position.y), z: r2(obj.position.z),
+          rx: r2(obj.rotation.x), ry: r2(obj.rotation.y), rz: r2(obj.rotation.z),
+        } : c)));
+      }
+    };
+    transform.addEventListener('objectChange', onObjectChange);
+
+    /* 拾取：正确 NDC + 递归相交，hover 高亮 + cursor；gizmo 悬停时不抢判定 */
     const raycaster = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const hit = new THREE.Vector3();
-    const line = new THREE.Line3();
-
     const toNdc = (clientX: number, clientY: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
       ndc.set(
@@ -379,180 +424,128 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
         -((clientY - rect.top) / rect.height) * 2 + 1,
       );
     };
-    const pickObject = (clientX: number, clientY: number): { kind: 'char' | 'cam' | 'gizmo'; id: string | null; axis: string | null } => {
+    const pickAt = (clientX: number, clientY: number): { kind: 'char' | 'cam'; id: string | null } => {
       toNdc(clientX, clientY);
-      // gizmo 优先
-      const giz = gizmoRef.current;
-      if (giz && giz.visible) {
-        raycaster.setFromCamera(ndc, camera);
-        const gh = raycaster.intersectObjects(giz.children, true);
-        if (gh.length) {
-          let node: THREE.Object3D | null = gh[0].object;
-          while (node && !node.userData.axis) node = node.parent;
-          if (node) return { kind: 'gizmo', id: null, axis: node.userData.axis as string };
-        }
-      }
       raycaster.setFromCamera(ndc, camera);
       const objs: THREE.Object3D[] = [];
-      charGroupsRef.current.forEach((g) => objs.push(g));
-      camGroupsRef.current.forEach((g) => objs.push(g));
+      charGroupsRef.current.forEach((g) => { if (g.visible) objs.push(g); });
+      camGroupsRef.current.forEach((g) => { if (g.visible) objs.push(g); });
       const hits = raycaster.intersectObjects(objs, true);
-      if (!hits.length) return { kind: 'char', id: null, axis: null };
+      if (!hits.length) return { kind: 'char', id: null };
       let node: THREE.Object3D | null = hits[0].object;
       while (node && !node.userData.charId && !node.userData.camId) node = node.parent;
-      if (node && node.userData.camId) return { kind: 'cam', id: node.userData.camId as string, axis: null };
-      if (node && node.userData.charId) return { kind: 'char', id: node.userData.charId as string, axis: null };
-      return { kind: 'char', id: null, axis: null };
+      if (node && node.userData.camId) return { kind: 'cam', id: node.userData.camId as string };
+      if (node && node.userData.charId) return { kind: 'char', id: node.userData.charId as string };
+      return { kind: 'char', id: null };
+    };
+    pickAtRef.current = pickAt;
+
+    const setHover = (id: string | null) => {
+      const helper = hoverHelperRef.current;
+      if (helper) {
+        scene.remove(helper);
+        helper.geometry.dispose();
+        (helper.material as THREE.Material).dispose();
+        hoverHelperRef.current = null;
+      }
+      if (!id) return;
+      const obj = charGroupsRef.current.get(id) ?? camGroupsRef.current.get(id);
+      if (!obj) return;
+      const box = new THREE.BoxHelper(obj, 0x0abccf);
+      (box.material as THREE.LineBasicMaterial).depthTest = false;
+      box.renderOrder = 999;
+      scene.add(box);
+      hoverHelperRef.current = box;
     };
 
-    const onDown = (e: MouseEvent) => {
-      if (recordingRef.current) return; // 录制中锁定交互，相机由路径接管
+    const onPointerMove = (e: PointerEvent) => {
+      if (recordingRef.current || orbit.enabled === false) return;
+      if (transform.dragging || transform.axis !== null) {
+        if (renderer.domElement.style.cursor !== 'move') renderer.domElement.style.cursor = 'move';
+        return;
+      }
+      const p = pickAt(e.clientX, e.clientY);
+      setHover(p.id);
+      renderer.domElement.style.cursor = p.id ? 'pointer' : 'default';
+    };
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+
+    /* 单击选中（区分点击 vs 拖动视角：位移 <5px 才算单击） */
+    let downX = 0, downY = 0;
+    const onPointerDown = (e: PointerEvent) => {
+      downX = e.clientX; downY = e.clientY;
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (recordingRef.current || e.button !== 0) return;
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) >= 5) return;
+      if (transform.dragging || transform.axis !== null) return;
       const st = stateRef.current;
-      const p = pickObject(e.clientX, e.clientY);
-      if (p.kind === 'gizmo' && p.axis) {
-        dragRef.current = { mode: 'gizmo', charId: null, axis: p.axis, px: e.clientX, py: e.clientY, velX: 0, velY: 0, inDrag: true };
-        return;
-      }
-      const id = p.id;
-      if (id && p.kind === 'char') {
-        const c = st.chars.find((x) => x.id === id);
-        if (c && c.locked) return;
-        if (c) setSelected(id);
-        dragRef.current = { mode: 'moveChar', charId: id, axis: null, px: e.clientX, py: e.clientY, velX: 0, velY: 0, inDrag: true };
-        return;
-      }
-      if (id && p.kind === 'cam') {
-        const c = st.cams.find((x) => x.id === id);
-        if (c && c.locked) return;
-        if (c) setSelected(id);
-        dragRef.current = { mode: 'moveChar', charId: id, axis: null, px: e.clientX, py: e.clientY, velX: 0, velY: 0, inDrag: true };
-        return;
-      }
-      dragRef.current = { mode: 'orbit', charId: null, axis: null, px: e.clientX, py: e.clientY, velX: 0, velY: 0, inDrag: true };
+      const p = pickAt(e.clientX, e.clientY);
+      if (!p.id) { setSelected(''); setHover(null); return; }
+      const data = p.kind === 'char' ? st.chars.find((x) => x.id === p.id) : st.cams.find((x) => x.id === p.id);
+      if (!data || data.locked) return;
+      setSelected(p.id);
     };
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
 
-    const onMove = (e: MouseEvent) => {
+    /* 双击对焦：OrbitControls target 对准选中角色（官方 editor 的 focus 行为） */
+    const onDblClick = (e: MouseEvent) => {
       if (recordingRef.current) return;
-      const d = dragRef.current;
-      const st = stateRef.current;
-      if (d.mode === 'gizmo' && d.axis) {
-        const sel = st.selected;
-        const isChar = st.chars.some((c) => c.id === sel);
-        const obj = isChar
-          ? charGroupsRef.current.get(sel)
-          : camGroupsRef.current.get(sel);
-        if (!obj) return;
-        const base = obj.position.clone();
-        if (st.transformMode === 'move') {
-          const dir = new THREE.Vector3(d.axis === 'x' ? 1 : 0, d.axis === 'y' ? 1 : 0, d.axis === 'z' ? 1 : 0);
-          line.set(base.clone().sub(dir.clone().multiplyScalar(50)), base.clone().add(dir.clone().multiplyScalar(50)));
-          toNdc(e.clientX, e.clientY);
-          raycaster.setFromCamera(ndc, camera);
-          // P1 修复：three r185 Ray 已无 intersectLine，改用“相机朝向平面求交 + 投影到轴线”的等价实现；
-          // 注意用独立临时平面，不可复用下方地面拖拽共用的 plane
-          const camDir = new THREE.Vector3();
-          camera.getWorldDirection(camDir);
-          const gizmoPlane = new THREE.Plane();
-          gizmoPlane.setFromNormalAndCoplanarPoint(camDir, base);
-          if (raycaster.ray.intersectPlane(gizmoPlane, hit)) {
-            const np = base.clone().add(dir.clone().multiplyScalar(hit.clone().sub(base).dot(dir)));
-            const nx = Math.round(np.x * 100) / 100, ny = Math.round(np.y * 100) / 100, nz = Math.round(np.z * 100) / 100;
-            if (isChar) setChars((arr) => arr.map((c) => (c.id === sel ? { ...c, x: nx, y: Math.max(0, ny), z: nz } : c)));
-            else setCams((arr) => arr.map((c) => (c.id === sel ? { ...c, x: nx, y: ny, z: nz } : c)));
-          }
-        } else if (st.transformMode === 'rotate') {
-          const dx = (e.clientX - d.px) * 0.012;
-          const dy = (e.clientY - d.py) * 0.012;
-          d.px = e.clientX; d.py = e.clientY;
-          const delta = d.axis === 'x' ? dy : d.axis === 'y' ? dx : -dy;
-          const rot: Record<string, 'rx' | 'ry' | 'rz'> = { x: 'rx', y: 'ry', z: 'rz' };
-          const k = rot[d.axis];
-          if (isChar) setChars((arr) => arr.map((c) => (c.id === sel ? { ...c, [k]: Math.round((c[k] + delta) * 100) / 100 } : c)));
-          else setCams((arr) => arr.map((c) => (c.id === sel ? { ...c, [k]: Math.round((c[k] + delta) * 100) / 100 } : c)));
-        } else {
-          const dx = (e.clientX - d.px) * 0.005;
-          d.px = e.clientX;
-          const f = 1 + dx;
-          if (isChar) setChars((arr) => arr.map((c) => (c.id === sel ? { ...c, sx: Math.min(8, Math.max(0.1, Math.round((c.sx * f) * 100) / 100)) } : c)));
-        }
-        return;
-      }
-      if (d.mode === 'moveChar' && d.charId) {
-        toNdc(e.clientX, e.clientY);
-        raycaster.setFromCamera(ndc, camera);
-        if (raycaster.ray.intersectPlane(plane, hit)) {
-          const isChar = st.chars.some((c) => c.id === d.charId);
-          const nx = Math.round(hit.x * 100) / 100, nz = Math.round(hit.z * 100) / 100;
-          if (isChar) setChars((arr) => arr.map((c) => (c.id === d.charId ? { ...c, x: nx, z: nz } : c)));
-          else setCams((arr) => arr.map((c) => (c.id === d.charId ? { ...c, x: nx, z: nz } : c)));
-        }
-        return;
-      }
-      if (d.mode === 'orbit') {
-        const dx = e.clientX - d.px, dy = e.clientY - d.py;
-        d.px = e.clientX; d.py = e.clientY;
-        // W: 基础转速下调至 0.0012 rad/px（约 0.07°/px），配合灵敏度滑杆可精调机位
-        const rate = 0.0012 * (stateRef.current.sensitivity || 1);
-        const st = stateRef.current;
-        const cm = st.view === 'cam' ? st.cams.find((x) => x.id === st.selected) : undefined;
-        const lx = cm && cm.lookTarget === 'manual' ? (cm.lookX ?? 0) : 0;
-        const ly = cm && cm.lookTarget === 'manual' ? (cm.lookY ?? 1) : 1;
-        const lz = cm && cm.lookTarget === 'manual' ? (cm.lookZ ?? 0) : 0;
-        const offset = camera.position.clone().sub(new THREE.Vector3(lx, ly, lz));
-        const r = offset.length();
-        const theta = Math.atan2(offset.x, offset.z) + dx * rate;
-        // 俯仰范围放宽到 近顶视(0.05)~近水平(1.45)，此前 0.2..0.99 竖向几乎推不动
-        const phi = Math.acos(Math.min(0.998, Math.max(0.05, offset.y / r))) + dy * rate;
-        offset.set(
-          r * Math.sin(phi) * Math.sin(theta),
-          r * Math.cos(phi),
-          r * Math.sin(phi) * Math.cos(theta),
-        );
-        camera.position.copy(new THREE.Vector3(lx, ly, lz).add(offset));
-        camera.lookAt(lx, ly, lz);
-        // W: 取消松手后的惯性自旋——精确摆机位需要"停即停"
-        d.velX = 0;
-        d.velY = 0;
-      }
+      const p = pickAt(e.clientX, e.clientY);
+      if (!p.id) return;
+      const obj = charGroupsRef.current.get(p.id) ?? camGroupsRef.current.get(p.id);
+      if (!obj) return;
+      orbit.target.copy(obj.position);
+      orbit.update();
     };
-    const onUp = () => {
-      const d = dragRef.current;
-      d.mode = 'orbit'; d.charId = null; d.axis = null; d.inDrag = false; d.px = 0; d.py = 0;
+    renderer.domElement.addEventListener('dblclick', onDblClick);
+
+    /* canvas 尺寸响应式 */
+    const resize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      if (!w || !h) return;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
     };
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const st = stateRef.current;
-      const cm = st.view === 'cam' ? st.cams.find((x) => x.id === st.selected) : undefined;
-      const lx = cm && cm.lookTarget === 'manual' ? (cm.lookX ?? 0) : 0;
-      const ly = cm && cm.lookTarget === 'manual' ? (cm.lookY ?? 1) : 1;
-      const lz = cm && cm.lookTarget === 'manual' ? (cm.lookZ ?? 0) : 0;
-      const dir = camera.position.clone().sub(new THREE.Vector3(lx, ly, lz)).normalize();
-      camera.position.addScaledVector(dir, e.deltaY * 0.0035 * (st.sensitivity || 1));
-      camera.lookAt(lx, ly, lz);
-    };
-    mount.addEventListener('mousedown', onDown);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    mount.addEventListener('wheel', onWheel, { passive: false });
+    const ro = new ResizeObserver(resize);
+    ro.observe(mount);
 
     let raf = 0;
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      // 阻尼惯性（Pavo OrbitControls 手感）：松手后按速度滑行并衰减
-      const d = dragRef.current;
+      // 阻尼只在控制权启用时更新；录制时相机由路径接管，不能被 lookAt(target) 覆盖
+      if (orbit.enabled) orbit.update();
+      if (hoverHelperRef.current) hoverHelperRef.current.update();
       renderer.render(scene, camera);
     };
     loop();
 
     return () => {
       cancelAnimationFrame(raf);
-      mount.removeEventListener('mousedown', onDown);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      mount.removeEventListener('wheel', onWheel);
+      ro.disconnect();
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('dblclick', onDblClick);
+      transform.removeEventListener('dragging-changed', onDraggingChanged);
+      transform.removeEventListener('objectChange', onObjectChange);
+      transform.detach();
+      transform.dispose();
+      scene.remove(transformHelper);
+      const helper = hoverHelperRef.current;
+      if (helper) {
+        helper.geometry.dispose();
+        (helper.material as THREE.Material).dispose();
+        hoverHelperRef.current = null;
+      }
+      orbit.dispose();
+      orbitRef.current = null;
+      transformRef.current = null;
+      transformHelperRef.current = null;
       charGroupsRef.current.clear();
       camGroupsRef.current.clear();
-      gizmoRef.current = null;
       importedRef.current = [];
       renderer.dispose();
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement);
@@ -562,59 +555,89 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
     };
   }, [director3DOpen]);
 
-  /* ---------------- 对象同步：角色/摄像机 ---------------- */
+  /* ---------------- 对象同步：结构 reconcile（只在增删/换皮时重建，拖拽不打断 gizmo） ---------------- */
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    charGroupsRef.current.forEach((g) => scene.remove(g));
-    charGroupsRef.current.clear();
-    camGroupsRef.current.forEach((g) => scene.remove(g));
-    camGroupsRef.current.clear();
-    chars.forEach((c) => {
+    const reconcile = (
+      list: (StageChar | StageCam)[],
+      map: Map<string, THREE.Group>,
+      build: (item: StageChar | StageCam) => THREE.Group,
+      tag: 'charId' | 'camId',
+    ) => {
+      const alive = new Set<string>();
+      list.forEach((item) => {
+        alive.add(item.id);
+        let g = map.get(item.id);
+        // kind/color/fov 外观变化才重建；位置/旋转/缩放走下方轻量同步
+        const skin = `${(item as StageChar).kind ?? 'cam'}|${(item as StageChar).color ?? ''}`;
+        if (!g || g.userData.skin !== skin) {
+          if (g) scene.remove(g);
+          g = build(item);
+          g.userData.skin = skin;
+          scene.add(g);
+          map.set(item.id, g);
+        }
+        g.userData[tag] = item.id;
+        g.visible = item.visible !== false;
+      });
+      map.forEach((g, id) => {
+        if (!alive.has(id)) {
+          scene.remove(g);
+          map.delete(id);
+          if (transformRef.current?.object === g) transformRef.current.detach();
+        }
+      });
+    };
+    reconcile(chars, charGroupsRef.current, (item) => {
+      const c = item as StageChar;
       const g = buildBody(c.kind, c.color);
       g.position.set(c.x, c.y, c.z);
       g.rotation.set(c.rx, c.ry, c.rz);
-      g.scale.set(c.sx, c.sy, c.sz);
-      g.userData.charId = c.id;
-      g.visible = c.visible !== false;
-      scene.add(g);
-      charGroupsRef.current.set(c.id, g);
-    });
-    cams.forEach((cm) => {
+      g.scale.set((c as StageChar).sx, (c as StageChar).sy, (c as StageChar).sz);
+      return g;
+    }, 'charId');
+    reconcile(cams, camGroupsRef.current, (cm) => {
       const g = buildCameraMarker();
       g.position.set(cm.x, cm.y, cm.z);
       g.rotation.set(cm.rx, cm.ry, cm.rz);
-      g.userData.camId = cm.id;
-      g.visible = cm.visible !== false;
-      scene.add(g);
-      camGroupsRef.current.set(cm.id, g);
-    });
+      return g;
+    }, 'camId');
   }, [chars, cams, director3DOpen]);
 
-  /* ---------------- Gizmo 同步（跟随选中对象 + 模式） ---------------- */
+  /* ---------------- 变换同步：状态 → 场景对象（轻量，每帧级可承受；跳过 gizmo 正在拖的对象） ---------------- */
   useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    if (gizmoRef.current) {
-      scene.remove(gizmoRef.current);
-      gizmoRef.current = null;
-    }
-    const isChar = chars.some((c) => c.id === selected);
-    const obj = isChar ? charGroupsRef.current.get(selected) : camGroupsRef.current.get(selected);
-    const c = isChar ? chars.find((x) => x.id === selected) : cams.find((x) => x.id === selected);
-    if (!obj || !c || c.visible === false || c.locked) return;
-    const giz = buildGizmo(transformMode);
-    giz.position.set(c.x, c.y, c.z);
-    giz.visible = true;
-    scene.add(giz);
-    gizmoRef.current = giz;
-    return () => {
-      if (gizmoRef.current) {
-        scene.remove(gizmoRef.current);
-        gizmoRef.current = null;
-      }
-    };
-  }, [chars, cams, selected, transformMode, view]);
+    const dragging = transformRef.current?.dragging === true;
+    chars.forEach((c) => {
+      const g = charGroupsRef.current.get(c.id);
+      if (!g || (dragging && transformRef.current?.object === g)) return;
+      g.position.set(c.x, c.y, c.z);
+      g.rotation.set(c.rx, c.ry, c.rz);
+      g.scale.set(c.sx, c.sy, c.sz);
+      g.visible = c.visible !== false;
+    });
+    cams.forEach((cm) => {
+      const g = camGroupsRef.current.get(cm.id);
+      if (!g || (dragging && transformRef.current?.object === g)) return;
+      g.position.set(cm.x, cm.y, cm.z);
+      g.rotation.set(cm.rx, cm.ry, cm.rz);
+      g.visible = cm.visible !== false;
+    });
+  }, [chars, cams, selected, transformMode, view, director3DOpen]);
+
+  /* ---------------- TransformControls：跟随选中对象 + 变换模式 ---------------- */
+  useEffect(() => {
+    attachSelectedRef.current();
+  }, [selected, transformMode, chars, cams, director3DOpen]);
+
+  /* ---------------- 灵敏度滑杆 → OrbitControls 转速/缩放 ---------------- */
+  useEffect(() => {
+    const orbit = orbitRef.current;
+    if (!orbit) return;
+    orbit.rotateSpeed = 0.6 * sensitivity;
+    orbit.zoomSpeed = 0.9 * sensitivity;
+    orbit.panSpeed = 0.8 * sensitivity;
+  }, [sensitivity, director3DOpen]);
 
   /* ---------------- 姿势应用到选中角色 ---------------- */
   useEffect(() => {
@@ -652,21 +675,36 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
   };
   const lookFrom = (pos: THREE.Vector3) => {
     const camera = cameraRef.current;
+    const orbit = orbitRef.current;
     if (!camera) return;
     camera.position.copy(pos);
     camera.lookAt(0, 1, 0);
+    if (orbit) {
+      orbit.target.set(0, 1, 0);
+      orbit.update();
+    }
   };
   useEffect(() => {
     const camera = cameraRef.current;
-    if (!camera) return;
+    const orbit = orbitRef.current;
+    if (!camera || !orbit) return;
     if (view === 'cam') {
-      const cm = cams.find((x) => x.id === selected) ?? cams[0];
-      if (cm) applyCam(cm, camera);
+      const cm = stateRef.current.cams.find((x) => x.id === stateRef.current.selected) ?? stateRef.current.cams[0];
+      if (cm) {
+        applyCam(cm, camera);
+        orbit.target.set(
+          cm.lookTarget === 'manual' ? (cm.lookX ?? 0) : 0,
+          cm.lookTarget === 'manual' ? (cm.lookY ?? 1) : 1,
+          cm.lookTarget === 'manual' ? (cm.lookZ ?? 0) : 0,
+        );
+        orbit.update();
+      }
     } else {
+      // 导演视角相机由 OrbitControls 全权接管；只在切换视图时复位，选中变化不打断用户视角
       lookFrom(DEFAULT_VIEW);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, selected, cams]);
+  }, [view, director3DOpen]);
 
   /* ---------------- 机位视角取景预览窗（副渲染器） ---------------- */
   useEffect(() => {
@@ -721,11 +759,14 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
     const oldPos = camera.position.clone();
     camera.position.copy(pos);
     camera.lookAt(0, 1, 0);
-    const giz = gizmoRef.current;
-    if (giz) giz.visible = false;
+    const helper = transformHelperRef.current;
+    const hoverBox = hoverHelperRef.current;
+    if (helper) helper.visible = false;
+    if (hoverBox) hoverBox.visible = false;
     renderer.render(scene, camera);
     const url = renderer.domElement.toDataURL('image/png');
-    if (giz) giz.visible = true;
+    if (helper) helper.visible = true;
+    if (hoverBox) hoverBox.visible = true;
     camera.position.copy(oldPos);
     camera.lookAt(0, 1, 0);
     return captureRatio(url, r);
@@ -984,8 +1025,23 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
     }
     // 白模录制自动切白模材质：白模只锁空间/运镜/节奏，颜色不能渗进成片
     if (!clayMode) setClayMode(true);
-    const giz = gizmoRef.current;
-    if (giz) giz.visible = false;
+    // 录制中锁定交互：暂停 OrbitControls（render 循环不再 update，相机由路径接管）、隐藏 gizmo/hover
+    const orbit = orbitRef.current;
+    const transform = transformRef.current;
+    const helper = transformHelperRef.current;
+    const hoverBox = hoverHelperRef.current;
+    const prevOrbitEnabled = orbit?.enabled ?? true;
+    if (orbit) orbit.enabled = false;
+    if (transform) transform.detach();
+    if (helper) helper.visible = false;
+    if (hoverBox) hoverBox.visible = false;
+    const restoreInteraction = () => {
+      recordingRef.current = false;
+      if (orbit) orbit.enabled = prevOrbitEnabled;
+      if (helper) helper.visible = true;
+      if (hoverBox) hoverBox.visible = true;
+      attachSelectedRef.current();
+    };
     const oldPos = camera.position.clone();
     const oldFov = camera.fov;
     const stream = canvas.captureStream(30);
@@ -995,7 +1051,7 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
       rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5_000_000 });
     } catch {
       flashRecMsg('录制器创建失败');
-      if (giz) giz.visible = true;
+      restoreInteraction();
       return;
     }
     rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
@@ -1024,11 +1080,10 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
     };
     const stopRecording = () => {
       if (!recordingRef.current) return;
-      recordingRef.current = false;
       setRecording(false);
       try { rec.stop(); } catch { /* 忽略 */ }
       stream.getTracks().forEach((tr) => tr.stop());
-      if (giz) giz.visible = true;
+      restoreInteraction();
       camera.position.copy(oldPos);
       camera.fov = oldFov;
       camera.updateProjectionMatrix();
@@ -1254,7 +1309,7 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
             </button>
           ))}
         </div>
-        <span style={{ fontSize: 12, color: P3.helper }}>选中对象拖拽/Gizmo 变换 · 滚轮缩放 · 空白拖拽旋转</span>
+        <span style={{ fontSize: 12, color: P3.helper }}>单击选中 · Gizmo 变换 · 左键拖动旋转 · 右键平移 · 滚轮缩放 · 双击对焦</span>
         <div style={{ flex: 1 }} />
         {/* 醒目的退出入口：全屏导演台此前只有一个小 X，用户找不到返回 */}
         <button
