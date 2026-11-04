@@ -491,7 +491,8 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
       if (d.mode === 'orbit') {
         const dx = e.clientX - d.px, dy = e.clientY - d.py;
         d.px = e.clientX; d.py = e.clientY;
-        const rate = 0.002 * (stateRef.current.sensitivity || 1);
+        // W: 基础转速下调至 0.0012 rad/px（约 0.07°/px），配合灵敏度滑杆可精调机位
+        const rate = 0.0012 * (stateRef.current.sensitivity || 1);
         const st = stateRef.current;
         const cm = st.view === 'cam' ? st.cams.find((x) => x.id === st.selected) : undefined;
         const lx = cm && cm.lookTarget === 'manual' ? (cm.lookX ?? 0) : 0;
@@ -500,7 +501,8 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
         const offset = camera.position.clone().sub(new THREE.Vector3(lx, ly, lz));
         const r = offset.length();
         const theta = Math.atan2(offset.x, offset.z) + dx * rate;
-        const phi = Math.acos(Math.min(0.99, Math.max(0.2, offset.y / r))) + dy * rate;
+        // 俯仰范围放宽到 近顶视(0.05)~近水平(1.45)，此前 0.2..0.99 竖向几乎推不动
+        const phi = Math.acos(Math.min(0.998, Math.max(0.05, offset.y / r))) + dy * rate;
         offset.set(
           r * Math.sin(phi) * Math.sin(theta),
           r * Math.cos(phi),
@@ -508,8 +510,9 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
         );
         camera.position.copy(new THREE.Vector3(lx, ly, lz).add(offset));
         camera.lookAt(lx, ly, lz);
-        d.velX = dx * rate;
-        d.velY = dy * rate;
+        // W: 取消松手后的惯性自旋——精确摆机位需要"停即停"
+        d.velX = 0;
+        d.velY = 0;
       }
     };
     const onUp = () => {
@@ -537,28 +540,6 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
       raf = requestAnimationFrame(loop);
       // 阻尼惯性（Pavo OrbitControls 手感）：松手后按速度滑行并衰减
       const d = dragRef.current;
-      if (!d.inDrag && (Math.abs(d.velX) > 0.00015 || Math.abs(d.velY) > 0.00015)) {
-        const st = stateRef.current;
-        const cm = st.view === 'cam' ? st.cams.find((x) => x.id === st.selected) : undefined;
-        const lx = cm && cm.lookTarget === 'manual' ? (cm.lookX ?? 0) : 0;
-        const ly = cm && cm.lookTarget === 'manual' ? (cm.lookY ?? 1) : 1;
-        const lz = cm && cm.lookTarget === 'manual' ? (cm.lookZ ?? 0) : 0;
-        const offset = camera.position.clone().sub(new THREE.Vector3(lx, ly, lz));
-        const r = offset.length();
-        const theta = Math.atan2(offset.x, offset.z) + d.velX;
-        const phi = Math.acos(Math.min(0.99, Math.max(0.2, offset.y / r))) + d.velY;
-        offset.set(
-          r * Math.sin(phi) * Math.sin(theta),
-          r * Math.cos(phi),
-          r * Math.sin(phi) * Math.cos(theta),
-        );
-        camera.position.copy(new THREE.Vector3(lx, ly, lz).add(offset));
-        camera.lookAt(lx, ly, lz);
-        d.velX *= 0.9;
-        d.velY *= 0.9;
-      } else if (!d.inDrag) {
-        d.velX = 0; d.velY = 0;
-      }
       renderer.render(scene, camera);
     };
     loop();
@@ -1275,7 +1256,15 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
         </div>
         <span style={{ fontSize: 12, color: P3.helper }}>选中对象拖拽/Gizmo 变换 · 滚轮缩放 · 空白拖拽旋转</span>
         <div style={{ flex: 1 }} />
-        <button className="p3-icon-btn" onClick={() => setDirector3DOpen(false)}>
+        {/* 醒目的退出入口：全屏导演台此前只有一个小 X，用户找不到返回 */}
+        <button
+          onClick={() => setDirector3DOpen(false)}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 10, border: `1px solid ${P3.border}`, background: P3.hover, fontSize: 13, color: P3.text, cursor: 'pointer' }}
+          title="返回画布"
+        >
+          ← 退出导演台
+        </button>
+        <button className="p3-icon-btn" onClick={() => setDirector3DOpen(false)} aria-label="关闭导演台">
           <X size={18} />
         </button>
       </div>
