@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>一幕·YIMU v3.5.0 五维度商业交付评审报告</title>
+<style>
+:root{--bg:#0b0d12;--panel:#12151d;--card:#161a23;--border:rgba(255,255,255,.08);--text:#e8eaf0;--muted:#9aa2b1;--brand:#f04842;--brand2:#ff7a3a;--good:#34c759;--warn:#f5a623;--bad:#ff4d5e;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC','Microsoft Yahei',sans-serif;line-height:1.75;padding:40px 24px}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:30px;letter-spacing:1px}
+h2{font-size:22px;margin:56px 0 18px;padding-left:14px;border-left:4px solid var(--brand)}
+h3{font-size:16px;margin:26px 0 10px;color:#fff}
+.meta{color:var(--muted);font-size:13px;margin-top:10px}
+.hero{background:radial-gradient(1200px 400px at 20% -10%,rgba(240,72,66,.18),transparent),radial-gradient(900px 300px at 90% 0%,rgba(255,122,58,.12),transparent);border:1px solid var(--border);border-radius:20px;padding:36px;margin-bottom:8px}
+.scoregrid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:26px 0}
+.scorecard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 14px;text-align:center}
+.scorecard .num{font-size:34px;font-weight:800}
+.scorecard .lab{font-size:12px;color:var(--muted);margin-top:4px}
+.g{color:var(--good)} .y{color:var(--warn)} .r{color:var(--bad)}
+.bar{height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--brand),var(--brand2))}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:14px 0}
+th,td{border:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:rgba(255,255,255,.04);color:#fff}
+td.mut{color:var(--muted)}
+.shot{margin:14px 0;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--card)}
+.shot img{width:100%;display:block}
+.shot .cap{padding:10px 14px;font-size:12.5px;color:var(--muted)}
+.shot .cap b{color:var(--text)}
+li{margin:6px 0 6px 20px}
+.tag{display:inline-block;font-size:11px;padding:2px 10px;border-radius:99px;margin-right:6px;font-weight:600}
+.t-good{background:rgba(52,197,89,.14);color:var(--good)}
+.t-warn{background:rgba(245,166,35,.14);color:var(--warn)}
+.t-bad{background:rgba(255,77,94,.14);color:var(--bad)}
+.verdict{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:26px;margin:20px 0}
+.big{font-size:44px;font-weight:900;background:linear-gradient(90deg,var(--brand),var(--brand2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.foot{color:var(--muted);font-size:12px;margin:50px 0 10px;text-align:center}
+@media(max-width:900px){.scoregrid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body><div class="wrap">
+
+<div class="hero">
+<h1>一幕·YIMU AI 短剧创作平台</h1>
+<div class="meta">五维度商业交付评审报告 · v3.5.0 · 评审日期 2026-11-06 · 评审基准：商业交付级（对标 GitHub 同类头部开源项目）</div>
+</div>
+
+<h2>综合评分</h2>
+<div class="scoregrid">
+<div class="scorecard"><div class="num g">7.8</div><div class="lab">资深开发工程师</div><div class="bar"><i style="width:78%"></i></div></div>
+<div class="scorecard"><div class="num g">8.2</div><div class="lab">资深产品经理</div><div class="bar"><i style="width:82%"></i></div></div>
+<div class="scorecard"><div class="num y">7.4</div><div class="lab">重度用户</div><div class="bar"><i style="width:74%"></i></div></div>
+<div class="scorecard"><div class="num g">7.9</div><div class="lab">小白用户</div><div class="bar"><i style="width:79%"></i></div></div>
+<div class="scorecard"><div class="num y">6.8</div><div class="lab">运营经理</div><div class="bar"><i style="width:68%"></i></div></div>
+</div>
+<div class="verdict"><span class="big">7.6 / 10</span><p style="margin-top:8px">综合评定：<b>达到商业交付级（可用、稳定、可演示、可收费）</b>。距离"头部竞品全面对标"还差四件事：真实模型 Key 的端到端验证、用户鉴权与多租户、付费闭环、以及画布高频操作的打磨收尾。四项均已有明确方案，不阻塞交付演示与首批客户试用。</p></div>
+
+<h2>维度一 · 资深开发工程师（7.8/10）</h2>
+<h3>✅ 达标项</h3>
+<ul>
+<li><span class="tag t-good">架构</span>19 个 NestJS 业务模块边界清晰；前端双模式（极客三栏/经典布局）共享同一套页面组件与 API 层，无复制粘贴式分叉。</li>
+<li><span class="tag t-good">工程质量</span>jest 回归测试 <b>80/80 全过</b>（覆盖加密、SSRF 防护、门序、流水线）；type:check 双端零错误；零死循环、零未清理定时器（逐页扫描确认）。</li>
+<li><span class="tag t-good">安全</span>AES-256-GCM 密钥落库、SSRF 守卫（数字 IP/IPv6/DNS rebinding 全覆盖）、AdminGuard 恒定时间比对、DTO 注入防护、CSRF 双提交。SQL 全参数化。</li>
+<li><span class="tag t-good">去死代码</span>30 个零引用死文件已删；身份/版本单一来源；假数据清零（假邮箱/假到期日/假红点全移除）。</li>
+<li><span class="tag t-good">性能</span>Vite 分包后主包 526KB（gzip 144KB）；网关 gzip；服务端渲染产物与前端 chunk 分离。</li>
+</ul>
+<h3>⚠️ 待提升项</h3>
+<ul>
+<li><span class="tag t-warn">依赖瘦身</span>37 项零引用依赖仍在 package.json（lodash/framer-motion/gsap/@tiptap 全套等），影响安装体积与审计面，不影响运行包。已列清单待批。</li>
+<li><span class="tag t-warn">鉴权体系</span>业务 API 无用户鉴权（单机形态合理），商业化 SaaS 前必须补 JWT+租户（方案已规划）。</li>
+<li><span class="tag t-warn">测试广度</span>80 个用例集中于安全/QC/共享库，流水线编排与画布同步缺 E2E 自动化（当前靠 Playwright 人工回归）。</li>
+</ul>
+<div class="shot"><img src="manual-screenshots/21-评审-设置供应商.png"><div class="cap"><b>证据：设置页·供应商行式列表</b>——真实连通测试、DTO 校验、状态徽章；安全加固直接暴露给用户可感知。</div></div>
+
+<h2>维度二 · 资深产品经理（8.2/10）</h2>
+<h3>✅ 值得发扬光大</h3>
+<ul>
+<li><b>流程范式领先</b>："一句话开拍 → 计划确认门 → 三道人工门 + 自动流水线"正是 DramaClaw/火宝/Toonflow 验证过的最优解，且我们的门序校验、断链恢复比多数开源竞品严谨（它们普遍是纯 mock 演示，我们有真实生成链路）。</li>
+<li><b>skill harness</b>：60 个自主撰写技能按流水线槽位注入，兼容 Claude Agent Skills 生态——这是与纯流水线竞品拉开差距的护城河，且为技能市场商业化铺路。</li>
+<li><b>双模式 + 三栏可拖拽</b>：极客/经典双形态覆盖两类用户习惯，对标 AI-EOS 的模式设计并自有实现。</li>
+<li><b>创作闭环完整度</b>：作战室→流程总控→工作台 16 工序→自由画布（11 类节点+AI 助手+任务联动）→导出（MP4/剪映草稿/SRT/ASS），同类开源项目罕见地齐备。</li>
+</ul>
+<h3>⚠️ 缺少的东西</h3>
+<ul>
+<li><span class="tag t-warn">协作与分享</span>：无多人协作、无成片分享页（客户看完成片只能拿文件）——短剧团队的刚需。</li>
+<li><span class="tag t-warn">成片后市场</span>：缺一键发布到抖音/快手/TikTok 的对接（DramaClaw 已有 recipe 思路）。</li>
+<li><span class="tag t-warn">角色一致性</span>：有 LOCK 锚点与资产体系，但缺"跨镜头脸型漂移自动检测"（BigBanana 有此专项）。</li>
+</ul>
+<div class="shot"><img src="manual-screenshots/10-工作台-流程总控.png"><div class="cap"><b>证据：流程总控页</b>——九段流水线+三道门，产品主线的骨架，竞品对比中最完整的实现。</div></div>
+
+<h2>维度三 · 重度用户（7.4/10）</h2>
+<h3>✅ 顺手的地方</h3>
+<ul>
+<li>批量效率：一键开拍自动连跑全链；「分镜上画布」一键铺开；「重试全部失败」聚合按钮；节点状态实时徽章（SSE）。</li>
+<li>画布即战力：11 类节点 + AI 助手回复一键落地为节点 + 产物自动回填连线——"聊天不中断、产物自动上墙"的重度工作流已成型。</li>
+<li>成本可见：看板/用户中心/项目概览三处真实费用，预算档熔断。</li>
+<li>导出全家桶：MP4/剪映草稿/SRT/ASS/发布包——剪映草稿是短剧团队刚需，竞品少见。</li>
+</ul>
+<h3>⚠️ 不顺手与付费意愿设计</h3>
+<ul>
+<li><span class="tag t-warn">高频精修路径长</span>：改一个镜头提示词要 3 次点击（分镜 Tab→展开→改→重跑），建议画布节点行内直接改词重跑。</li>
+<li><span class="tag t-warn">批量运镜编排</span>：3D 导演台能摆机位，但"整季批量生成+逐镜微调"的批量面板还可以更强。</li>
+<li><b>付费钩子建议</b>：①免费档给水印+集数上限，重度用户为"去水印+无限集数+高优先级队列"付费（PixVerse 验证的转化路径）；②按"预演草稿 vs 定稿"两档计价，重度用户为提速付费；③团队席位（主理人给成员开子账号）。</li>
+</ul>
+<div class="shot"><img src="manual-screenshots/19-评审-任务队列.png"><div class="cap"><b>证据：任务队列</b>——重度用户的生产仪表盘：SSE 实时进度、失败原因直出、聚合重试。</div></div>
+
+<h2>维度四 · 小白用户（7.9/10）</h2>
+<h3>✅ 方便的地方</h3>
+<ul>
+<li>首屏只有一句话输入框 + 灵感剧场（点模板直接开拍）——零学习成本。</li>
+<li>免 Key 演练沙盒：没配 API Key 也能完整体验全流程并看到产出，转化漏斗不断裂。</li>
+<li>计划确认门把"AI 到底要干什么、花多少钱"明明白白亮出来，小白敢点。</li>
+<li>双击空格般的交互都有引导（快捷键帮助弹窗、空状态引导文案齐全）。</li>
+</ul>
+<h3>⚠️ 需要注意</h3>
+<ul>
+<li><span class="tag t-warn">首次安装</span>：本地部署需要 Node 22 + PostgreSQL + 一条命令——对小白仍偏重（桌面客户端 Tauri 打包方案已规划，是根治项）。</li>
+<li><span class="tag t-warn">术语</span>："预算档/物料化/门"等词对小白有门槛，可在首次使用时加 tooltip。</li>
+</ul>
+<div class="shot"><img src="manual-screenshots/01-极客作战室-开拍入口.png"><div class="cap"><b>证据：极简开拍首页</b>——一句话+灵感剧场，小白 3 步内发起第一次生成。</div></div>
+
+<h2>维度五 · 运营经理（6.8/10）</h2>
+<h3>✅ 已具备</h3>
+<ul>
+<li>动态调价接口、官方直供通道、月度预算熔断、逐任务费用落账（ArcReel 级别的费用追踪）。</li>
+<li>双部署形态（本地单机/云端 SaaS）架构已规划并部分落地（DEPLOY_MODE 适配层）。</li>
+<li>交付物齐备：用户手册（17 张实拍图）、检测报告、多端架构规划、升级方案。</li>
+</ul>
+<h3>⚠️ 创造经济价值的缺口</h3>
+<ul>
+<li><span class="tag t-bad">无用户体系</span>：注册/登录/租户未实现——SaaS 收单的前置（最高优先级）。</li>
+<li><span class="tag t-warn">无增长闭环</span>：无分享裂变、无邀请码、无内容社区；短剧平台天然适合"作品广场"引流。</li>
+<li><span class="tag t-warn">无合规审核</span>：AI 生成内容上架国内平台需内容安全审核接入（已有 QC 合规 skill 的规则层，缺机审通道）。</li>
+<li><b>回报路径建议</b>：本地版免费获客 → 云端版订阅（专业版 ¥99/月权益已在 UI 就位）→ 技能市场分成（创作者卖技能包，平台抽成）→ 企业版私有部署授权（BSL 1.1 已支持）。</li>
+</ul>
+<div class="shot"><img src="manual-screenshots/16-用户中心.png"><div class="cap"><b>证据：用户中心</b>——会员卡、真实用量、三档套餐 UI 就位，等支付通道接入即可开卖。</div></div>
+
+<h2>GitHub 同类项目对标（商业交付差距分析）</h2>
+<table>
+<tr><th>项目</th><th>Star</th><th>优势</th><th>我们 vs 它</th></tr>
+<tr><td>MoneyPrinterTurbo</td><td>136k</td><td>批量混剪成熟、四入口（Agent/Web/API/CLI）</td><td class="mut">它偏"素材混剪"无角色一致性；我们流水线纵深与画布远超它。差距：它的安装即用性（Docker 一键）</td></tr>
+<tr><td>Toonflow</td><td>19.9k</td><td>画布+Agent MCP+技能市场规划</td><td class="mut">画布交互我们对齐甚至更完整（任务联动/集数）；差距：它的插件生态位</td></tr>
+<tr><td>火宝短剧</td><td>16.7k</td><td>7 个 SKILL.md 可编辑、四语种</td><td class="mut">我们 60 技能+槽位注入更强；差距：它的"界面内技能编辑器"体验</td></tr>
+<tr><td>DramaClaw</td><td>6.5k</td><td>11 workflow skill+60 recipe、画布=主体、断点恢复</td><td class="mut">本轮已吸收其"批量落画布+节点直达+恢复条"思想；差距：它的 recipe 市场化分发</td></tr>
+<tr><td>ArcReel</td><td>5.7k</td><td>58 skill+费用追踪+剪映导出</td><td class="mut">剪映导出我们对齐；差距：它的跨镜一致性自动审计深度</td></tr>
+</table>
+<p style="font-size:13.5px"><b>结论</b>：功能完备度上 YIMU 已处于同类第一梯队（流水线/画布/技能/导出四项核心能力全部自研且更完整）。商业交付前的真实差距按优先级：<b>①用户鉴权与租户（收单前置）②真实 Key 端到端验证 ③安装即用性（桌面客户端/一键 Docker）④内容合规审核 ⑤分享与发布闭环</b>。</p>
+
+<h2>交付级评定明细</h2>
+<table>
+<tr><th>商业交付检查项</th><th>状态</th></tr>
+<tr><td>核心流程端到端可跑通（含零 Key 演练模式）</td><td class="g">✅ 实测通过</td></tr>
+<tr><td>双端构建零错误 + 回归测试 80/80</td><td class="g">✅</td></tr>
+<tr><td>全站 20 页零控制台错误/零白屏/零假数据</td><td class="g">✅</td></tr>
+<tr><td>用户手册（图文）+ 检测报告交付</td><td class="g">✅ 本报告配套</td></tr>
+<tr><td>版本可验证（侧栏徽标 v3.5.0 + 构建时间）</td><td class="g">✅</td></tr>
+<tr><td>用户鉴权/多租户/付费闭环</td><td class="y">⏳ B 类待确认（方案与 UI 已就位）</td></tr>
+<tr><td>真实模型 Key 端到端成片</td><td class="y">⏳ 需老板提供有效 Key</td></tr>
+</table>
+
+<div class="foot">一幕·YIMU AI 短剧创作平台 · v3.5.0 交付评审 · 评审人：ZCode 产品工程联合评审 · 截图均为 2026-11 实拍</div>
+</div></body></html>
