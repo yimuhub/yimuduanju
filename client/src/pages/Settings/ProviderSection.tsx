@@ -813,7 +813,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         type="button"
                         onClick={() => {
                           setFormData((prev) => ({ ...prev, ...preset.patch }));
-                          setCustomFields(new Set(['textModel', 'imageModel', 'videoModel', 'ttsModel']));
+                          // 统一下拉交互：预设值通过"当前值 · 不在列表"选项显示，不再强制切手填
                           toast.success(
                             preset.patch.formatType === 'mock'
                               ? `已套用「${preset.patch.name}」：免 Key 可用，产物是占位内容且不计费，不能当正式出片`
@@ -936,8 +936,10 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   });
                   const unknowns = fetchedModels.filter((m) => (m.kind ?? classifyModelId(m.id)) === 'unknown');
                   const inList = options.some((m) => m.id === current) || unknowns.some((m) => m.id === current);
-                  // 默认永远下拉；只有用户显式点铅笔，或已有值不在列表里时才手填
-                  const custom = customFields.has(g.field) || (current !== '' && (options.length > 0 || unknowns.length > 0) && !inList);
+                  // P0 修复：custom 只由用户显式点"手填"决定。
+                  // 之前 `current 不在列表 → 强制手填`，导致文本/图片/配音字段经常被渲染成
+                  // input + 一个点了没反应的"下拉"按钮（只有视频模型幸免），四个字段交互不一致。
+                  const custom = customFields.has(g.field);
                   const FieldIcon = g.field === 'textModel' ? Type : g.field === 'imageModel' ? ImageIcon : g.field === 'videoModel' ? Video : Mic;
                   return (
                     <div key={g.field} className="rounded-xl border border-border/60 bg-muted/20 p-3">
@@ -984,7 +986,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         />
                       ) : (
                         <select
-                          value={inList ? current : ''}
+                          value={current}
                           onChange={(e) => {
                             setFormData((p) => ({ ...p, [g.field]: e.target.value }));
                           }}
@@ -997,6 +999,10 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                                 ? `请选择${g.label}模型（共${options.length + unknowns.length}个）…`
                                 : '暂无列表：先点下方"获取模型列表"'}
                           </option>
+                          {/* 当前值不在列表（预设模板/手填残留/列表拉取失败）时保留显示，避免 select 变空白 */}
+                          {current !== '' && !inList && (
+                            <option value={current}>{current}（当前值 · 不在列表）</option>
+                          )}
                           {options.map((m) => (
                             <option key={m.id} value={m.id}>{m.id}</option>
                           ))}

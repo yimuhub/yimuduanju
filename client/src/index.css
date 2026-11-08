@@ -10,3 +10,11 @@
 @source "../../node_modules/streamdown/dist/*.js";
 @config "../../tailwind.config.ts";
 
+/* ===== 全站胶囊修复（缺口 / 半亮伪影）=====
+ * Tailwind v4 的 rounded-full = calc(infinity * 1px)，Chromium 会钳制为 2^24px，
+ * 在高 DPR / GPU 光栅化下胶囊会出现"缺口"或"半亮"（背景只糊一半）的渲染伪影。
+ * 统一钳到与 .pill 规范一致的 9999px：形状不变（仍是完整对称胶囊），渲染稳定。 */
+.rounded-full {
+  border-radius: 9999px;
+}
+
