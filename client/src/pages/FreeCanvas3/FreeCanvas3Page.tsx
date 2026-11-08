@@ -15,7 +15,6 @@ import {
   Panel,
   getBezierPath,
   Position,
-  useReactFlow,
   type Connection,
   type ConnectionState,
   type Edge,
@@ -26,7 +25,7 @@ import {
   type OnSelectionChangeParams,
   type XYPosition,
 } from '@xyflow/react';
-import { Anchor, Copy, ExternalLink, Image as ImageIcon, Pencil, Scissors, Trash2 } from 'lucide-react';
+import { Anchor, Copy, ExternalLink, Image as ImageIcon, Pencil, Plus, Scissors, Trash2 } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useP3Store } from './pavo3Store';
 import { Pavo3Node } from './Pavo3Node';
@@ -40,6 +39,7 @@ import {
   AssetLibraryDialog,
   ModelSelectDialog,
   ReorganizeConfirm,
+  PavoDeleteConfirm,
   ShortcutsDialog,
   StyleLibraryDialog,
 } from './Dialogs';
@@ -107,38 +107,166 @@ function PavoEdge({
 
 const edgeTypes: EdgeTypes = { pavoEdge: PavoEdge };
 
-/** 顶栏集数选择器（画布状态按集分存 localStorage -epN，沿用画布自动保存机制） */
+/** 顶栏集数选择器（画布状态按集分存 localStorage -epN，沿用画布自动保存机制；支持增删集） */
+const EPISODE_LIMIT = 200;
+
 const EpisodeBar = ({ projectId }: { projectId?: string }) => {
   const episode = useP3Store((s) => s.episode);
   const setEpisode = useP3Store((s) => s.setEpisode);
+  const maxEpisode = useP3Store((s) => s.maxEpisode);
+  // 待确认删除的集数（两步确认，避免误触）
+  const [confirmDeleteEp, setConfirmDeleteEp] = useState<number | null>(null);
+  const baseKey = `yimu-free3-${projectId ?? 'default'}`;
+
   const pick = (ep: number) => {
     setEpisode(ep);
     try {
-      localStorage.setItem(`yimu-free3-${projectId ?? 'default'}-last-ep`, String(ep));
+      localStorage.setItem(`${baseKey}-last-ep`, String(ep));
     } catch {
       /* 忽略 */
     }
   };
+
+  const addEpisode = () => {
+    const st = useP3Store.getState();
+    if (st.maxEpisode >= EPISODE_LIMIT) return;
+    const nextMax = st.maxEpisode + 1;
+    st.setMaxEpisode(nextMax);
+    try {
+      localStorage.setItem(`${baseKey}-max-ep`, String(nextMax));
+    } catch {
+      /* 忽略 */
+    }
+    pick(nextMax); // 新集自动成为当前集（空画布，由加载 effect 恢复）
+    setConfirmDeleteEp(null);
+  };
+
+  const removeEpisode = (ep: number) => {
+    const st = useP3Store.getState();
+    if (st.maxEpisode <= 1) {
+      setConfirmDeleteEp(null);
+      return;
+    }
+    const newMax = st.maxEpisode - 1;
+    try {
+      // 数据前移：ep+1 → ep ...（保持集号连续），随后删除尾部键
+      for (let i = ep; i <= newMax; i++) {
+        const src = localStorage.getItem(`${baseKey}-ep${i + 1}`);
+        if (src === null) localStorage.removeItem(`${baseKey}-ep${i}`);
+        else localStorage.setItem(`${baseKey}-ep${i}`, src);
+      }
+      localStorage.removeItem(`${baseKey}-ep${st.maxEpisode}`);
+      localStorage.setItem(`${baseKey}-max-ep`, String(newMax));
+    } catch {
+      /* 存储异常时仍收窄集数，避免状态与键错位 */
+    }
+    st.setMaxEpisode(newMax);
+    // 删除当前集 → 切到相邻集（前移后原位置即相邻集数据）；删前面的集 → 集号减一
+    const cur = st.episode;
+    pick(ep < cur ? cur - 1 : Math.min(cur, newMax));
+    // 集数据键已重排，触发画布按当前键重载（同键内容变化也生效）
+    st.bumpEpisodeDataVersion();
+    setConfirmDeleteEp(null);
+    toast.success(`第 ${ep} 集已删除`);
+  };
+
+  const episodes = Array.from({ length: maxEpisode }, (_, i) => i + 1);
+
   return (
     <Panel position="top-center">
-      <div className="p3-tool-panel" style={{ gap: 6, padding: '4px 8px' }}>
-        <span style={{ fontSize: 12, color: P3.helper, padding: '0 2px' }}>集数</span>
-        {[1, 2, 3].map((ep) => (
+      <div style={{ position: 'relative' }}>
+        <div className="p3-tool-panel" style={{ gap: 6, padding: '4px 8px' }}>
+          <span style={{ fontSize: 12, color: P3.helper, padding: '0 2px' }}>集数</span>
+          {episodes.map((ep) => (
+            <div key={ep} style={{ position: 'relative' }} className="p3-ep-item">
+              <button
+                onClick={() => pick(ep)}
+                title={`切换到第 ${ep} 集（独立画布）`}
+                style={{
+                  width: 30, height: 26, borderRadius: 7, fontSize: 12, cursor: 'pointer',
+                  fontWeight: 600, transition: 'background 0.12s',
+                  background: episode === ep ? P3.primary : '#fff',
+                  color: episode === ep ? '#fff' : P3.text,
+                  border: episode === ep ? 'none' : `1px solid ${P3.border}`,
+                }}
+              >
+                {ep}
+              </button>
+              {/* hover 小删除键（至少保留 1 集） */}
+              {maxEpisode > 1 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDeleteEp(ep);
+                  }}
+                  className="p3-ep-delete"
+                  title={`删除第 ${ep} 集`}
+                  aria-label={`删除第 ${ep} 集`}
+                  style={{
+                    position: 'absolute', top: -6, right: -6, width: 16, height: 16,
+                    borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: '#fff', border: `1px solid ${P3.border}`, color: '#E5484D',
+                    cursor: 'pointer', padding: 0, boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
+                  }}
+                >
+                  <Trash2 size={9} />
+                </button>
+              )}
+            </div>
+          ))}
+          {/* 新增下一集（上限 200） */}
           <button
-            key={ep}
-            onClick={() => pick(ep)}
-            title={`切换到第 ${ep} 集（独立画布）`}
+            onClick={addEpisode}
+            disabled={maxEpisode >= EPISODE_LIMIT}
+            title={maxEpisode >= EPISODE_LIMIT ? `最多 ${EPISODE_LIMIT} 集` : `新增第 ${maxEpisode + 1} 集（空画布）`}
             style={{
-              width: 30, height: 26, borderRadius: 7, fontSize: 12, cursor: 'pointer',
-              fontWeight: 600, transition: 'background 0.12s',
-              background: episode === ep ? P3.primary : '#fff',
-              color: episode === ep ? '#fff' : P3.text,
-              border: episode === ep ? 'none' : `1px solid ${P3.border}`,
+              width: 26, height: 26, borderRadius: 7, cursor: maxEpisode >= EPISODE_LIMIT ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: '#fff', color: maxEpisode >= EPISODE_LIMIT ? P3.faint : P3.primary,
+              border: `1px dashed ${maxEpisode >= EPISODE_LIMIT ? P3.border : P3.primary}`,
+              opacity: maxEpisode >= EPISODE_LIMIT ? 0.5 : 1,
             }}
           >
-            {ep}
+            <Plus size={13} />
           </button>
-        ))}
+        </div>
+
+        {/* 删除确认（浮层，不阻塞其他集切换） */}
+        {confirmDeleteEp !== null && (
+          <div
+            className="p3-tool-panel"
+            style={{
+              position: 'absolute', top: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
+              flexDirection: 'column', alignItems: 'stretch', gap: 8, padding: '10px 12px',
+              whiteSpace: 'nowrap', zIndex: 10,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <span style={{ fontSize: 12, color: P3.text }}>
+              确认删除第 {confirmDeleteEp} 集？该集画布数据将被清空，后续集自动前移。
+            </span>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setConfirmDeleteEp(null)}
+                style={{
+                  fontSize: 12, padding: '4px 12px', borderRadius: 7, cursor: 'pointer',
+                  background: '#fff', color: P3.text, border: `1px solid ${P3.border}`,
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => removeEpisode(confirmDeleteEp)}
+                style={{
+                  fontSize: 12, padding: '4px 12px', borderRadius: 7, cursor: 'pointer',
+                  background: '#E5484D', color: '#fff', border: 'none',
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </Panel>
   );
@@ -174,13 +302,12 @@ const CanvasInner = () => {
     setReorganizeConfirm,
     minimap,
   } = useP3Store();
-  const { screenToFlowPosition } = useReactFlow();
   const navigate = useNavigate();
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const flowWrapRef = useRef<HTMLDivElement>(null);
 
   /* ---- 持久化：按项目 + 集数分存 localStorage（-epN 后缀，沿用画布自动保存机制）+ 后端实体同步 ---- */
-  const { projectName, restoreCanvas, syncFromBackend, episode, setEpisode } = useP3Store();
+  const { projectName, restoreCanvas, syncFromBackend, episode, setEpisode, episodeDataVersion } = useP3Store();
   // 路由参数名为 id（project/:id/canvas-free3），之前误读 projectId 导致恒为 undefined、
   // 画布持久化与白模上传都拿不到项目归属；此处修正（白模产线需要真实 projectId）。
   const { id: routeProjectId } = useParams<{ id: string }>();
@@ -196,11 +323,25 @@ const CanvasInner = () => {
   const persistWarningShownRef = useRef(false);
   // 后端实体每个项目只同步一次（切集不重复注入）
   const syncedProjectRef = useRef<string | null>(null);
+  // 恢复本项目的集数上限（-max-ep 键；旧项目默认 3 集）。须先于集数加载 effect 执行
   useEffect(() => {
     try {
-      // 记忆用户上次的集数选择
+      const savedMax = Number(localStorage.getItem(`${baseKey}-max-ep`) || '3') || 3;
+      useP3Store.getState().setMaxEpisode(Math.max(1, Math.min(200, savedMax)));
+    } catch {
+      /* 忽略 */
+    }
+  }, [baseKey]);
+  useEffect(() => {
+    try {
+      // 记忆用户上次的集数选择（钳制到当前集数上限内）
       const savedEp = Number(localStorage.getItem(`${baseKey}-last-ep`) || '1');
-      if (Number.isFinite(savedEp) && savedEp >= 1 && savedEp <= 3 && savedEp !== episode) {
+      if (
+        Number.isFinite(savedEp) &&
+        savedEp >= 1 &&
+        savedEp <= useP3Store.getState().maxEpisode &&
+        savedEp !== episode
+      ) {
         setEpisode(savedEp);
         return; // 下一次 effect 随 persistKey 变化重新执行
       }
@@ -226,7 +367,7 @@ const CanvasInner = () => {
       void syncFromBackend(projectId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistKey, projectId]);
+  }, [persistKey, projectId, episodeDataVersion]);
   useEffect(() => {
     if (!loadedRef.current) return;
     try {
@@ -248,7 +389,7 @@ const CanvasInner = () => {
   /* ---- 任务流 ↔ 画布实时联动：任务进度徽章 + 生成产物自动落画布 ---- */
   useJobCanvasSync(projectId);
 
-  /* ---- 双击画布空白 → 快速创建文本节点（对标 FigJam/tldraw：双击即写；其他类型走工具栏 / 拖线） ---- */
+  /* ---- 双击画布空白 → 弹出节点类型选择菜单（复用 AddNodeMenu，坐标记录在 addMenu.x/y，选定后在双击点创建） ---- */
   useEffect(() => {
     const el = flowWrapRef.current;
     if (!el) return;
@@ -258,13 +399,15 @@ const CanvasInner = () => {
       if (t.closest('.react-flow__node')) return;
       if (t.closest('.p3-dialog-mask')) return;
       if (t.closest('.p3-tool-panel')) return;
+      if (t.closest('.p3-add-menu')) return;
       closeDialog();
       setCtxMenu(null);
-      useP3Store.getState().createNode('text', screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+      // 记录双击坐标到 store（addMenu.x/y），菜单定位到双击点
+      openAddMenu({ visible: true, x: e.clientX, y: e.clientY });
     };
     el.addEventListener('dblclick', onDbl);
     return () => el.removeEventListener('dblclick', onDbl);
-  }, [closeDialog, screenToFlowPosition]);
+  }, [closeDialog, openAddMenu]);
 
   /* ---- 单击画布空白：关闭弹窗 ---- */
   const onPaneClick = useCallback(() => {
@@ -365,6 +508,15 @@ const CanvasInner = () => {
 
   const ctxNode = ctxMenu ? nodes.find((n) => n.id === ctxMenu.nodeId) : null;
 
+  // 重命名：页内玻璃拟态弹窗（替代原生 window.prompt——原生弹窗阻塞主线程且无法统一样式）
+  const [renameState, setRenameState] = useState<{ id: string; value: string } | null>(null);
+  const submitRename = useCallback(() => {
+    if (!renameState) return;
+    const next = renameState.value.trim();
+    if (next) useP3Store.getState().updateNodeData(renameState.id, { title: next });
+    setRenameState(null);
+  }, [renameState]);
+
   const ctxAction = useCallback((action: 'rename' | 'duplicate' | 'delete' | 'toggle-ref' | 'pick-ref' | 'open-workbench') => {
     if (!ctxMenu) return;
     const st = useP3Store.getState();
@@ -387,8 +539,7 @@ const CanvasInner = () => {
       return;
     }
     if (action === 'rename' && node) {
-      const next = window.prompt('重命名节点', node.data.title);
-      if (next && next.trim() && next.trim() !== node.data.title) st.updateNodeData(id, { title: next.trim() });
+      setRenameState({ id, value: node.data.title });
     } else if (action === 'duplicate') {
       st.duplicateNodes([id]);
     } else if (action === 'delete') {
@@ -492,6 +643,51 @@ const CanvasInner = () => {
           </div>
         )}
 
+        {/* 重命名弹窗（玻璃拟态，替代原生 window.prompt；Enter 提交 / Esc 取消） */}
+        {renameState && (
+          <div
+            className="p3-dialog-mask"
+            onMouseDown={() => setRenameState(null)}
+          >
+            <div
+              className="p3-dialog"
+              style={{ width: 380, padding: 20 }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div style={{ fontSize: 15, fontWeight: 600, color: P3.text, marginBottom: 12 }}>重命名节点</div>
+              <input
+                autoFocus
+                value={renameState.value}
+                onChange={(e) => setRenameState({ ...renameState, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submitRename();
+                  if (e.key === 'Escape') setRenameState(null);
+                }}
+                onFocus={(e) => e.target.select()}
+                style={{
+                  width: '100%', padding: '9px 12px', borderRadius: 10, fontSize: 14,
+                  color: P3.text, background: '#fff', border: `1px solid ${P3.border}`,
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                <button
+                  onClick={() => setRenameState(null)}
+                  style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, color: P3.text, background: P3.hover, cursor: 'pointer', border: 'none' }}
+                >
+                  取消
+                </button>
+                <button
+                  onClick={submitRename}
+                  style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, color: '#fff', background: P3.primary, cursor: 'pointer', border: 'none' }}
+                >
+                  确定
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* 弹窗层 */}
@@ -503,6 +699,7 @@ const CanvasInner = () => {
       <AssetLibraryDialog />
       <ShortcutsDialog />
       <ReorganizeConfirm />
+      <PavoDeleteConfirm />
       <Director3D projectId={projectId} />
     </div>
   );

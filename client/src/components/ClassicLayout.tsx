@@ -35,6 +35,8 @@ import {
   UserCircle,
   MonitorCog,
   LayoutTemplate,
+  PenTool,
+  ArrowLeft,
 } from 'lucide-react';
 
 /**
@@ -46,33 +48,34 @@ import {
  * 画布路由保持全屏沉浸（不渲染侧栏 / 顶栏 / 助手坞），左上角品牌悬浮导航。
  */
 
-const navItems = [
-  { to: '/', label: '创作作战室', icon: Sparkles, end: true },
-  { to: '/dashboard', label: '数据看板', icon: LayoutDashboard },
-  { to: '/projects', label: '我的项目', icon: FolderKanban },
-  { to: '/project/free/canvas-free3', label: '自由画布', icon: Workflow },
-  { to: '/create', label: '一键创作', icon: Wand2 },
-  { to: '/templates', label: '模板中心', icon: LayoutTemplate },
-  { to: '/styles', label: '风格中心', icon: Palette },
-  { to: '/assets', label: '资产库', icon: ImageIcon },
-  { to: '/ai-assistant', label: 'AI助手', icon: Bot },
-  { to: '/account', label: '用户中心', icon: UserCircle },
-  { to: '/settings', label: '设置', icon: Settings },
+const navItems: { key: string; to: string; label: string; icon: typeof Sparkles; end?: boolean }[] = [
+  { key: 'home', to: '/', label: '创作作战室', icon: Sparkles, end: true },
+  { key: 'canvas', to: '/project/free/canvas-free3', label: '自由画布', icon: Workflow },
+  { key: 'canvases', to: '/canvases', label: '画布模式', icon: PenTool },
+  { key: 'create', to: '/create', label: '一键创作', icon: Wand2 },
+  { key: 'dashboard', to: '/dashboard', label: '数据看板', icon: LayoutDashboard },
+  { key: 'projects', to: '/projects', label: '我的项目', icon: FolderKanban },
+  { key: 'templates', to: '/templates', label: '模板中心', icon: LayoutTemplate },
+  { key: 'styles', to: '/styles', label: '风格中心', icon: Palette },
+  { key: 'assets', to: '/assets', label: '资产库', icon: ImageIcon },
+  { key: 'ai-assistant', to: '/ai-assistant', label: 'AI助手', icon: Bot },
+  { key: 'account', to: '/account', label: '用户中心', icon: UserCircle },
+  { key: 'settings', to: '/settings', label: '设置', icon: Settings },
 ];
 
 // 侧栏分组（对标即梦/可灵工作台：导航按「创作 / 项目 / 账户」分区，降低长列表噪音）
 const navGroups: { label: string; items: typeof navItems }[] = [
   {
     label: '创作',
-    items: [navItems[0], navItems[3], navItems[4]],
+    items: navItems.filter((n) => ['home', 'canvas', 'canvases', 'create'].includes(n.key)),
   },
   {
     label: '项目',
-    items: [navItems[1], navItems[2], navItems[5], navItems[6], navItems[7]],
+    items: navItems.filter((n) => ['dashboard', 'projects', 'templates', 'styles', 'assets'].includes(n.key)),
   },
   {
     label: '助手与账户',
-    items: [navItems[8], navItems[9], navItems[10]],
+    items: navItems.filter((n) => ['ai-assistant', 'account', 'settings'].includes(n.key)),
   },
 ];
 
@@ -88,6 +91,7 @@ const breadcrumbMap: Record<string, string> = {
   styles: '风格中心',
   settings: '设置',
   project: '项目工作台',
+  canvases: '画布模式',
   'canvas-free3': '自由画布',
   script: '剧本',
   bible: '圣经',
@@ -320,12 +324,32 @@ const ClassicLayout = () => {
                   >
                     <Menu className="h-5 w-5" />
                   </button>
+                  {/* 返回上一页：/create、画布模式等二级页面提供明确返回入口 */}
+                  <button
+                    onClick={() => navigate(-1)}
+                    className="flex shrink-0 items-center gap-1 rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    aria-label="返回上一页"
+                    title="返回上一页"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> 返回
+                  </button>
                   <span className="hidden shrink-0 text-muted-foreground sm:inline">首页</span>
                   <div className="hidden min-w-0 items-center gap-2 md:flex">
-                    {breadcrumbs.map((b) => (
+                    {breadcrumbs.map((b, i) => (
                       <div key={b.path} className="flex min-w-0 items-center gap-2">
                         <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate font-medium text-foreground">{b.label}</span>
+                        {/* 面包屑可点击跳转（末级仅高亮不可点，避免自跳转） */}
+                        {i < breadcrumbs.length - 1 ? (
+                          <button
+                            onClick={() => navigate(b.path)}
+                            className="truncate font-medium text-muted-foreground transition-colors hover:text-primary"
+                            title={b.label}
+                          >
+                            {b.label}
+                          </button>
+                        ) : (
+                          <span className="truncate font-medium text-foreground">{b.label}</span>
+                        )}
                       </div>
                     ))}
                   </div>

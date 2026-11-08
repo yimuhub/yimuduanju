@@ -456,3 +456,39 @@ export const ReorganizeConfirm = () => {
 };
 
 
+
+/* ---------------- 批量删除确认弹窗（替代原生 window.confirm，玻璃拟态一致样式） ---------------- */
+export const PavoDeleteConfirm = () => {
+  const { deleteConfirm } = useP3Store();
+  if (!deleteConfirm) return null;
+  return (
+    <div className="p3-dialog-mask">
+      <div
+        className="p3-dialog"
+        style={{ width: 380, padding: 24 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ fontSize: 15, fontWeight: 600, color: P3.text, marginBottom: 8 }}>
+          确认删除 {deleteConfirm.count} 个节点？
+        </div>
+        <div style={{ fontSize: 13, color: P3.helper, marginBottom: 20 }}>
+          选中的节点及其连线将被一并删除（可用 ⌘Z 撤销）。
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            onClick={() => deleteConfirm.resolve(false)}
+            style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, color: P3.text, background: P3.hover, cursor: 'pointer', border: 'none' }}
+          >
+            取消
+          </button>
+          <button
+            onClick={() => deleteConfirm.resolve(true)}
+            style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, color: '#fff', background: '#E5484D', cursor: 'pointer', border: 'none' }}
+          >
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

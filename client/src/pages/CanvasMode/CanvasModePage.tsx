@@ -20,7 +20,8 @@ import {
 import { listProjects, createProject, updateProject, deleteProject } from '@client/src/api/projects';
 import type { ProjectListItem } from '@shared/api.interface';
 
-const PAGE_SIZE = 200;
+// 服务端 PageQueryDto 校验 pageSize ≤ 100，超限直接 400
+const PAGE_SIZE = 100;
 
 export const CanvasModePage = () => {
   const navigate = useNavigate();

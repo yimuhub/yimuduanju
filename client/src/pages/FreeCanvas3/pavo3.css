@@ -505,3 +505,12 @@
 /* 任务/同步进行中旋转图标（全局定义，避免依赖节点内 style 标签） */
 @keyframes p3spin { to { transform: rotate(360deg); } }
 .p3-spin { animation: p3spin 1s linear infinite; }
+
+/* ---------- 集数选择器：hover 显示删除键 ---------- */
+.p3-ep-item .p3-ep-delete {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.p3-ep-item:hover .p3-ep-delete {
+  opacity: 1;
+}

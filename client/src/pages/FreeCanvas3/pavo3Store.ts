@@ -48,7 +48,13 @@ interface FreeCanvas3State {
   counters: Record<PavoNodeType, number>;
   /** 当前集数（画布状态按集分存 localStorage -epN） */
   episode: number;
+  /** 集数上限（可增删，1..200；持久化在各项目 -max-ep 键） */
+  maxEpisode: number;
+  /** 集数据结构变化计数（增删集后递增，触发按当前键重载） */
+  episodeDataVersion: number;
   setEpisode: (ep: number) => void;
+  setMaxEpisode: (n: number) => void;
+  bumpEpisodeDataVersion: () => void;
   filter: string;
   addMenu: AddMenuState | null;
   dialogNodeId: string | null;
@@ -61,6 +67,8 @@ interface FreeCanvas3State {
   snapGrid: boolean;
   reorganizeConfirm: boolean;
   reorganizeSnapshot: { id: string; x: number; y: number }[] | null;
+  /** 批量删除确认（>5 节点时弹页内弹窗；resolve(true) 后执行删除） */
+  deleteConfirm: { count: number; resolve: (ok: boolean) => void } | null;
   director3DOpen: boolean;
   directorNodeId: string | null; // 当前打开的导演台节点
   hideEmpty: boolean;
@@ -75,6 +83,8 @@ interface FreeCanvas3State {
   onConnect: (conn: Connection) => void;
   createNode: (type: PavoNodeType, pos: XYPosition, opts?: { source?: string; target?: string; autoOpen?: boolean }) => void;
   removeNode: (id: string) => void;
+  /** 实际执行选中删除（deleteSelection 确认回调调用） */
+  doDeleteSelection: () => void;
   /** 批量删除选中节点与选中连线（一次历史快照；大数量删除前由调用方确认） */
   deleteSelection: () => void;
   /** 复制选中节点（偏移 28px）并克隆副本之间的内部连线（⌘D） */
@@ -136,6 +146,8 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
   edges: [],
   counters: { ...EMPTY_COUNTERS },
   episode: 1,
+  maxEpisode: 3,
+  episodeDataVersion: 0,
   filter: 'all',
   addMenu: null,
   dialogNodeId: null,
@@ -148,6 +160,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
   snapGrid: true,
   reorganizeConfirm: false,
   reorganizeSnapshot: null,
+  deleteConfirm: null,
   director3DOpen: false,
   directorNodeId: null,
   hideEmpty: false,
@@ -246,7 +259,26 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
   deleteSelection: () => {
     const s = get();
     const nodeIds = new Set(s.selectedNodeIds ?? []);
-    if (nodeIds.size > 5 && !window.confirm(`即将删除选中的 ${nodeIds.size} 个节点及其连线，确认删除？`)) return;
+    // 大批量删除走页内确认弹窗（替代原生 window.confirm——阻塞主线程且样式不统一，
+    // 用画布玻璃拟态弹层 PavoDeleteConfirm 承接，确认后回调 doDeleteSelection）
+    if (nodeIds.size > 5) {
+      set({
+        deleteConfirm: {
+          count: nodeIds.size,
+          resolve: (ok) => {
+            set({ deleteConfirm: null });
+            if (ok) get().doDeleteSelection();
+          },
+        },
+      });
+      return;
+    }
+    get().doDeleteSelection();
+  },
+
+  doDeleteSelection: () => {
+    const s = get();
+    const nodeIds = new Set(s.selectedNodeIds ?? []);
     if (nodeIds.size === 0 && !s.edges.some((e) => e.selected)) return;
     set({
       nodes: s.nodes.filter((n) => !nodeIds.has(n.id)),
@@ -327,7 +359,11 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
     }),
 
   setProjectName: (name) => set({ projectName: name }),
-  setEpisode: (ep) => set({ episode: Math.min(3, Math.max(1, ep)) }),
+  // 集数上限 200；实际钳制到当前 maxEpisode（持久化在各项目 -max-ep 键，由页面加载恢复）
+  setEpisode: (ep) => set({ episode: Math.min(get().maxEpisode, Math.max(1, ep)) }),
+  setMaxEpisode: (n) => set({ maxEpisode: Math.min(200, Math.max(1, n)) }),
+  /** 集数据结构变化（增删集）后递增，触发页面按当前键重载画布 */
+  bumpEpisodeDataVersion: () => set((s) => ({ episodeDataVersion: s.episodeDataVersion + 1 })),
   restoreCanvas: (snap) => {
     const nodes = (snap.nodes ?? []).map((n) => ({
       ...n,

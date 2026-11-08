@@ -202,6 +202,15 @@ const RoutesComponent = () => {
           {/* 首页 = 创作作战室；经典模式下作为侧栏「创作作战室」项对应的普通页面渲染 */}
           <Route index element={<AgentStudio />} />
           <Route path="create" element={<CreateWizardPage />} />
+          {/* 画布模式：卡片式画布项目列表（此前仅 Studio 模式有该路由，经典/极客模式下访问会 404） */}
+          <Route
+            path="canvases"
+            element={
+              <RouteErrorGuard>
+                <CanvasModePage />
+              </RouteErrorGuard>
+            }
+          />
           {isClassic ? (
             <>
               {/* 经典模式：所有真实路由直接整页渲染 */}
