@@ -898,26 +898,31 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   )}
                 </label>
                 <div className="relative mt-2">
+                  {/* 编辑态不回填掩码假值：value 恒为用户输入，眼睛只切换新输入的明文/密文 */}
                   <input
                     type={showApiKey ? 'text' : 'password'}
                     value={formData.apiKey || ''}
                     onChange={(e) =>
                       setFormData((p) => ({ ...p, apiKey: e.target.value }))
                     }
-                    placeholder={editingId ? '••••••••（留空表示不修改）' : '输入 API Key'}
+                    placeholder={editingId ? '已保存 · 输入新值覆盖' : '输入 API Key'}
+                    autoComplete={editingId ? 'new-password' : 'off'}
                     className="h-10 w-full rounded-xl border border-input bg-card px-3 pr-10 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showApiKey ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
+                  {(formData.apiKey || '').length > 0 && (
+                    <button
+                      type="button"
+                      title={showApiKey ? '隐藏新输入的 Key' : '明文显示新输入的 Key'}
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showApiKey ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
 

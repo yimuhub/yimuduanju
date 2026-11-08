@@ -75,8 +75,10 @@ export const StudioStage = ({ children }: { children?: ReactNode }) => {
       {projectId ? <ProjectSectionNav /> : null}
 
       <div className="stage-body">
-        {/* 画布体验统一走全屏自由画布（canvas-free3）；中舞台在 page/chat 之间切换 */}
-        {showPage ? children : <StudioChat />}
+        {/* 画布体验统一走全屏自由画布（canvas-free3）；中舞台在 page/chat 之间切换。
+            内容页包进 .studio-page（flex:1 + min-height:0 + overflow-y:auto）：
+            stage-body 本身 overflow:hidden，若不包滚动容器，窗口小于内容时下方会被裁切且无法滚动 */}
+        {showPage ? <div className="studio-page">{children}</div> : <StudioChat />}
       </div>
     </section>
   );

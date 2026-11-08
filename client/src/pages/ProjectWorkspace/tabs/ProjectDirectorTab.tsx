@@ -135,7 +135,7 @@ const ProjectDirectorTab = () => {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       {/* 标题 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -164,13 +164,13 @@ const ProjectDirectorTab = () => {
           <button onClick={() => navigate(`/project/${id}/storyboard`)} className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">去分镜</button>
         </div>
       ) : (
-        <div className="flex flex-col gap-4 xl:flex-row">
-          {/* 左：项目树 */}
-          <div className="w-full shrink-0 rounded-xl border bg-card p-3 shadow-sm xl:w-64">
-            <div className="mb-2 flex items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
+        <div className="flex flex-col gap-4 @4xl:h-[calc(100dvh-14rem)] @4xl:min-h-[480px] @4xl:flex-row @4xl:items-stretch">
+          {/* 左：项目树（240px，树区独立滚动） */}
+          <div className="flex w-full shrink-0 flex-col rounded-xl border bg-card p-3 shadow-sm @4xl:w-60">
+            <div className="mb-2 flex shrink-0 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
               <ChevronDown className="h-3 w-3" /> 项目结构
             </div>
-            <div className="max-h-[560px] space-y-1 overflow-y-auto scrollbar-thin">
+            <div className="max-h-64 min-h-0 space-y-1 overflow-y-auto scrollbar-thin @4xl:max-h-none @4xl:flex-1">
               {scenes.map((scene) => {
                 const sshots = shotsByScene.get(scene.id) ?? [];
                 const expanded = expandedScenes.has(scene.id);
@@ -208,8 +208,8 @@ const ProjectDirectorTab = () => {
             </div>
           </div>
 
-          {/* 中：实时监看 */}
-          <div className="flex-1">
+          {/* 中：实时监看（弹性宽，独立滚动） */}
+          <div className="min-h-0 min-w-0 flex-1 scrollbar-thin @4xl:overflow-y-auto @4xl:pr-0.5">
             <div className="rounded-xl border bg-card p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -298,8 +298,8 @@ const ProjectDirectorTab = () => {
             </div>
           </div>
 
-          {/* 右：导演控制 */}
-          <div className="w-full shrink-0 space-y-3 xl:w-72">
+          {/* 右：导演控制 / 机位预设 / 白模参考（300px，独立滚动） */}
+          <div className="min-h-0 w-full shrink-0 space-y-3 scrollbar-thin @4xl:w-[300px] @4xl:overflow-y-auto @4xl:pr-0.5">
             {selectedShot && (
               <div className="rounded-xl border bg-card p-4 shadow-sm">
                 <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-foreground">
@@ -381,12 +381,12 @@ const ProjectDirectorTab = () => {
             {/* 底部时间线条预览 */}
             <div className="rounded-xl border bg-card p-3 shadow-sm">
               <div className="mb-2 text-[11px] font-medium text-muted-foreground">全片镜头流</div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
                 {shots.map((s) => (
                   <button
                     key={s.id}
                     onClick={() => setSelectedShotId(s.id)}
-                    className={`h-7 w-9 rounded-md text-[9px] font-medium transition-colors ${
+                    className={`h-7 w-9 shrink-0 rounded-md text-[9px] font-medium transition-colors ${
                       selectedShotId === s.id
                         ? 'bg-primary text-primary-foreground'
                         : s.status === 'ready'

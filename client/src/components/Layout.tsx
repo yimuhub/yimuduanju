@@ -48,7 +48,7 @@ const GeekLayout = () => {
     <WorkspaceTabsProvider>
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* 常规页面：仅渲染页面自身（首页为三栏屏；其余路由均已重定向到首页开签） */}
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
         <Outlet />
       </main>
       <ConfirmHost />
