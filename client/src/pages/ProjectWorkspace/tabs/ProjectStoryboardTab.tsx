@@ -24,20 +24,21 @@ import { showConfirm } from '@client/src/components/ui/confirm';
 import { toast } from 'sonner';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
 
+// 状态胶囊：统一 .pill 5 色板（见 tailwind-theme.css）
 const statusConfig: Record<string, { label: string; className: string }> = {
-  draft: { label: '草稿', className: 'bg-muted text-muted-foreground' },
-  queued: { label: '排队中', className: 'bg-amber-500/15 text-amber-400' },
-  pending: { label: '等待中', className: 'bg-muted text-muted-foreground' },
-  generating: { label: '生成中', className: 'bg-blue-500/15 text-blue-400' },
-  running: { label: '生成中', className: 'bg-blue-500/15 text-blue-400' },
-  ready: { label: '已就绪', className: 'bg-green-500/15 text-green-400' },
-  completed: { label: '已完成', className: 'bg-green-500/15 text-green-400' },
-  succeeded: { label: '已完成', className: 'bg-green-500/15 text-green-400' },
-  failed: { label: '失败', className: 'bg-red-500/15 text-red-400' },
+  draft: { label: '草稿', className: 'pill-neutral' },
+  queued: { label: '排队中', className: 'pill-wait' },
+  pending: { label: '等待中', className: 'pill-neutral' },
+  generating: { label: '生成中', className: 'pill-run' },
+  running: { label: '生成中', className: 'pill-run' },
+  ready: { label: '已就绪', className: 'pill-ok' },
+  completed: { label: '已完成', className: 'pill-ok' },
+  succeeded: { label: '已完成', className: 'pill-ok' },
+  failed: { label: '失败', className: 'pill-fail' },
 };
 
 const getStatusInfo = (status: string) =>
-  statusConfig[status] || { label: status, className: 'bg-muted text-muted-foreground' };
+  statusConfig[status] || { label: status, className: 'pill-neutral' };
 
 const shotSizeLabels: Record<string, string> = {
   close_up: '特写',
@@ -536,7 +537,7 @@ const ProjectStoryboardTab = () => {
                       </span>
                     )}
                     <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusInfo.className}`}
+                      className={`pill ${statusInfo.className}`}
                     >
                       {statusInfo.label}
                     </span>
@@ -769,7 +770,7 @@ const ProjectStoryboardTab = () => {
                       {shot.visualPrompt || shot.action || '-'}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${statusInfo.className}`}>
+                      <span className={`pill ${statusInfo.className}`}>
                         {statusInfo.label}
                       </span>
                     </td>

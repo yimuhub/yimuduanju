@@ -597,7 +597,7 @@ const AgentStudio = () => {
             <div key={j.id} className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
-                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <span className="pill pill-neutral">
                   {JOB_STATUS_LABELS[j.status] ?? j.status}{j.status === 'running' ? ` ${j.progress ?? 0}%` : ''}
                 </span>
               </div>
@@ -692,8 +692,14 @@ const AgentStudio = () => {
               </button>
             ))}
           </div>
-          {/* 用户卡 + 界面模式切换（仅极客模式显示「经典模式」入口） */}
-          <div className="mt-1.5 flex items-center gap-2.5 rounded-lg px-2 py-2">
+          {/* 用户卡 + 界面模式切换（仅极客模式显示「经典模式」入口）。
+              点击用户卡进用户中心：极客模式无 /account 整页路由，走旧路由兼容
+              （回首页并在右栏自动打开「用户中心」功能签），与经典侧栏用户卡行为一致 */}
+          <button
+            onClick={() => navigate('/account')}
+            title={`${nickname} · 进入用户中心`}
+            className="mt-1.5 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-sidebar-accent"
+          >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-xs font-semibold text-white">
               {getAvatarInitial(nickname)}
             </div>
@@ -702,7 +708,7 @@ const AgentStudio = () => {
               <div className="truncate text-[10px] text-sidebar-foreground/50">{TIER_LABEL}</div>
             </div>
             <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="在线" />
-          </div>
+          </button>
           {isGeekMode && (
             <button
               onClick={() => switchUIMode('classic', '/projects')}
@@ -966,7 +972,7 @@ const AgentStudio = () => {
             ) : panelJobs.map((j) => (
               <div key={j.id} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
                 <span className="truncate text-xs font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                <span className="pill pill-neutral">
                   {JOB_STATUS_LABELS[j.status] ?? j.status}{j.status === 'running' ? ` ${j.progress ?? 0}%` : ''}
                 </span>
               </div>
@@ -1035,7 +1041,7 @@ const AgentStudio = () => {
                     </button>
                   ))}
                   {active?.projectId && (
-                    <span className="ml-auto shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">已绑定项目</span>
+                    <span className="pill pill-neutral">已绑定项目</span>
                   )}
                 </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
@@ -1077,7 +1083,7 @@ const AgentStudio = () => {
                   <li key={j.id} className="rounded-lg border border-transparent bg-card px-2.5 py-2 hover:border-input">
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-xs font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
-                      <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="pill pill-neutral">
                         {JOB_STATUS_LABELS[j.status] ?? j.status}
                       </span>
                     </div>

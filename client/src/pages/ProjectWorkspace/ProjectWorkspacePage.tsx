@@ -61,20 +61,21 @@ const statusLabelMap: Record<ProjectStatus, string> = {
   failed: '失败',
 };
 
+// 状态胶囊：统一 .pill 5 色板（蓝=生产 绿=就绪 琥珀=质检 红=失败 灰=草稿）
 const statusColorMap: Record<ProjectStatus, string> = {
-  draft: 'bg-muted text-muted-foreground',
-  parsing: 'bg-blue-500/15 text-blue-400',
-  planning: 'bg-blue-500/15 text-blue-400',
-  bible_ready: 'bg-emerald-500/15 text-emerald-400',
-  storyboard_ready: 'bg-emerald-500/15 text-emerald-400',
-  assets_generating: 'bg-amber-500/15 text-amber-400',
-  video_generating: 'bg-amber-500/15 text-amber-400',
-  audio_generating: 'bg-amber-500/15 text-amber-400',
-  editing: 'bg-primary/10 text-primary',
-  qc: 'bg-primary/10 text-primary',
-  ready: 'bg-emerald-500/15 text-emerald-400',
-  exported: 'bg-emerald-500/15 text-emerald-400',
-  failed: 'bg-red-500/15 text-red-400',
+  draft: 'pill-neutral',
+  parsing: 'pill-run',
+  planning: 'pill-run',
+  bible_ready: 'pill-ok',
+  storyboard_ready: 'pill-ok',
+  assets_generating: 'pill-run',
+  video_generating: 'pill-run',
+  audio_generating: 'pill-run',
+  editing: 'pill-run',
+  qc: 'pill-wait',
+  ready: 'pill-ok',
+  exported: 'pill-ok',
+  failed: 'pill-fail',
 };
 
 const ProjectWorkspacePage = () => {
@@ -106,7 +107,7 @@ const ProjectWorkspacePage = () => {
               {displayTitle}
             </h1>
             <span
-              className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColorMap[displayStatus]}`}
+              className={`pill ${statusColorMap[displayStatus]}`}
             >
               {statusLabelMap[displayStatus]}
             </span>

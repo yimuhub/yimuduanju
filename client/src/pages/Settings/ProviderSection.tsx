@@ -195,7 +195,7 @@ const ProviderKeysManager = ({ providerId }: { providerId: string }) => {
               <span className="font-medium text-foreground">{k.label}</span>
               <code className="text-muted-foreground">{k.maskedKey}</code>
               {k.isActive ? (
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-400">
+                <span className="pill pill-ok">
                   生效中
                 </span>
               ) : (
@@ -572,21 +572,21 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         {PROVIDER_TYPE_LABELS[provider.providerType]}
                       </span>
                       {provider.isDefault && (
-                        <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-400">
+                        <span className="pill pill-wait">
                           <Star className="h-3 w-3 fill-current" />
                           默认
                         </span>
                       )}
                       {!provider.enabled ? (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                        <span className="pill pill-neutral">
                           已停用
                         </span>
                       ) : status === 'ok' ? (
-                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+                        <span className="pill pill-ok">
                           可用
                         </span>
                       ) : status === 'fail' ? (
-                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-300">
+                        <span className="pill pill-fail">
                           连通异常
                         </span>
                       ) : status === 'testing' ? (

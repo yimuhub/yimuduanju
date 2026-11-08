@@ -21,8 +21,13 @@ import { Clapperboard, X, Sparkles, Wand2 } from 'lucide-react';
  */
 
 const Layout = () => {
+  // /create（三栏 TriPane）与 /canvases（卡片画布页）是全幅宽页面，
+  // 极客模式下原本无任何导航外壳——统一用 ClassicLayout 侧栏壳覆盖
+  // （进入时默认折叠为图标栏，见 ClassicLayout），保证全站导航可达。
+  const firstSeg = useLocation().pathname.split('/').filter(Boolean)[0] ?? '';
+  const needsSidebarShell = firstSeg === 'create' || firstSeg === 'canvases';
   // 双模式路由分流：切换通过整页刷新（switchUIMode），此处读到的一定是最新档
-  if (readUIMode() === 'classic') {
+  if (readUIMode() === 'classic' || needsSidebarShell) {
     return <ClassicLayout />;
   }
   return <GeekLayout />;

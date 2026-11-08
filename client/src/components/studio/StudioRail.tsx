@@ -23,6 +23,7 @@ import {
   ClipboardCheck,
 } from 'lucide-react';
 import type { ProjectStatus } from '@shared/api.interface';
+import { getAvatarInitial, getNickname } from '@client/src/lib/identity';
 import { useStudio } from './StudioShell';
 
 /** 项目状态 → (chip 样式, 文案) */
@@ -250,15 +251,18 @@ export const StudioRail = () => {
         </div>
       </div>
 
-      <div className="rail-foot">
-        <div className="avatar">幕</div>
+      <button
+        type="button"
+        className="rail-foot"
+        title={`${getNickname()} · 进入用户中心`}
+        onClick={() => navigate('/account')}
+      >
+        <div className="avatar">{getAvatarInitial(getNickname())}</div>
         <div className="who">
-          <div className="who-n">
-            {localStorage.getItem('yimu.account.nickname') || '一幕用户'}
-          </div>
+          <div className="who-n">{getNickname()}</div>
           <div className="who-r">PRO · 单机版</div>
         </div>
-      </div>
+      </button>
     </aside>
   );
 };

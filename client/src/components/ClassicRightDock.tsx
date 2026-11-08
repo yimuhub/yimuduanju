@@ -15,6 +15,14 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   pending: '排队中', running: '生成中', succeeded: '已完成', failed: '失败', cancelled: '已取消',
 };
 
+/** 任务状态 → 统一 .pill 语义色（5 色板，见 tailwind-theme.css） */
+const JOB_STATUS_PILL: Record<string, string> = {
+  pending: 'pill-wait', queued: 'pill-wait', retrying: 'pill-wait',
+  running: 'pill-run',
+  succeeded: 'pill-ok', completed: 'pill-ok',
+  failed: 'pill-fail',
+};
+
 type DockTab = 'jobs' | 'assets' | 'activity';
 
 const TABS: { id: DockTab; label: string; icon: typeof ListTodo }[] = [
@@ -122,7 +130,7 @@ const ClassicRightDock = ({ onClose }: { onClose: () => void }) => {
                 <li key={j.id} className="rounded-lg border border-transparent bg-card px-2.5 py-2.5 hover:border-input">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
-                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    <span className={`pill ${JOB_STATUS_PILL[j.status] ?? 'pill-neutral'}`}>
                       {JOB_STATUS_LABELS[j.status] ?? j.status}
                     </span>
                   </div>

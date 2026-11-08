@@ -18,6 +18,7 @@ import GenerationSection, { loadGenDefaults } from './GenerationSection';
 import BudgetSection from './BudgetSection';
 import OfficialSection from './OfficialSection';
 import StageBindingsSection from './StageBindingsSection';
+import UIModeSection from './UIModeSection';
 // P1 诚信：个人设置页全为假按钮/假身份，已下线（有账号体系后再上）；文件保留
 
 type SettingsAnchor = 'providers' | 'bindings' | 'billing' | 'preferences';
@@ -241,7 +242,8 @@ const SettingsPage = () => {
           <OfficialSection />
         </section>
 
-        <section id={sectionId('preferences')}>
+        <section id={sectionId('preferences')} className="space-y-6">
+          <UIModeSection />
           <GenerationSection />
         </section>
       </div>

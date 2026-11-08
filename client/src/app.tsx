@@ -25,12 +25,21 @@ import ProjectQcTab from './pages/ProjectWorkspace/tabs/ProjectQcTab';
 import ProjectExportTab from './pages/ProjectWorkspace/tabs/ProjectExportTab';
 // 方案 F · Studio Graphite：新界面外壳（导航轨 / 舞台 / 产出坞 / 时间线 / 状态栏）
 import StudioLayout from './components/studio/StudioLayout';
+import { StudioShell } from './components/studio/StudioShell';
 import StudioHomePage from './pages/Studio/StudioHomePage';
 import StudioProjectPage from './pages/Studio/StudioProjectPage';
 import StudioSectionPage from './pages/Studio/StudioSectionPage';
 import { CanvasModePage } from './pages/CanvasMode/CanvasModePage';
 // P1 性能：画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
 const FreeCanvas3Page = lazy(() => import('./pages/FreeCanvas3/FreeCanvas3Page'));
+
+// Studio 外壳（无项目上下文）+ 全幅内容页：/create 三栏 TriPane 与 /canvases 卡片画布页
+// 需要完整宽度与高度，这里只提供左导航轨 + 底状态栏，不再包 .studio-page 内边距容器。
+const StudioBarePage = ({ children }: { children: React.ReactNode }) => (
+  <StudioShell>
+    <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+  </StudioShell>
+);
 
 // 经典模式整页路由：与极客模式右栏签共用同一批懒加载 chunk（Vite 按 module 去重，不重复打包）
 const ClassicPages = {
@@ -177,12 +186,23 @@ const RoutesComponent = () => {
               path="create"
               element={
                 <RouteErrorGuard>
-                  <CreateWizardPage />
+                  <StudioBarePage>
+                    <CreateWizardPage />
+                  </StudioBarePage>
                 </RouteErrorGuard>
               }
             />
             {/* 画布模式：所有画布项目的卡片式展示 + 新建/编辑/删除 */}
-            <Route path="canvases" element={<CanvasModePage />} />
+            <Route
+              path="canvases"
+              element={
+                <RouteErrorGuard>
+                  <StudioBarePage>
+                    <CanvasModePage />
+                  </StudioBarePage>
+                </RouteErrorGuard>
+              }
+            />
           </Route>
         </>
       ) : (

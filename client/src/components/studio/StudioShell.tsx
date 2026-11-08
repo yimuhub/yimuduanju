@@ -48,6 +48,26 @@ export type StageView = 'chat' | 'canvas' | 'page';
 /** 时间线收起态跨页持久（localStorage 键） */
 export const TL_COLLAPSED_KEY = 'yimu.timelineCollapsed';
 
+/**
+ * 导航轨折叠（图标模式）持久键 —— 与经典模式侧栏共用同一个 key，
+ * 用户手动展开/收起后全模式保持；未设置过时 /create、/canvases 等
+ * 需要完整宽度的页面默认折叠为图标栏（hover 显 tooltip，点击轨开关展开）。
+ */
+export const SIDEBAR_COLLAPSED_KEY = 'yimu.sidebarCollapsed';
+
+/** 需要完整内容宽度的路由（默认折叠导航轨） */
+const WIDE_STAGE_PATHS = ['/create', '/canvases'];
+
+const readSidebarCollapsed = (pathname: string): boolean => {
+  try {
+    const stored = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+    if (stored === '1' || stored === '0') return stored === '1';
+  } catch {
+    /* 隐私模式读不到：按路径默认 */
+  }
+  return WIDE_STAGE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+};
+
 const readTlCollapsed = (): boolean => {
   try {
     return localStorage.getItem(TL_COLLAPSED_KEY) === '1';
@@ -121,7 +141,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
 
   const data = useStudioData(projectId);
 
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(() => readSidebarCollapsed(location.pathname));
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [tlCollapsed, setTlCollapsedState] = useState(readTlCollapsed);
 
@@ -137,6 +157,18 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const toggleTlCollapsed = useCallback(() => {
     setTlCollapsed(!tlCollapsed);
   }, [tlCollapsed, setTlCollapsed]);
+
+  /** 导航轨折叠切换：写档持久（与经典模式侧栏共用 yimu.sidebarCollapsed） */
+  const toggleRailCollapsed = useCallback(() => {
+    setRailCollapsed((v) => {
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? '0' : '1');
+      } catch {
+        /* 隐私模式写失败：本次会话仍生效 */
+      }
+      return !v;
+    });
+  }, []);
   const [dockTab, setDockTabState] = useState<DockTabKey>('preview');
   const [dockW, setDockW] = useState<number | null>(null);
   const [stageView, setStageViewState] = useState<StageView>('chat');
@@ -230,7 +262,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key) {
         case '[':
-          setRailCollapsed((v) => !v);
+          toggleRailCollapsed();
           break;
         case ']':
           setDockCollapsed((v) => !v);
@@ -370,7 +402,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           className="rail-toggle"
           title={railCollapsed ? '展开侧栏 ( [ )' : '收起侧栏 ( [ )'}
           aria-label="收起或展开侧栏"
-          onClick={() => setRailCollapsed((v) => !v)}
+          onClick={toggleRailCollapsed}
         >
           <svg
             viewBox="0 0 24 24"

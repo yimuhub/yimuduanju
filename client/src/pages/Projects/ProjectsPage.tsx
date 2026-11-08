@@ -23,23 +23,23 @@ import { showConfirm } from '@client/src/components/ui/confirm';
 import PageHeader from '@client/src/components/PageHeader';
 
 /** 状态徽章：小圆点 + 文案（面向流程语义分色，而非每个状态一色） */
-const statusBadge = (status: ProjectStatus): { label: string; dot: string } => {
+const statusBadge = (status: ProjectStatus): { label: string; dot: string; pill: string } => {
   switch (status) {
     case 'ready':
     case 'exported':
-      return { label: status === 'ready' ? '已完成' : '已导出', dot: 'bg-emerald-500/150' };
+      return { label: status === 'ready' ? '已完成' : '已导出', dot: 'bg-emerald-400', pill: 'pill-ok' };
     case 'failed':
-      return { label: '失败', dot: 'bg-red-500/150' };
+      return { label: '失败', dot: 'bg-red-400', pill: 'pill-fail' };
     case 'draft':
-      return { label: '草稿', dot: 'bg-muted-foreground/40' };
+      return { label: '草稿', dot: 'bg-muted-foreground/60', pill: 'pill-neutral' };
     case 'parsing':
     case 'planning':
     case 'bible_ready':
     case 'storyboard_ready':
-      return { label: '前期制作', dot: 'bg-blue-500/150' };
+      return { label: '前期制作', dot: 'bg-blue-400', pill: 'pill-run' };
     default:
       // assets/video/audio generating, editing, qc —— 生成管线阶段
-      return { label: '生成中', dot: 'bg-amber-500/150' };
+      return { label: '生成中', dot: 'bg-blue-400', pill: 'pill-run' };
   }
 };
 
@@ -336,10 +336,10 @@ const ProjectsPage = () => {
 
                 {/* 状态小圆点徽章 */}
                 <span
-                  className={`flex shrink-0 items-center gap-1.5 rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium text-foreground/70`}
+                  className={`pill ${badge.pill}`}
                   title={project.status}
                 >
-                  <span className={`h-1.5 w-1.5 rounded-full ${badge.dot} ${deletingId === project.id ? 'animate-pulse' : ''}`} />
+                  <span className={`pill-dot ${deletingId === project.id ? 'animate-pulse' : ''}`} />
                   {badge.label}
                 </span>
 

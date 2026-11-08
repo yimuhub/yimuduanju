@@ -66,7 +66,7 @@
   --dock: 548px;
   --tl-h: 198px;
   --tl-min: 36px;
-  --statusbar: 26px;
+  --statusbar: 32px;
 
   /* ---------- 字体 ---------- */
   --sans:
@@ -328,11 +328,22 @@
 }
 .rail-foot {
   flex: 0 0 auto;
+  border: none;
   border-top: 1px solid var(--line);
   padding: 7px 8px;
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.rail-foot:hover {
+  background: var(--bg-hover);
 }
 .avatar {
   width: 22px;
@@ -597,13 +608,14 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 11px;
-  background: var(--bg-float);
-  border: 1px solid var(--line);
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
   font-size: 11px;
+  font-weight: 500;
   color: var(--fg-2);
   white-space: nowrap;
 }
@@ -611,8 +623,8 @@
   font-size: 10.5px;
 }
 .dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--fg-4);
 }
@@ -1885,20 +1897,25 @@
   border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
-  padding: 0 4px;
+  gap: 4px;
+  padding: 0 8px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--fg-4);
   z-index: 40;
 }
+/* 底部状态栏信息胶囊：统一中性 pill（规范见 tailwind-theme.css .pill 家族） */
 .sb {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 100%;
-  padding: 0 9px;
-  border-right: 1px solid var(--line);
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: none;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .sb.hoverable {
   cursor: pointer;
@@ -2532,32 +2549,30 @@
 }
 
 /* ---------- 状态标记（chip） ---------- */
+/* 状态胶囊（rail 项目列表等）：形状/语义对齐全站 .pill 规范（5 色板） */
 .chip {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 550;
   letter-spacing: 0.01em;
-  padding: 1px 5px;
-  border-radius: var(--r-xs);
+  padding: 2px 7px;
+  border-radius: 9999px;
   white-space: nowrap;
-  background: var(--bg-float);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--fg-3);
-  border: 1px solid var(--line);
+  border: none;
 }
 .chip.ok {
-  color: #7cc98a;
-  background: rgba(70, 167, 88, 0.1);
-  border-color: rgba(70, 167, 88, 0.22);
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.15);
 }
 .chip.run {
-  color: #ffb3b6;
-  background: var(--brand-soft);
-  border-color: var(--brand-line);
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.15);
 }
 .chip.warn {
-  color: #e0be6b;
-  background: rgba(201, 154, 46, 0.1);
-  border-color: rgba(201, 154, 46, 0.22);
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
 }
 
 /* ---------- 画布模式 · 卡片式项目展示 ---------- */

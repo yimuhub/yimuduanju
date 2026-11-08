@@ -29,6 +29,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/settings': '设置',
   '/dashboard': '用量与预算',
   '/create': '一键创作',
+  '/canvases': '画布模式',
 };
 
 export const StudioStage = ({ children }: { children?: ReactNode }) => {

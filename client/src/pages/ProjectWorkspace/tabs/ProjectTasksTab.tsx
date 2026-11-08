@@ -37,14 +37,15 @@ const typeFilters: { value: JobType | 'all'; label: string }[] = [
   { value: 'script', label: '剧本技能' },
 ];
 
+// 状态胶囊：统一 .pill 5 色板（见 tailwind-theme.css）
 const statusInfoMap: Record<JobStatus, { label: string; className: string; barClass: string }> = {
-  pending: { label: '等待中', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
-  queued: { label: '排队中', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
-  running: { label: '进行中', className: 'bg-blue-500/15 text-blue-400', barClass: 'bg-blue-500/150' },
-  succeeded: { label: '已完成', className: 'bg-green-500/15 text-green-400', barClass: 'bg-green-500/150' },
-  failed: { label: '失败', className: 'bg-red-500/15 text-red-400', barClass: 'bg-red-500/150' },
-  cancelled: { label: '已取消', className: 'bg-muted text-muted-foreground', barClass: 'bg-muted-foreground/50' },
-  retrying: { label: '重试中', className: 'bg-amber-500/15 text-amber-400', barClass: 'bg-amber-500/150' },
+  pending: { label: '等待中', className: 'pill-neutral', barClass: 'bg-muted-foreground/50' },
+  queued: { label: '排队中', className: 'pill-neutral', barClass: 'bg-muted-foreground/50' },
+  running: { label: '进行中', className: 'pill-run', barClass: 'bg-blue-400' },
+  succeeded: { label: '已完成', className: 'pill-ok', barClass: 'bg-emerald-400' },
+  failed: { label: '失败', className: 'pill-fail', barClass: 'bg-red-400' },
+  cancelled: { label: '已取消', className: 'pill-neutral', barClass: 'bg-muted-foreground/50' },
+  retrying: { label: '重试中', className: 'pill-wait', barClass: 'bg-amber-400' },
 };
 
 const typeLabelMap: Record<JobType, string> = {
@@ -427,7 +428,7 @@ const ProjectTasksTab = () => {
                         {job.targetId && ` · ${job.targetId.slice(0, 8)}`}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${info.className}`}>
+                        <span className={`pill ${info.className}`}>
                           {info.label}
                         </span>
                       </td>

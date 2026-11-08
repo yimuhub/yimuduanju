@@ -12,6 +12,14 @@
 
 export type UIMode = 'classic' | 'geek' | 'studio';
 
+/**
+ * 命名约定（全站文案统一，见 设置→偏好「界面模式」）：
+ *   studio  = 「Studio 模式」（方案 F，默认——未设置过 uiMode 的新用户直接进入）
+ *   classic = 「经典模式」（侧栏整页导航）
+ *   geek    = 「极客模式」（三栏作战室）
+ * 已设置过的用户保持其选择；旧档迁移规则见 readUIMode。
+ */
+
 /** 新档（方案 F 上线后写这里） */
 export const UI_MODE_KEY = 'yimu.uiMode.v2';
 /** 旧档（双模式时代） */

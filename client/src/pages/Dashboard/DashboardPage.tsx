@@ -15,21 +15,22 @@ import { getNickname } from '@client/src/lib/identity';
  */
 
 const JOB_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频', tts: '配音', parse_script: '剧本解析', script: '剧本' };
+// 状态胶囊：统一 .pill 规范（5 色板：蓝=运行 绿=成功 琥珀=等待 红=失败 灰=中性）
 const JOB_STATUS: Record<string, { label: string; cls: string }> = {
-  pending: { label: '排队', cls: 'bg-amber-500/15 text-amber-400' },
-  running: { label: '生成中', cls: 'bg-blue-500/15 text-blue-400' },
-  succeeded: { label: '完成', cls: 'bg-emerald-500/15 text-emerald-400' },
-  failed: { label: '失败', cls: 'bg-red-500/15 text-red-400' },
-  cancelled: { label: '取消', cls: 'bg-muted text-muted-foreground' },
+  pending: { label: '排队', cls: 'pill-wait' },
+  running: { label: '生成中', cls: 'pill-run' },
+  succeeded: { label: '完成', cls: 'pill-ok' },
+  failed: { label: '失败', cls: 'pill-fail' },
+  cancelled: { label: '取消', cls: 'pill-neutral' },
 };
 const PROJECT_STATUS: Record<string, { label: string; cls: string }> = {
-  draft: { label: '草稿', cls: 'bg-muted text-muted-foreground' },
-  script_ready: { label: '剧本就绪', cls: 'bg-sky-500/15 text-sky-400' },
-  assets_generating: { label: '资产生成中', cls: 'bg-blue-500/15 text-blue-400' },
-  storyboard_ready: { label: '分镜就绪', cls: 'bg-indigo-500/15 text-indigo-400' },
-  rendering: { label: '成片中', cls: 'bg-violet-500/15 text-violet-400' },
-  completed: { label: '已完成', cls: 'bg-emerald-500/15 text-emerald-400' },
-  failed: { label: '失败', cls: 'bg-red-500/15 text-red-400' },
+  draft: { label: '草稿', cls: 'pill-neutral' },
+  script_ready: { label: '剧本就绪', cls: 'pill-ok' },
+  assets_generating: { label: '资产生成中', cls: 'pill-run' },
+  storyboard_ready: { label: '分镜就绪', cls: 'pill-ok' },
+  rendering: { label: '成片中', cls: 'pill-run' },
+  completed: { label: '已完成', cls: 'pill-ok' },
+  failed: { label: '失败', cls: 'pill-fail' },
 };
 
 const timeAgo = (iso: string) => {
@@ -147,7 +148,7 @@ const DashboardPage = () => {
                           </span>
                         </span>
                       )}
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${st.cls}`}>{st.label}</span>
+                      <span className={`pill ${st.cls}`}>{st.label}</span>
                     </li>
                   );
                 })}
@@ -176,7 +177,7 @@ const DashboardPage = () => {
                         onClick={() => navigate(`/project/${p.id}`)}
                         className="group flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/40"
                       >
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${st.cls}`}>{st.label}</span>
+                        <span className={`pill ${st.cls}`}>{st.label}</span>
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground group-hover:text-primary">{p.title}</span>
                         <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted-foreground sm:flex">
                           <Clock className="h-3 w-3" /> {timeAgo(p.updatedAt ?? p.createdAt)}

@@ -347,3 +347,37 @@ body {
     display: none !important;
   }
 }
+
+/* ===== 全站状态 / 信息胶囊规范（.pill 家族）=====
+ * 统一规格：h-24px · rounded-full · px-2.5(10px) · text-11px font-medium · 状态点 6px
+ * 语义仅 5 种：运行中=蓝 · 成功=绿 · 等待=琥珀 · 失败=红 · 中性=灰
+ * 深色底统一 color/15 + color-400 文字；信息胶囊（通道/预算/计数等）一律 .pill-neutral。
+ * 基础 .pill 形状在 styles/graphite.css，此处只放语义色板——全站状态徽章禁止再自写颜色。 */
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.pill-run {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+}
+.pill-ok {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+}
+.pill-wait {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+.pill-fail {
+  background: rgba(248, 113, 113, 0.15);
+  color: #f87171;
+}
+.pill-neutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg-3);
+}

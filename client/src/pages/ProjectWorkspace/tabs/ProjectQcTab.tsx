@@ -22,20 +22,21 @@ const scoreItems: { key: keyof QcReport; label: string }[] = [
   { key: 'technicalQuality', label: '技术质量' },
 ];
 
+// 严重度胶囊：统一 .pill 5 色板（见 tailwind-theme.css）
 const severityConfig: Record<string, { label: string; className: string; icon: typeof AlertTriangle }> = {
-  critical: { label: '严重', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: XCircle },
-  high: { label: '高', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: AlertTriangle },
-  medium: { label: '中', className: 'bg-amber-500/15 text-amber-400 border-amber-500/30', icon: AlertTriangle },
-  low: { label: '低', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30', icon: AlertTriangle },
+  critical: { label: '严重', className: 'pill-fail', icon: XCircle },
+  high: { label: '高', className: 'pill-fail', icon: AlertTriangle },
+  medium: { label: '中', className: 'pill-wait', icon: AlertTriangle },
+  low: { label: '低', className: 'pill-run', icon: AlertTriangle },
 };
 
 const getSeverityInfo = (severity: string) =>
   severityConfig[severity] || severityConfig.medium;
 
 const getVerdict = (score: number, thresholdPass: number, thresholdReview: number) => {
-  if (score >= thresholdPass) return { label: 'PASS', className: 'bg-green-500/15 text-green-400 border-green-500/30', icon: CheckCircle2 };
-  if (score >= thresholdReview) return { label: 'REVIEW', className: 'bg-amber-500/15 text-amber-400 border-amber-500/30', icon: AlertTriangle };
-  return { label: 'RETRY', className: 'bg-red-500/15 text-red-400 border-red-500/30', icon: XCircle };
+  if (score >= thresholdPass) return { label: 'PASS', className: 'pill-ok', icon: CheckCircle2 };
+  if (score >= thresholdReview) return { label: 'REVIEW', className: 'pill-wait', icon: AlertTriangle };
+  return { label: 'RETRY', className: 'pill-fail', icon: XCircle };
 };
 
 // Ring progress component using conic-gradient
@@ -261,7 +262,7 @@ const ProjectQcTab = () => {
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-bold ${verdict.className}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold ${verdict.className} !h-auto`}
               >
                 <VerdictIcon className="h-4 w-4" />
                 {verdict.label}

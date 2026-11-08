@@ -331,14 +331,16 @@ const ProjectOverviewTab = () => {
                     </div>
                   </div>
                   <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${
+                    className={`pill ${
                       job.status === 'succeeded'
-                        ? 'bg-green-500/15 text-green-400'
+                        ? 'pill-ok'
                         : job.status === 'running'
-                          ? 'bg-blue-500/15 text-blue-400'
+                          ? 'pill-run'
                           : job.status === 'failed'
-                            ? 'bg-red-500/15 text-red-400'
-                            : 'bg-muted text-muted-foreground'
+                            ? 'pill-fail'
+                            : job.status === 'pending' || job.status === 'queued'
+                              ? 'pill-wait'
+                              : 'pill-neutral'
                     }`}
                   >
                     {JOB_STATUS_LABELS[job.status] || job.status}
@@ -437,7 +439,7 @@ const ProjectOverviewTab = () => {
             ))}
           </select>
           {project?.providerOverride?.providerName && (
-            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+            <span className="pill pill-neutral">
               已覆盖：{project.providerOverride.providerName}
             </span>
           )}
@@ -544,7 +546,7 @@ const SeriesLedgerCard = ({
             <span
               key={c.id}
               title={c.canonicalDescription || c.name}
-              className="rounded-full bg-muted px-2.5 py-1 text-xs text-foreground/80"
+              className="pill pill-neutral"
             >
               {c.name}
             </span>

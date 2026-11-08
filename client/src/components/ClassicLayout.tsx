@@ -136,10 +136,18 @@ const ClassicLayout = () => {
   const [dockOpen, setDockOpen] = useState(
     () => localStorage.getItem('yimu.rightDockOpen') !== '0',
   );
-  // 侧栏折叠（图标模式），状态跨页面持久
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem('yimu.sidebarCollapsed') === '1',
-  );
+  // 侧栏折叠（图标模式），状态跨页面持久；
+  // /create、/canvases 等全幅宽页面在用户未手动设置过时默认折叠为图标栏（hover 显 tooltip）
+  const isWidePageRoute = pathParts[0] === 'create' || pathParts[0] === 'canvases';
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      const stored = localStorage.getItem('yimu.sidebarCollapsed');
+      if (stored === '1' || stored === '0') return stored === '1';
+    } catch {
+      /* 隐私模式读不到：按路径默认 */
+    }
+    return isWidePageRoute;
+  });
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       localStorage.setItem('yimu.sidebarCollapsed', prev ? '0' : '1');
