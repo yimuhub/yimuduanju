@@ -132,8 +132,6 @@ const ClassicLayout = () => {
   const [dockOpen, setDockOpen] = useState(
     () => localStorage.getItem('yimu.rightDockOpen') !== '0',
   );
-  // 顶栏头像下拉
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
   // 侧栏折叠（图标模式），状态跨页面持久
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('yimu.sidebarCollapsed') === '1',
@@ -369,46 +367,6 @@ const ClassicLayout = () => {
                   >
                     <PanelRightOpen className="h-[18px] w-[18px]" />
                   </button>
-                  <div className="relative">
-                    <button
-                      onClick={() => setUserMenuOpen((v) => !v)}
-                      className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-gradient text-sm font-semibold text-primary-foreground transition-transform hover:scale-105"
-                      aria-label="用户菜单"
-                    >
-                      {getAvatarInitial(nickname)}
-                    </button>
-                    {userMenuOpen && (
-                      <>
-                        <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                        <div className="absolute right-0 top-11 z-50 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-2xl">
-                          <div className="border-b border-border px-4 py-2.5">
-                            <div className="text-sm font-medium text-foreground">{nickname}</div>
-                            <div className="text-xs text-muted-foreground">{TIER_LABEL}</div>
-                          </div>
-                          <button
-                            onClick={() => {
-                              setUserMenuOpen(false);
-                              navigate('/account');
-                            }}
-                            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted"
-                          >
-                            <UserCircle className="h-4 w-4 text-muted-foreground" />
-                            用户中心
-                          </button>
-                          <button
-                            onClick={() => {
-                              setUserMenuOpen(false);
-                              navigate('/settings');
-                            }}
-                            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted"
-                          >
-                            <Settings className="h-4 w-4 text-muted-foreground" />
-                            设置
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
                 </div>
               </header>
 
