@@ -42,11 +42,11 @@ const StyleCover = ({ style, className = 'aspect-[3/4]' }: { style: StylePreset;
         e.currentTarget.style.display = 'none';
       }}
     />
-    <div className="absolute left-3 top-3 flex gap-1">
+    <div className="absolute left-3 top-3 flex max-w-[calc(100%-24px)] flex-wrap gap-1">
       {style.productLines.map((line) => (
         <span
           key={line}
-          className="rounded-full bg-black/30 px-2 py-0.5 text-[11px] font-medium text-white/90 backdrop-blur"
+          className="whitespace-nowrap rounded-full bg-black/30 px-2 py-0.5 text-[11px] font-medium text-white/90 backdrop-blur"
         >
           {line}
         </span>
@@ -83,7 +83,8 @@ const StylesPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    /* @container：窄坞（极客模式右栏）与整页共用本页，网格按容器宽度取列数 */
+    <div className="@container space-y-6">
       <PageHeader
         title="风格中心"
         icon={Palette}
@@ -114,7 +115,7 @@ const StylesPage = () => {
           <p>该分类暂无风格</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-5 @sm:grid-cols-2 @4xl:grid-cols-3 @5xl:grid-cols-4">
           {styles.map((style) => (
             <button
               key={style.id}
@@ -187,7 +188,7 @@ const StylesPage = () => {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-medium text-foreground/70 hover:border-primary hover:text-primary"
                   >
                     {copied === 'positive' ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-3000" />
+                      <Check className="h-3.5 w-3.5 text-emerald-300" />
                     ) : (
                       <Copy className="h-3.5 w-3.5" />
                     )}
@@ -208,7 +209,7 @@ const StylesPage = () => {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-medium text-foreground/70 hover:border-primary hover:text-primary"
                   >
                     {copied === 'negative' ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-3000" />
+                      <Check className="h-3.5 w-3.5 text-emerald-300" />
                     ) : (
                       <Copy className="h-3.5 w-3.5" />
                     )}

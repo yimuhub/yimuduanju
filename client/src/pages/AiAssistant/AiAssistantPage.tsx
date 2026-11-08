@@ -164,9 +164,10 @@ const AiAssistantPage = () => {
   };
 
   return (
-    <div className="flex h-[calc(100vh-10rem)] flex-col gap-4">
-      {/* 顶部定位说明：与创作作战室（AgentStudio）拉开定位 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-gradient-to-r from-primary/5 via-white to-white px-5 py-3.5 shadow-sm">
+    /* @container：窄坞（极客模式右栏）内隐藏固定宽度技能侧栏并收敛渐变，避免竖排文字与白块 */
+    <div className="@container flex h-[calc(100vh-10rem)] flex-col gap-4">
+      {/* 顶部定位说明：与创作作战室（AgentStudio）拉开定位（深色主题下不使用白色渐变） */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-5 py-3.5 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-white">
             <Wand2 className="h-5 w-5" />
@@ -190,8 +191,9 @@ const AiAssistantPage = () => {
       </div>
 
       <div className="flex min-h-0 flex-1 gap-6">
-        {/* 左侧：技能面板（按产品线分组 + 启停开关） */}
-        <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
+        {/* 左侧：技能面板（按产品线分组 + 启停开关）；
+            @3xl 以下（窄坞渲染）隐藏，避免 w-72 固定宽度把对话区挤成 1 字/行竖排 */}
+        <aside className="hidden w-72 shrink-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm @3xl:flex">
           <div className="border-b px-4 py-3">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />

@@ -195,7 +195,8 @@ const TemplatesPage = () => {
   const templateCount = useMemo(() => templates.length, [templates]);
 
   return (
-    <div className="space-y-6">
+    /* @container：窄坞（极客模式右栏）内自动降列，避免 3:4 封面卡片挤压成竖排文字 */
+    <div className="@container space-y-6">
       <PageHeader
         title="模板中心"
         description={`精选模板，一键套用快速创作 · 共 ${templateCount} 个模板`}
@@ -290,7 +291,7 @@ const TemplatesPage = () => {
           <p>暂无匹配的模板</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-6 @sm:grid-cols-2 @4xl:grid-cols-3 @5xl:grid-cols-4">
           {templates.map((tpl) => (
             <div
               key={tpl.id}
@@ -344,17 +345,17 @@ const TemplatesPage = () => {
                     {tpl.description}
                   </p>
                 )}
-                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
+                <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
                     ⏱ {formatDuration(tpl.durationSeconds)}
                   </span>
                   {/* W5 市场：使用次数展示；0 次不展示，避免冷启动难看 */}
                   {(tpl.useCount ?? 0) > 0 && (
-                    <span className="rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                    <span className="whitespace-nowrap rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
                       {tpl.useCount} 人用过
                     </span>
                   )}
-                  <span>{tpl.aspectRatio}</span>
+                  <span className="whitespace-nowrap">{tpl.aspectRatio}</span>
                 </div>
                 {/* 管理动作收纳为 hover 小图标，浏览态不打扰 */}
                 <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -380,7 +381,7 @@ const TemplatesPage = () => {
                       e.stopPropagation();
                       handleDeleteTemplate(tpl);
                     }}
-                    className="rounded-lg bg-card/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-red-3000"
+                    className="rounded-lg bg-card/90 p-1.5 text-foreground/70 shadow-sm backdrop-blur hover:text-red-300"
                     aria-label="删除模板"
                   >
                     <Trash2 className="h-3.5 w-3.5" />

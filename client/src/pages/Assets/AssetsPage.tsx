@@ -229,7 +229,8 @@ const AssetsPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    /* @container：窄坞（极客模式右栏）内自动降列，避免素材卡徽章与名称被挤成竖排 */
+    <div className="@container space-y-6">
       <PageHeader
         title="资产库"
         description={`管理所有图片、视频、音频等素材资产 · 共 ${assets.length} 个`}
@@ -346,7 +347,7 @@ const AssetsPage = () => {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6">
           {sortedAssets.map((asset) => {
             const isMedia =
               asset.assetType === 'video' || asset.assetType === 'audio';
@@ -367,7 +368,7 @@ const AssetsPage = () => {
                   <AssetThumb asset={asset} />
 
                   <span
-                    className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-xs font-medium ${getTypeColor(
+                    className={`absolute left-2 top-2 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${getTypeColor(
                       asset.assetType,
                     )}`}
                   >
@@ -376,7 +377,7 @@ const AssetsPage = () => {
 
                   {asset.mock && (
                     <span
-                      className="absolute right-2 top-2 rounded-full bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                      className="absolute right-2 top-2 whitespace-nowrap rounded-full bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white"
                       title="mock 演练占位产物：未计费，请勿当作成片交付"
                     >
                       演示
@@ -384,7 +385,7 @@ const AssetsPage = () => {
                   )}
 
                   {asset.durationSeconds && isMedia && (
-                    <span className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                    <span className="absolute bottom-2 right-2 whitespace-nowrap rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
                       {formatDuration(asset.durationSeconds)}
                     </span>
                   )}
@@ -417,7 +418,7 @@ const AssetsPage = () => {
                         e.stopPropagation();
                         handleDelete(asset.id);
                       }}
-                      className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-red-3000 shadow-lg hover:scale-110"
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-red-300 shadow-lg hover:scale-110"
                       title="删除"
                     >
                       <Trash2 className="h-4 w-4" />

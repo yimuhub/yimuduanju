@@ -39,7 +39,7 @@ export function FieldLayout({
     >
       {label}
       {required && (
-        <span className="text-red-3000">
+        <span className="text-red-300">
           <Asterisk size={12} />
         </span>
       )}

@@ -168,12 +168,12 @@ const ProjectOverviewTab = () => {
   }, [jobs]);
 
   const stats = [
-    { label: '人物数', value: characters.length, icon: Users, color: 'text-blue-3000 bg-blue-500/15' },
+    { label: '人物数', value: characters.length, icon: Users, color: 'text-blue-300 bg-blue-500/15' },
     { label: '场景数', value: scenes.length, icon: Film, color: 'text-purple-500 bg-purple-50' },
-    { label: '分镜数', value: shots.length, icon: Clapperboard, color: 'text-amber-3000 bg-amber-500/15' },
-    { label: '资产数', value: assetList.length, icon: FolderOpen, color: 'text-green-3000 bg-green-500/15' },
+    { label: '分镜数', value: shots.length, icon: Clapperboard, color: 'text-amber-300 bg-amber-500/15' },
+    { label: '资产数', value: assetList.length, icon: FolderOpen, color: 'text-green-300 bg-green-500/15' },
     { label: '总费用', value: `¥${project?.totalCost?.toFixed(2) || '0.00'}`, icon: DollarSign, color: 'text-primary bg-primary/10' },
-    { label: '预计时长', value: `${project?.durationSeconds || 0}s`, icon: Clock, color: 'text-indigo-3000 bg-indigo-500/15' },
+    { label: '预计时长', value: `${project?.durationSeconds || 0}s`, icon: Clock, color: 'text-indigo-300 bg-indigo-500/15' },
   ];
 
   return (

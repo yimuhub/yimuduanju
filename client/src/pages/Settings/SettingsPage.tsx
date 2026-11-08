@@ -123,7 +123,7 @@ const SettingsPage = () => {
   const budgetMode = BUDGET_MODE_LABELS[loadGenDefaults().budgetMode] ?? '均衡';
 
   return (
-    <div className="space-y-6">
+    <div className="@container space-y-6">
       <PageHeader
         title="设置"
         icon={Settings2}
@@ -171,7 +171,7 @@ const SettingsPage = () => {
       {/* 右侧：状态卡 + 锚点区块 */}
       <div className="min-w-0 flex-1 space-y-8">
         {/* 顶部状态卡 */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-3">
           <div className="rounded-xl border bg-card p-5 shadow-sm">
             <div className="text-xs text-muted-foreground">已配供应商</div>
             <div className="mt-2 flex items-baseline gap-1.5">

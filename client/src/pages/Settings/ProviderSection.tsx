@@ -208,7 +208,7 @@ const ProviderKeysManager = ({ providerId }: { providerId: string }) => {
               )}
               <button
                 onClick={() => handleRemove(k)}
-                className="ml-auto text-muted-foreground hover:text-red-3000"
+                className="ml-auto text-muted-foreground hover:text-red-300"
               >
                 删除
               </button>
@@ -525,7 +525,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
 
   return (
     <>
-      <div className="flex items-start justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-foreground">
             模型服务管理
@@ -536,7 +536,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
         </div>
         <button
           onClick={openCreateModal}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+          className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
           添加模型服务
@@ -586,7 +586,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                           可用
                         </span>
                       ) : status === 'fail' ? (
-                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-3000">
+                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-300">
                           连通异常
                         </span>
                       ) : status === 'testing' ? (
@@ -643,7 +643,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     <button
                       onClick={() => handleDelete(provider.id)}
                       title="删除"
-                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-500/15 hover:text-red-3000"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-500/15 hover:text-red-300"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -1197,7 +1197,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                   {testResult.success ? (
                     <Check className="mt-0.5 h-5 w-5 text-emerald-400" />
                   ) : (
-                    <AlertCircle className="mt-0.5 h-5 w-5 text-red-3000" />
+                    <AlertCircle className="mt-0.5 h-5 w-5 text-red-300" />
                   )}
                   <div>
                     <div
@@ -1258,7 +1258,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     {modelsResult.success ? (
                       <Check className="h-4 w-4 text-emerald-400" />
                     ) : (
-                      <AlertCircle className="h-4 w-4 text-red-3000" />
+                      <AlertCircle className="h-4 w-4 text-red-300" />
                     )}
                     <span
                       className={`text-sm font-medium ${

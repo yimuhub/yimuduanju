@@ -579,7 +579,7 @@ const ProjectStoryboardTab = () => {
                     </button>
                     <button
                       onClick={() => handleDelete(shot.id)}
-                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-red-3000"
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-red-300"
                       title="删除"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -783,7 +783,7 @@ const ProjectStoryboardTab = () => {
                         </button>
                         <button
                           onClick={() => handleDelete(shot.id)}
-                          className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground hover:border-red-300 hover:text-red-3000"
+                          className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground hover:border-red-300 hover:text-red-300"
                         >
                           删除
                         </button>

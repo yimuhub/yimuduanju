@@ -378,7 +378,7 @@ const ProjectExportTab = () => {
                     setBgmUrl(null);
                     setBgmName(null);
                   }}
-                  className="text-muted-foreground hover:text-red-3000"
+                  className="text-muted-foreground hover:text-red-300"
                 >
                   移除
                 </button>

@@ -499,7 +499,7 @@ const ProjectTasksTab = () => {
                           {(job.status === 'running' || job.status === 'pending' || job.status === 'queued') && (
                             <button
                               onClick={() => handleCancel(job.id)}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-red-3000"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-red-300"
                               title="取消"
                             >
                               <XCircle className="h-3.5 w-3.5" />

@@ -392,7 +392,7 @@ const ProjectQcTab = () => {
       {/* Recommendations */}
       <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex items-center gap-2">
-          <Lightbulb className="h-5 w-5 text-amber-3000" />
+          <Lightbulb className="h-5 w-5 text-amber-300" />
           <h3 className="text-base font-semibold text-foreground">优化建议</h3>
         </div>
         {(!report.recommendations || report.recommendations.length === 0) ? (

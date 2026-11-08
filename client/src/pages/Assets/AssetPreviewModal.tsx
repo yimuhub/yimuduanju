@@ -266,7 +266,7 @@ const AssetPreviewModal = ({
         <div className="flex justify-end gap-2 border-t p-4">
           <button
             onClick={() => onDelete(asset.id)}
-            className="flex items-center gap-1.5 rounded-xl border border-input px-4 py-2 text-sm font-medium text-red-3000 hover:bg-red-500/15"
+            className="flex items-center gap-1.5 rounded-xl border border-input px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/15"
           >
             <Trash2 className="h-4 w-4" />
             删除

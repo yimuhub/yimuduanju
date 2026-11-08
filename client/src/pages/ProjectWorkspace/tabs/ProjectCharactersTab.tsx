@@ -366,7 +366,7 @@ const ProjectCharactersTab = () => {
                   </button>
                   <button
                     onClick={() => handleDelete(char.id)}
-                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-red-3000"
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:text-red-300"
                     title="删除"
                   >
                     <Trash2 className="h-3.5 w-3.5" />

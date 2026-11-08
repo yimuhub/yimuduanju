@@ -83,7 +83,9 @@ const DashboardPage = () => {
   const activeJobs = runningJobs.length > 0 ? runningJobs : jobs.slice(0, 6);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
+    /* @container：页面会以 ~400px 窄签（极客模式右坞）或整页（经典模式）两种宽度渲染，
+       网格断点全部改为容器查询，窄坞内自动降级为少列，避免 KPI 数字被裁切 */
+    <div className="@container mx-auto max-w-6xl space-y-5">
       {/* 顶栏：问候（去掉了原「快速开拍」假输入条：输入不落地、仅跳转，与侧栏导航重复） */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -99,7 +101,7 @@ const DashboardPage = () => {
       </div>
 
       {/* KPI 行 */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @4xl:grid-cols-4">
         {kpis.map((k) => (
           <div key={k.label} className="glass-card p-4">
             <div className="flex items-center justify-between">
@@ -113,9 +115,9 @@ const DashboardPage = () => {
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-5">
         {/* 左：生成任务 + 最近项目 */}
-        <div className="space-y-4 lg:col-span-3">
+        <div className="space-y-4 @4xl:col-span-3">
           <section className="rounded-xl border border-border bg-card">
             <header className="flex items-center justify-between border-b border-border px-4 py-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -190,7 +192,7 @@ const DashboardPage = () => {
         </div>
 
         {/* 右：活动流 */}
-        <section className="rounded-xl border border-border bg-card lg:col-span-2">
+        <section className="rounded-xl border border-border bg-card @4xl:col-span-2">
           <header className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">动态</h2>
           </header>

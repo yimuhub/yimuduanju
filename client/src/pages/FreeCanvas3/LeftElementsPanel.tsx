@@ -47,7 +47,8 @@ export const LeftElementsPanel = () => {
         borderRight: '1px solid #F0F0F0',
         display: 'flex',
         flexDirection: 'column',
-        padding: '16px 14px',
+        /* 顶部 72px 让开 Layout 悬浮导航圆钮（fixed left-4 top-4 h-12），避免盖压「返回工作台」按钮 */
+        padding: '72px 14px 16px',
         gap: 12,
         overflowY: 'auto',
       }}

@@ -149,7 +149,7 @@ const ProjectScenesTab = () => {
                   <div className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="truncate font-semibold text-foreground">{sc.title || `第 ${sc.sceneNumber} 场`}</h3>
-                      <button onClick={() => handleDeleteScene(sc.id)} className="text-muted-foreground opacity-0 transition-opacity hover:text-red-3000 group-hover:opacity-100" title="删除">
+                      <button onClick={() => handleDeleteScene(sc.id)} className="text-muted-foreground opacity-0 transition-opacity hover:text-red-300 group-hover:opacity-100" title="删除">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>

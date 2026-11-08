@@ -13,7 +13,9 @@ interface PageHeaderProps {
 }
 
 const PageHeader = ({ title, description, icon: Icon, actions }: PageHeaderProps) => (
-  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+  /* @container：本组件可能在极客模式右栏 ~400px 窄容器内渲染，
+     断点一律用容器查询（@md）而非视口断点（md:），避免窄坞内横向挤压 */
+  <div className="@container flex flex-col gap-4 @md:flex-row @md:items-start @md:justify-between">
     <div className="min-w-0">
       <h1 className="flex items-center gap-2 text-xl font-semibold text-foreground">
         {Icon && <Icon className="h-5 w-5 shrink-0 text-primary" />}

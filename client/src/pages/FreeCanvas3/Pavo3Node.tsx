@@ -177,10 +177,10 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
         <ConnIcon />
       </Handle>
 
-      {/* 标题行 */}
+      {/* 标题行（标题占满剩余宽度并截断，状态徽章不换行，避免「已完成」被挤成竖排） */}
       <div className="p3-node-title-row">
-        <span style={{ display: 'inline-flex', color: NODE_COLORS[kind] ?? P3.helper }}>{TYPE_ICON[kind]}</span>
-        <span>{data.title}</span>
+        <span style={{ display: 'inline-flex', flexShrink: 0, color: NODE_COLORS[kind] ?? P3.helper }}>{TYPE_ICON[kind]}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: P3.text, fontWeight: 500 }}>{data.title}</span>
         {CREATION_KINDS.has(kind) && (
           <span
             style={{
@@ -215,12 +215,12 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
           </span>
         )}
         {data.status === 'done' && (
-          <span style={{ marginLeft: 'auto', color: P3.green, fontSize: 12 }}>
+          <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap', color: P3.green, fontSize: 12 }}>
             {data.isDemo ? '演示' : '已完成'}
           </span>
         )}
         {data.status === 'error' && (
-          <span style={{ marginLeft: 'auto', color: '#E5484D', fontSize: 12 }}>失败</span>
+          <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap', color: '#E5484D', fontSize: 12 }}>失败</span>
         )}
       </div>
 

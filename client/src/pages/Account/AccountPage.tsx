@@ -106,7 +106,7 @@ const AccountPage = () => {
       : null;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="@container mx-auto max-w-5xl space-y-6">
       <PageHeader
         title="用户中心"
         icon={UserCircle}
@@ -114,8 +114,8 @@ const AccountPage = () => {
       />
 
       {/* 个人资料 + 会员卡 */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
-        <div className="rounded-xl border bg-card p-5 shadow-sm lg:col-span-2">
+      <div className="grid grid-cols-1 gap-5 @4xl:grid-cols-5">
+        <div className="rounded-xl border bg-card p-5 shadow-sm @4xl:col-span-2">
           <div className="flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-gradient text-lg font-semibold text-primary-foreground">
               {getAvatarInitial(nickname)}
@@ -173,7 +173,7 @@ const AccountPage = () => {
         </div>
 
         {/* 会员卡（品牌红渐变，与全站唯一品牌语言一致） */}
-        <div className="relative overflow-hidden rounded-xl bg-brand-gradient p-5 text-white shadow-sm lg:col-span-3">
+        <div className="relative overflow-hidden rounded-xl bg-brand-gradient p-5 text-white shadow-sm @4xl:col-span-3">
           <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-card/15 blur-2xl" />
           <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -202,7 +202,7 @@ const AccountPage = () => {
             查看数据看板
           </Link>
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-5 @2xl:grid-cols-3">
           <div className="rounded-xl bg-muted/50 p-4">
             <div className="text-xs text-muted-foreground">本月费用</div>
             <div className="mt-1 text-2xl font-bold text-foreground">
@@ -258,7 +258,7 @@ const AccountPage = () => {
           <Layers className="h-4 w-4 text-primary" />
           套餐方案
         </h2>
-        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-4 @2xl:grid-cols-3">
           {PLANS.map((plan) => {
             const Icon = plan.icon;
             return (
@@ -285,7 +285,7 @@ const AccountPage = () => {
                 <ul className="mt-3 space-y-1.5">
                   {plan.perks.map((perk) => (
                     <li key={perk} className="flex items-start gap-1.5 text-xs text-foreground/80">
-                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-3000" />
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
                       {perk}
                     </li>
                   ))}

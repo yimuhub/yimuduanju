@@ -198,7 +198,8 @@ const ProjectsPage = () => {
   ];
 
   return (
-    <div className="space-y-5">
+    /* @container：在极客模式右坞 ~400px 窄签内渲染时，工具条/行内断点按容器宽度降级 */
+    <div className="@container space-y-5">
       {/* 顶部：标题 + 新建（全站统一页头） */}
       <PageHeader
         title="我的项目"
@@ -214,8 +215,8 @@ const ProjectsPage = () => {
         }
       />
 
-      {/* 工具条：搜索 + 状态筛选 + 排序 */}
-      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm lg:flex-row lg:items-center">
+      {/* 工具条：搜索 + 状态筛选 + 排序（窄容器内纵向堆叠，@2xl 起横排） */}
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 shadow-sm @2xl:flex-row @2xl:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -244,7 +245,7 @@ const ProjectsPage = () => {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2 lg:border-l lg:border-border lg:pl-3">
+        <div className="flex items-center gap-2 @2xl:border-l @2xl:border-border @2xl:pl-3">
           <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
           <select
             value={sortKey}
@@ -347,16 +348,16 @@ const ProjectsPage = () => {
                   <div className="truncate text-sm font-medium text-foreground group-hover:text-primary">
                     {project.title}
                   </div>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                     <span className="shrink-0">{formatDuration(project.durationSeconds || 0)}</span>
                     {project.description && (
-                      <span className="hidden truncate sm:inline">· {project.description}</span>
+                      <span className="hidden min-w-0 truncate @sm:inline">· {project.description}</span>
                     )}
                   </div>
                 </div>
 
-                {/* 元信息 */}
-                <div className="hidden shrink-0 text-right text-xs text-muted-foreground md:block">
+                {/* 元信息（窄容器内隐藏，避免挤压行内文字） */}
+                <div className="hidden shrink-0 text-right text-xs text-muted-foreground @md:block">
                   <div>更新于 {formatTimeAgo(project.updatedAt)}</div>
                   {project.artStyle && <div className="mt-0.5">{project.artStyle}</div>}
                 </div>
@@ -390,7 +391,7 @@ const ProjectsPage = () => {
                       handleDelete(project);
                     }}
                     title="删除项目"
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground/60 hover:bg-red-500/15 hover:text-red-3000"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground/60 hover:bg-red-500/15 hover:text-red-300"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>

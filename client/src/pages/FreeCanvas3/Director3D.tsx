@@ -1291,8 +1291,8 @@ export const Director3D = ({ projectId }: { projectId?: string }) => {
 
   return (
     <div className="p3-director3d">
-      {/* 顶栏 */}
-      <div style={{ height: 52, borderBottom: `1px solid ${P3.border}`, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12 }}>
+      {/* 顶栏（左内边距 72px 让开 Layout 悬浮导航圆钮 fixed left-4 top-4，避免盖压标题） */}
+      <div style={{ height: 52, borderBottom: `1px solid ${P3.border}`, display: 'flex', alignItems: 'center', padding: '0 16px 0 72px', gap: 12 }}>
         <span style={{ fontSize: 15, fontWeight: 600, color: P3.text }}>3D导演台</span>
         <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
           {(['director', 'cam'] as const).map((v) => (
