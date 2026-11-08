@@ -49,7 +49,7 @@ const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
 
 const PROVIDER_TYPE_COLORS: Record<ProviderType, string> = {
   volcengine_ark: 'bg-blue-500/15 text-blue-400',
-  openai_proxy: 'bg-purple-50 text-purple-600',
+  openai_proxy: 'bg-purple-500/15 text-purple-300',
   custom: 'bg-muted/60 text-muted-foreground',
   official: 'bg-amber-500/15 text-amber-300',
 };
@@ -565,7 +565,7 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         {provider.name}
                       </h3>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
                           PROVIDER_TYPE_COLORS[provider.providerType]
                         }`}
                       >
