@@ -116,6 +116,9 @@ const JOB_STATUS_LABELS: Record<string, string> = {
 
 // 界面模式：极客模式左栏才显示「经典模式」切换入口（经典模式下同一组件作 / 首页内容，不重复显示）
 const isGeekMode = readUIMode() === 'geek';
+// 经典模式：作战室首页右坞交给外壳的 ClassicRightDock（任务/资产/动态，可收起持久），
+// 本页不再渲染 TriPane 右栏功能签坞，避免同屏双右坞（极客模式保持不变）
+const isClassicMode = readUIMode() === 'classic';
 
 const AgentStudio = () => {
   const navigate = useNavigate();
@@ -135,6 +138,9 @@ const AgentStudio = () => {
   const [pendingPlan, setPendingPlan] = useState<{
     prompt: string; durationSeconds: number; artStyle: string; aspectRatio: string; budgetMode: string;
   } | null>(null);
+  // 一句话创建：页内自定义弹窗（替代原生 window.prompt——深色玻璃拟态卡 + 品牌红「创建」按钮，回车提交）
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [quickCreateText, setQuickCreateText] = useState('');
   const [tpls, setTpls] = useState<Template[]>([]);
   const [panelAssets, setPanelAssets] = useState<Asset[]>([]);
   const [panelJobs, setPanelJobs] = useState<GenerationJob[]>([]);
@@ -345,8 +351,8 @@ const AgentStudio = () => {
       if (text.includes('一句话创建')) {
         setInput('');
         appendMsg(sid, { id: uid(), role: 'user', text: '🎬 一句话创建短剧项目' });
-        const fill = window.prompt('用一句话描述你的短剧（题材/人物/反转）：', '深夜便利店，店员捡到一只会说话的猫，它要用九条命换一个愿望');
-        if (fill && fill.trim()) setPendingPlan({ prompt: fill.trim(), durationSeconds: 45, artStyle: 'realistic', aspectRatio: '9:16', budgetMode: 'balanced' });
+        setQuickCreateText('');
+        setQuickCreateOpen(true);
         return;
       }
       setInput('');
@@ -426,7 +432,59 @@ const AgentStudio = () => {
     return [...map.entries()];
   }, [filtered]);
 
-  // ---- 计划确认门：开拍前展示拆解计划与可改参数（确认才消耗算力） ----
+  // ---- 一句话创建弹窗：页内玻璃拟态深色卡，替代原生 window.prompt（样式对齐开拍计划卡） ----
+  const renderQuickCreateDialog = () => {
+    if (!quickCreateOpen) return null;
+    const submit = () => {
+      const value = quickCreateText.trim();
+      if (!value) return;
+      setQuickCreateOpen(false);
+      setPendingPlan({ prompt: value, durationSeconds: 45, artStyle: 'realistic', aspectRatio: '9:16', budgetMode: 'balanced' });
+    };
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setQuickCreateOpen(false)}>
+        <div className="glass-card glass-card-static w-full max-w-md p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Sparkles className="h-4 w-4 text-primary" /> 一句话创建短剧项目
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            用一句话描述题材 / 人物 / 反转，确认后进入开拍计划（可改时长、画风、预算）
+          </p>
+          <textarea
+            autoFocus
+            value={quickCreateText}
+            onChange={(e) => setQuickCreateText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit();
+              }
+              if (e.key === 'Escape') setQuickCreateOpen(false);
+            }}
+            rows={3}
+            placeholder="例如：深夜便利店，店员捡到一只会说话的猫，它要用九条命换一个愿望"
+            className="mt-3 w-full resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              onClick={() => setQuickCreateOpen(false)}
+              className="rounded-lg border border-input px-4 py-2 text-xs text-muted-foreground hover:bg-muted"
+            >
+              取消
+            </button>
+            <button
+              onClick={submit}
+              disabled={!quickCreateText.trim()}
+              className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              创建
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderPlanGate = () => {
     if (!pendingPlan) return null;
     const opt = (arr: readonly (string | number)[], cur: string | number, set: (v: string) => void) => (
@@ -578,8 +636,9 @@ const AgentStudio = () => {
 
   return (
     <>
-      {/* 发送后会追加用户消息、退出 heroMode；开拍确认门不能随首屏状态一起消失。 */}
+      {/* 发送后会追加用户消息、退出 heroMode；开拍确认门/创建弹窗不能随首屏状态一起消失。 */}
       {pendingPlan && renderPlanGate()}
+      {quickCreateOpen && renderQuickCreateDialog()}
       {/* TriPane 三栏：左=会话列表 | 中=对话流 | 右=产出面板（宽度可拖拽，localStorage 持久） */}
       <TriPane
         leftKey="agentstudio.left"
@@ -624,7 +683,7 @@ const AgentStudio = () => {
             {WORKSPACE_PAGES.map((it) => (
               <button
                 key={it.key}
-                onClick={() => openTab(it.key)}
+                onClick={() => (isClassicMode ? navigate(`/${it.key}`) : openTab(it.key))}
                 title={it.description}
                 className="flex min-w-0 flex-col items-center gap-1 overflow-hidden rounded-lg px-1 py-2 text-[11px] leading-tight text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               >
@@ -958,7 +1017,7 @@ const AgentStudio = () => {
         )}
       </section>
       )}
-        right={(
+        right={isClassicMode ? undefined : (
           <WorkspaceRightDock
             outputView={(
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">

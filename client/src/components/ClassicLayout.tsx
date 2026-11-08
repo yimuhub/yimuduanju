@@ -358,18 +358,17 @@ const ClassicLayout = () => {
                   >
                     <Bell className="h-[18px] w-[18px] text-foreground/70" />
                   </button>
-                  {!isStudioHome && (
-                    <button
-                      onClick={toggleDock}
-                      className={`hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 xl:flex ${
-                        dockOpen ? 'border-primary/40 text-primary' : 'text-foreground/70'
-                      }`}
-                      aria-label={dockOpen ? '收起助手坞' : '展开助手坞'}
-                      title={dockOpen ? '收起助手坞' : '展开助手坞'}
-                    >
-                      <PanelRightOpen className="h-[18px] w-[18px]" />
-                    </button>
-                  )}
+                  {/* 助手坞开关：作战室首页也显示（收起后可从这里重新展开） */}
+                  <button
+                    onClick={toggleDock}
+                    className={`hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background hover:bg-muted/50 xl:flex ${
+                      dockOpen ? 'border-primary/40 text-primary' : 'text-foreground/70'
+                    }`}
+                    aria-label={dockOpen ? '收起助手坞' : '展开助手坞'}
+                    title={dockOpen ? '收起助手坞' : '展开助手坞'}
+                  >
+                    <PanelRightOpen className="h-[18px] w-[18px]" />
+                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setUserMenuOpen((v) => !v)}
@@ -422,8 +421,9 @@ const ClassicLayout = () => {
                 >
                   <Outlet />
                 </main>
-                {/* 作战室页自带功能签右坞（WorkspaceRightDock），经典助手坞在首页不开，避免同屏双右坞 */}
-                {dockOpen && !isStudioHome && <ClassicRightDock onClose={toggleDock} />}
+                {/* 助手坞：所有经典模式页面（含作战室首页）默认展开，收起状态 localStorage 持久；
+                    作战室首页的 TriPane 右坞在经典模式下不再渲染（见 AgentStudio isClassicMode），避免同屏双右坞 */}
+                {dockOpen && <ClassicRightDock onClose={toggleDock} />}
               </div>
             </div>
           </>

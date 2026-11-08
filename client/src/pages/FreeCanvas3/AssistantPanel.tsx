@@ -129,12 +129,14 @@ export const AssistantPanel = ({ projectId }: Props) => {
 
   return (
     <>
-      {/* 悬浮开关（右下，避开 Controls / MiniMap） */}
+      {/* 悬浮开关（右下，避开 Controls / MiniMap）。
+          层级策略：助手浮层整体低于 3D 导演台（.p3-director3d z-index 90）——
+          导演台打开时助手被完整盖住，绝不再遮挡右上「关闭导演台 / 退出导演台」按钮 */}
       <button
         onClick={() => setOpen((o) => !o)}
         title={open ? '收起 AI 助手' : '打开 AI 助手'}
         style={{
-          position: 'fixed', right: 16, bottom: 88, zIndex: 260,
+          position: 'fixed', right: 16, bottom: 88, zIndex: 55,
           width: 46, height: 46, borderRadius: '50%',
           background: P3.primary, color: '#fff', border: 'none', cursor: 'pointer',
           boxShadow: '0 6px 20px rgba(10,188,207,0.4)',
@@ -148,7 +150,7 @@ export const AssistantPanel = ({ projectId }: Props) => {
         <div
           data-yimu-panel
           style={{
-            position: 'fixed', top: 12, right: 12, bottom: 12, zIndex: 300, width: 372,
+            position: 'fixed', top: 12, right: 12, bottom: 12, zIndex: 60, width: 372,
             display: 'flex', flexDirection: 'column', background: '#fff',
             borderRadius: 14, border: `1px solid ${P3.border}`,
             boxShadow: '0 10px 40px rgba(0,0,0,0.14)', overflow: 'hidden',

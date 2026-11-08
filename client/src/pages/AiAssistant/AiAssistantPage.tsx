@@ -31,10 +31,35 @@ const LINE_LABELS: Record<string, string> = {
 
 const LINE_ORDER = ['shortdrama', 'comic', 'ads', 'common'];
 
-const GREETING =
-  '你好，我是「一幕 · YIMU AI 短剧创作平台」助手 👋 我可以帮你做剧本创作、分镜设计、角色设定、风格建议等轻量问答。左侧是我的技能面板，可以按需开关；要做完整的从想法到成片的流水线编排，请去「创作作战室」。';
+/** 问候语：容器自适应——技能面板可见（@3xl 及以上）时提示「左侧」，窄容器面板隐藏时不提面板位置 */
+const buildGreeting = (skillsPanelVisible: boolean) =>
+  `你好，我是「一幕 · YIMU AI 短剧创作平台」助手 👋 我可以帮你做剧本创作、分镜设计、角色设定、风格建议等轻量问答。${
+    skillsPanelVisible
+      ? '左侧是我的技能面板，可以按需开关；'
+      : ''
+  }要做完整的从想法到成片的流水线编排，请去「创作作战室」。`;
+
+/** 与样式断点对齐：@container 3xl = 48rem = 768px，低于此宽度技能面板隐藏 */
+const SKILLS_PANEL_BREAKPOINT = 768;
 
 const AiAssistantPage = () => {
+  // ===== 容器自适应：技能面板是否可见（@3xl 以下隐藏，问候语等文案随之切换） =====
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [skillsPanelVisible, setSkillsPanelVisible] = useState(true);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    // 首帧同步测量（useEffect 内同步读宽，避免闪错文案）
+    setSkillsPanelVisible(el.clientWidth >= SKILLS_PANEL_BREAKPOINT);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      setSkillsPanelVisible(width >= SKILLS_PANEL_BREAKPOINT);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // ===== 技能面板 =====
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(true);
@@ -91,7 +116,7 @@ const AiAssistantPage = () => {
 
   // ===== 对话区（保留原有真实网关对话） =====
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 'msg-1', role: 'assistant', content: GREETING, createdAt: new Date().toISOString() },
+    { id: 'msg-1', role: 'assistant', content: buildGreeting(true), createdAt: new Date().toISOString() },
   ]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -104,6 +129,13 @@ const AiAssistantPage = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // 问候语跟随容器宽度：窄容器（技能面板隐藏）时首条问候不再提「左侧技能面板」
+  useEffect(() => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === 'msg-1' ? { ...m, content: buildGreeting(skillsPanelVisible) } : m)),
+    );
+  }, [skillsPanelVisible]);
 
   const handleSend = async () => {
     const text = input.trim();
@@ -165,7 +197,7 @@ const AiAssistantPage = () => {
 
   return (
     /* @container：窄坞（极客模式右栏）内隐藏固定宽度技能侧栏并收敛渐变，避免竖排文字与白块 */
-    <div className="@container flex h-[calc(100vh-10rem)] flex-col gap-4">
+    <div ref={rootRef} className="@container flex h-[calc(100vh-10rem)] flex-col gap-4">
       {/* 顶部定位说明：与创作作战室（AgentStudio）拉开定位（深色主题下不使用白色渐变） */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-5 py-3.5 shadow-sm">
         <div className="flex items-center gap-3">
@@ -334,7 +366,9 @@ const AiAssistantPage = () => {
               {messages.length === 0 && !isSending && (
                 <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
                   <Grip className="mb-3 h-8 w-8 opacity-40" />
-                  <p className="text-sm">从左侧挑几项技能，然后在这里开始提问</p>
+                  <p className="text-sm">
+                    {skillsPanelVisible ? '从左侧挑几项技能，然后在这里开始提问' : '挑几项技能，然后在这里开始提问'}
+                  </p>
                 </div>
               )}
 

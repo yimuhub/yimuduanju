@@ -74,14 +74,15 @@ const ClassicRightDock = ({ onClose }: { onClose: () => void }) => {
   const loading = tab === 'jobs' ? jobsLoading : tab === 'assets' ? assetsLoading : activityLoading;
 
   return (
-    <aside className="hidden h-full w-[300px] shrink-0 flex-col border-l border-sidebar-border bg-sidebar xl:flex">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-2">
+    <aside className="hidden h-full w-[340px] shrink-0 flex-col border-l border-sidebar-border bg-sidebar xl:flex">
+      {/* tab 头：紧凑单行（h-10），页签 + 收起钮 */}
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-sidebar-border px-1.5">
         <div className="flex items-center gap-0.5">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
-              className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
                 tab === id
                   ? 'bg-primary/10 text-primary'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -108,11 +109,17 @@ const ClassicRightDock = ({ onClose }: { onClose: () => void }) => {
           </div>
         ) : tab === 'jobs' ? (
           jobs.length === 0 ? (
-            <p className="p-3 text-center text-xs text-muted-foreground">暂无生成任务</p>
+            <div className="flex flex-col items-center gap-1.5 px-4 py-10 text-center">
+              <ListTodo className="h-6 w-6 text-muted-foreground/50" />
+              <p className="text-xs font-medium text-foreground/70">暂无生成任务</p>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                在创作作战室发起一句话创作后，任务进度会实时滚动到这里
+              </p>
+            </div>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="space-y-2">
               {jobs.map((j) => (
-                <li key={j.id} className="rounded-lg border border-transparent bg-card px-2.5 py-2 hover:border-input">
+                <li key={j.id} className="rounded-lg border border-transparent bg-card px-2.5 py-2.5 hover:border-input">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs font-medium text-foreground">{j.jobType} · {j.id.slice(0, 8)}</span>
                     <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -130,7 +137,13 @@ const ClassicRightDock = ({ onClose }: { onClose: () => void }) => {
           )
         ) : tab === 'assets' ? (
           assets.length === 0 ? (
-            <p className="p-3 text-center text-xs text-muted-foreground">暂无资产 · 生成产物会自动归档到这里</p>
+            <div className="flex flex-col items-center gap-1.5 px-4 py-10 text-center">
+              <ImageIcon className="h-6 w-6 text-muted-foreground/50" />
+              <p className="text-xs font-medium text-foreground/70">暂无资产</p>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                生成的图片 / 视频 / 配音会自动归档到这里，可随时取用
+              </p>
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {assets.map((a) => (
@@ -148,7 +161,13 @@ const ClassicRightDock = ({ onClose }: { onClose: () => void }) => {
             </div>
           )
         ) : activity.length === 0 ? (
-          <p className="p-3 text-center text-xs text-muted-foreground">暂无动态</p>
+          <div className="flex flex-col items-center gap-1.5 px-4 py-10 text-center">
+            <Activity className="h-6 w-6 text-muted-foreground/50" />
+            <p className="text-xs font-medium text-foreground/70">暂无动态</p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              创建项目或生成资产后，平台最新动态会按时间线展示在这里
+            </p>
+          </div>
         ) : (
           <ol className="relative space-y-3 border-l border-border pl-4 pt-1">
             {activity.map((a) => (
