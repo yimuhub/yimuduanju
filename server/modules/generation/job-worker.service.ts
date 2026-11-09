@@ -44,6 +44,8 @@ import IORedis from 'ioredis';
 
 /** 上游限流冷却时长（按 provider 维度，见 providerHoldUntil） */
 const RATE_LIMIT_COOLDOWN_MS = 20_000;
+/** 连续限流的指数退避上限（20s→40s→…→300s 封顶），成功生成后清零 */
+const RATE_LIMIT_COOLDOWN_MAX_MS = 300_000;
 /** 未被路由到具体 provider 的任务在冷却表里的占位键 */
 const DEFAULT_PROVIDER_KEY = '__default__';
 /**
@@ -115,6 +117,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 某个供应商限流会把所有项目、所有任务类型一起冻 20s。
    */
   private readonly providerHoldUntil = new Map<string, number>();
+  /** 各 provider 连续限流次数（指数退避用），成功生成后清零 */
+  private readonly providerHoldCount = new Map<string, number>();
   private budgetWarned = false;
   private queue: Queue | null = null;
   private worker: Worker | null = null;
@@ -740,6 +744,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.providerHoldUntil.delete(holdKey);
+    this.providerHoldCount.delete(holdKey);
     try {
       switch (job.jobType) {
         case 'parse_script':
@@ -808,9 +813,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       // 改为按 provider 维度冷却，未受影响的通道继续跑。
       if (isRateLimitMessage(message)) {
         const key = providerName ?? DEFAULT_PROVIDER_KEY;
-        this.providerHoldUntil.set(key, Date.now() + RATE_LIMIT_COOLDOWN_MS);
+        // W 指数退避：连续限流时冷却翻倍（封顶 300s），上游过载时不再以固定
+        // 20s 高频重试打爆对端队列；任一任务成功后清零恢复基线。
+        const prev = this.providerHoldUntil.get(key) ?? 0;
+        const consecutive = prev > Date.now() ? (this.providerHoldCount.get(key) ?? 1) : 1;
+        const nextCount = Math.min(consecutive + 1, 8);
+        this.providerHoldCount.set(key, nextCount);
+        const cooldown = Math.min(RATE_LIMIT_COOLDOWN_MS * 2 ** (nextCount - 1), RATE_LIMIT_COOLDOWN_MAX_MS);
+        this.providerHoldUntil.set(key, Date.now() + cooldown);
         this.logger.warn(
-          `任务 ${job.id} 上游限流（provider=${key}），冷却 ${RATE_LIMIT_COOLDOWN_MS / 1000}s 后重试：${message.slice(0, 160)}`,
+          `任务 ${job.id} 上游限流（provider=${key}），冷却 ${cooldown / 1000}s 后重试（连续第 ${nextCount} 次）：${message.slice(0, 160)}`,
         );
         await this.releaseToPending(job.id);
         return;
