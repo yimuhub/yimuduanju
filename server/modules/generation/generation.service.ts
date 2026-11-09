@@ -43,6 +43,8 @@ function isoOr(value: Date | string | null | undefined, fallback: Date): string 
 
 @Injectable()
 export class GenerationService {
+  /** 视频 status 轮询节流表（jobId → 上次查询时间戳） */
+  private readonly videoPollAt = new Map<string, number>();
   private readonly logger = new Logger(GenerationService.name);
 
   constructor(
@@ -542,7 +544,12 @@ export class GenerationService {
     }
 
     // 如果有 externalTaskId 且是 video 任务，通过 model gateway 轮询
+    // W 节流：同一任务 8s 内只打一次上游状态查询（多页签轮询/SSE 并发会放大
+    // 查询次数，Agnes 对 status 查询有独立限流）
     if (job.externalTaskId && job.jobType === 'video') {
+      const last = this.videoPollAt.get(id) ?? 0;
+      if (Date.now() - last < 8_000) return job;
+      this.videoPollAt.set(id, Date.now());
       try {
         const result = await this.modelGateway.pollVideoTask(
           job.externalTaskId,
@@ -550,6 +557,12 @@ export class GenerationService {
         );
         if (result.status === 'succeeded') {
           return this.settleJobSuccess(id, result.outputData);
+        }
+        if (result.status === 'rate_limit') {
+          // W: 上游状态查询限流——保持 running，退避后由下一次轮询继续，
+          // 不消耗重试次数、不推进演示进度（避免"看起来在跑其实没查"）
+          this.logger.warn(`视频任务 ${id} 状态查询被上游限流，稍后自动重试`);
+          return job;
         }
         if (result.status === 'failed') {
           return this.settleJobFailure(id, result.errorMessage ?? '视频生成失败');

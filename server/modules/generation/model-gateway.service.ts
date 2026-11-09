@@ -68,7 +68,7 @@ interface TTSGenerateParams {
 }
 
 interface VideoPollResult {
-  status: 'running' | 'succeeded' | 'failed';
+  status: 'running' | 'succeeded' | 'failed' | 'rate_limit';
   progress?: number;
   outputData?: Record<string, unknown>;
   errorMessage?: string;
@@ -644,6 +644,11 @@ export class ModelGatewayService {
       );
       if (!response.ok) {
         const errText = await response.text();
+        // W: 状态查询限流（429/503）≠ 生成失败——返回 rate_limit 让 worker 走
+        // 限流退避重试，不消耗重试次数；仅其它 4xx/5xx 按失败处理
+        if (response.status === 429 || response.status === 503) {
+          return { status: 'rate_limit', errorMessage: `Agnes 状态查询限流 (${response.status})` };
+        }
         return { status: 'failed', errorMessage: `Agnes 查询失败 (${response.status}): ${errText.slice(0, 200)}` };
       }
       const data = await response.json();
