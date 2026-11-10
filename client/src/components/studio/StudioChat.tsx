@@ -433,8 +433,6 @@ export const StudioChat = () => {
         durationSec={data.totalSec}
         onNavigate={navigate}
       />
-
-      <ConsistencyCard projectId={projectId} jobs={data.jobs} />
     </>
   );
 
@@ -476,6 +474,11 @@ export const StudioChat = () => {
           }
         />
       )}
+
+      {/* 人物/场景一致性常驻输入框上方：不随消息滚动，剧本分析后立即可见 */}
+      <div className="chat-cons-dock">
+        <ConsistencyCard projectId={projectId} jobs={data.jobs} />
+      </div>
 
       <ChatComposer
         value={input}

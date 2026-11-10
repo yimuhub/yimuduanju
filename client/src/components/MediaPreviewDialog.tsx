@@ -3,6 +3,7 @@
  * Studio 预览「预览视频」、项目资产卡片、自由画布历史资产共用。
  */
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download } from 'lucide-react';
 
 export type MediaKind = 'video' | 'image' | 'audio';
@@ -23,9 +24,11 @@ const MediaPreviewDialog = ({ url, kind, title, onClose }: MediaPreviewDialogPro
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  // 必须挂到 body：右坞 / 画布都建立了 stacking context（含 container-type），
+  // 嵌在里面的 fixed 遮罩会被裁切，且盖不过底部 IDE 状态栏。
+  return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -75,7 +78,8 @@ const MediaPreviewDialog = ({ url, kind, title, onClose }: MediaPreviewDialogPro
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

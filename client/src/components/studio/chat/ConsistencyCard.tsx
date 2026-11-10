@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ImagePlus, Loader2, Lock, MapPin, RefreshCw, Sparkles, Users } from 'lucide-react';
+import {
+  ChevronRight,
+  Loader2,
+  MapPin,
+  Sparkles,
+  Users,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
-import { generateBible, generateLocationImage, listCharacters, listLocations } from '@client/src/api/bible';
-import { generateCharacterSheet } from '@client/src/api/storyboard';
+import { generateBible, listCharacters, listLocations } from '@client/src/api/bible';
 import type { Character, GenerationJob, Location } from '@shared/api.interface';
 
 interface ConsistencyCardProps {
@@ -13,29 +18,25 @@ interface ConsistencyCardProps {
 }
 
 /**
- * 人物 & 场景一致性卡：展示参考图（定妆照/概念图）的到位情况，
- * 缺失的可一键提交生成；生成完成后参考图会回写到人物/场景并归档为项目资产。
+ * 人物 & 场景一致性摘要（常驻在对话输入框上方）。
+ *
+ * 设计标准：
+ *  · 不再放进消息流的 header —— 那里会随消息滚动、默认只露出半截；
+ *    常驻条固定高度、始终完整可见。
+ *  · 一行人物 + 一行场景，缩略图 / 名称 / 定妆状态都在，点击未定妆项
+ *    跳到圣经页绑定形象图（不在对话里偷偷提交计费任务）。
+ *  · 人物/场景为 0 时不隐藏，给出「AI 生成制作圣经」直达入口。
  */
 export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
   const navigate = useNavigate();
   const [chars, setChars] = useState<Character[]>([]);
   const [locs, setLocs] = useState<Location[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [pending, setPending] = useState<Record<string, boolean>>({});
-  const [bulk, setBulk] = useState(false);
-  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
   const [genBusy, setGenBusy] = useState(false);
   const [bibleStamp, setBibleStamp] = useState(0);
+  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
 
-  // 圣经页新增人物/场景、上传参考图后即时同步（jobs 不会变化，不能只依赖 stamp）
-  useEffect(() => {
-    const onUpdate = () => setBibleStamp((v) => v + 1);
-    window.addEventListener('yimu:bible-updated', onUpdate);
-    return () => window.removeEventListener('yimu:bible-updated', onUpdate);
-  }, []);
-
-  // 角色/场景图任务有进展时重拉参考图，生成完自动出现在卡里
+  // 角色/场景图任务有进展，或圣经页新增/编辑设定后重拉（jobs 不变时靠事件）
   const stamp = useMemo(() => {
     const related = jobs.filter(
       (j) => j.targetType === 'character' || j.targetType === 'location',
@@ -48,8 +49,13 @@ export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
   }, [jobs]);
 
   useEffect(() => {
+    const onUpdate = () => setBibleStamp((v) => v + 1);
+    window.addEventListener('yimu:bible-updated', onUpdate);
+    return () => window.removeEventListener('yimu:bible-updated', onUpdate);
+  }, []);
+
+  useEffect(() => {
     let alive = true;
-    setRefreshing(true);
     Promise.all([listCharacters(projectId), listLocations(projectId)])
       .then(([c, l]) => {
         if (!alive) return;
@@ -57,72 +63,20 @@ export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
         setLocs(l);
       })
       .catch(() => {
-        /* 设定还没生成时接口可能为空/失败，不打扰用户 */
+        /* 设定还没生成时接口可能为空，不打扰用户 */
       })
       .finally(() => {
-        if (!alive) return;
-        setLoaded(true);
-        setRefreshing(false);
+        if (alive) setLoaded(true);
       });
     return () => {
       alive = false;
     };
   }, [projectId, stamp, bibleStamp]);
 
-  const missingChars = chars.filter((c) => c.referenceImageUrls.length === 0);
-  const missingLocs = locs.filter((l) => l.referenceImageUrls.length === 0);
   const total = chars.length + locs.length;
-  const ready = total - missingChars.length - missingLocs.length;
-
-  const markPending = (ids: string[], value: boolean) =>
-    setPending((prev) => {
-      const next = { ...prev };
-      for (const id of ids) next[id] = value;
-      return next;
-    });
-
-  const genChar = async (c: Character) => {
-    if (pending[c.id]) return;
-    markPending([c.id], true);
-    try {
-      await generateCharacterSheet(projectId, c.id, {});
-      toast.success(`已提交「${c.name}」的定妆照任务`);
-    } catch (e) {
-      toast.error(`提交失败：${(e as Error).message}`);
-    } finally {
-      markPending([c.id], false);
-    }
-  };
-
-  const genLoc = async (l: Location) => {
-    if (pending[l.id]) return;
-    markPending([l.id], true);
-    try {
-      await generateLocationImage(projectId, l.id);
-      toast.success(`已提交「${l.name}」的场景概念图任务`);
-    } catch (e) {
-      toast.error(`提交失败：${(e as Error).message}`);
-    } finally {
-      markPending([l.id], false);
-    }
-  };
-
-  const generateMissing = async () => {
-    const charIds = missingChars.map((c) => c.id);
-    const locIds = missingLocs.map((l) => l.id);
-    if (charIds.length + locIds.length === 0 || bulk) return;
-    setBulk(true);
-    markPending([...charIds, ...locIds], true);
-    const results = await Promise.allSettled([
-      ...missingChars.map((c) => generateCharacterSheet(projectId, c.id, {})),
-      ...missingLocs.map((l) => generateLocationImage(projectId, l.id)),
-    ]);
-    markPending([...charIds, ...locIds], false);
-    setBulk(false);
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
-    if (ok > 0) toast.success(`已提交 ${ok} 个定妆/概念图任务，完成后自动更新`);
-    if (ok < results.length) toast.error(`${results.length - ok} 个任务提交失败，请检查预算与 Provider`);
-  };
+  const ready =
+    chars.filter((c) => c.referenceImageUrls.length > 0).length +
+    locs.filter((l) => l.referenceImageUrls.length > 0).length;
 
   /** 空态直达生成：剧本分析后人物/场景一直为空，就是因为没有人把它们写进设定表 */
   const runGenerate = async () => {
@@ -146,162 +100,86 @@ export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
     }
   };
 
-  if (!loaded) return null;
-  if (total === 0) {
-    return (
-      <section className="cons">
-        <div className="cons-head">
-          <div className="cons-title">
-            <Users className="ico" />
-            人物 &amp; 场景一致性
-          </div>
-          <div className="cons-count">尚未建立设定</div>
-        </div>
-        <div className="cons-blank">
-          <span className="cons-blank-ico"><Sparkles className="ico" /></span>
-          <b>还没有人物和场景设定</b>
-          <p>
-            剧本分析后，制作圣经会自动识别出场人物与场景；这里是全片人物形象一致性的起点，
-            建议先生成并绑定参考图，再出首帧。
-          </p>
-          <div className="cons-blank-acts">
-            <button type="button" className="btn pri" onClick={() => void runGenerate()} disabled={genBusy}>
-              {genBusy ? <Loader2 className="ico spin" /> : <Sparkles className="ico" />}
-              {genBusy ? '生成中…' : 'AI 生成制作圣经'}
-            </button>
-            <button type="button" className="btn" onClick={() => navigate(`/project/${projectId}/bible`)}>
-              打开圣经
-            </button>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  const item = (
-    key: string,
-    name: string,
-    refs: string[],
-    locked: boolean,
-    kind: 'char' | 'loc',
-    onGenerate: () => void,
-  ) => {
-    const busyItem = !!pending[key];
+  const chip = (item: Character | Location, kind: 'char' | 'loc') => {
+    const refs = item.referenceImageUrls ?? [];
     const hasRef = refs.length > 0;
     return (
       <button
-        key={key}
+        key={item.id}
         type="button"
-        className={`cons-item${hasRef ? ' ok' : ' miss'}`}
-        title={hasRef ? `${name}：点击预览参考图` : `${name}：点击生成${kind === 'char' ? '定妆照' : '概念图'}`}
-        onClick={() => {
-          if (hasRef) setPreview({ url: refs[0], title: `${name} · 参考图` });
-          else onGenerate();
-        }}
-        disabled={busyItem}
+        className={`cons-chip${hasRef ? ' ok' : ''}`}
+        title={hasRef ? `${item.name}：点击预览参考图` : `${item.name}：去圣经页绑定形象图`}
+        onClick={() =>
+          hasRef
+            ? setPreview({ url: refs[0], title: `${item.name} · 参考图` })
+            : navigate(`/project/${projectId}/bible`)
+        }
       >
-        <span className="cons-thumb">
+        <span className="cons-chip-thumb">
           {hasRef ? (
-            <img src={refs[0]} alt={name} loading="lazy" />
-          ) : busyItem ? (
-            <Loader2 className="spin" />
+            <img src={refs[0]} alt="" loading="lazy" />
+          ) : kind === 'char' ? (
+            <Users size={13} />
           ) : (
-            <ImagePlus />
+            <MapPin size={13} />
           )}
         </span>
-        <span className="cons-name">{name}</span>
-        <span className="cons-state">{hasRef ? '已定妆' : busyItem ? '提交中' : '待生成'}</span>
-        {locked ? (
-          <span className="cons-lock" title="设定已锁定">
-            <Lock />
-          </span>
-        ) : null}
+        <span className="cons-chip-nm">{item.name}</span>
+        <i className="cons-chip-dot" />
       </button>
     );
   };
 
+  if (!loaded) return null;
+
   return (
-    <section className="cons">
+    <section className="cons compact">
       <div className="cons-head">
         <div className="cons-title">
           <Users className="ico" />
           人物 &amp; 场景一致性
         </div>
         <div className="cons-count">
-          {ready}/{total} 已定妆
-          {refreshing ? <RefreshCw className="cons-refresh spin" /> : null}
+          {total === 0 ? '尚未建立设定' : `${ready}/${total} 已定妆`}
         </div>
+        <button
+          type="button"
+          className="cons-open"
+          onClick={() => navigate(`/project/${projectId}/bible`)}
+        >
+          管理设定 <ChevronRight size={11} />
+        </button>
       </div>
 
-      {chars.length > 0 ? (
-        <div className="cons-row">
-          <span className="cons-k">人物</span>
-          <div className="cons-items">
-            {chars.map((c) =>
-              item(
-                c.id,
-                c.name,
-                c.referenceImageUrls,
-                c.locked,
-                'char',
-                () => void genChar(c),
-              ),
-            )}
-          </div>
-        </div>
-      ) : null}
-
-      {locs.length > 0 ? (
-        <div className="cons-row">
-          <span className="cons-k">
-            <MapPin className="ico" /> 场景
+      {total === 0 ? (
+        <div className="cons-blank compact">
+          <span className="cons-blank-txt">
+            <Users size={13} /> 还没有人物和场景设定，剧本分析后可从制作圣经一键生成
           </span>
-          <div className="cons-items">
-            {locs.map((l) =>
-              item(
-                l.id,
-                l.name,
-                l.referenceImageUrls,
-                l.locked,
-                'loc',
-                () => void genLoc(l),
-              ),
-            )}
+          <button type="button" className="btn pri" onClick={() => void runGenerate()} disabled={genBusy}>
+            {genBusy ? <Loader2 className="ico spin" /> : <Sparkles className="ico" />}
+            {genBusy ? '生成中…' : 'AI 生成'}
+          </button>
+          <button type="button" className="btn" onClick={() => navigate(`/project/${projectId}/bible`)}>
+            打开圣经
+          </button>
+        </div>
+      ) : (
+        <div className="cons-lines">
+          <div className="cons-line">
+            <span className="cons-k">人物 <b>{chars.length}</b></span>
+            <div className="cons-chips">
+              {chars.length ? chars.map((c) => chip(c, 'char')) : <span className="cons-none">暂无人物</span>}
+            </div>
+          </div>
+          <div className="cons-line">
+            <span className="cons-k">场景 <b>{locs.length}</b></span>
+            <div className="cons-chips">
+              {locs.length ? locs.map((l) => chip(l, 'loc')) : <span className="cons-none">暂无场景</span>}
+            </div>
           </div>
         </div>
-      ) : null}
-
-      <div className="cons-foot">
-        <button
-          type="button"
-          className="btn"
-          disabled={bulk || missingChars.length + missingLocs.length === 0}
-          onClick={() => void generateMissing()}
-        >
-          {bulk ? (
-            <>
-              <Loader2 className="ico spin" /> 提交中…
-            </>
-          ) : (
-            `补齐缺失（${missingChars.length + missingLocs.length}）`
-          )}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => navigate(`/project/${projectId}/characters`)}
-        >
-          人物设定
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => navigate(`/project/${projectId}/scenes`)}
-        >
-          场景设定
-        </button>
-        <span className="cons-note">参考图会作为首帧与视频生成的一致性依据</span>
-      </div>
+      )}
 
       {preview ? (
         <MediaPreviewDialog
