@@ -35,7 +35,7 @@ import { StudioDock } from './StudioDock';
 import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
 import { useStudioData, type StudioData } from './useStudioData';
-import { shotIndexAt } from './model';
+import { clipSpan, shotIndexAt } from './model';
 import {
   DOCK_SEG,
   DOCK_SEG_OF,
@@ -193,6 +193,14 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   }, [projectId, seg, hasChildren]);
 
   const shots = data.shots;
+  /** 播放总时长以 EDL 为准（片段可被拖动/修剪，不再等于镜头时长之和） */
+  const timelineTotal = useMemo(() => {
+    let end = 0;
+    for (const c of data.timeline?.clips ?? []) {
+      end = Math.max(end, c.timelineStart + clipSpan(c));
+    }
+    return end > 0 ? end : data.totalSec;
+  }, [data.timeline, data.totalSec]);
 
   // 镜头集合变化时把选中项收敛到合法范围
   useEffect(() => {
@@ -208,9 +216,14 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       if (shots.length === 0) return;
       const i = Math.max(0, Math.min(shots.length - 1, index));
       setSelRaw(i);
-      setCurT(shots[i].start);
+      // 预览跳到该镜在时间线上的真实位置（EDL 可被移动，shots.start 只是生产顺序）
+      const shot = shots[i];
+      const clip = (data.timeline?.clips ?? [])
+        .filter((c) => c.track === 'video' && c.sourceShotId === shot.id)
+        .sort((a, b) => a.timelineStart - b.timelineStart)[0];
+      setCurT(clip ? clip.timelineStart : shot.start);
     },
-    [shots],
+    [shots, data.timeline],
   );
 
   const stepShot = useCallback(
@@ -261,6 +274,11 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key) {
+        case ' ':
+          // 空格：播放 / 暂停（阻止页面滚动与焦点按钮误触发）
+          e.preventDefault();
+          setPlaying((v) => !v);
+          break;
         case '[':
           toggleRailCollapsed();
           break;
@@ -304,13 +322,17 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     return () => window.removeEventListener('keydown', onKey);
   }, [canvasApi, stepShot, setStageView, stageView, toggleTlCollapsed]);
 
-  // 播放：按镜头真实时长推进播放头
+  // 播放：按真实经过时间推进播放头（时间戳差值，避免 setInterval 漂移）
   useEffect(() => {
-    if (!playing || shots.length === 0) return undefined;
+    if (!playing || timelineTotal <= 0) return undefined;
+    const total = timelineTotal;
+    let last = performance.now();
     const timer = setInterval(() => {
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
       setCurT((t) => {
-        const next = t + 0.1;
-        const total = shots.reduce((s, x) => s + x.dur, 0);
+        const next = t + dt;
         if (next >= total) {
           setPlaying(false);
           return 0;
@@ -319,14 +341,28 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       });
     }, 100);
     return () => clearInterval(timer);
-  }, [playing, shots]);
+  }, [playing, timelineTotal, setPlaying]);
 
-  // 播放头移动 → 选中镜位跟随
+  // 播放头移动 → 通过 EDL 视频片段反查镜头（片段被移动后仍能跟随）
   useEffect(() => {
-    if (!playing || shots.length === 0) return;
-    const idx = shotIndexAt(shots, curT);
+    if (shots.length === 0) return;
+    const video = (data.timeline?.clips ?? []).filter((c) => c.track === 'video');
+    let idx = -1;
+    if (video.length > 0) {
+      const active = video
+        .filter((c) => curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c))
+        .sort((a, b) => a.timelineStart - b.timelineStart)
+        .pop();
+      const fallback = video
+        .filter((c) => c.timelineStart <= curT)
+        .sort((a, b) => a.timelineStart - b.timelineStart)
+        .pop();
+      const hit = active ?? fallback;
+      if (hit?.sourceShotId) idx = shots.findIndex((s) => s.id === hit.sourceShotId);
+    }
+    if (idx < 0) idx = shotIndexAt(shots, curT);
     setSelRaw((prev) => (prev === idx ? prev : idx));
-  }, [curT, playing, shots]);
+  }, [curT, shots, data.timeline]);
 
   // 全局页（无项目）不展示产出坞与时间线：它们属于项目上下文
   const dockHidden = dockCollapsed || (!projectId && hasChildren);

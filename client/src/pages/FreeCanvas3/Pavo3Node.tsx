@@ -296,12 +296,33 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
           )}
           {data.mediaUrl && data.mediaKind && (
             <div onDoubleClick={onDouble} style={{ marginTop: 4 }}>
-              <img
-                src={data.mediaUrl}
-                alt={data.title}
-                style={{ width: '100%', borderRadius: 10, display: 'block' }}
-                draggable={false}
-              />
+              {data.mediaKind === 'video' ? (
+                <video
+                  className="nodrag"
+                  src={data.mediaUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  style={{ width: '100%', borderRadius: 10, display: 'block', background: '#000' }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : data.mediaKind === 'audio' ? (
+                <audio
+                  className="nodrag"
+                  src={data.mediaUrl}
+                  controls
+                  preload="metadata"
+                  style={{ width: '100%', display: 'block' }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <img
+                  src={data.mediaUrl}
+                  alt={data.title}
+                  style={{ width: '100%', borderRadius: 10, display: 'block' }}
+                  draggable={false}
+                />
+              )}
             </div>
           )}
           {/* 空态：占位 + 尝试 */}

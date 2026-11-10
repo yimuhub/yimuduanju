@@ -308,12 +308,12 @@ CREATE TABLE IF NOT EXISTS model_providers (
 -- ============================================================
 INSERT INTO templates (name, template_type, category, description, duration_seconds, aspect_ratio, art_style, genre, config, is_builtin, sort_order)
 SELECT * FROM (VALUES
-  ('都市情感', 'full', '言情', '都市男女的宿命相遇', 90, '9:16', 'realistic', '都市', '{"shotCount":12,"shotDuration":4,"shotSizes":["close_up","medium","wide"],"cameraMovements":["static","push_in","tilt"],"voicePreset":"zh_female_gentle","subtitleEnabled":true}'::jsonb, true, 1),
-  ('古风仙侠', 'full', '古风', '仙侠世界的恩怨情仇', 120, '9:16', 'guofeng_3d', '仙侠', '{"shotCount":16,"shotDuration":4,"shotSizes":["wide","medium","close_up"],"cameraMovements":["crane","dolly","static"],"voicePreset":"zh_male_deep","subtitleEnabled":true}'::jsonb, true, 2),
-  ('悬疑推理', 'style', '悬疑', '高能反转悬疑短剧', 90, '9:16', 'realistic', '悬疑', '{"shotCount":14,"shotDuration":4,"shotSizes":["close_up","extreme_close_up"],"cameraMovements":["static","zoom_in","handheld"],"voicePreset":"zh_male_steady","subtitleEnabled":true}'::jsonb, true, 3),
-  ('热血动漫', 'style', '动漫', '二次元热血少年漫', 120, '9:16', 'anime_2d', '动漫', '{"shotCount":18,"shotDuration":4,"shotSizes":["action","medium","wide"],"cameraMovements":["dynamic","pan","tracking"],"voicePreset":"zh_male_youth","subtitleEnabled":true}'::jsonb, true, 4),
-  ('三分钟成片', 'duration', '通用', '三分钟完整短剧', 180, '9:16', 'realistic', '通用', '{"shotCount":30,"shotDuration":5,"shotSizes":["wide","medium","close_up"],"cameraMovements":["static","dolly","tilt"],"voicePreset":"zh_female_warm","subtitleEnabled":true}'::jsonb, true, 5),
-  ('九宫格漫剧', 'full', '漫剧', 'AI漫剧九宫格分镜', 60, '1:1', 'manhwa', '漫剧', '{"shotCount":9,"shotDuration":4,"shotSizes":["panel","medium"],"cameraMovements":["static"],"voicePreset":"zh_female_clear","subtitleEnabled":true}'::jsonb, true, 6)
+  ('都市情感', 'full', '言情', '都市男女的宿命相遇', 90, '9:16', 'realistic', '都市', '{"shotCount":10,"shotDuration":9,"shotSizes":["close_up","medium","wide"],"cameraMovements":["static","push_in","tilt"],"voicePreset":"zh_female_gentle","subtitleEnabled":true}'::jsonb, true, 1),
+  ('古风仙侠', 'full', '古风', '仙侠世界的恩怨情仇', 120, '9:16', 'guofeng_3d', '仙侠', '{"shotCount":12,"shotDuration":10,"shotSizes":["wide","medium","close_up"],"cameraMovements":["crane","dolly","static"],"voicePreset":"zh_male_deep","subtitleEnabled":true}'::jsonb, true, 2),
+  ('悬疑推理', 'style', '悬疑', '高能反转悬疑短剧', 90, '9:16', 'realistic', '悬疑', '{"shotCount":10,"shotDuration":9,"shotSizes":["close_up","extreme_close_up"],"cameraMovements":["static","zoom_in","handheld"],"voicePreset":"zh_male_steady","subtitleEnabled":true}'::jsonb, true, 3),
+  ('热血动漫', 'style', '动漫', '二次元热血少年漫', 120, '9:16', 'anime_2d', '动漫', '{"shotCount":15,"shotDuration":8,"shotSizes":["action","medium","wide"],"cameraMovements":["dynamic","pan","tracking"],"voicePreset":"zh_male_youth","subtitleEnabled":true}'::jsonb, true, 4),
+  ('三分钟成片', 'duration', '通用', '三分钟完整短剧', 180, '9:16', 'realistic', '通用', '{"shotCount":20,"shotDuration":9,"shotSizes":["wide","medium","close_up"],"cameraMovements":["static","dolly","tilt"],"voicePreset":"zh_female_warm","subtitleEnabled":true}'::jsonb, true, 5),
+  ('九宫格漫剧', 'full', '漫剧', 'AI漫剧九宫格分镜', 60, '1:1', 'manhwa', '漫剧', '{"shotCount":9,"shotDuration":7,"shotSizes":["panel","medium"],"cameraMovements":["static"],"voicePreset":"zh_female_clear","subtitleEnabled":true}'::jsonb, true, 6)
 ) AS v(name, template_type, category, description, duration_seconds, aspect_ratio, art_style, genre, config, is_builtin, sort_order)
 WHERE NOT EXISTS (SELECT 1 FROM templates LIMIT 1);
 

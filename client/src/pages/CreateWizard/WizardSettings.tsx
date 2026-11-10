@@ -325,8 +325,8 @@ const WizardSettings = ({
               </div>
               <input
                 type="range"
-                min="2"
-                max="10"
+                min="4"
+                max="15"
                 value={shotDuration}
                 onChange={(e) => setShotDuration(Number(e.target.value))}
                 className="mt-2 w-full accent-primary"

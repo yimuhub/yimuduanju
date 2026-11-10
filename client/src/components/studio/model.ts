@@ -8,9 +8,17 @@
  * 本文件把后端的 Shot[] / Scene[] 归一成一个 StudioShot[]，
  * 并提供时间码、场次分组、状态派生等纯函数。
  */
-import type { Scene, Shot } from '@shared/api.interface';
+import type { Scene, Shot, TimelineClip } from '@shared/api.interface';
 
 export const FPS = 24;
+
+/** EDL 片段在时间线上的有效时长（秒） */
+export const clipSpan = (c: Pick<TimelineClip, 'inPoint' | 'outPoint' | 'speed'>) =>
+  Math.max(0, (c.outPoint - c.inPoint) / (c.speed > 0 ? c.speed : 1));
+
+/** EDL 片段在时间线上的结束秒 */
+export const clipEnd = (c: Pick<TimelineClip, 'inPoint' | 'outPoint' | 'speed' | 'timelineStart'>) =>
+  c.timelineStart + clipSpan(c);
 
 /** 镜头在生产链上的三种状态（设计稿 data-st 同名） */
 export type ShotState = 'done' | 'render' | 'pending';
@@ -61,6 +69,10 @@ export interface StudioShot {
   rawStatus: string;
   /** 在时间线上的起始秒 */
   start: number;
+  /** 源媒体入点（秒）：预览/导出取段起点，缺省 0 */
+  inPoint?: number;
+  /** 源媒体出点（秒）：缺省 inPoint + duration */
+  outPoint?: number;
 }
 
 /** 场次分组（画布分带 / 剧本纸 / 时间线标签共用） */
@@ -167,6 +179,8 @@ export function normalizeShots(shots: Shot[], scenes: Scene[]): StudioShot[] {
       st,
       rawStatus: shot.status ?? '',
       start: t,
+      inPoint: shot.inPoint,
+      outPoint: shot.outPoint,
     };
     t += dur;
     return result;

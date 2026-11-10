@@ -348,7 +348,7 @@ export class StorySkillsService {
           scene: typeof r.scene === 'string' && r.scene.trim() ? r.scene.slice(0, 200) : '未命名场',
           shotSize: typeof r.shotSize === 'string' && sizes.has(r.shotSize) ? r.shotSize : 'medium',
           movement: typeof r.movement === 'string' && moves.has(r.movement) ? r.movement : 'static',
-          durationSeconds: Number.isFinite(dur) ? Math.max(1, Math.min(30, Math.round(dur))) : 4,
+          durationSeconds: Number.isFinite(dur) ? Math.max(1, Math.min(30, Math.round(dur))) : 8,
           dialogue: str(r.dialogue),
           visualPrompt: str(r.visualPrompt),
         }];

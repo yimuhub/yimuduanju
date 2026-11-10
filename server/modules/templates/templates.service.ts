@@ -239,7 +239,7 @@ export class TemplatesService {
       genre: p.genre ?? undefined,
       config: {
         shotCount: Number(professional?.shotCount ?? 20),
-        shotDuration: Number(professional?.shotDuration ?? 4),
+        shotDuration: Number(professional?.shotDuration ?? 8),
         shotSizes: [],
         cameraMovements: [],
         voicePreset: String(professional?.voicePreset ?? ''),

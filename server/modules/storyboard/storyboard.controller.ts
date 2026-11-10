@@ -15,6 +15,7 @@ import type {
   ParseScriptResponse,
   ScriptJobResponse,
   BlockedVideoSummary,
+  SplitShotResult,
 } from '@shared/api.interface';
 import type { RigRunResult } from '../story-skills/story-skills.service';
 import { StoryboardService } from './storyboard.service';
@@ -26,11 +27,13 @@ import {
   CreateShotDto,
   DesignCharactersDto,
   ParseScriptDto,
+  ReorderShotsDto,
   RerunShotDto,
   RewriteScriptDto,
   RigSceneDto,
   ScriptToBoardsDto,
   ShotVariantsDto,
+  SplitShotDto,
   UpdateSceneDto,
   UpdateShotDto,
 } from './dto';
@@ -105,6 +108,15 @@ export class StoryboardController {
     return this.storyboardService.createShot(projectId, body);
   }
 
+  /** P2 线性剪辑：按数组顺序批量重排镜头（事务内重编 sortOrder/shotNumber） */
+  @Post('shots/reorder')
+  async reorderShots(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: ReorderShotsDto,
+  ): Promise<Shot[]> {
+    return this.storyboardService.reorderShots(projectId, body.shotIds);
+  }
+
   @Patch('shots/:id')
   async updateShot(
     @Param('projectId', ParseUUIDPipe) projectId: string,
@@ -120,6 +132,16 @@ export class StoryboardController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     return this.storyboardService.deleteShot(projectId, id);
+  }
+
+  /** P2 线性剪辑：在镜头内 atSecond 秒处分割成两条（共享源媒体，按入出点取段） */
+  @Post('shots/:id/split')
+  async splitShot(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: SplitShotDto,
+  ): Promise<SplitShotResult> {
+    return this.storyboardService.splitShot(projectId, id, body);
   }
 
   @Post('shots/:id/generate-image')

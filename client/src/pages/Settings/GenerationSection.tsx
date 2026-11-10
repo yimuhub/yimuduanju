@@ -14,7 +14,7 @@ export interface GenDefaults {
 export const loadGenDefaults = (): GenDefaults => {
   try {
     const raw = localStorage.getItem(GEN_DEFAULTS_KEY);
-    if (raw) return { shotDuration: 3, subtitleEnabled: true, ...JSON.parse(raw) } as GenDefaults;
+    if (raw) return { shotDuration: 8, subtitleEnabled: true, ...JSON.parse(raw) } as GenDefaults;
   } catch {
     /* ignore */
   }
@@ -22,7 +22,7 @@ export const loadGenDefaults = (): GenDefaults => {
     aspectRatio: '9:16',
     artStyle: 'realistic',
     budgetMode: 'balanced',
-    shotDuration: 3,
+    shotDuration: 8,
     subtitleEnabled: true,
   };
 };
@@ -126,10 +126,15 @@ const GenerationSection = () => {
               </label>
               <input
                 type="number"
+                min={4}
+                max={15}
                 value={shotDuration}
                 onChange={(e) => setShotDuration(Number(e.target.value))}
                 className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
+              <p className="mt-1 text-xs text-muted-foreground">
+                建议 8-10 秒；4-6 秒适合快切，10-15 秒适合完整动作/对白
+              </p>
             </div>
             <div className="flex items-center">
               <div className="flex-1">

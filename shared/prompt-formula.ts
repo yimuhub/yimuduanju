@@ -35,6 +35,24 @@ export function buildFivePart(input: FivePartInput): string {
 export const CINEMATIC_NEGATIVE =
   '避免：人物形变、多余手指、面部扭曲、画面闪烁、果冻形变、模糊低清、水印、凭空出现的文字字幕、白模塑料质感、无意义的教学拆解与箭头标签';
 
+/**
+ * 视频画面文字策略：默认关闭画面内字幕。
+ * 字幕/对白统一由时间线后期烧录，模型把字烧进画面会与后期字幕叠加、遮脸、
+ * 且无法再改文案；因此提交视频任务时默认追加这条约束，用户显式开启才放行。
+ */
+export const NO_ONSCREEN_TEXT =
+  '画面内不得出现任何字幕、对白文字、旁白文字、标题、贴纸文字、水印或 UI 文字；请保持画面干净，所有字幕与文字由后期统一添加。';
+
+const TEXT_BAN_RE = /(不要|不得|避免|禁止)[^，。；\n]{0,8}(字幕|文字)|无字幕|no subtitles?/i;
+
+/** 按项目/单次开关决定是否把“画面无文字”约束拼进视频 prompt（幂等） */
+export function withVideoTextPolicy(prompt: string, allowOnScreenText = false): string {
+  const base = prompt.trim();
+  if (!base || allowOnScreenText) return base;
+  if (base.includes(NO_ONSCREEN_TEXT) || TEXT_BAN_RE.test(base)) return base;
+  return `${base}\n${NO_ONSCREEN_TEXT}`;
+}
+
 export interface StyleBibleLike {
   visualStyle?: string;
   cameraLanguage?: string;

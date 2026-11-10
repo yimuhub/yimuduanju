@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Sparkles,
   X,
+  Captions,
 } from 'lucide-react';
 import { useP3Store } from './pavo3Store';
 import { P3, RATIOS, RESOLUTIONS, PRESETS, COUNTS, STYLE_LIBRARY, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, VIDEO_MODES, type StyleItem } from './pavo3Constants';
@@ -570,8 +571,10 @@ function VideoGenPanel({ nodeId }: { nodeId: string }) {
   const [mode, setMode] = useState('文生视频');
   const [prompt, setPrompt] = useState('');
   const [ratio, setRatio] = useState('9:16');
-  const [duration, setDuration] = useState('4s');
+  const [duration, setDuration] = useState('8s');
   const [res, setRes] = useState('720P');
+  // 画面内字幕默认关：模型把字烧进画面会与后期字幕叠加且无法改文案
+  const [onScreenText, setOnScreenText] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
   const [durOpen, setDurOpen] = useState(false);
   const [resOpen, setResOpen] = useState(false);
@@ -748,6 +751,7 @@ function VideoGenPanel({ nodeId }: { nodeId: string }) {
       duration,
       mode,
       res,
+      onScreenText,
     });
   };
 
@@ -1068,6 +1072,23 @@ function VideoGenPanel({ nodeId }: { nodeId: string }) {
             <SelectMenu items={VIDEO_RESOLUTIONS} current={res} onPick={(v) => { setRes(v); setResOpen(false); }} />
           )}
         </div>
+
+        <button
+          onClick={() => setOnScreenText((v) => !v)}
+          title={
+            onScreenText
+              ? '模型会在画面内生成字幕/文字，后期字幕可能叠加'
+              : '默认关闭：画面内不生成字幕/文字，字幕由后期统一添加'
+          }
+          style={{
+            ...dropdownBtn,
+            borderColor: onScreenText ? P3.primary : P3.border,
+            color: onScreenText ? P3.primary : P3.text,
+          }}
+        >
+          <Captions size={13} color={onScreenText ? P3.primary : P3.helper} />
+          画面字幕 {onScreenText ? '开' : '关'}
+        </button>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
           <button

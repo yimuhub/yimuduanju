@@ -16,8 +16,9 @@ import {
   History,
   RotateCcw,
   AlertTriangle,
+  Captions,
 } from 'lucide-react';
-import { storyboard, assets } from '@client/src/api';
+import { storyboard, assets, projects } from '@client/src/api';
 import type { Shot, Scene, Asset, BlockedVideoSummary } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
@@ -76,6 +77,34 @@ const ProjectStoryboardTab = () => {
   // 首帧受阻汇总：哪些镜头的视频因首帧未就绪被暂停，以及是否已有在途首帧任务
   const [blocked, setBlocked] = useState<BlockedVideoSummary | null>(null);
   const [recovering, setRecovering] = useState(false);
+  // 画面字幕：默认关（字幕后期统一添加）；存 projects.metadata.videoSubtitles，
+  // 只影响保存之后提交的视频任务，已生成/已排队的任务不回溯。
+  const [videoSubtitles, setVideoSubtitles] = useState(false);
+  const [subtitlePrefSaving, setSubtitlePrefSaving] = useState(false);
+
+  const toggleVideoSubtitles = async () => {
+    if (!id || subtitlePrefSaving) return;
+    const next = !videoSubtitles;
+    setSubtitlePrefSaving(true);
+    try {
+      // 先取最新 metadata 再合并，避免覆盖期间流水线确认门等并发写入
+      const fresh = await projects.getProject(id);
+      const baseMeta = (fresh.metadata ?? {}) as Record<string, unknown>;
+      await projects.updateProject(id, {
+        metadata: { ...baseMeta, videoSubtitles: next },
+      } as never);
+      setVideoSubtitles(next);
+      toast.success(
+        next ? '已开启画面内字幕：之后提交的视频会生成字幕' : '已关闭画面内字幕：之后提交的视频保持干净，字幕后期添加',
+        { duration: 2400 },
+      );
+    } catch (err) {
+      logger.error('Save video subtitle pref failed:', String(err));
+      toast.error('画面字幕设置保存失败');
+    } finally {
+      setSubtitlePrefSaving(false);
+    }
+  };
 
   const loadHistory = async (shot: Shot) => {
     setHistoryLoading((prev) => new Set(prev).add(shot.id));
@@ -243,6 +272,16 @@ const ProjectStoryboardTab = () => {
     if (!id) return;
     setLoading(true);
     void refreshBlocked();
+    // 画面字幕开关：读项目 metadata（旧项目无字段 = 默认关）
+    projects.getProject(id)
+      .then((p) => {
+        const meta = (p.metadata ?? {}) as {
+          videoSubtitles?: boolean;
+          professional?: { videoSubtitles?: boolean };
+        };
+        setVideoSubtitles(meta.videoSubtitles === true || meta.professional?.videoSubtitles === true);
+      })
+      .catch((err) => logger.error('Load project subtitle pref failed:', String(err)));
     storyboard.listScenes(id)
       .then(async (sceneData) => {
         setScenes(sceneData);
@@ -371,6 +410,25 @@ const ProjectStoryboardTab = () => {
               ))}
             </select>
           </div>
+
+          <button
+            onClick={toggleVideoSubtitles}
+            disabled={subtitlePrefSaving}
+            title={
+              videoSubtitles
+                ? '当前开启：模型会在画面内生成字幕，后期字幕可能叠加'
+                : '默认关闭：模型不生成画面字幕/文字，字幕由后期统一添加'
+            }
+            aria-pressed={videoSubtitles}
+            className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm transition-colors disabled:opacity-60 ${
+              videoSubtitles
+                ? 'border-primary bg-primary/5 text-primary'
+                : 'border-input bg-card text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Captions className="h-4 w-4" />
+            画面字幕 · {videoSubtitles ? '开' : '关'}
+          </button>
 
           <div className="flex items-center rounded-lg border border-input bg-card p-0.5">
             <button

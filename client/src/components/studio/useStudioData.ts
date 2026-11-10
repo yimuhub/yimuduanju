@@ -24,6 +24,7 @@ import {
   type JobStreamSnapshot,
 } from '@client/src/api/generation';
 import { getCostSummary, getStats } from '@client/src/api/dashboard';
+import { getTimeline } from '@client/src/api/timeline';
 import type {
   CostSummary,
   DashboardStats,
@@ -33,6 +34,7 @@ import type {
   ProjectProgressResponse,
   Scene,
   Shot,
+  TimelineDocument,
 } from '@shared/api.interface';
 import {
   countStates,
@@ -50,6 +52,22 @@ export interface StudioData {
   projectId?: string;
   /** 归一化后的镜头（画布 / 时间线 / 预览 / 分镜共用） */
   shots: StudioShot[];
+  /** 后端原始镜头（时间线编辑的乐观更新 / 撤销重做快照用） */
+  rawShots: Shot[];
+  /** 剪辑决策表（多轨时间线的唯一渲染源；未落库时由 shots 派生） */
+  timeline: TimelineDocument | null;
+  /** 本地编辑后的时间线写回（标记已触碰，避免 SSE 重拉覆盖） */
+  commitTimeline: (doc: TimelineDocument) => void;
+  /** 重新拉取 EDL；force=false 时用户已编辑过则跳过 */
+  reloadTimeline: (force?: boolean) => Promise<void>;
+  /**
+   * 编辑通道写入镜头：递增编辑 epoch 并替换 rawShots。
+   * epoch 变化会使编辑前发起、尚未返回的 reloadShots 结果被丢弃，
+   * 避免 SSE 重拉把乐观更新覆盖回旧数据。
+   */
+  commitShots: (shots: Shot[]) => void;
+  /** 编辑进行中锁定 reloadShots（SSE / 轮询重拉暂时跳过） */
+  setShotsLocked: (locked: boolean) => void;
   scenes: StudioScene[];
   shotStats: { done: number; render: number; pending: number; total: number };
   totalSec: number;
@@ -69,6 +87,7 @@ export function useStudioData(projectId?: string): StudioData {
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [project, setProject] = useState<Project | undefined>(undefined);
   const [rawShots, setRawShots] = useState<Shot[]>([]);
+  const [timeline, setTimeline] = useState<TimelineDocument | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [worker, setWorker] = useState<StudioData['worker']>(null);
@@ -76,6 +95,43 @@ export function useStudioData(projectId?: string): StudioData {
   const [cost, setCost] = useState<CostSummary | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const mounted = useRef(true);
+  /** 编辑 epoch：commitShots 递增；过期的 reloadShots 响应据此丢弃 */
+  const editEpochRef = useRef(0);
+  /** 编辑进行中锁：锁定期间 SSE / 轮询触发的 reloadShots 直接跳过 */
+  const shotsLockedRef = useRef(false);
+  /** 时间线是否已被本地编辑：编辑后不再被自动重拉结果覆盖 */
+  const timelineTouchedRef = useRef(false);
+
+  const commitTimeline = useCallback((doc: TimelineDocument) => {
+    timelineTouchedRef.current = true;
+    setTimeline(doc);
+  }, []);
+
+  const reloadTimeline = useCallback(
+    async (force = false) => {
+      if (!projectId) {
+        setTimeline(null);
+        return;
+      }
+      if (!force && timelineTouchedRef.current) return;
+      try {
+        const doc = await getTimeline(projectId);
+        if (mounted.current && (force || !timelineTouchedRef.current)) setTimeline(doc);
+      } catch {
+        /* 时间线不可用不阻断主界面：编辑器显示空态 */
+      }
+    },
+    [projectId],
+  );
+
+  const commitShots = useCallback((next: Shot[]) => {
+    editEpochRef.current += 1;
+    setRawShots(next);
+  }, []);
+
+  const setShotsLocked = useCallback((locked: boolean) => {
+    shotsLockedRef.current = locked;
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -101,17 +157,20 @@ export function useStudioData(projectId?: string): StudioData {
       setScenes([]);
       return;
     }
+    if (shotsLockedRef.current) return;
+    const epoch = editEpochRef.current;
     try {
       // 一次性取回全项目镜头与场次（后端支持一次查询，避免 N+1）
       const [shotList, sceneList] = await Promise.all([
         listAllShots(projectId),
         listScenes(projectId),
       ]);
-      if (!mounted.current) return;
+      // 请求期间发生过编辑（epoch 变化）或仍被锁定：丢弃过期响应
+      if (!mounted.current || epoch !== editEpochRef.current || shotsLockedRef.current) return;
       setRawShots(shotList ?? []);
       setScenes(sceneList ?? []);
     } catch {
-      if (mounted.current) {
+      if (mounted.current && epoch === editEpochRef.current && !shotsLockedRef.current) {
         setRawShots([]);
         setScenes([]);
       }
@@ -128,7 +187,9 @@ export function useStudioData(projectId?: string): StudioData {
     setProject(undefined);
     setProgress(null);
     setRawShots([]);
+    setTimeline(null);
     setScenes([]);
+    timelineTouchedRef.current = false;
     if (!projectId) return;
     void (async () => {
       try {
@@ -145,7 +206,8 @@ export function useStudioData(projectId?: string): StudioData {
       }
     })();
     void reloadShots();
-  }, [projectId, reloadShots]);
+    void reloadTimeline(true);
+  }, [projectId, reloadShots, reloadTimeline]);
 
   // 任务队列：SSE 优先，失败降级轮询
   useEffect(() => {
@@ -191,9 +253,11 @@ export function useStudioData(projectId?: string): StudioData {
     if (!projectId || !jobSig) return;
     const t = setTimeout(() => {
       void reloadShots();
+      // 新视频/配音完成后派生 EDL 需要跟着更新；用户手动编辑过则不覆盖
+      void reloadTimeline();
     }, 1200);
     return () => clearTimeout(t);
-  }, [jobSig, projectId, reloadShots]);
+  }, [jobSig, projectId, reloadShots, reloadTimeline]);
   const shotScenes = useMemo(() => groupByScene(shots), [shots]);
   const shotStats = useMemo(() => countStates(shots), [shots]);
   const totalSec = useMemo(() => totalDuration(shots), [shots]);
@@ -204,6 +268,12 @@ export function useStudioData(projectId?: string): StudioData {
     project,
     projectId,
     shots,
+    rawShots,
+    timeline,
+    commitTimeline,
+    reloadTimeline,
+    commitShots,
+    setShotsLocked,
     scenes: shotScenes,
     shotStats,
     totalSec,

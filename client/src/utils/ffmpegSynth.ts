@@ -1,5 +1,30 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { toBlobURL } from '@ffmpeg/util';
+// classWorker 显式经 Vite ?worker&url 打包：预构建依赖里 `new URL('./worker.js', import.meta.url)`
+// 不会被 Vite 处理成 worker，导致 worker 无法启动、load() 永久挂起。显式传入 classWorkerURL 修复。
+import classWorkerURL from '@ffmpeg/ffmpeg/worker?worker&url';
+// 合成引擎本地化打包（不再依赖 unpkg CDN）。core JS 用 ?raw 取未经 Vite 转换的原始
+// ESM 源码再转 blob（与官方 CDN 提供原始文件一致）；wasm 用 ?url 取同源地址再 toBlobURL。
+// 走 package exports 映射（"." → esm js，"./wasm" → esm wasm），深路径不被 exports 暴露。
+import coreRaw from '@ffmpeg/core?raw';
+import wasmURL from '@ffmpeg/core/wasm?url';
+
+/**
+ * 取媒体字节：远端片段经服务端同源代理（/api/...）下载，需带 CSRF 头
+ * （框架对 /api/* 全方法校验 cookie+header 双提交；@ffmpeg/util 的 fetchFile 用裸 fetch
+ * 不带 header 会 403）。这里与 api/http.ts 的 axios 拦截器同口径补上 header。
+ * blob:/本地地址不带 header，credentials include 保证同源 cookie 随行。
+ */
+async function fetchMediaBytes(url: string): Promise<Uint8Array> {
+  const headers: Record<string, string> = {};
+  if (url.startsWith('/api/')) {
+    const m = /(?:^|;\s*)suda-csrf-token=([^;]+)/.exec(document.cookie);
+    if (m) headers['X-Suda-Csrf-Token'] = decodeURIComponent(m[1]);
+  }
+  const resp = await fetch(url, { headers, credentials: 'include' });
+  if (!resp.ok) throw new Error(`媒体下载失败（HTTP ${resp.status}）`);
+  return new Uint8Array(await resp.arrayBuffer());
+}
 
 export type SynthStatus =
   | 'idle'
@@ -75,13 +100,10 @@ async function measureFrameStats(
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-const CORE_VERSION = '0.12.6';
-const CORE_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/esm`;
-
 let sharedFFmpeg: FFmpeg | null = null;
 let coreLoading: Promise<FFmpeg> | null = null;
 
-/** 单例加载 FFmpeg.wasm（首次约 30MB CDN，后续缓存） */
+/** 单例加载 FFmpeg.wasm（引擎已本地化打包，首次约 30MB，后续缓存） */
 export async function getFFmpeg(
   onLog?: (message: string) => void,
 ): Promise<FFmpeg> {
@@ -92,9 +114,11 @@ export async function getFFmpeg(
       if (onLog) {
         ffmpeg.on('log', ({ message }) => onLog(message));
       }
+      const coreBlobURL = URL.createObjectURL(new Blob([coreRaw], { type: 'text/javascript' }));
       await ffmpeg.load({
-        coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
+        classWorkerURL,
+        coreURL: coreBlobURL,
+        wasmURL: await toBlobURL(wasmURL, 'application/wasm'),
       });
       sharedFFmpeg = ffmpeg;
       return ffmpeg;
@@ -179,7 +203,7 @@ export async function synthesizeMp4(
   for (let i = 0; i < clips.length; i += 1) {
     const name = `clip${i}.mp4`;
     // eslint-disable-next-line no-await-in-loop
-    await ffmpeg.writeFile(name, await fetchFile(clips[i].url));
+    await ffmpeg.writeFile(name, await fetchMediaBytes(clips[i].url));
     names.push(name);
     onProgress('fetching', Math.round(((i + 1) / clips.length) * 100));
   }
@@ -263,14 +287,14 @@ export async function synthesizeMp4(
     if (opts.bgmUrl) {
       inputs.push('-i', 'bgm.dat');
       // eslint-disable-next-line no-await-in-loop
-      await ffmpeg.writeFile('bgm.dat', await fetchFile(opts.bgmUrl));
+      await ffmpeg.writeFile('bgm.dat', await fetchMediaBytes(opts.bgmUrl));
     }
     let vi = 0;
     for (const c of clips) {
       if (!c.voiceUrl || !includeVoices) continue;
       const vn = `voice${vi}.dat`;
       // eslint-disable-next-line no-await-in-loop
-      await ffmpeg.writeFile(vn, await fetchFile(c.voiceUrl));
+      await ffmpeg.writeFile(vn, await fetchMediaBytes(c.voiceUrl));
       inputs.push('-i', vn);
       voiceNames.push(vn);
       vi += 1;

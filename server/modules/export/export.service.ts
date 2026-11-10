@@ -43,6 +43,75 @@ export class ExportService {
     return rows[0];
   }
 
+  /**
+   * 导出合成媒体代理：浏览器端 FFmpeg.wasm 直接 fetch 远端 CDN 会被 CORS 拦截
+   * （前端表现为 "Failed to fetch"）。本端点以服务端身份取流，前端用同源
+   * /export/media?url=... 喂给 fetchFile 即可绕开跨域。
+   * 安全：仅放行本项目镜头/资产登记过的 URL（防开放代理），并过 SSRF 守卫。
+   */
+  async proxyProjectMedia(
+    projectId: string,
+    rawUrl: string,
+  ): Promise<{ buffer: Buffer; mime: string }> {
+    await this.requireProject(projectId);
+    if (!/^https?:\/\//i.test(rawUrl)) {
+      throw new BadRequestException('仅支持 http/https 媒体地址');
+    }
+    const [shotRows, assetRows] = await Promise.all([
+      this.db.select().from(shots).where(eq(shots.projectId, projectId)),
+      this.db.select().from(assets).where(eq(assets.projectId, projectId)),
+    ]);
+    const allowed = new Set<string>();
+    for (const s of shotRows) {
+      const urls = [
+        s.videoUrl, s.voiceUrl, s.startFrameUrl, s.endFrameUrl, s.whitemodelUrl,
+        ...(s.sfxUrls ?? []), ...(s.referenceImageUrls ?? []),
+      ];
+      for (const u of urls) if (u) allowed.add(u);
+    }
+    for (const a of assetRows) {
+      if (a.fileUrl) allowed.add(a.fileUrl);
+      if (a.thumbnailUrl) allowed.add(a.thumbnailUrl);
+    }
+    if (!allowed.has(rawUrl)) {
+      throw new BadRequestException('该媒体地址不属于本项目');
+    }
+    if (!(await isSafeExternalUrl(rawUrl))) {
+      throw new BadRequestException('媒体地址被安全策略拦截（仅允许公网 http/https）');
+    }
+    // Agnes CDN 双域名互为镜像，单域名偶发不可达时切换重试（与资产取流一致）
+    const candidates = [rawUrl];
+    if (rawUrl.includes('cos-platform-outputs.agnes-ai.cn')) {
+      candidates.push(rawUrl.replace('cos-platform-outputs.agnes-ai.cn', 'platform-outputs.agnes-ai.space'));
+    }
+    if (rawUrl.includes('platform-outputs.agnes-ai.space')) {
+      candidates.push(rawUrl.replace('platform-outputs.agnes-ai.space', 'cos-platform-outputs.agnes-ai.cn'));
+    }
+    let lastErr = '';
+    for (const target of [...new Set(candidates)]) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const resp = await fetch(target, { signal: controller.signal, redirect: 'follow' });
+        if (!resp.ok) {
+          lastErr = `HTTP ${resp.status}`;
+          continue;
+        }
+        const mime = resp.headers.get('content-type') || 'application/octet-stream';
+        // eslint-disable-next-line no-await-in-loop
+        const buffer = Buffer.from(await resp.arrayBuffer());
+        if (buffer.length > 64) return { buffer, mime };
+        lastErr = '响应体过小';
+      } catch (e) {
+        lastErr = (e as Error).message;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new BadRequestException(`媒体源暂时不可达（${lastErr || 'CDN 超时'}）`);
+  }
+
   async getStoryboard(projectId: string) {
     const project = await this.requireProject(projectId);
     const [sceneRows, shotRows] = await Promise.all([
@@ -634,8 +703,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   /**
    * 跨平台探测 ffmpeg 可执行文件路径（消除硬编码 /Users/shanziya/.local/bin/ffmpeg）。
+   * public：线性剪辑 EDL 导出（TimelineExportService）复用同一探测逻辑。
    */
-  private resolveFfmpegBin(): string {
+  resolveFfmpegBin(): string {
     if (process.env.FFMPEG_PATH && process.env.FFMPEG_PATH.trim()) {
       return process.env.FFMPEG_PATH.trim();
     }
@@ -668,8 +738,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   /**
    * 将本地 /uploads/ 路径、data: Base64 URI 或安全公网 URL 物化为本地临时文件。
+   * public：线性剪辑 EDL 导出复用（http(s) 走 downloadClip：SSRF 守卫 + Agnes 双镜像 fallback）。
    */
-  private async materializeMediaToFile(
+  async materializeMediaToFile(
     url: string,
     dest: string,
     cacheDir?: string,
@@ -961,7 +1032,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
   }
 
-  private runFfmpeg(bin: string, args: string[], cwd: string): Promise<boolean> {
+  /** public：线性剪辑 EDL 导出复用同一 ffmpeg 执行器（失败返回 false 并记 stderr 尾部） */
+  runFfmpeg(bin: string, args: string[], cwd: string): Promise<boolean> {
     return new Promise((resolve) => {
       const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       let err = '';

@@ -400,7 +400,7 @@ export class ModelGatewayService {
       // 占位输出：优先用首帧合成本地 mp4（静音轨，ffmpeg 可直接拼接进成片）；
       // ffmpeg 不可用/无首帧时回退白模/首帧 URL（调用方按 references[1]/[0] 传入亦可）
       const standIn = params.referenceVideoUrl || params.imageUrl || '';
-      const mp4Url = await this.mockVideoMp4(taskId, params).catch(() => null);
+      const mp4Url = await this.mockVideoMp4(taskId, { ...params, duration: params.duration ?? 8 }).catch(() => null);
       const url = mp4Url ?? standIn;
       this.mockVideoTasks.set(taskId, { url, at: Date.now() });
       if (this.mockVideoTasks.size > 200) {
@@ -425,7 +425,8 @@ export class ModelGatewayService {
       videoDurations?: unknown;
       videoSizes?: unknown;
     };
-    const wantDuration = params.duration ?? 5;
+    const wantDuration = params.duration ?? 8;
+    let effectiveDuration = wantDuration;
     if (Array.isArray(vparams.videoDurations) && vparams.videoDurations.length > 0) {
       const allowed = vparams.videoDurations.map(Number).filter(Number.isFinite);
       // 修复（fail-open）：声明了 videoDurations 但条目全部非数字时 allowed 为空，
@@ -437,8 +438,15 @@ export class ModelGatewayService {
             `（${JSON.stringify(vparams.videoDurations).slice(0, 120)}），本次不做时长校验`,
         );
       } else if (!allowed.includes(wantDuration)) {
-        throw new BadRequestException(
-          `该供应商视频时长仅支持 ${allowed.join('/')}s，当前 ${wantDuration}s（请改镜头时长或换供应商）`,
+        // 模型只支持离散时长（如 5/10s）时就近贴合，而不是整单失败：
+        // 8s 默认时长在 5/10 能力表上会落到 10s，保持剧情完整优先。
+        effectiveDuration = allowed.reduce(
+          (best, d) => (Math.abs(d - wantDuration) < Math.abs(best - wantDuration) ? d : best),
+          allowed[0],
+        );
+        this.logger.warn(
+          `视频时长 ${wantDuration}s 不被 ${provider.name} 支持，自动贴合到 ${effectiveDuration}s` +
+            `（支持 ${allowed.join('/')}s）`,
         );
       }
     }
@@ -475,7 +483,7 @@ export class ModelGatewayService {
 
     // Agnes 专用通道（测试版）：官方双接口，mode 按参考素材自动映射
     if (formatType === 'agnes') {
-      return this.createAgnesVideo(provider, params, withPrefix);
+      return this.createAgnesVideo(provider, { ...params, duration: effectiveDuration }, withPrefix);
     }
 
     if (formatType === 'volcengine_ark') {
@@ -484,7 +492,7 @@ export class ModelGatewayService {
       body = {
         model,
         prompt: withPrefix(params.prompt),
-        duration: params.duration ?? 5,
+        duration: effectiveDuration,
         size: params.size ?? '720p',
         ...(params.imageUrl ? { image_url: params.imageUrl } : {}),
         ...(sendRef ? { reference_video_url: refUrl } : {}),
@@ -495,7 +503,7 @@ export class ModelGatewayService {
       body = {
         model,
         prompt: withPrefix(params.prompt),
-        duration: params.duration ?? 5,
+        duration: effectiveDuration,
         size: params.size ?? '1024x576',
         ...(params.imageUrl ? { image_url: params.imageUrl } : {}),
         ...(sendRef ? { reference_video: refUrl } : {}),
@@ -571,7 +579,7 @@ export class ModelGatewayService {
     }
     const isPublic = (u?: string) => !!u && /^https?:\/\//i.test(u);
     const base = this.normalizeBaseUrl(provider.baseUrl);
-    const seconds = String(Math.max(4, Math.min(12, Math.round(params.duration ?? 5))));
+    const seconds = String(Math.max(4, Math.min(12, Math.round(params.duration ?? 8))));
     // mode 方言：官方 text/keyframe/reference；个别中转（如用户本地 relay）用
     // ti2vid/keyframes/multi_reference，可在供应商 modelParams.agnesModes 覆盖
     const dialect = ((provider.modelParams ?? {}) as { agnesModes?: { text?: string; keyframe?: string; reference?: string }; agnesSchema?: string }).agnesModes ?? {};

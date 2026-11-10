@@ -1580,7 +1580,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     // P1 专业模式透传消费：目标总镜头数/单镜时长/景别/运镜/字幕开关来自 project.metadata；
-    // 缺省时按片长估算（总时长/4s），与极速模式行为一致
+    // 缺省时按片长估算（总时长/8s），与极速模式行为一致
     const projectRows = await this.db
       .select({
         durationSeconds: projects.durationSeconds,
@@ -1596,7 +1596,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const totalDuration = projectRows[0]?.durationSeconds ?? 90;
     const targetShots =
       prefs.shotCount ??
-      Math.max(4, Math.min(60, Math.round(totalDuration / 4)));
+      Math.max(4, Math.min(60, Math.round(totalDuration / prefs.shotDuration)));
 
     const blocks = this.splitScenes(scriptText);
     const perSceneTarget = Math.max(
@@ -1708,7 +1708,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       raw.shotDuration >= 1 &&
       raw.shotDuration <= 30
         ? raw.shotDuration
-        : 4;
+        : 8;
     const shotCount =
       typeof raw?.shotCount === 'number'
         ? Math.max(1, Math.min(120, Math.floor(raw.shotCount)))

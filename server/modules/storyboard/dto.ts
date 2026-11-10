@@ -3,6 +3,7 @@
 import { Type } from 'class-transformer';
 import type { Dialogue, SceneAction } from '@shared/api.interface';
 import {
+  ArrayMinSize,
   IsArray,
   IsIn,
   IsInt,
@@ -86,6 +87,19 @@ export class CreateShotDto {
   @IsNumber()
   @Min(0.1)
   duration?: number;
+
+  // 线性剪辑：源媒体入/出点（秒）；缺省 in=0、out=in+duration
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  inPoint?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  outPoint?: number;
 
   @IsOptional()
   @IsString()
@@ -185,6 +199,19 @@ export class UpdateShotDto {
   @IsNumber()
   @Min(0.1)
   duration?: number;
+
+  // 线性剪辑：源媒体入/出点（秒）；null = 清除（恢复缺省语义）
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  inPoint?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  outPoint?: number | null;
 
   @IsOptional()
   @IsString()
@@ -293,6 +320,22 @@ export class BatchGenerateDto {
   @IsOptional()
   @IsArray()
   shotIds?: string[];
+}
+
+/** P2 镜头清单批量重排：按数组顺序重编 sortOrder/shotNumber */
+export class ReorderShotsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('all', { each: true })
+  shotIds!: string[];
+}
+
+/** P2 镜头分割：atSecond 须 ∈ (0, duration)，服务端二次校验 */
+export class SplitShotDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  atSecond!: number;
 }
 
 export class RerunShotDto {

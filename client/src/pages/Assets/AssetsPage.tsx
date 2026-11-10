@@ -25,6 +25,7 @@ import AssetPreviewModal, {
 } from './AssetPreviewModal';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import PageHeader from '@client/src/components/PageHeader';
+import { useAssetPreviewMode } from './previewMode';
 
 type AssetTypeFilter = 'all' | 'image' | 'video' | 'audio' | 'subtitle';
 type SortKey = 'newest' | 'oldest' | 'largest' | 'name';
@@ -118,6 +119,8 @@ const AssetsPage = () => {
   const [uploading, setUploading] = useState(false);
   // 客户端排序（列表接口不支持 sort 参数）
   const [sortKey, setSortKey] = useState<SortKey>('newest');
+  // 预览模式：精简（默认，只看媒体）/ 详情（含类型、大小、模型、提示词）
+  const [previewMode, setPreviewMode] = useAssetPreviewMode();
 
   useEffect(() => {
     projectsApi
@@ -235,13 +238,38 @@ const AssetsPage = () => {
         title="资产库"
         description={`管理所有图片、视频、音频等素材资产 · 共 ${assets.length} 个`}
         actions={
-          <button
-            onClick={() => setShowUpload(true)}
-            className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-          >
-            <Upload className="h-4 w-4" />
-            上传资产
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="flex rounded-xl border border-input bg-card p-0.5 text-xs"
+              title="点击资产时的预览模式（保存在本机）"
+            >
+              {(
+                [
+                  ['simple', '精简预览'],
+                  ['detail', '详情预览'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setPreviewMode(key)}
+                  className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                    previewMode === key
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowUpload(true)}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+            >
+              <Upload className="h-4 w-4" />
+              上传资产
+            </button>
+          </div>
         }
       />
 
@@ -404,11 +432,10 @@ const AssetsPage = () => {
                     {assetsApi.mediaUrl(asset) && (
                       <a
                         href={assetsApi.mediaUrl(asset)}
-                        target="_blank"
-                        rel="noreferrer"
+                        download={asset.name || undefined}
                         onClick={(e) => e.stopPropagation()}
                         className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-foreground shadow-lg hover:scale-110"
-                        title="下载 / 原图打开"
+                        title="下载"
                       >
                         <Download className="h-4 w-4" />
                       </a>
@@ -446,6 +473,7 @@ const AssetsPage = () => {
           asset={selectedAsset}
           onClose={() => setSelectedAsset(null)}
           onDelete={handleDelete}
+          mode={previewMode}
           projectName={
             selectedAsset.projectId
               ? projectNameById[selectedAsset.projectId]

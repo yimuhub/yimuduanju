@@ -56,19 +56,19 @@ const ProjectTimelineTab = () => {
   );
 
   const totalDuration = useMemo(
-    () => orderedShots.reduce((acc, s) => acc + (s.duration || 4), 0),
+    () => orderedShots.reduce((acc, s) => acc + (s.duration || 8), 0),
     [orderedShots],
   );
 
   const startXOf = (idx: number) =>
-    orderedShots.slice(0, idx).reduce((acc, s) => acc + Math.max(s.duration || 4, 1) * PX_PER_SEC, 0);
+    orderedShots.slice(0, idx).reduce((acc, s) => acc + Math.max(s.duration || 8, 1) * PX_PER_SEC, 0);
 
   const sceneAt = (shotId: string) =>
     scenes.find((s) => s.id === shots.find((x) => x.id === shotId)?.sceneId);
 
   const handleResizeStart = (e: React.PointerEvent, shot: Shot) => {
     e.stopPropagation();
-    setResizing({ id: shot.id, startX: e.clientX, origW: Math.max(shot.duration || 4, 1) * PX_PER_SEC });
+    setResizing({ id: shot.id, startX: e.clientX, origW: Math.max(shot.duration || 8, 1) * PX_PER_SEC });
   };
 
   const handleResizeMove = (e: React.PointerEvent) => {
@@ -158,7 +158,7 @@ const ProjectTimelineTab = () => {
                   <div key={t.key} className="relative h-14 border-b border-border/50">
                     {orderedShots.map((shot, idx) => {
                       const x = startXOf(idx);
-                      const w = Math.max(shot.duration || 4, 1) * PX_PER_SEC;
+                      const w = Math.max(shot.duration || 8, 1) * PX_PER_SEC;
                       const sc = sceneAt(shot.id);
                       const isSel = selectedShotId === shot.id;
                       return (

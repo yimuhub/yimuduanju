@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { FolderOpen, Image as ImageIcon, Film, Music, FileText, Upload, Search, ExternalLink } from 'lucide-react';
+import { FolderOpen, Image as ImageIcon, Film, Music, FileText, Upload, Search, Eye } from 'lucide-react';
 import { assets } from '@client/src/api';
 import type { Asset } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
+import AssetPreviewModal from '@client/src/pages/Assets/AssetPreviewModal';
+import { useAssetPreviewMode } from '@client/src/pages/Assets/previewMode';
+import { showConfirm } from '@client/src/components/ui/confirm';
+import { toast } from 'sonner';
 
 const mediaSrc = (a: Asset): string | undefined => assets.mediaUrl(a);
 
@@ -33,6 +37,8 @@ const ProjectAssetsTab = () => {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Asset | null>(null);
+  const [previewMode, setPreviewMode] = useAssetPreviewMode();
 
   const load = () => {
     if (!id) return;
@@ -45,6 +51,18 @@ const ProjectAssetsTab = () => {
 
   useEffect(() => { load(); }, [id]);
 
+  const handleDelete = async (assetId: string) => {
+    if (!await showConfirm('确定删除此资产？')) return;
+    try {
+      await assets.deleteAsset(assetId);
+      setItems((prev) => prev.filter((a) => a.id !== assetId));
+      if (selected?.id === assetId) setSelected(null);
+    } catch (e) {
+      logger.error('delete asset failed', String(e));
+      toast.error('删除失败，请重试');
+    }
+  };
+
   const filtered = items.filter((a) => {
     const typeOk = activeType === '全部' || (a.assetType || '').toLowerCase().includes(typeFilter(activeType) || '');
     const kw = search.trim().toLowerCase();
@@ -55,6 +73,13 @@ const ProjectAssetsTab = () => {
   const isImage = (a: Asset) => (a.assetType || '').toLowerCase().includes('image') || /\.(png|jpe?g|webp|gif)$/i.test(a.fileUrl || '');
   const isVideo = (a: Asset) => (a.assetType || '').toLowerCase().includes('video') || /\.(mp4|mov|webm)$/i.test(a.fileUrl || '');
 
+  const selectedIndex = selected ? filtered.findIndex((a) => a.id === selected.id) : -1;
+  const stepSelected = (delta: number) => {
+    if (selectedIndex < 0 || filtered.length === 0) return;
+    const next = (selectedIndex + delta + filtered.length) % filtered.length;
+    setSelected(filtered[next]);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -62,14 +87,34 @@ const ProjectAssetsTab = () => {
           <h2 className="text-lg font-semibold text-foreground">项目资产</h2>
           <p className="mt-1 text-sm text-muted-foreground">本项目生成的全部图片、视频、音频资产 · 共 {items.length} 个</p>
         </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索资产..."
-            className="h-9 w-56 rounded-lg border border-input bg-card pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
+        <div className="flex items-center gap-2">
+          <div className="flex overflow-hidden rounded-lg border border-input bg-card text-xs">
+            {([
+              ['simple', '精简预览'],
+              ['detail', '详情预览'],
+            ] as const).map(([m, label]) => (
+              <button
+                key={m}
+                onClick={() => setPreviewMode(m)}
+                className={`px-2.5 py-1.5 transition-colors ${
+                  previewMode === m
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索资产..."
+              className="h-9 w-56 rounded-lg border border-input bg-card pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
         </div>
       </div>
 
@@ -105,7 +150,14 @@ const ProjectAssetsTab = () => {
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
           {filtered.map((a) => (
-            <div key={a.id} className="group overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+            <div
+              key={a.id}
+              onClick={() => setSelected(a)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter') setSelected(a); }}
+              className="group cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+            >
               <div className="relative aspect-square">
                 {isImage(a) ? (
                   <MediaOrMissing
@@ -148,21 +200,38 @@ const ProjectAssetsTab = () => {
                   {a.assetType || 'asset'} · v{a.version}
                 </span>
                 {a.locked && <span className="absolute right-2 top-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-white">锁定</span>}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity group-hover:opacity-100">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-foreground shadow-lg">
+                    <Eye className="h-4 w-4" />
+                  </span>
+                </div>
               </div>
               <div className="p-2.5">
                 <div className="truncate text-xs font-medium text-foreground">{a.name || '未命名资产'}</div>
                 <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
                   <span>{a.durationSeconds ? `${a.durationSeconds}s` : a.fileSize ? `${(a.fileSize / 1024).toFixed(0)}KB` : a.sourceType}</span>
-                  {mediaSrc(a) && (
-                    <a href={mediaSrc(a)} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 text-primary hover:underline">
-                      <ExternalLink className="h-3 w-3" /> 打开
-                    </a>
-                  )}
+                  <span className="flex items-center gap-0.5 text-primary">
+                    <Eye className="h-3 w-3" /> 点击预览
+                  </span>
                 </div>
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {selected && (
+        <AssetPreviewModal
+          asset={selected}
+          mode={previewMode}
+          onClose={() => setSelected(null)}
+          onDelete={handleDelete}
+          hasPrev={filtered.length > 1}
+          hasNext={filtered.length > 1}
+          onPrev={() => stepSelected(-1)}
+          onNext={() => stepSelected(1)}
+          position={selectedIndex >= 0 ? { index: selectedIndex + 1, total: filtered.length } : undefined}
+        />
       )}
     </div>
   );

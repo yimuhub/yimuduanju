@@ -82,6 +82,11 @@ export interface ProjectMetadata {
       final?: string;
     };
   };
+  /**
+   * 视频画面内是否生成字幕/文字（默认 false）。
+   * 关闭时提交视频任务会追加“画面无文字”约束，字幕统一由时间线后期烧录。
+   */
+  videoSubtitles?: boolean;
 }
 
 /**
@@ -332,6 +337,10 @@ export interface Shot {
   locked: boolean;
   status: string;
   sortOrder: number;
+  /** 线性剪辑：源媒体入点（秒）。分割/修剪时定义取段起点；缺省 0 */
+  inPoint?: number;
+  /** 线性剪辑：源媒体出点（秒）。缺省 inPoint + duration */
+  outPoint?: number;
   /** 当前首帧/成片是否来自 mock 演练通道（占位内容，不计费，导出前需替换） */
   mock?: boolean;
   createdAt: string;
@@ -735,6 +744,8 @@ export interface ProfessionalPrefs {
   voicePreset?: string;
   /** 是否生成字幕 */
   subtitleEnabled?: boolean;
+  /** 视频画面内是否生成字幕/文字（默认 false，字幕后期统一添加） */
+  videoSubtitles?: boolean;
   /** 剧本改造总开关：false = 忠实转换/启发式拆分，不做吸引力改写（默认 true） */
   rewriteEnabled?: boolean;
   /** 故事风格预设 id（见 GET /api/story-skills），缺省按项目 artStyle 映射 */
@@ -949,4 +960,103 @@ export interface GenerateTTSRequest {
 export interface RerunShotRequest {
   shotId: string;
   type: 'image' | 'video' | 'voice';
+}
+
+// ============================================================================
+// 线性剪辑（Linear Edit）共享契约 —— 前后端共同遵守，勿单方面改动
+// ----------------------------------------------------------------------------
+// 路由约定（后端实现 / 前端调用）：
+//   POST /api/projects/:projectId/storyboard/shots/reorder      ReorderShotsRequest → Shot[]
+//   POST /api/projects/:projectId/storyboard/shots/:id/split    SplitShotRequest    → SplitShotResult
+//   GET  /api/projects/:projectId/timeline                      → TimelineDocument
+//   PUT  /api/projects/:projectId/timeline                      SaveTimelineRequest → TimelineDocument
+//   POST /api/projects/:projectId/timeline/export               ExportTimelineRequest → { asset; clips; durationSeconds }
+// 片段有效时长 = (outPoint - inPoint) / speed。时间线位置由 timelineStart 显式给出。
+// ============================================================================
+
+/** P2 镜头清单：批量重排（按数组顺序重编 sortOrder/shotNumber） */
+export interface ReorderShotsRequest {
+  shotIds: string[];
+}
+
+/** P2 镜头清单：在镜头内某秒处分割成两条（视频文件不切，按入出点取段） */
+export interface SplitShotRequest {
+  /** 分割点（相对镜头起始的秒数，须 ∈ (0, duration)） */
+  atSecond: number;
+}
+
+export interface SplitShotResult {
+  original: Shot;
+  created: Shot;
+}
+
+/** P3 EDL 轨道类型 */
+export type TimelineTrackKind = 'video' | 'audio' | 'subtitle' | 'overlay';
+
+/** P3 EDL 片段（与生产 shots 解耦的剪辑决策表） */
+export interface TimelineClip {
+  id: string;
+  projectId: string;
+  track: TimelineTrackKind;
+  /** 来源镜头 id（外部导入素材为空） */
+  sourceShotId?: string | null;
+  /** 媒体地址（视频/音频/图片） */
+  sourceUrl?: string | null;
+  /** 素材入点（源媒体内起始秒） */
+  inPoint: number;
+  /** 素材出点（源媒体内结束秒） */
+  outPoint: number;
+  /** 时间线上的起始秒 */
+  timelineStart: number;
+  /**
+   * 同类型轨道内的分层下标（0 起）。音频 lane 约定：0 对白 / 1 配乐 / 2 音效；
+   * 不同 lane 可同时重叠播出，同 lane 也允许重叠（导出按时间混流）。
+   */
+  lane?: number;
+  /** 播放速率 0.25–4，默认 1 */
+  speed: number;
+  /** 音量 0–1（音频轨），默认 1 */
+  volume: number;
+  /** 与下一片段间的转场 */
+  transition?: { type: 'none' | 'crossfade' | 'fade'; duration: number } | null;
+  /** 字幕文本（字幕轨） */
+  text?: string | null;
+  locked: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** P3 剪辑工程文档 */
+export interface TimelineDocument {
+  projectId: string;
+  fps: number;
+  width: number;
+  height: number;
+  clips: TimelineClip[];
+  updatedAt?: string;
+}
+
+/** P3 保存工程（整体替换，事务写入）；clip 缺省 id 视为新建 */
+export interface SaveTimelineRequest {
+  fps?: number;
+  width?: number;
+  height?: number;
+  clips: Array<
+    Omit<TimelineClip, 'id' | 'projectId' | 'createdAt' | 'updatedAt'> & { id?: string }
+  >;
+}
+
+/** P4 按 EDL 导出 */
+export interface ExportTimelineRequest {
+  width?: number;
+  height?: number;
+  /** 是否烧录字幕轨，默认 true */
+  burnSubtitles?: boolean;
+}
+
+export interface ExportTimelineResult {
+  asset: Asset;
+  clips: number;
+  durationSeconds: number;
 }

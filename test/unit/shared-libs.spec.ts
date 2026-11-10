@@ -7,6 +7,8 @@ import {
   buildFivePart,
   CINEMATIC_NEGATIVE,
   styleBibleToStyle,
+  withVideoTextPolicy,
+  NO_ONSCREEN_TEXT,
 } from '@shared/prompt-formula';
 import { CAMERA_RIGS, movementLabel, rigById } from '@shared/camera-rigs';
 import {
@@ -50,6 +52,15 @@ describe('prompt-formula', () => {
     expect(
       styleBibleToStyle({ visualStyle: '电影感', lighting: '侧逆光' }),
     ).toContain('侧逆光');
+  });
+
+  test('视频默认不生成画面字幕，显式开启才放行', () => {
+    expect(withVideoTextPolicy('雨夜街道')).toContain(NO_ONSCREEN_TEXT);
+    expect(withVideoTextPolicy('雨夜街道', true)).toBe('雨夜街道');
+    // 幂等：重复应用不叠加；已有“不要字幕”的自定义负词不重复追加
+    const once = withVideoTextPolicy('雨夜街道');
+    expect(withVideoTextPolicy(once)).toBe(once);
+    expect(withVideoTextPolicy('避免：不要字幕')).toBe('避免：不要字幕');
   });
 });
 

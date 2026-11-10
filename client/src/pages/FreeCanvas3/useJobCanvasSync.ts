@@ -40,7 +40,13 @@ function jobNodeKind(job: GenerationJob): 'image' | 'video' | 'audio' | 'text' |
 
 /** 在画布上找到该任务关联的节点（externalTaskId → 分镜镜头 → 角色定妆） */
 function matchNodes(job: GenerationJob, nodes: PavoFlowNode[]): PavoFlowNode[] {
-  const hit = nodes.filter((n) => (n.data as PavoNodeData).externalTaskId === job.id);
+  // 画布内发起的生成：节点 externalTaskId 可能存的是后端任务 UUID（job.id），
+  // 也可能存的是供应商任务 ID（job.externalTaskId，如 agnes:task_xxx:model）。
+  // 两者都尝试匹配，才能让排队/在途任务完成后自动回填产物。
+  const hit = nodes.filter((n) => {
+    const ext = (n.data as PavoNodeData).externalTaskId;
+    return ext != null && (ext === job.id || (job.externalTaskId != null && ext === job.externalTaskId));
+  });
   if (hit.length > 0) return hit;
   if (job.targetType === 'shot' && job.targetId) {
     const family = job.jobType === 'video' ? 'shot-vid' : 'shot-img';

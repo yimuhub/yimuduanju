@@ -25,6 +25,8 @@ export interface P3GenerateRequest {
   style?: P3StyleInput | null;
   voice?: string;
   duration?: number;
+  /** 视频画面内是否生成字幕/文字；缺省 false（字幕由后期统一添加） */
+  onScreenText?: boolean;
   projectId?: string;
   taskId?: string;
 }

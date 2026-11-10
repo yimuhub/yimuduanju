@@ -18,6 +18,7 @@ import { decryptApiKey } from '../../common/crypto.util';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { BillingService } from '../billing/billing.service';
 import { ModelGatewayService } from '../generation/model-gateway.service';
+import { withVideoTextPolicy } from '@shared/prompt-formula';
 
 export interface P3RefInput {
   id?: string;
@@ -43,6 +44,8 @@ export interface P3GenerateRequest {
   style?: P3StyleInput | null;
   voice?: string;
   duration?: number;
+  /** 视频画面内是否生成字幕/文字；缺省 false（字幕由后期统一添加） */
+  onScreenText?: boolean;
   /** 可选关联项目 ID（传入后自动记入项目账单与任务表） */
   projectId?: string;
   /** 视频续轮询任务 ID（超时后再次查询同一远端任务，不重复创建扣费） */
@@ -373,7 +376,8 @@ export class Pavo3Service {
         ? { taskId: req.taskId }
         : await this.modelGateway.generateVideo(
             {
-              prompt: this.buildPrompt(req),
+              // 默认不把字幕/文字烧进画面，字幕由时间线后期统一添加
+              prompt: withVideoTextPolicy(this.buildPrompt(req), req.onScreenText === true),
               model,
               duration: req.duration ?? 5,
               size: RATIO_SIZES[req.size ?? '9:16'] ?? '720P',
@@ -412,7 +416,8 @@ export class Pavo3Service {
 
     let taskId = req.taskId;
     if (!taskId) {
-      const prompt = this.buildPrompt(req);
+      // 默认不把字幕/文字烧进画面，字幕由时间线后期统一添加
+      const prompt = withVideoTextPolicy(this.buildPrompt(req), req.onScreenText === true);
       const body: Record<string, unknown> = {
         model,
         prompt,

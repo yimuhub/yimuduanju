@@ -1,7 +1,7 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { scenes, shots, characters, generationJobs, projects, assets } from '@server/database/schema';
-import { eq, desc, and, count, inArray, lt, sql } from 'drizzle-orm';
+import { eq, desc, asc, and, count, inArray, lt, sql } from 'drizzle-orm';
 import type {
   Scene,
   Shot,
@@ -13,6 +13,7 @@ import type {
   StorySkillId,
   BlockedVideoShot,
   BlockedVideoSummary,
+  SplitShotResult,
 } from '@shared/api.interface';
 import {
   CAMERA_ANGLE_LABELS,
@@ -27,6 +28,7 @@ import {
   buildFivePart,
   CINEMATIC_NEGATIVE,
   styleBibleToStyle,
+  withVideoTextPolicy,
   type StyleBibleLike,
 } from '@shared/prompt-formula';
 import {
@@ -226,7 +228,9 @@ export class StoryboardService {
         projectId,
         sceneId: dto.sceneId,
         shotNumber: dto.shotNumber ?? nextNumber,
-        duration: dto.duration?.toString() ?? '4.0',
+        duration: dto.duration?.toString() ?? '8.0',
+        inPoint: dto.inPoint !== undefined ? dto.inPoint.toString() : undefined,
+        outPoint: dto.outPoint !== undefined ? dto.outPoint.toString() : undefined,
         shotSize: dto.shotSize ?? 'medium',
         cameraAngle: dto.cameraAngle ?? 'eye_level',
         lens: dto.lens ?? '50mm',
@@ -260,6 +264,12 @@ export class StoryboardService {
     const patch: Record<string, unknown> = {};
     if (dto.shotNumber !== undefined) patch.shotNumber = dto.shotNumber;
     if (dto.duration !== undefined) patch.duration = dto.duration.toString();
+    // 线性剪辑入/出点：null = 清除（恢复缺省语义）；同传时校验 out > in
+    if (dto.inPoint !== undefined) patch.inPoint = dto.inPoint === null ? null : dto.inPoint.toString();
+    if (dto.outPoint !== undefined) patch.outPoint = dto.outPoint === null ? null : dto.outPoint.toString();
+    if (dto.inPoint != null && dto.outPoint != null && dto.outPoint <= dto.inPoint) {
+      throw new BadRequestException('outPoint 必须大于 inPoint');
+    }
     if (dto.shotSize !== undefined) patch.shotSize = dto.shotSize;
     if (dto.cameraAngle !== undefined) patch.cameraAngle = dto.cameraAngle;
     if (dto.lens !== undefined) patch.lens = dto.lens;
@@ -308,6 +318,178 @@ export class StoryboardService {
       .where(and(eq(shots.id, id), eq(shots.projectId, projectId)))
       .returning({ id: shots.id });
     if (rows.length === 0) throw new NotFoundException('分镜不存在');
+  }
+
+  // ========== 线性剪辑 Phase 2：镜头清单编辑 ==========
+
+  /**
+   * 线性剪辑扁平序 = sortOrder → 镜号 → 创建时间倒序。
+   * 必须与前端 sortRaw（useTimelineEditor）同口径：时间线展示顺序以 sortOrder 为准，
+   * 同序时按 GET /shots 的返回顺序（shotNumber 升序、createdAt 倒序）稳定排列，
+   * 旧数据镜号场内递增，按场序排会把用户既有的剪辑顺序打散。
+   */
+  private async flatShotRows(
+    projectId: string,
+  ): Promise<{ shot: typeof shots.$inferSelect; sceneNumber: number }[]> {
+    return this.db
+      .select({ shot: shots, sceneNumber: scenes.sceneNumber })
+      .from(shots)
+      .innerJoin(scenes, eq(shots.sceneId, scenes.id))
+      .where(eq(shots.projectId, projectId))
+      .orderBy(asc(shots.sortOrder), asc(shots.shotNumber), desc(shots.createdAt));
+  }
+
+  /**
+   * P2 批量重排：按数组顺序全局扁平重编 shotNumber/sortOrder（1..N）。
+   * 未列入数组的镜头保持原相对顺序，追加在指定镜头之后。
+   * IDOR：所有 shotId 必须归属本项目；整体单事务，失败全回滚。
+   * 注意：重排后镜号为全局扁平编号（线性剪辑视图口径），旧「场内递增」编号被归一。
+   */
+  async reorderShots(projectId: string, shotIds: string[]): Promise<Shot[]> {
+    if (!Array.isArray(shotIds) || shotIds.length === 0) {
+      throw new BadRequestException('shotIds 不能为空');
+    }
+    const unique = [...new Set(shotIds)];
+    if (unique.length !== shotIds.length) {
+      throw new BadRequestException('shotIds 存在重复');
+    }
+    // 连接池 max=1：所有 pool 读取必须在进事务前完成，事务回调内只用 tx 做 IO
+    const flat = await this.flatShotRows(projectId);
+    const byId = new Map(flat.map((r) => [r.shot.id, r.shot]));
+    for (const sid of unique) {
+      if (!byId.has(sid)) {
+        throw new NotFoundException(`分镜 ${sid} 不存在（或不属于本项目）`);
+      }
+    }
+    const specifiedSet = new Set(unique);
+    const ordered = [
+      ...unique.map((sid) => byId.get(sid) as typeof shots.$inferSelect),
+      ...flat.filter((r) => !specifiedSet.has(r.shot.id)).map((r) => r.shot),
+    ];
+    const now = new Date();
+    const updated: (typeof shots.$inferSelect)[] = [];
+    await this.db.transaction(async (tx) => {
+      for (let i = 0; i < ordered.length; i += 1) {
+        const s = ordered[i];
+        if (s.shotNumber === i + 1 && s.sortOrder === i + 1) {
+          updated.push(s);
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const res = await tx
+          .update(shots)
+          .set({ shotNumber: i + 1, sortOrder: i + 1, updatedAt: now })
+          .where(and(eq(shots.id, s.id), eq(shots.projectId, projectId)))
+          .returning();
+        if (res.length === 0) throw new NotFoundException('分镜不存在');
+        updated.push(res[0]);
+      }
+    });
+    return updated.map((r) => this.mapShot(r));
+  }
+
+  /**
+   * P2 镜头分割：在 atSecond（相对镜头起始，∈ (0, duration)）处拆成两条。
+   * 视频文件不物理切：original 保留 inPoint、duration=atSecond；
+   * created.inPoint=(原inPoint??0)+atSecond、duration=剩余，共享 videoUrl/voiceUrl/startFrameUrl。
+   * 新镜插在 original 之后，后续镜头按扁平序重新编号；整体单事务 + IDOR 守卫。
+   * 对白/字幕留在 original（避免两段重复烧录同一条字幕），created 可再编辑。
+   */
+  async splitShot(
+    projectId: string,
+    id: string,
+    dto: { atSecond: number },
+  ): Promise<SplitShotResult> {
+    // IDOR：写操作 id + projectId 双匹配
+    const originalRows = await this.db
+      .select()
+      .from(shots)
+      .where(and(eq(shots.id, id), eq(shots.projectId, projectId)));
+    if (originalRows.length === 0) throw new NotFoundException('分镜不存在');
+    const original = originalRows[0];
+    const duration = Number(original.duration);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new BadRequestException('镜头时长无效，无法分割');
+    }
+    const atSecond = Number(dto.atSecond);
+    if (!Number.isFinite(atSecond) || atSecond <= 0 || atSecond >= duration) {
+      throw new BadRequestException(`分割点必须在 (0, ${duration}) 秒内`);
+    }
+    const round3 = (n: number) => Math.round(n * 1000) / 1000;
+    const origIn = original.inPoint != null ? Number(original.inPoint) : 0;
+    const origOut = original.outPoint != null ? Number(original.outPoint) : null;
+    const flat = await this.flatShotRows(projectId);
+    const idx = flat.findIndex((r) => r.shot.id === id);
+    if (idx < 0) throw new NotFoundException('分镜不存在');
+
+    const now = new Date();
+    let originalRow: typeof shots.$inferSelect | undefined;
+    let createdRow: typeof shots.$inferSelect | undefined;
+    await this.db.transaction(async (tx) => {
+      // 新镜插在 original 之后（扁平位置 idx+1 → 编号 idx+2）
+      const inserted = await tx
+        .insert(shots)
+        .values({
+          projectId,
+          sceneId: original.sceneId,
+          shotNumber: idx + 2,
+          sortOrder: idx + 2,
+          duration: String(round3(duration - atSecond)),
+          inPoint: String(round3(origIn + atSecond)),
+          // 原镜有显式出点则继承（created 覆盖源媒体剩余段）；否则缺省 = in + duration
+          outPoint: origOut != null ? String(origOut) : null,
+          shotSize: original.shotSize,
+          cameraAngle: original.cameraAngle,
+          lens: original.lens,
+          movement: original.movement,
+          subject: original.subject,
+          action: original.action,
+          emotion: original.emotion,
+          visualPrompt: original.visualPrompt,
+          negativePrompt: original.negativePrompt,
+          startFrameUrl: original.startFrameUrl,
+          endFrameUrl: original.endFrameUrl,
+          whitemodelUrl: original.whitemodelUrl,
+          whitemodelMeta: original.whitemodelMeta,
+          referenceImageUrls: original.referenceImageUrls ?? [],
+          videoUrl: original.videoUrl,
+          voiceUrl: original.voiceUrl,
+          sfxUrls: original.sfxUrls ?? [],
+          characterIds: original.characterIds ?? [],
+          locked: false,
+          status: original.status,
+        })
+        .returning();
+      createdRow = inserted[0];
+      const updatedOriginal = await tx
+        .update(shots)
+        .set({
+          duration: String(round3(atSecond)),
+          // 原镜有显式出点时收缩到分割点，避免与 created 取段重叠
+          ...(origOut != null ? { outPoint: String(round3(origIn + atSecond)) } : {}),
+          shotNumber: idx + 1,
+          sortOrder: idx + 1,
+          updatedAt: now,
+        })
+        .where(and(eq(shots.id, id), eq(shots.projectId, projectId)))
+        .returning();
+      if (updatedOriginal.length === 0) throw new NotFoundException('分镜不存在');
+      originalRow = updatedOriginal[0];
+      // 其余镜头按新扁平序重新编号（created 占 idx+2，原 idx 之后的镜头整体 +1）
+      for (let i = 0; i < flat.length; i += 1) {
+        if (i === idx) continue;
+        const num = i < idx ? i + 1 : i + 2;
+        const s = flat[i].shot;
+        if (s.shotNumber === num && s.sortOrder === num) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await tx
+          .update(shots)
+          .set({ shotNumber: num, sortOrder: num, updatedAt: now })
+          .where(and(eq(shots.id, s.id), eq(shots.projectId, projectId)));
+      }
+    });
+    if (!originalRow || !createdRow) throw new NotFoundException('分镜不存在');
+    return { original: this.mapShot(originalRow), created: this.mapShot(createdRow) };
   }
 
   async generateShotImage(
@@ -468,10 +650,10 @@ export class StoryboardService {
     references: string[];
     chainedFrom?: { shotId: string; kind: 'endFrame' | 'video' };
   }> {
-    // P1 修复：duration 可空/非法时回落 4s，避免 NaN 进入视频 prompt
+    // P1 修复：duration 可空/非法时回落 8s（默认镜头时长，避免 4s 太短讲不完剧情）
     const parsedDuration = Number(shot.duration);
     const videoDuration =
-      Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 4;
+      Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 8;
     // P0-1 尾帧链（移植 YouHai/SDSmirnov/forge 三家验证的做法）：
     // 本镜无首帧图时，自动继承同场景上一镜的尾帧（优先）或成片（其次）作首帧参考，
     // 只填空不覆盖——已有首帧的镜头行为与旧版逐字节一致；来源记入 inputData备查。
@@ -519,7 +701,11 @@ export class StoryboardService {
     // P1-1 五段式 prompt（移植 AdForge：Cinematography/Subject/Action/Context/Style，
     // 风格圣经逐字复用；网关无 negative 字段，负面约束拼进正文）。
     const projRows = await this.db
-      .select({ styleBible: projects.styleBible, contentMode: projects.contentMode })
+      .select({
+        styleBible: projects.styleBible,
+        contentMode: projects.contentMode,
+        metadata: projects.metadata,
+      })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
@@ -539,7 +725,18 @@ export class StoryboardService {
       ? `避免：${shot.negativePrompt.trim()}`
       : CINEMATIC_NEGATIVE;
     const basePrompt = fivePart || shot.visualPrompt || shot.action || '';
-    const fullPrompt = `【运镜事实】${facts}。${rigLine}${whitemodelLine}\n${basePrompt}\n${negativeLine}`.trim();
+    // 画面字幕策略：默认不把字幕/文字烧进画面（后期统一配），
+    // 旧项目 metadata 无该字段时按 false 处理；专业模式在 metadata.professional 下。
+    const meta = (projRows[0]?.metadata ?? {}) as {
+      videoSubtitles?: boolean;
+      professional?: { videoSubtitles?: boolean };
+    };
+    const allowOnScreenText =
+      meta.videoSubtitles === true || meta.professional?.videoSubtitles === true;
+    const fullPrompt = withVideoTextPolicy(
+      `【运镜事实】${facts}。${rigLine}${whitemodelLine}\n${basePrompt}\n${negativeLine}`.trim(),
+      allowOnScreenText,
+    );
     return {
       prompt: fullPrompt,
       duration: videoDuration,
@@ -1018,7 +1215,7 @@ export class StoryboardService {
           inputData: {
             prompt: shot.visualPrompt ?? shot.action ?? '',
             movement,
-            duration: Number(shot.duration) > 0 ? Number(shot.duration) : 4,
+            duration: Number(shot.duration) > 0 ? Number(shot.duration) : 8,
             references: [...[shot.startFrameUrl, shot.whitemodelUrl, shot.endFrameUrl].filter(Boolean) as string[]],
             variantGroup: groupId,
             variantIndex: i + 1,
@@ -1298,6 +1495,8 @@ export class StoryboardService {
       sceneId: row.sceneId,
       shotNumber: row.shotNumber,
       duration: Number(row.duration),
+      inPoint: row.inPoint != null ? Number(row.inPoint) : undefined,
+      outPoint: row.outPoint != null ? Number(row.outPoint) : undefined,
       shotSize: row.shotSize,
       cameraAngle: row.cameraAngle,
       lens: row.lens,

@@ -216,8 +216,8 @@ export function buildCharacterPrompt(
  * 输出 JSON 数组，调用方直接物化为 scenes/shots（解析失败回落 parse_script）。
  */
 export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出任何解释文字，格式如下：
-[{"scene":"第一场 雨夜·外","shotSize":"wide","movement":"dolly","durationSeconds":4,"dialogue":"追！","visualPrompt":"黑衣人在雨夜街道狂奔，路灯拉出长影"}]
-shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov；durationSeconds 1-30整数；同 scene 字段的镜归为一场。`;
+[{"scene":"第一场 雨夜·外","shotSize":"wide","movement":"dolly","durationSeconds":8,"dialogue":"追！","visualPrompt":"黑衣人在雨夜街道狂奔，路灯拉出长影"}]
+shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov；durationSeconds 4-15整数：默认 8-10，动作/对白需要完整起承转合的镜头 10-12，快切/过渡 4-6；同 scene 字段的镜归为一场。`;
 
 export function buildBoardsPrompt(
   scriptText: string,
@@ -228,7 +228,7 @@ export function buildBoardsPrompt(
   const genre = genreRules ? `\n${genreRules}\n` : '';
   const durationRule =
     targetSeconds && targetSeconds > 0
-      ? `全片目标总时长约${Math.round(targetSeconds)}秒：镜数×单镜时长之和须接近该值（允许±10%），单镜 durationSeconds 建议 4-8。`
+      ? `全片目标总时长约${Math.round(targetSeconds)}秒：镜数×单镜时长之和须接近该值（允许±10%）。单镜默认 8-10 秒；动作/对白需要完整起承转合的镜头 10-12 秒；快切/过渡 4-6 秒；按内容选择，不要所有镜头同一时长。`
       : '';
   return (
     `你是资深分镜师，把剧本拆成可直接拍摄的分镜表。每场1个 establishing 镜 + 按需对白镜；单镜对白超20字必须拆；相邻镜景别错开。\n${styleBlock(style)}\n${genre}${durationRule}\n` +

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Asset } from '@shared/api.interface';
 import { assets as assetsApi } from '@client/src/api';
+import type { AssetPreviewMode } from './previewMode';
 
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return '—';
@@ -78,6 +79,11 @@ interface AssetPreviewModalProps {
   onNext?: () => void;
   /** 第几张 / 共几张 */
   position?: { index: number; total: number };
+  /**
+   * 预览模式：simple 只看媒体本身（默认）；detail 展示类型/大小/来源/模型/提示词。
+   * 由资产库顶部的「精简 / 详情」开关控制并持久到本机。
+   */
+  mode?: AssetPreviewMode;
 }
 
 const AssetPreviewModal = ({
@@ -90,12 +96,14 @@ const AssetPreviewModal = ({
   onPrev,
   onNext,
   position,
+  mode = 'simple',
 }: AssetPreviewModalProps) => {
   const [mediaFailed, setMediaFailed] = useState(false);
   const Icon = getTypeIcon(asset.assetType);
   const typeLabel = TYPE_LABELS[asset.assetType] || asset.assetType;
   const url = assetsApi.mediaUrl(asset);
   const canShowMedia = !!url && !mediaFailed;
+  const simple = mode === 'simple';
 
   // 键盘左右切换 + Esc 关闭（媒体地址变化时重置加载失败状态）
   useEffect(() => {
@@ -118,7 +126,9 @@ const AssetPreviewModal = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl overflow-hidden rounded-2xl bg-card shadow-2xl"
+        className={`w-full overflow-hidden rounded-2xl bg-card shadow-2xl ${
+          simple ? 'max-w-3xl' : 'max-w-2xl'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b p-4">
@@ -127,7 +137,7 @@ const AssetPreviewModal = ({
               {asset.name}
             </h3>
             <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-              {projectName && (
+              {!simple && projectName && (
                 <span className="inline-flex items-center gap-1">
                   <FolderKanban className="h-3 w-3" />
                   {projectName}
@@ -151,7 +161,7 @@ const AssetPreviewModal = ({
         <div
           className={`relative flex items-center justify-center bg-gradient-to-br ${getTypeGradient(
             asset.assetType,
-          )} min-h-[240px] aspect-video overflow-hidden`}
+          )} overflow-hidden aspect-video ${simple ? 'min-h-[320px]' : 'min-h-[240px]'}`}
         >
           {asset.assetType === 'image' && canShowMedia ? (
             <img
@@ -164,6 +174,7 @@ const AssetPreviewModal = ({
             <video
               src={url}
               controls
+              autoPlay
               playsInline
               className="max-h-full max-w-full"
               onError={() => setMediaFailed(true)}
@@ -206,61 +217,65 @@ const AssetPreviewModal = ({
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-4 p-5">
-          <div>
-            <div className="text-xs text-muted-foreground">类型</div>
-            <div className="mt-1 text-sm font-medium text-foreground">
-              {typeLabel}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground">大小</div>
-            <div className="mt-1 text-sm font-medium text-foreground">
-              {formatFileSize(asset.fileSize)}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground">来源</div>
-            <div className="mt-1 text-sm font-medium text-foreground">
-              {getSourceLabel(asset.sourceType)}
-              {asset.mock && (
-                <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-                  演示占位
-                </span>
+        {!simple && (
+          <>
+            <div className="grid grid-cols-3 gap-4 p-5">
+              <div>
+                <div className="text-xs text-muted-foreground">类型</div>
+                <div className="mt-1 text-sm font-medium text-foreground">
+                  {typeLabel}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">大小</div>
+                <div className="mt-1 text-sm font-medium text-foreground">
+                  {formatFileSize(asset.fileSize)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">来源</div>
+                <div className="mt-1 text-sm font-medium text-foreground">
+                  {getSourceLabel(asset.sourceType)}
+                  {asset.mock && (
+                    <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                      演示占位
+                    </span>
+                  )}
+                </div>
+              </div>
+              {asset.width && asset.height && (
+                <div>
+                  <div className="text-xs text-muted-foreground">分辨率</div>
+                  <div className="mt-1 text-sm font-medium text-foreground">
+                    {asset.width} × {asset.height}
+                  </div>
+                </div>
               )}
-            </div>
-          </div>
-          {asset.width && asset.height && (
-            <div>
-              <div className="text-xs text-muted-foreground">分辨率</div>
-              <div className="mt-1 text-sm font-medium text-foreground">
-                {asset.width} × {asset.height}
+              {asset.generationModel && (
+                <div>
+                  <div className="text-xs text-muted-foreground">生成模型</div>
+                  <div className="mt-1 text-sm font-medium text-foreground">
+                    {asset.generationModel}
+                  </div>
+                </div>
+              )}
+              <div>
+                <div className="text-xs text-muted-foreground">版本</div>
+                <div className="mt-1 text-sm font-medium text-foreground">
+                  v{asset.version}
+                </div>
               </div>
             </div>
-          )}
-          {asset.generationModel && (
-            <div>
-              <div className="text-xs text-muted-foreground">生成模型</div>
-              <div className="mt-1 text-sm font-medium text-foreground">
-                {asset.generationModel}
-              </div>
-            </div>
-          )}
-          <div>
-            <div className="text-xs text-muted-foreground">版本</div>
-            <div className="mt-1 text-sm font-medium text-foreground">
-              v{asset.version}
-            </div>
-          </div>
-        </div>
 
-        {asset.generationPrompt && (
-          <div className="border-t px-5 py-4">
-            <div className="text-xs text-muted-foreground">生成提示词</div>
-            <div className="mt-1 text-sm text-foreground">
-              {asset.generationPrompt}
-            </div>
-          </div>
+            {asset.generationPrompt && (
+              <div className="border-t px-5 py-4">
+                <div className="text-xs text-muted-foreground">生成提示词</div>
+                <div className="mt-1 text-sm text-foreground">
+                  {asset.generationPrompt}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         <div className="flex justify-end gap-2 border-t p-4">
@@ -273,8 +288,7 @@ const AssetPreviewModal = ({
           </button>
           <a
             href={url || '#'}
-            target="_blank"
-            rel="noreferrer"
+            download={asset.name || undefined}
             className={`flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 ${!url ? 'pointer-events-none opacity-50' : ''}`}
           >
             <Download className="h-4 w-4" />

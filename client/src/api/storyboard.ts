@@ -74,6 +74,12 @@ export const getShot = (projectId: string, shotId: string) =>
     .get<Shot>(`/api/projects/${projectId}/storyboard/shots/${shotId}`)
     .then((res) => res.data);
 
+/** 新建镜头（后端 POST /storyboard/shots 已存在）；时间线「撤销删除」用于重建镜头 */
+export const createShot = (projectId: string, data: Partial<Shot>) =>
+  axiosForBackend
+    .post<Shot>(`/api/projects/${projectId}/storyboard/shots`, data)
+    .then((res) => res.data);
+
 export const updateShot = (
   projectId: string,
   shotId: string,

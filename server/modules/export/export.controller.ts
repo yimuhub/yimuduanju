@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ExportService } from './export.service';
 import type { Asset } from '@shared/api.interface';
 
@@ -16,6 +17,24 @@ export class ExportController {
     @Body() _body?: Record<string, unknown>,
   ): Promise<{ asset: Asset; clips: number; durationSeconds: number }> {
     return this.exportService.assembleFinalVideo(projectId);
+  }
+
+  /**
+   * 媒体取流代理：浏览器端合成直接 fetch 远端 CDN 会被 CORS 拦截（Failed to fetch）。
+   * 前端把远端片段 URL 经此同源端点取流后再喂给 FFmpeg.wasm。仅放行本项目登记 URL + SSRF 守卫。
+   */
+  @Get('media')
+  async media(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query('url') url: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!url) throw new BadRequestException('缺少 url 参数');
+    const { buffer, mime } = await this.exportService.proxyProjectMedia(projectId, url);
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Content-Length', String(buffer.length));
+    res.end(buffer);
   }
 
   /** 字幕 SRT 文件下载 */

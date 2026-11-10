@@ -341,6 +341,9 @@ export const shots = pgTable("shots", {
   sceneId: uuid("scene_id").notNull(),
   shotNumber: integer("shot_number").notNull().default(1),
   duration: numeric("duration").default('4.0'),
+  // 线性剪辑（0015）：源媒体入/出点（秒）。NULL 语义：in=0，out=in+duration
+  inPoint: numeric("in_point"),
+  outPoint: numeric("out_point"),
   shotSize: varchar("shot_size", { length: 30 }).default('medium'),
   cameraAngle: varchar("camera_angle", { length: 30 }).default('eye_level'),
   lens: varchar("lens", { length: 20 }).default('50mm'),
@@ -637,3 +640,65 @@ export const agentRegistry = pgTable("agents", {
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+/* ================= 线性剪辑 EDL（migration 0016） =================
+ * 注意：schema.ts 标注为自动生成，若后续重新执行 gen:db-schema，
+ * 本段手工映射可能被覆盖，请检查（同 auditLogs 段的约定）。 */
+
+// 时间线文档：有行 = 项目已保存过 EDL（哪怕 0 条片段）；fps/画幅持久化在此
+export const timelineDocuments = pgTable("timeline_documents", {
+  projectId: uuid("project_id").primaryKey(),
+  fps: integer("fps").notNull().default(24),
+  width: integer("width").notNull().default(1080),
+  height: integer("height").notNull().default(1920),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdBy: userProfile("_created_by"),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedBy: userProfile("_updated_by"),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "timeline_documents_project_id_fkey",
+  }).onDelete("cascade"),
+]);
+export const timelineDocumentsTable = timelineDocuments;
+
+// EDL 片段：与生产 shots 解耦的剪辑决策表；有效时长 = (outPoint-inPoint)/speed
+export const timelineClips = pgTable("timeline_clips", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull(),
+  track: varchar("track", { length: 20 }).notNull().default('video'),
+  sourceShotId: uuid("source_shot_id"),
+  sourceUrl: text("source_url"),
+  inPoint: numeric("in_point").notNull().default('0'),
+  outPoint: numeric("out_point").notNull().default('0'),
+  timelineStart: numeric("timeline_start").notNull().default('0'),
+  // 同类型轨道内的分层（音频 0=对白/1=配乐/2=音效），不同 lane 可重叠
+  lane: integer("lane").notNull().default(0),
+  speed: numeric("speed").notNull().default('1'),
+  volume: numeric("volume").notNull().default('1'),
+  /**
+   * @type { type: 'none' | 'crossfade' | 'fade', duration: number } | null
+   */
+  transition: jsonb("transition"),
+  text: text("text"),
+  locked: boolean("locked").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdBy: userProfile("_created_by"),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedBy: userProfile("_updated_by"),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "timeline_clips_project_id_fkey",
+  }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.sourceShotId],
+    foreignColumns: [shots.id],
+    name: "timeline_clips_source_shot_id_fkey",
+  }).onDelete("set null"),
+]);
+export const timelineClipsTable = timelineClips;

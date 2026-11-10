@@ -1890,6 +1890,360 @@
   color: var(--brand);
 }
 
+/* ---------- 线性剪辑（P1 视图 / P2 编辑） ---------- */
+.tl-tools {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+.tl-tools .icon-btn:disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+.tl-tools .icon-btn.danger:hover {
+  color: var(--brand);
+  background: var(--brand-dim, rgba(229, 72, 77, 0.12));
+}
+.tl-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  margin: 0 4px;
+  flex: 0 0 1px;
+}
+.tl-zoom-pct {
+  min-width: 34px;
+  text-align: center;
+  font-size: 9.5px;
+  color: var(--fg-4);
+  letter-spacing: -0.02em;
+}
+.tl-fit {
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 2px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tl-fit:hover {
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+.tl-canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+.tl-tracks .ruler {
+  cursor: ew-resize;
+  user-select: none;
+}
+.tl-tracks .trk {
+  user-select: none;
+}
+.clip {
+  touch-action: none;
+  user-select: none;
+}
+.clip.dragging {
+  z-index: 9;
+  opacity: 0.88;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  cursor: grabbing;
+}
+.clip.trimming {
+  z-index: 9;
+  box-shadow: 0 0 0 1.5px var(--brand);
+}
+.tl-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  opacity: 0;
+  transition: opacity 120ms;
+  display: block;
+}
+.tl-handle.l {
+  left: 0;
+}
+.tl-handle.r {
+  right: 0;
+}
+.tl-handle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.85);
+}
+.tl-handle.l::after {
+  left: 2px;
+}
+.tl-handle.r::after {
+  right: 2px;
+}
+.clip.on .tl-handle {
+  opacity: 0.9;
+}
+.clip .tl-handle:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+.tl-sub-input {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--brand);
+  border-radius: 3px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 9px;
+  outline: none;
+  z-index: 10;
+}
+.playhead {
+  pointer-events: none;
+}
+.playhead-grip {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 9px;
+  height: 9px;
+  background: var(--brand);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* ---------- 多轨时间线：保存态 / 加轨菜单 / 片段删除 / 音频选择 ---------- */
+.tl-save {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 9.5px;
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+.tl-save.dirty {
+  color: #e5b04d;
+  border-color: rgba(229, 176, 77, 0.45);
+}
+.tl-save.busy {
+  color: var(--brand);
+  border-color: var(--brand-line, rgba(229, 72, 77, 0.45));
+}
+
+.tl-add {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.tl-add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 176px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.tl-add-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tl-add-menu button:hover {
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+.tl-add-menu .sep {
+  height: 1px;
+  margin: 3px 4px;
+  background: var(--line);
+}
+
+.clip .tl-clip-del {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  z-index: 5;
+  width: 14px;
+  height: 14px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+.clip:hover .tl-clip-del,
+.clip.on .tl-clip-del {
+  display: flex;
+}
+.clip .tl-clip-del:hover {
+  background: var(--brand);
+}
+
+.tl-empty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 16px;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+  color: var(--fg-4);
+  font-size: 11.5px;
+}
+.tl-empty em {
+  font-style: normal;
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.tl-picker-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+.tl-picker {
+  width: min(520px, 92vw);
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.tl-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--fg);
+}
+.tl-picker-head button {
+  display: flex;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.tl-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.tl-picker-row select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.tl-picker-row .num {
+  margin-left: auto;
+}
+.tl-picker-list {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tl-picker-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-picker-list button:hover {
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+.tl-picker-list .nm {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-picker-list .du {
+  color: var(--fg-4);
+}
+.tl-picker-list .empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--fg-4);
+  font-size: 11.5px;
+}
+
+/* 多轨时可纵向滚动兜底（正常高度会随轨道数自动撑开） */
+.tl-tracks {
+  overflow-y: auto;
+}
+
+
 /* ---------- 底：IDE 状态栏 ---------- */
 .statusbar {
   grid-area: status;
@@ -2306,6 +2660,42 @@
   inset: 8%;
   border: 1px dashed rgba(255, 255, 255, 0.09);
   border-radius: var(--r-sm);
+}
+.pv-subtitle {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  bottom: 8%;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #fff;
+  text-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.92),
+    0 0 2px rgba(0, 0, 0, 0.9);
+}
+.pv-gap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #000;
+  color: var(--fg-4);
+  font-size: 11.5px;
+}
+.pv-gap em {
+  font-style: normal;
+  font-size: 10px;
+  opacity: 0.7;
 }
 .pv-scan {
   position: absolute;

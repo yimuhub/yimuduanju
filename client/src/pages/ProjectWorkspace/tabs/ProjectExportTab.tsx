@@ -78,8 +78,8 @@ const ProjectExportTab = () => {
   } | null>(null);
   useEffect(() => {
     if (!id) return;
-    fetch(`/api/projects/${id}/export/manifest.json`)
-      .then((res) => (res.ok ? res.json() : null))
+    exportApi
+      .getManifest(id)
       .then((data) => setManifest(data))
       .catch(() => setManifest(null));
   }, [id, shots.length]);
@@ -134,10 +134,11 @@ const ProjectExportTab = () => {
     .filter((s) => s.videoUrl)
     .sort((a, b) => a.shotNumber - b.shotNumber)
     .map((s) => ({
-      url: s.videoUrl as string,
+      // 远端 CDN 片段经服务端同源代理取流，绕开浏览器 CORS（修复 "Failed to fetch"）
+      url: id ? exportApi.mediaProxyUrl(id, s.videoUrl as string) : (s.videoUrl as string),
       label: `镜头 #${s.shotNumber}`,
       durationSeconds: s.duration,
-      voiceUrl: s.voiceUrl,
+      voiceUrl: s.voiceUrl && id ? exportApi.mediaProxyUrl(id, s.voiceUrl) : s.voiceUrl,
     }));
 
   // P1-3 BGM：本地文件直入合成（objectURL，不经过服务器），配音默认按镜混入
@@ -322,7 +323,11 @@ const ProjectExportTab = () => {
                   href={item.disabled ? undefined : item.href}
                   aria-disabled={item.disabled}
                   onClick={(e) => {
-                    if (item.disabled) e.preventDefault();
+                    e.preventDefault();
+                    if (item.disabled || !item.href) return;
+                    exportApi.downloadDeliverable(item.href).catch(() => {
+                      toast.error(`${item.label} 下载失败`);
+                    });
                   }}
                   className={`flex items-start gap-3 rounded-lg border p-3 transition-colors ${
                     item.disabled

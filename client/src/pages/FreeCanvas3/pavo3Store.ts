@@ -39,6 +39,7 @@ export interface GenRunOptions {
   duration?: string; // 视频时长：4s / 8s / 12s / 15s / 30s
   mode?: string; // 视频模式：文生视频 / 全能参考 / 首尾帧
   res?: string; // 视频分辨率
+  onScreenText?: boolean; // 画面内是否生成字幕/文字，缺省 false
 }
 
 interface FreeCanvas3State {
@@ -206,7 +207,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
         type === 'image'
           ? { prompt: '', refs: [], refMode: false, ratio: '9:16', res: '1K', preset: '通用', count: 1 }
           : type === 'video'
-            ? { prompt: '', refs: [], refMode: false, ratio: '9:16', res: '720P', preset: '通用', count: 1, mode: '文生视频', duration: '4s' }
+            ? { prompt: '', refs: [], refMode: false, ratio: '9:16', res: '720P', preset: '通用', count: 1, mode: '文生视频', duration: '8s' }
             : undefined,
     };
     const node: PavoFlowNode = {
@@ -578,6 +579,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
             refs,
             style: style ? { name: style.name, prompt: style.prompt, negative: style.negative } : null,
             duration: opts?.duration ? parseInt(String(opts.duration), 10) || undefined : undefined,
+            onScreenText: opts?.onScreenText === true,
             projectId: activeProjectId,
             taskId: kind === 'video' ? existingTaskId : undefined,
           });
@@ -789,7 +791,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
             position: { x: 860, y: rowY },
             data: {
               nodeType: 'video',
-              title: `镜 #${sh.shotNumber} 视频 (${sh.duration ?? 4}s)`,
+              title: `镜 #${sh.shotNumber} 视频 (${sh.duration ?? 8}s)`,
               status: sh.videoUrl ? 'done' : 'idle',
               progress: sh.videoUrl ? 100 : 0,
               mediaUrl: sh.videoUrl,
@@ -804,7 +806,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
                 preset: '通用',
                 count: 1,
                 mode: '全能参考',
-                duration: `${Math.round(Number(sh.duration) || 4)}s`,
+                duration: `${Math.round(Number(sh.duration) || 8)}s`,
               },
             },
           });
@@ -909,7 +911,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
             position: { x: baseX + 400, y: rowY },
             data: {
               nodeType: 'video',
-              title: `镜 #${sh.shotNumber} 视频 (${Math.round(Number(sh.duration) || 4)}s)`,
+              title: `镜 #${sh.shotNumber} 视频 (${Math.round(Number(sh.duration) || 8)}s)`,
               status: sh.videoUrl ? 'done' : 'idle',
               progress: sh.videoUrl ? 100 : 0,
               mediaUrl: sh.videoUrl,
@@ -924,7 +926,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
                 preset: '通用',
                 count: 1,
                 mode: '全能参考',
-                duration: `${Math.round(Number(sh.duration) || 4)}s`,
+                duration: `${Math.round(Number(sh.duration) || 8)}s`,
               },
             },
           });

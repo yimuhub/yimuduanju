@@ -41,6 +41,7 @@
     "setup": "node scripts/setup.js"
   },
   "dependencies": {
+    "@ffmpeg/core": "0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@huggingface/transformers": "^4.3.0",
@@ -62,6 +63,7 @@
     "dotenv": "^17.2.2",
     "drizzle-orm": "0.44.6",
     "hbs": "^4.2.0",
+    "interactjs": "1.10.27",
     "ioredis": "^6.0.0",
     "postgres": "^3.4.5",
     "reflect-metadata": "^0.1.14",

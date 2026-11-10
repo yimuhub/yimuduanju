@@ -61,7 +61,7 @@ const CreateWizardPage = () => {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
   const [artStyle, setArtStyle] = useState<ArtStyle>('realistic');
   const [budgetMode, setBudgetMode] = useState<BudgetMode>('balanced');
-  const [shotDuration, setShotDuration] = useState(4);
+  const [shotDuration, setShotDuration] = useState(8);
   const [subtitleEnabled, setSubtitleEnabled] = useState(true);
   // 剧本技能总开关：一句话扩写 / 小说改编是否做吸引力改造（默认开）
   const [expandScript, setExpandScript] = useState(true);
@@ -209,7 +209,7 @@ const CreateWizardPage = () => {
   };
 
   // Professional mode params
-  const [shotCount, setShotCount] = useState(20);
+  const [shotCount, setShotCount] = useState(12);
   const [shotSizePref, setShotSizePref] = useState('mixed');
   const [cameraStyle, setCameraStyle] = useState('dynamic');
   const [voicePreset, setVoicePreset] = useState('warm_female');
