@@ -14,8 +14,14 @@
  */
 
 :root {
+  color-scheme: dark;
+
   --button-outline: rgba(255, 255, 255, 0.12);
   --badge-outline: rgba(255, 255, 255, 0.06);
+
+  /* 统一 Switch 关态 track（见 components/ui/switch.tsx；浅色主题在下方覆盖） */
+  --switch-off-bg: rgba(255, 255, 255, 0.1);
+  --switch-off-border: rgba(255, 255, 255, 0.1);
 
   /* Automatic computation of border around primary / danger buttons */
   --opaque-button-border-intensity: -8;
@@ -380,4 +386,188 @@ body {
 .pill-neutral {
   background: rgba(255, 255, 255, 0.06);
   color: var(--fg-3);
+}
+
+/* ============================================================
+ *  浅色主题（html[data-theme='light']，设置 → 偏好「外观」切换）
+ *  ------------------------------------------------------------
+ *  只覆盖 graphite.css 的物理 token（--bg/--fg/--line…）：桥接层
+ *  的 shadcn 变量全部是 var() 反向引用，token 一换全站自动适配。
+ *  品牌红在浅底上略加深保证对比；语义色同步加深；白系叠加
+ *  （hover 描边 / pill 底 / 画布点阵）翻转成黑系叠加。
+ * ============================================================ */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  /* ---------- 面（浅底层级：越靠前越白） ---------- */
+  --bg: #f4f4f6;
+  --bg-inset: #ececef;
+  --bg-rail: #efeff1;
+  --bg-panel: #ffffff;
+  --bg-float: #fafafa;
+  --bg-hover: #e9e9ec;
+
+  /* ---------- 线 ---------- */
+  --line: rgba(17, 20, 24, 0.09);
+  --line-strong: rgba(17, 20, 24, 0.16);
+  --line-inset: rgba(17, 20, 24, 0.1);
+
+  /* ---------- 字 ---------- */
+  --fg: #1b1d21;
+  --fg-2: #444a52;
+  --fg-3: #6a7079;
+  --fg-4: #979da6;
+
+  /* ---------- 品牌红（浅底加深一档保证对比） ---------- */
+  --brand: #d93a3f;
+  --brand-hi: #c02e33;
+  --brand-soft: rgba(217, 58, 63, 0.1);
+  --brand-line: rgba(217, 58, 63, 0.34);
+
+  /* ---------- 语义色（浅底加深） ---------- */
+  --ok: #2f9e44;
+  --warn: #a5761c;
+  --blue: #3576b8;
+  --steel: #9cb7ce;
+
+  /* ---------- 开关关态 / 桥接层自持变量 ---------- */
+  --switch-off-bg: rgba(17, 20, 24, 0.08);
+  --switch-off-border: rgba(17, 20, 24, 0.14);
+  --button-outline: rgba(17, 20, 24, 0.16);
+  --badge-outline: rgba(17, 20, 24, 0.08);
+  --elevate-1: rgba(17, 20, 24, 0.04);
+  --elevate-2: rgba(17, 20, 24, 0.08);
+
+  /* 圆角 / 字体 / radius 桥接层不随主题变化，无需覆盖 */
+}
+
+/* ---------- 浅色下白系叠加翻转（graphite.css 硬编码的 rgba 白） ---------- */
+html[data-theme='light'] .pill-neutral {
+  background: rgba(17, 20, 24, 0.05);
+}
+html[data-theme='light'] .sb {
+  background: rgba(17, 20, 24, 0.045);
+}
+html[data-theme='light'] .btn:hover {
+  border-color: rgba(17, 20, 24, 0.22);
+}
+html[data-theme='light'] .rail-toggle:hover,
+html[data-theme='light'] .dock-toggle:hover {
+  border-color: rgba(17, 20, 24, 0.24);
+}
+html[data-theme='light'] .pipe-row:hover {
+  background: rgba(17, 20, 24, 0.03);
+}
+html[data-theme='light'] .pipe-step.open > .pipe-row {
+  background: rgba(17, 20, 24, 0.035);
+}
+html[data-theme='light'] .cv-viewport {
+  background-image: radial-gradient(circle, rgba(17, 20, 24, 0.14) 1px, transparent 1px);
+}
+html[data-theme='light'] .cv-band {
+  background: rgba(17, 20, 24, 0.02);
+}
+html[data-theme='light'] .cv-node:hover {
+  border-color: rgba(17, 20, 24, 0.22);
+}
+html[data-theme='light'] .cv-ntop::after {
+  border-color: rgba(17, 20, 24, 0.16);
+  background: rgba(17, 20, 24, 0.03);
+}
+html[data-theme='light'] .nav-i.on {
+  color: var(--brand-hi);
+}
+html[data-theme='light'] .nav-badge.hot {
+  color: var(--brand-hi);
+}
+html[data-theme='light'] .cbox,
+html[data-theme='light'] .result {
+  box-shadow: none;
+}
+html[data-theme='light'] .frame::after {
+  box-shadow: inset 0 0 0 1px rgba(17, 20, 24, 0.04);
+}
+html[data-theme='light'] .turn-b code {
+  color: var(--fg-2);
+}
+html[data-theme='light'] .tool-log .v {
+  color: #3d6a94;
+}
+html[data-theme='light'] .tool-log .g {
+  color: #2f9e44;
+}
+html[data-theme='light'] .pipe-error {
+  color: var(--brand-hi);
+}
+html[data-theme='light'] .tl-add-menu,
+html[data-theme='light'] .tl-picker {
+  box-shadow: 0 12px 32px rgba(17, 20, 24, 0.16);
+}
+html[data-theme='light'] .clip.pending {
+  background: repeating-linear-gradient(45deg, #e4e4e7 0 3px, #dddddf 3px 6px);
+}
+
+/* ---------- 浅色下的状态胶囊（.pill 语义色板压暗一档） ---------- */
+html[data-theme='light'] .pill-run {
+  background: rgba(53, 118, 184, 0.12);
+  color: #2b6cb0;
+}
+html[data-theme='light'] .pill-ok {
+  background: rgba(47, 158, 68, 0.12);
+  color: #1e7d33;
+}
+html[data-theme='light'] .pill-wait {
+  background: rgba(145, 92, 10, 0.12);
+  color: #915c0a;
+}
+html[data-theme='light'] .pill-fail {
+  background: rgba(211, 49, 54, 0.12);
+  color: #c0292e;
+}
+
+/* ---------- 浅色下的低对比文字修复 ----------
+ * 300/400 档彩色文字是按深色底设计的；浅色底上压暗一档保证可读。
+ * 只动 color，不影响深色主题（html[data-theme='light'] 选择器隔离）。 */
+html[data-theme='light'] .text-red-300 {
+  color: #c0292e;
+}
+html[data-theme='light'] .text-red-400 {
+  color: #d33136;
+}
+html[data-theme='light'] .text-amber-300,
+html[data-theme='light'] .text-amber-400 {
+  color: #915c0a;
+}
+html[data-theme='light'] .text-emerald-300,
+html[data-theme='light'] .text-emerald-400,
+html[data-theme='light'] .text-green-300,
+html[data-theme='light'] .text-green-400 {
+  color: #1e7d33;
+}
+html[data-theme='light'] .text-blue-300,
+html[data-theme='light'] .text-blue-400 {
+  color: #2b6cb0;
+}
+html[data-theme='light'] .text-sky-300,
+html[data-theme='light'] .text-sky-400 {
+  color: #2570a8;
+}
+html[data-theme='light'] .text-purple-300,
+html[data-theme='light'] .text-purple-500 {
+  color: #7a3aa8;
+}
+
+/* ---------- 主题切换的平滑过渡 ----------
+ * 仅在切换瞬间（html.theme-switching，由 lib/theme.ts 加 220ms 后移除）
+ * 对底色/描边/文字做过渡；不常驻，避免劫持组件自身的 width/transform 过渡。 */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    fill 180ms ease,
+    stroke 180ms ease !important;
 }

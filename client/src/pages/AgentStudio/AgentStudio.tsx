@@ -23,6 +23,7 @@ import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@sh
 import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
 import TriPane from '@client/src/components/TriPane';
 import WorkspaceRightDock from '@client/src/components/workspace/WorkspaceRightDock';
+import SidebarUserCard from '@client/src/components/SidebarUserCard';
 import {
   useWorkspaceTabs,
   WORKSPACE_PAGES,
@@ -30,13 +31,6 @@ import {
 } from '@client/src/components/workspace/WorkspaceTabsContext';
 import { OPEN_SESSION_EVENT } from '@client/src/components/workspace/CommandPalette';
 import { readUIMode, switchUIMode } from '@client/src/lib/uiMode';
-import {
-  getAvatarInitial,
-  getNickname,
-  NICKNAME_CHANGE_EVENT,
-  TIER_LABEL,
-} from '@client/src/lib/identity';
-import { APP_VERSION } from '@client/src/lib/version';
 
 /**
  * 创作作战室（首页 · Agent 三段式 · AI-EOS 极客模式结构）
@@ -151,21 +145,12 @@ const AgentStudio = () => {
   const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  // 用户卡昵称：单一来源 lib/identity（AccountPage 改昵称后通过事件同步）
-  const [nickname, setNickname] = useState(getNickname);
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? sessions[0],
     [sessions, activeId],
   );
   useEffect(() => { if (!active) setActiveId(sessions[0]?.id ?? ''); }, [active, sessions]);
-
-  // 昵称变更广播：AccountPage 保存后实时同步本页用户卡
-  useEffect(() => {
-    const onNicknameChange = () => setNickname(getNickname());
-    window.addEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
-    return () => window.removeEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
-  }, []);
 
   // 风格中心「以此风格开拍」深链：携带 stylePrompt 落地后回填输入框并清掉 state（防刷新重复回填）
   useEffect(() => {
@@ -175,7 +160,7 @@ const AgentStudio = () => {
       toast.success(`已带入「${state.styleName ?? '所选风格'}」提示词，补充题材细节后即可开拍`);
       navigate('/', { replace: true, state: null });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // 旧路由 / 画布悬浮导航深链：携带 openTab 落地后在右栏打开对应功能签，并清掉 state（防刷新重复开签）
@@ -185,7 +170,7 @@ const AgentStudio = () => {
       openTab(state.openTab);
       navigate('/', { replace: true, state: null });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // ⌘K 命令面板选中会话：监听全局事件并激活对应会话
@@ -615,8 +600,8 @@ const AgentStudio = () => {
         onClick={() => setActiveId(s.id)}
         className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
           s.id === active?.id
-            ? 'bg-primary/10 text-foreground'
-            : 'text-foreground/75 hover:bg-sidebar-accent'
+            ? 'bg-primary/10 font-medium text-primary'
+            : 'text-foreground/75 hover:bg-sidebar-accent hover:text-foreground'
         }`}
       >
         <span className="block truncate pr-6 font-medium">{s.title}</span>
@@ -672,7 +657,8 @@ const AgentStudio = () => {
         <div className="flex-1 overflow-y-auto p-2">
           {groups.map(([label, list]) => (
             <div key={label} className="mb-2">
-              <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
+              {/* 分组微标签：与经典侧栏导航分组统一（text-[11px] medium uppercase） */}
+              <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-sidebar-foreground/40">{label}</div>
               <div className="space-y-0.5">{list.map(sessionBtn)}</div>
             </div>
           ))}
@@ -692,23 +678,12 @@ const AgentStudio = () => {
               </button>
             ))}
           </div>
-          {/* 用户卡 + 界面模式切换（仅极客模式显示「经典模式」入口）。
+          {/* 用户卡（共享组件）+ 界面模式切换（仅极客模式显示「经典模式」入口）。
               点击用户卡进用户中心：极客模式无 /account 整页路由，走旧路由兼容
               （回首页并在右栏自动打开「用户中心」功能签），与经典侧栏用户卡行为一致 */}
-          <button
-            onClick={() => navigate('/account')}
-            title={`${nickname} · 进入用户中心`}
-            className="mt-1.5 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-sidebar-accent"
-          >
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-xs font-semibold text-white">
-              {getAvatarInitial(nickname)}
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-xs font-medium text-sidebar-foreground">{nickname}</div>
-              <div className="truncate text-[10px] text-sidebar-foreground/50">{TIER_LABEL}</div>
-            </div>
-            <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="在线" />
-          </button>
+          <div className="mt-1.5">
+            <SidebarUserCard size="sm" />
+          </div>
           {isGeekMode && (
             <button
               onClick={() => switchUIMode('classic', '/projects')}
@@ -717,11 +692,6 @@ const AgentStudio = () => {
             >
               <PanelLeft className="h-3.5 w-3.5 shrink-0" /> 经典模式
             </button>
-          )}
-          {APP_VERSION && (
-            <div className="pt-1 text-center text-[10px] text-sidebar-foreground/30" title={APP_VERSION}>
-              v{APP_VERSION}
-            </div>
           )}
         </div>
         </aside>

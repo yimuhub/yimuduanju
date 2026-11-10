@@ -39,6 +39,7 @@ import { classifyModelId, MODEL_FIELD_GUIDE, MODEL_KIND_LABELS, type ModelKind }
 import { FREE_AGNES_MODELS, isFreeAgnesModel } from '@shared/agnes';
 import { toast } from 'sonner';
 import { showConfirm } from '@client/src/components/ui/confirm';
+import { Switch } from '@client/src/components/ui/switch';
 
 const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
   volcengine_ark: '火山引擎方舟',
@@ -133,7 +134,7 @@ const ProviderKeysManager = ({ providerId }: { providerId: string }) => {
 
   useEffect(() => {
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [providerId]);
 
   const handleAdd = async () => {
@@ -618,21 +619,12 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      onClick={() =>
-                        handleToggleEnabled(provider.id, !provider.enabled)
-                      }
+                    <Switch
+                      checked={provider.enabled}
+                      onChange={(next) => handleToggleEnabled(provider.id, next)}
                       title={provider.enabled ? '停用该供应商' : '启用该供应商'}
-                      className={`relative h-6 w-11 rounded-full transition-colors ${
-                        provider.enabled ? 'bg-primary' : 'bg-muted'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
-                          provider.enabled ? 'translate-x-5' : 'translate-x-0.5'
-                        }`}
-                      />
-                    </button>
+                      aria-label={`启用供应商 ${provider.name}`}
+                    />
                     <button
                       onClick={() => openEditModal(provider)}
                       title="编辑"
@@ -1182,21 +1174,13 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     新建任务时优先使用此 Provider
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFormData((p) => ({ ...p, isDefault: !p.isDefault }))
+                <Switch
+                  checked={formData.isDefault}
+                  onChange={(next) =>
+                    setFormData((p) => ({ ...p, isDefault: next }))
                   }
-                  className={`relative h-6 w-11 rounded-full transition-colors ${
-                    formData.isDefault ? 'bg-primary' : 'bg-muted'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
-                      formData.isDefault ? 'translate-x-5' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
+                  aria-label="设为默认 Provider"
+                />
               </div>
 
               {testResult && (

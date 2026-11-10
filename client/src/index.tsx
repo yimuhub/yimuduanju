@@ -7,6 +7,10 @@ import RoutesComponent from './app.tsx';
 import './index.css';
 import { createPortal } from 'react-dom';
 import { Toaster } from '@client/src/components/ui/sonner';
+import { initTheme } from '@client/src/lib/theme';
+
+// 渲染前同步应用外观主题（html data-theme），避免首帧闪色
+initTheme();
 
 /**
  * 一幕·YIMU AI 短剧创作平台应用入口（已去平台化）。

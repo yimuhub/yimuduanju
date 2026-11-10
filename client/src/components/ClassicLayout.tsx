@@ -1,20 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ConfirmHost } from '@client/src/components/ui/confirm';
 import CommandPalette from '@client/src/components/workspace/CommandPalette';
 import ClassicRightDock from '@client/src/components/ClassicRightDock';
+import CanvasFloatingNav from '@client/src/components/CanvasFloatingNav';
+import SidebarUserCard from '@client/src/components/SidebarUserCard';
 import {
   WorkspaceTabsProvider,
-  WORKSPACE_PAGES,
 } from '@client/src/components/workspace/WorkspaceTabsContext';
 import { switchUIMode } from '@client/src/lib/uiMode';
-import {
-  getAvatarInitial,
-  getNickname,
-  TIER_LABEL,
-  NICKNAME_CHANGE_EVENT,
-} from '@client/src/lib/identity';
-import { APP_VERSION } from '@client/src/lib/version';
 import {
   LayoutDashboard,
   FolderKanban,
@@ -121,13 +115,7 @@ const ClassicLayout = () => {
   const isStudioHome = pathParts.length === 0;
   // /projects 页内已有搜索（工具条），顶栏搜索同视图重复 → 该路由下隐藏
   const isProjectsRoute = pathParts[0] === 'projects';
-  // 用户身份单一来源（lib/identity）；Layout 不随路由重挂载，监听昵称变更事件实时同步
-  const [nickname, setNickname] = useState(getNickname);
-  useEffect(() => {
-    const onNicknameChange = () => setNickname(getNickname());
-    window.addEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
-    return () => window.removeEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
-  }, []);
+  // 用户身份单一来源（lib/identity 的 useNickname hook，与极客左栏用户卡共享）
 
   // P1 移动端：抽屉式侧边栏，小屏默认收起
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -241,26 +229,9 @@ const ClassicLayout = () => {
           <MonitorCog className="h-4 w-4 shrink-0" />
           {!sidebarCollapsed && <span>极客模式</span>}
         </button>
-        <button
-          onClick={() => navigate('/account')}
-          title={sidebarCollapsed ? nickname : undefined}
-          className={`mt-1 flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-sidebar-accent ${sidebarCollapsed ? 'justify-center' : ''}`}
-        >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-sm font-semibold text-primary-foreground">
-            {getAvatarInitial(nickname)}
-          </div>
-          {!sidebarCollapsed && (
-            <div className="flex-1 overflow-hidden">
-              <div className="truncate text-sm font-medium text-sidebar-foreground">{nickname}</div>
-              <div className="truncate text-xs text-sidebar-foreground/60">{TIER_LABEL}</div>
-            </div>
-          )}
-        </button>
-        {!sidebarCollapsed && APP_VERSION && (
-          <div className="mt-1 text-center text-[10px] text-sidebar-foreground/30" title={APP_VERSION}>
-            v{APP_VERSION}
-          </div>
-        )}
+        <div className="mt-1">
+          <SidebarUserCard size="md" collapsed={sidebarCollapsed} />
+        </div>
         <button
           onClick={toggleSidebar}
           className={`mt-1 hidden w-full items-center gap-3 rounded-lg px-2 py-2 text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground lg:flex ${sidebarCollapsed ? 'justify-center' : ''}`}
@@ -285,6 +256,7 @@ const ClassicLayout = () => {
             }}
           />
         )}
+
 
         {/* 画布全屏沉浸：只渲染画布路由本体（Outlet），不渲染侧栏 / 顶栏 / 助手坞。
             P1 修复：此前画布路由下直接跳过 Outlet，经典模式进入 /project/:id/canvas-free3 白屏。 */}
@@ -422,64 +394,6 @@ const ClassicLayout = () => {
         <CommandPalette />
       </div>
     </WorkspaceTabsProvider>
-  );
-};
-
-/** 画布全屏沉浸：左上角品牌圆钮 + 全部导航浮层（经典模式下点击整页导航） */
-const CanvasFloatingNav = ({ onNavigate }: { onNavigate: (to: string) => void }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="fixed left-4 top-4 z-[1002] flex h-12 w-12 items-center justify-center rounded-full bg-brand-gradient text-white shadow-lg shadow-black/25 transition-transform hover:scale-105"
-        aria-label={open ? '关闭导航菜单' : '打开导航菜单'}
-        title="导航菜单"
-      >
-        {open ? <X className="h-5 w-5" /> : <Clapperboard className="h-5 w-5" />}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-[1000]" onClick={() => setOpen(false)} />
-          <div className="fixed left-4 top-[72px] z-[1001] max-h-[calc(100vh-96px)] w-60 overflow-y-auto rounded-2xl border border-border bg-card py-2 shadow-2xl">
-            <div className="px-4 pb-1.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">导航菜单</div>
-            <button
-              onClick={() => {
-                setOpen(false);
-                onNavigate('/');
-              }}
-              className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            >
-              <Sparkles className="h-[18px] w-[18px] shrink-0" /> 创作作战室
-            </button>
-            {WORKSPACE_PAGES.map((item) => (
-              <button
-                key={item.key}
-                onClick={() => {
-                  setOpen(false);
-                  onNavigate(`/${item.key}`);
-                }}
-                className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <item.icon className="h-[18px] w-[18px] shrink-0" />
-                <span>{item.title}</span>
-              </button>
-            ))}
-            <div className="mt-1 border-t border-border pt-1">
-              <button
-                onClick={() => {
-                  setOpen(false);
-                  onNavigate('/create');
-                }}
-                className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <Wand2 className="h-[18px] w-[18px] shrink-0" /> 一键创作
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-    </>
   );
 };
 

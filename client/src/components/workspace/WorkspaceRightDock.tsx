@@ -91,26 +91,28 @@ const WorkspaceRightDock = ({ outputView }: WorkspaceRightDockProps) => {
 
   return (
     <aside className="flex h-full min-h-0 w-full min-w-0 flex-col border-l border-sidebar-border bg-sidebar">
-      {/* 标签页条（类浏览器：横向滚动 + 固定 + 号） */}
+      {/* 标签页条（类浏览器：横向滚动 + 固定 + 号）
+          页签样式与经典模式 ClassicRightDock 统一：rounded-lg 胶囊 · 12px 字 ·
+          激活 bg-primary/10 + 品牌红字（Studio 视觉节奏，极客/经典同款不漂移） */}
       <div className="flex h-10 shrink-0 items-stretch border-b border-sidebar-border">
-        <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto dock-tabs-scroll">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1.5 dock-tabs-scroll">
           {tabs.map((t) => {
             const active = t.key === activeKey;
             const closable = t.key !== OUTPUT_TAB.key;
             return (
               <div
                 key={t.key}
-                className={`group/tab flex shrink-0 items-center gap-1.5 border-r border-sidebar-border pl-3 pr-2 text-xs transition-colors ${
-                  active
-                    ? 'bg-background font-medium text-foreground'
-                    : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-                }`}
+                className="group/tab flex shrink-0 items-center"
               >
                 <button
                   type="button"
                   onClick={() => setActiveKey(t.key)}
-                  className="flex items-center gap-1.5 py-2"
                   title={t.title}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                    active
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                  }`}
                 >
                   <t.icon className="h-3.5 w-3.5 shrink-0" />
                   <span className="whitespace-nowrap">{t.title}</span>
@@ -120,7 +122,7 @@ const WorkspaceRightDock = ({ outputView }: WorkspaceRightDockProps) => {
                     type="button"
                     onClick={() => closeTab(t.key)}
                     aria-label={`关闭 ${t.title}`}
-                    className={`rounded p-0.5 transition-opacity hover:bg-muted hover:text-foreground ${
+                    className={`-ml-0.5 rounded p-0.5 transition-opacity hover:bg-muted hover:text-foreground ${
                       active ? 'opacity-60' : 'opacity-0 group-hover/tab:opacity-60'
                     }`}
                   >

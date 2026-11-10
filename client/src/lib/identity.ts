@@ -9,6 +9,8 @@
  * NICKNAME_CHANGE_EVENT 广播，同页挂载的组件可监听实时同步。
  */
 
+import { useEffect, useState } from 'react';
+
 export const NICKNAME_KEY = 'yimu.account.nickname';
 
 /** 同文档昵称变更广播事件（storage 事件只在跨 tab 触发，同页用自定义事件） */
@@ -40,4 +42,18 @@ export function setNickname(nickname: string) {
 /** 头像首字：取昵称首字符，兜底 AVATAR_INITIAL（全站统一展示） */
 export function getAvatarInitial(nickname?: string): string {
   return (nickname || getNickname() || AVATAR_INITIAL).slice(0, 1);
+}
+
+/**
+ * 昵称订阅 hook：挂载读档 + 监听 NICKNAME_CHANGE_EVENT 实时同步。
+ * 经典侧栏用户卡 / 极客左栏用户卡等共用，替代各处手写的 useState + useEffect 监听块。
+ */
+export function useNickname(): string {
+  const [nickname, setNicknameState] = useState(getNickname);
+  useEffect(() => {
+    const onNicknameChange = () => setNicknameState(getNickname());
+    window.addEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
+    return () => window.removeEventListener(NICKNAME_CHANGE_EVENT, onNicknameChange);
+  }, []);
+  return nickname;
 }
