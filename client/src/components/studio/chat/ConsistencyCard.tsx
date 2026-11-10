@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ImagePlus, Loader2, Lock, MapPin, RefreshCw, Users } from 'lucide-react';
+import { ImagePlus, Loader2, Lock, MapPin, RefreshCw, Sparkles, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
-import { generateLocationImage, listCharacters, listLocations } from '@client/src/api/bible';
+import { generateBible, generateLocationImage, listCharacters, listLocations } from '@client/src/api/bible';
 import { generateCharacterSheet } from '@client/src/api/storyboard';
 import type { Character, GenerationJob, Location } from '@shared/api.interface';
 
@@ -25,6 +25,15 @@ export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [bulk, setBulk] = useState(false);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  const [genBusy, setGenBusy] = useState(false);
+  const [bibleStamp, setBibleStamp] = useState(0);
+
+  // 圣经页新增人物/场景、上传参考图后即时同步（jobs 不会变化，不能只依赖 stamp）
+  useEffect(() => {
+    const onUpdate = () => setBibleStamp((v) => v + 1);
+    window.addEventListener('yimu:bible-updated', onUpdate);
+    return () => window.removeEventListener('yimu:bible-updated', onUpdate);
+  }, []);
 
   // 角色/场景图任务有进展时重拉参考图，生成完自动出现在卡里
   const stamp = useMemo(() => {
@@ -58,7 +67,7 @@ export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
     return () => {
       alive = false;
     };
-  }, [projectId, stamp]);
+  }, [projectId, stamp, bibleStamp]);
 
   const missingChars = chars.filter((c) => c.referenceImageUrls.length === 0);
   const missingLocs = locs.filter((l) => l.referenceImageUrls.length === 0);
@@ -115,8 +124,59 @@ export const ConsistencyCard = ({ projectId, jobs }: ConsistencyCardProps) => {
     if (ok < results.length) toast.error(`${results.length - ok} 个任务提交失败，请检查预算与 Provider`);
   };
 
-  if (!loaded && total === 0) return null;
-  if (total === 0) return null;
+  /** 空态直达生成：剧本分析后人物/场景一直为空，就是因为没有人把它们写进设定表 */
+  const runGenerate = async () => {
+    if (genBusy) return;
+    setGenBusy(true);
+    try {
+      const res = await generateBible(projectId, { mode: 'fill' });
+      setChars(res.characters);
+      setLocs(res.locations);
+      setLoaded(true);
+      window.dispatchEvent(new Event('yimu:bible-updated'));
+      toast.success(
+        res.source === 'llm'
+          ? '制作圣经已生成，人物与场景已就位'
+          : '已生成人物与场景草稿，请到圣经页复核',
+      );
+    } catch (e) {
+      toast.error(`生成失败：${(e as Error).message}`);
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  if (!loaded) return null;
+  if (total === 0) {
+    return (
+      <section className="cons">
+        <div className="cons-head">
+          <div className="cons-title">
+            <Users className="ico" />
+            人物 &amp; 场景一致性
+          </div>
+          <div className="cons-count">尚未建立设定</div>
+        </div>
+        <div className="cons-blank">
+          <span className="cons-blank-ico"><Sparkles className="ico" /></span>
+          <b>还没有人物和场景设定</b>
+          <p>
+            剧本分析后，制作圣经会自动识别出场人物与场景；这里是全片人物形象一致性的起点，
+            建议先生成并绑定参考图，再出首帧。
+          </p>
+          <div className="cons-blank-acts">
+            <button type="button" className="btn pri" onClick={() => void runGenerate()} disabled={genBusy}>
+              {genBusy ? <Loader2 className="ico spin" /> : <Sparkles className="ico" />}
+              {genBusy ? '生成中…' : 'AI 生成制作圣经'}
+            </button>
+            <button type="button" className="btn" onClick={() => navigate(`/project/${projectId}/bible`)}>
+              打开圣经
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const item = (
     key: string,

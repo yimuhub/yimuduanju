@@ -280,6 +280,14 @@ export const StudioChat = () => {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [approvingStage, setApprovingStage] = useState<GateStage | null>(null);
   const [refStats, setRefStats] = useState<{ ready: number; total: number } | null>(null);
+  const [bibleStamp, setBibleStamp] = useState(0);
+
+  // 圣经页生成/编辑人物与场景后即时刷新门控进度（jobs 不变时 refStamp 不会动）
+  useEffect(() => {
+    const onUpdate = () => setBibleStamp((v) => v + 1);
+    window.addEventListener('yimu:bible-updated', onUpdate);
+    return () => window.removeEventListener('yimu:bible-updated', onUpdate);
+  }, []);
 
   // 分镜门放行前先看清人物/场景定妆进度：参考图没到位就出首帧，人物一致性会明显变差
   const refStamp = useMemo(() => {
@@ -314,7 +322,7 @@ export const StudioChat = () => {
     return () => {
       alive = false;
     };
-  }, [projectId, refStamp]);
+  }, [projectId, refStamp, bibleStamp]);
 
   if (!projectId) return <StudioHome openNewWork={openNewWork} />;
 

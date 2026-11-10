@@ -14,6 +14,7 @@ import type {
   Location,
   WorldView,
   StyleBible,
+  GenerateBibleResponse,
 } from '@shared/api.interface';
 import { BibleService } from './bible.service';
 import {
@@ -21,6 +22,7 @@ import {
   CreateLocationDto,
   UpdateCharacterDto,
   UpdateLocationDto,
+  GenerateBibleDto,
 } from './dto';
 
 @Controller('api/projects/:projectId/bible')
@@ -131,6 +133,15 @@ export class BibleController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<{ jobId: string }> {
     return this.bibleService.generateLocationImage(projectId, id);
+  }
+
+  // ========== AI 一键生成完整制作圣经 ==========
+  @Post('generate')
+  async generateBible(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: GenerateBibleDto,
+  ): Promise<GenerateBibleResponse> {
+    return this.bibleService.generateBible(projectId, body);
   }
 
   // ========== Worldview ==========

@@ -288,6 +288,37 @@ export interface UpdateLocationRequest {
   locked?: boolean;
 }
 
+/**
+ * 一键生成制作圣经。
+ * 剧本来源优先级：请求体 scriptText → projects.scriptText → scenes 汇总 → projects.description。
+ * fill（默认）只补空白，保护用户已编辑内容与 locked 设定；overwrite 覆盖文本字段。
+ */
+export interface GenerateBibleRequest {
+  scriptText?: string;
+  mode?: 'fill' | 'overwrite';
+  providerName?: string;
+}
+
+export interface GenerateBibleCounts {
+  worldViewFields: number;
+  styleFields: number;
+  charactersCreated: number;
+  charactersUpdated: number;
+  locationsCreated: number;
+  locationsUpdated: number;
+}
+
+export interface GenerateBibleResponse {
+  worldView: WorldView;
+  styleBible: StyleBible;
+  characters: Character[];
+  locations: Location[];
+  counts: GenerateBibleCounts;
+  /** llm = 模型生成；fallback = 无 Key / 模型失败时的确定性草稿 */
+  source: 'llm' | 'fallback';
+  note?: string;
+}
+
 export interface Scene {
   id: string;
   projectId: string;

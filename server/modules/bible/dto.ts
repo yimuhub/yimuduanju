@@ -7,6 +7,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -191,4 +192,22 @@ export class UpdateLocationDto {
 
   @IsOptional()
   locked?: boolean;
+}
+
+/** 一键生成制作圣经：不传 scriptText 时服务端自行解析项目剧本 */
+export class GenerateBibleDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(30000)
+  scriptText?: string;
+
+  /** fill = 只补空白（默认）；overwrite = 覆盖已有文本 */
+  @IsOptional()
+  @IsIn(['fill', 'overwrite'])
+  mode?: 'fill' | 'overwrite';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  providerName?: string;
 }

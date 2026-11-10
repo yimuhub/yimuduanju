@@ -8326,3 +8326,802 @@ select.nw-input {
 @keyframes yimu-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ============================================================
+   制作圣经 · .bi-* 设计系统
+   ------------------------------------------------------------
+   容器驱动（.bi-root 自身是 container），标准 548px 单列、
+   ≥700px 双列字段与卡片。层级靠发丝线 + 底色深浅差。
+   ============================================================ */
+.bi-root {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 30px;
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.dp-content > .bi-root {
+  padding: 0 0 12px;
+}
+.bi-root *,
+.bi-root *::before,
+.bi-root *::after {
+  box-sizing: border-box;
+}
+.bi-root button,
+.bi-root input,
+.bi-root textarea,
+.bi-root select {
+  font-family: inherit;
+}
+.bi-root button {
+  cursor: pointer;
+}
+.bi-root button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bi-root .num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.bi-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 4px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+
+/* ---------- 头部 ---------- */
+.bi-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+}
+.bi-hero-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bi-hero-ico {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+}
+.bi-hero-txt {
+  min-width: 0;
+  flex: 1;
+}
+.bi-hero-txt h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+.bi-hero-txt p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.bi-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--fg-2);
+  transition: color var(--t), border-color var(--t);
+}
+.bi-icon-btn:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+.bi-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.bi-progress-line {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+.bi-progress-line span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--brand);
+  transition: width 320ms var(--ease);
+}
+.bi-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.bi-progress-meta b {
+  font-size: 12px;
+  color: var(--fg);
+}
+.bi-progress-meta span {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+.bi-hero-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.bi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--fg-2);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color var(--t), border-color var(--t), background var(--t);
+}
+.bi-btn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--line-strong);
+  background: var(--bg-hover);
+}
+.bi-btn.primary {
+  border-color: var(--brand-line);
+  background: var(--brand);
+  color: #fff;
+}
+.bi-btn.primary:hover:not(:disabled) {
+  border-color: var(--brand);
+  background: var(--brand-hi);
+  color: #fff;
+}
+.bi-btn.ghost {
+  background: transparent;
+}
+.bi-btn.lg {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 11.5px;
+}
+.bi-btn.arrow {
+  width: 28px;
+  padding: 0;
+}
+.bi-gen {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.bi-gen .bi-btn.primary.lg:first-child {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+.bi-gen .bi-btn.primary.lg.arrow {
+  height: 32px;
+  border-left-color: rgba(255, 255, 255, 0.22);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+.bi-gen-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 230px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-float);
+}
+.bi-gen-menu button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  text-align: left;
+  color: var(--fg);
+}
+.bi-gen-menu button:hover {
+  background: var(--bg-hover);
+}
+.bi-gen-menu b {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.bi-gen-menu small {
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.bi-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid rgba(201, 154, 46, 0.28);
+  border-radius: var(--r-sm);
+  background: rgba(201, 154, 46, 0.08);
+  color: var(--fg-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.bi-note > svg {
+  flex: none;
+  color: var(--warn);
+  margin-top: 1px;
+}
+.bi-note span {
+  flex: 1;
+}
+.bi-note button {
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  padding: 0;
+}
+
+/* ---------- 空态 ---------- */
+.bi-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 24px 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  text-align: center;
+}
+.bi-empty-ico {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--brand-line);
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+}
+.bi-empty b {
+  font-size: 13px;
+  color: var(--fg);
+}
+.bi-empty p {
+  max-width: 430px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--fg-3);
+}
+
+/* ---------- 区块 ---------- */
+.bi-sec {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.bi-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-rail);
+}
+.bi-sec-ico {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--brand-hi);
+}
+.bi-sec-txt {
+  min-width: 0;
+  flex: 1;
+}
+.bi-sec-txt b {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.bi-sec-txt small {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.bi-sec-meta {
+  flex: none;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-inset);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.bi-add-btn,
+.bi-chev {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--fg-2);
+  font-size: 10.5px;
+  transition: color var(--t), border-color var(--t);
+}
+.bi-add-btn:hover,
+.bi-chev:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+.bi-chev {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+}
+.bi-chev svg {
+  transition: transform var(--t);
+}
+.bi-chev.shut svg {
+  transform: rotate(-90deg);
+}
+.bi-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 12px;
+}
+.bi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.bi-field-lb {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--fg-2);
+}
+.bi-field-lb i {
+  font-style: normal;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  color: var(--fg-4);
+}
+.bi-field-lb i.on {
+  border-color: rgba(70, 167, 88, 0.3);
+  color: var(--ok);
+}
+.bi-field textarea,
+.bi-edit-desc textarea,
+.bi-edit-row input,
+.bi-edit-row select,
+.bi-add input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--fg);
+  outline: none;
+  font-size: 11.5px;
+  line-height: 1.55;
+  transition: border-color var(--t), background var(--t);
+}
+.bi-field textarea {
+  min-height: 54px;
+  padding: 7px 9px;
+  resize: vertical;
+}
+.bi-field textarea::placeholder,
+.bi-edit-desc textarea::placeholder,
+.bi-add input::placeholder {
+  color: var(--fg-4);
+}
+.bi-field textarea:focus,
+.bi-edit-desc textarea:focus,
+.bi-edit-row input:focus,
+.bi-edit-row select:focus,
+.bi-add input:focus {
+  border-color: var(--brand-line);
+  background: var(--bg-panel);
+}
+.bi-sec-empty {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.bi-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-inset);
+}
+.bi-add input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+}
+.bi-add .bi-btn.ghost {
+  width: 30px;
+  padding: 0;
+}
+
+/* ---------- 人物 / 场景卡片 ---------- */
+.bi-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+.bi-card {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+  overflow: hidden;
+  transition: border-color var(--t), background var(--t);
+}
+.bi-card:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-panel);
+}
+.bi-card.locked {
+  border-color: rgba(201, 154, 46, 0.28);
+}
+.bi-card-thumb {
+  position: relative;
+  display: block;
+  min-height: 116px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: var(--bg-rail);
+  overflow: hidden;
+}
+.bi-card-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.bi-card-ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--fg-4);
+}
+.bi-card-ph small {
+  font-size: 9px;
+}
+.bi-card-state {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 9, 10, 0.86);
+  font-style: normal;
+  font-size: 9px;
+  color: var(--fg-3);
+}
+.bi-card-state.ok {
+  border-color: rgba(70, 167, 88, 0.36);
+  color: var(--ok);
+}
+.bi-card-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 9, 10, 0.7);
+  color: var(--fg);
+}
+.bi-card-body {
+  min-width: 0;
+  padding: 9px 10px;
+}
+.bi-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.bi-card-title b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.bi-card-title i {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-style: normal;
+  font-size: 9px;
+  color: var(--fg-3);
+}
+.bi-lock {
+  flex: none;
+  color: var(--warn);
+}
+.bi-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 6px 0 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+.bi-card-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.bi-card-acts button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 23px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--fg-2);
+  font-size: 10px;
+  transition: color var(--t), border-color var(--t);
+}
+.bi-card-acts button:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+.bi-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-sm);
+  background: var(--brand-soft);
+  font-size: 10px;
+  color: var(--fg-2);
+}
+.bi-confirm span {
+  flex: 1;
+}
+.bi-confirm button {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--fg-2);
+  font-size: 10px;
+}
+.bi-confirm button.danger {
+  border-color: var(--brand-line);
+  background: var(--brand);
+  color: #fff;
+}
+
+/* ---------- 内联编辑 ---------- */
+.bi-edit {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+.bi-edit-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.bi-edit-row label,
+.bi-edit-desc {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.bi-edit-row input,
+.bi-edit-row select {
+  height: 28px;
+  padding: 0 8px;
+}
+.bi-edit-desc textarea {
+  min-height: 60px;
+  padding: 7px 9px;
+  resize: vertical;
+}
+.bi-edit-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bi-lock-chk {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.bi-lock-chk input {
+  accent-color: var(--brand);
+}
+
+/* ---------- 底部说明 ---------- */
+.bi-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-rail);
+}
+.bi-foot > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--blue);
+}
+.bi-foot b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.bi-foot p {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--fg-3);
+}
+
+/* 宽坞：字段与卡片升为两列 */
+@container (min-width: 700px) {
+  .bi-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bi-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bi-btn,
+  .bi-card,
+  .bi-chev svg,
+  .bi-progress-line span,
+  .bi-icon-btn,
+  .bi-card-acts button {
+    transition: none !important;
+  }
+}
+
+/* 一致性卡空态：人物/场景为 0 时不再整卡隐藏，给出生成入口 */
+.cons-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 18px 22px;
+  text-align: center;
+}
+.cons-blank-ico {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--brand-line);
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+}
+.cons-blank-ico svg {
+  width: 15px;
+  height: 15px;
+  color: var(--brand-hi);
+}
+.cons-blank b {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.cons-blank p {
+  max-width: 440px;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--fg-3);
+}
+.cons-blank-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.cons-blank-acts .btn.pri {
+  border-color: var(--brand-line);
+  background: var(--brand);
+  color: #fff;
+}
+.cons-blank-acts .btn.pri:hover:not(:disabled) {
+  background: var(--brand-hi);
+  color: #fff;
+}

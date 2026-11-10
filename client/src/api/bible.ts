@@ -8,6 +8,8 @@ import type {
   UpdateCharacterRequest,
   CreateLocationRequest,
   UpdateLocationRequest,
+  GenerateBibleRequest,
+  GenerateBibleResponse,
 } from '@shared/api.interface';
 
 export const getWorldView = (projectId: string) =>
@@ -119,5 +121,21 @@ export const generateLocationImage = (projectId: string, id: string) =>
   axiosForBackend
     .post<{ jobId: string }>(
       `/api/projects/${projectId}/bible/locations/${id}/generate-image`,
+    )
+    .then((res) => res.data);
+
+/**
+ * 一键生成完整制作圣经：世界观 + 风格 + 人物 + 场景。
+ * 不传 scriptText 时服务端自行读取项目剧本 / 场次 / 简介。
+ * source=fallback 表示模型不可用，返回的是按剧本规则生成的可编辑草稿。
+ */
+export const generateBible = (
+  projectId: string,
+  data: GenerateBibleRequest = {},
+) =>
+  axiosForBackend
+    .post<GenerateBibleResponse>(
+      `/api/projects/${projectId}/bible/generate`,
+      data,
     )
     .then((res) => res.data);
