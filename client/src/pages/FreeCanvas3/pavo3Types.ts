@@ -18,6 +18,8 @@ export type PavoNodeType =
   | 'character'
   /** 场景节点：场地设定与场景概念图 */
   | 'scene'
+  /** 道具节点：形制 / 尺度 / 状态变体 / 设定图 */
+  | 'prop'
   /** 分镜节点：单镜头（首帧 / 视频 / 台词） */
   | 'storyboard'
   /** 备注节点：创作便签 */
@@ -87,6 +89,7 @@ export type DialogKind =
   /** 创作类节点属性面板（富文本编辑：人设 / 场景 / 剧本 / 分镜 / 备注） */
   | 'character'
   | 'scene'
+  | 'prop'
   | 'script'
   | 'storyboard'
   | 'note';

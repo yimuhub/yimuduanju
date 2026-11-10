@@ -8,8 +8,11 @@ import {
   Min,
   MinLength,
   IsIn,
+  IsObject,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { CharacterIdentityKit, PropCategory, PropTextPolicy, PropStateVariant } from '@shared/api.interface';
 
 export class CreateCharacterDto {
   @IsString()
@@ -41,6 +44,11 @@ export class CreateCharacterDto {
   @IsOptional()
   @IsArray()
   referenceImageUrls?: string[];
+
+  /** 人物视觉资产包（主图 + 四视图 + 文本锁） */
+  @IsOptional()
+  @IsObject()
+  identityKit?: CharacterIdentityKit;
 }
 
 export class UpdateCharacterDto {
@@ -117,6 +125,11 @@ export class UpdateCharacterDto {
   referenceImageUrls?: string[];
 
   @IsOptional()
+  @IsObject()
+  identityKit?: CharacterIdentityKit;
+
+  @IsOptional()
+  @IsBoolean()
   locked?: boolean;
 }
 
@@ -191,6 +204,148 @@ export class UpdateLocationDto {
   referenceImageUrls?: string[];
 
   @IsOptional()
+  locked?: boolean;
+}
+
+const PROP_CATEGORY_VALUES = ['hero', 'recurring', 'stateful', 'set_dressing'];
+const PROP_TEXT_POLICY_VALUES = [
+  'exact_readable',
+  'graphic_only',
+  'no_readable_text',
+  'pending_creator_text',
+];
+
+/** 道具：跨镜复现的物件，身份与状态变体分离 */
+export class CreatePropDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  name!: string;
+
+  @IsOptional()
+  @IsIn(PROP_CATEGORY_VALUES)
+  category?: PropCategory;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  identityAnchors?: string;
+
+  @IsOptional()
+  @IsString()
+  appearance?: string;
+
+  @IsOptional()
+  @IsString()
+  scaleReference?: string;
+
+  @IsOptional()
+  @IsString()
+  functionDesc?: string;
+
+  @IsOptional()
+  @IsString()
+  storyRole?: string;
+
+  @IsOptional()
+  @IsString()
+  ownerCharacterId?: string;
+
+  @IsOptional()
+  @IsString()
+  continuityLock?: string;
+
+  @IsOptional()
+  @IsString()
+  forbiddenChanges?: string;
+
+  @IsOptional()
+  @IsIn(PROP_TEXT_POLICY_VALUES)
+  textPolicy?: PropTextPolicy;
+
+  @IsOptional()
+  @IsString()
+  readableText?: string;
+
+  @IsOptional()
+  @IsArray()
+  stateVariants?: PropStateVariant[];
+
+  @IsOptional()
+  @IsArray()
+  referenceImageUrls?: string[];
+}
+
+export class UpdatePropDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  name?: string;
+
+  @IsOptional()
+  @IsIn(PROP_CATEGORY_VALUES)
+  category?: PropCategory;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  identityAnchors?: string;
+
+  @IsOptional()
+  @IsString()
+  appearance?: string;
+
+  @IsOptional()
+  @IsString()
+  scaleReference?: string;
+
+  @IsOptional()
+  @IsString()
+  functionDesc?: string;
+
+  @IsOptional()
+  @IsString()
+  storyRole?: string;
+
+  @IsOptional()
+  @IsString()
+  ownerCharacterId?: string;
+
+  @IsOptional()
+  @IsString()
+  continuityLock?: string;
+
+  @IsOptional()
+  @IsString()
+  forbiddenChanges?: string;
+
+  @IsOptional()
+  @IsIn(PROP_TEXT_POLICY_VALUES)
+  textPolicy?: PropTextPolicy;
+
+  @IsOptional()
+  @IsString()
+  readableText?: string;
+
+  @IsOptional()
+  @IsArray()
+  stateVariants?: PropStateVariant[];
+
+  @IsOptional()
+  @IsArray()
+  referenceImageUrls?: string[];
+
+  @IsOptional()
+  @IsBoolean()
   locked?: boolean;
 }
 

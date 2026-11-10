@@ -19,6 +19,7 @@ import {
   Film,
   StickyNote,
   Pencil,
+  Package,
 } from 'lucide-react';
 import type { PavoFlowNode } from './pavo3Types';
 import { useP3Store } from './pavo3Store';
@@ -34,12 +35,13 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
   script: <ScrollText size={16} strokeWidth={1.8} />,
   character: <UserRound size={16} strokeWidth={1.8} />,
   scene: <Mountain size={16} strokeWidth={1.8} />,
+  prop: <Package size={16} strokeWidth={1.8} />,
   storyboard: <Film size={16} strokeWidth={1.8} />,
   note: <StickyNote size={16} strokeWidth={1.8} />,
 };
 
 /** 短剧创作类节点（属性面板 = 富文本编辑） */
-const CREATION_KINDS = new Set<string>(['script', 'character', 'scene', 'storyboard', 'note']);
+const CREATION_KINDS = new Set<string>(['script', 'character', 'scene', 'prop', 'storyboard', 'note']);
 
 /** 端口连接图标（Pavo 同款：紧贴节点框两侧的圆形「+」） */
 function ConnIcon() {

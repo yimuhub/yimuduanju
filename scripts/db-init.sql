@@ -326,3 +326,36 @@ SELECT * FROM (VALUES
   ('一木·YIMU 官方API 聚合平台', 'openai', false, 'gpt-4o-mini', 'gpt-image-1', '', 'tts-1', 'alloy', 'openai', '{"text":true,"image":true,"video":false,"tts":true}'::jsonb, 20, true)
 ) AS v(name, provider_type, is_default, text_model, image_model, video_model, tts_model, tts_voice, format_type, capabilities, routing_priority, enabled)
 WHERE NOT EXISTS (SELECT 1 FROM model_providers LIMIT 1);
+
+-- ============================================================
+-- 0019 道具资产 + 人物视觉资产包（与 server/database/migrations/0019 一致）
+-- ============================================================
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS identity_kit JSONB;
+
+CREATE TABLE IF NOT EXISTS props (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  code VARCHAR(20) NOT NULL DEFAULT '',
+  name VARCHAR(100) NOT NULL,
+  category VARCHAR(30) NOT NULL DEFAULT 'recurring',
+  identity_anchors TEXT,
+  appearance TEXT,
+  scale_reference TEXT,
+  function_desc TEXT,
+  story_role TEXT,
+  owner_character_id UUID,
+  continuity_lock TEXT,
+  forbidden_changes TEXT,
+  text_policy VARCHAR(30) NOT NULL DEFAULT 'no_readable_text',
+  readable_text TEXT,
+  state_variants JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reference_image_urls TEXT[] NOT NULL DEFAULT '{}',
+  locked BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  _created_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  _created_by USER_PROFILE DEFAULT NULL,
+  _updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  _updated_by USER_PROFILE DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS props_project_idx ON props(project_id, sort_order);
+CREATE UNIQUE INDEX IF NOT EXISTS props_project_code_uq ON props(project_id, code) WHERE code <> '';

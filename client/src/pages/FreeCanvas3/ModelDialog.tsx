@@ -60,7 +60,7 @@ function DialogBody({ nodeId, kind }: { nodeId: string; kind: DialogKind }) {
   if (kind === 'image') return <ImageGenPanel nodeId={nodeId} />;
   if (kind === 'video') return <VideoGenPanel nodeId={nodeId} />;
   // 创作类节点（剧本/角色/场景/分镜/备注）：属性面板 = 富文本编辑（与「自己编写」同通道保存）
-  if (kind === 'write' || kind === 'script' || kind === 'character' || kind === 'scene' || kind === 'storyboard' || kind === 'note') {
+  if (kind === 'write' || kind === 'script' || kind === 'character' || kind === 'scene' || kind === 'prop' || kind === 'storyboard' || kind === 'note') {
     return <WritePanel nodeId={nodeId} />;
   }
   return <TextGenDialog nodeId={nodeId} kind={kind} />;
@@ -1152,7 +1152,7 @@ function WritePanel({ nodeId }: { nodeId: string }) {
     if (!text.trim()) return;
     closeDialog();
     // 创作类节点：专属属性 profile 与正文 markdown 同步保存
-    if (node && (node.data.nodeType === 'script' || node.data.nodeType === 'character' || node.data.nodeType === 'scene' || node.data.nodeType === 'storyboard' || node.data.nodeType === 'note')) {
+    if (node && (node.data.nodeType === 'script' || node.data.nodeType === 'character' || node.data.nodeType === 'scene' || node.data.nodeType === 'prop' || node.data.nodeType === 'storyboard' || node.data.nodeType === 'note')) {
       useP3Store.getState().updateNodeData(nodeId, { profile: text });
     }
     runGeneration(nodeId, 'write', text);

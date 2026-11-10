@@ -12,6 +12,8 @@ import {
   shots,
   assets,
   qcReports,
+  props,
+  characters,
 } from '@server/database/schema';
 import { eq, desc, asc } from 'drizzle-orm';
 // 修复（分层）：uploadDir 直接从工具模块导入。
@@ -57,9 +59,11 @@ export class ExportService {
     if (!/^https?:\/\//i.test(rawUrl)) {
       throw new BadRequestException('仅支持 http/https 媒体地址');
     }
-    const [shotRows, assetRows] = await Promise.all([
+    const [shotRows, assetRows, propRows, charRows] = await Promise.all([
       this.db.select().from(shots).where(eq(shots.projectId, projectId)),
       this.db.select().from(assets).where(eq(assets.projectId, projectId)),
+      this.db.select().from(props).where(eq(props.projectId, projectId)),
+      this.db.select().from(characters).where(eq(characters.projectId, projectId)),
     ]);
     const allowed = new Set<string>();
     for (const s of shotRows) {
@@ -72,6 +76,20 @@ export class ExportService {
     for (const a of assetRows) {
       if (a.fileUrl) allowed.add(a.fileUrl);
       if (a.thumbnailUrl) allowed.add(a.thumbnailUrl);
+    }
+    // 道具设定图 / 状态变体图与人物主图 · 四视图同样属于本项目一致性资产
+    for (const p of propRows) {
+      for (const u of p.referenceImageUrls ?? []) if (u) allowed.add(u);
+      const variants = (p.stateVariants ?? []) as { imageUrl?: string }[];
+      for (const v of variants) if (v?.imageUrl) allowed.add(v.imageUrl);
+    }
+    for (const c of charRows) {
+      const kit = c.identityKit as {
+        portraitUrl?: string; sheetUrl?: string; views?: Record<string, string>;
+      } | null;
+      if (kit?.portraitUrl) allowed.add(kit.portraitUrl);
+      if (kit?.sheetUrl) allowed.add(kit.sheetUrl);
+      for (const u of Object.values(kit?.views ?? {})) if (u) allowed.add(u);
     }
     if (!allowed.has(rawUrl)) {
       throw new BadRequestException('该媒体地址不属于本项目');

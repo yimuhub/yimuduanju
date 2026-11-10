@@ -193,6 +193,61 @@ export interface SceneAction {
   duration: number;
 }
 
+/**
+ * 人物视觉资产包 · 行业标准「1 张主图 + 四视图」。
+ *
+ * 参考 GitHub 上 AI 短剧/漫剧流水线的共识（billpar/ai-cinematic-pipeline 的
+ * 7-panel turnaround、siyuan-liu31/agentic-comic-drama-studio 的 visual sheet、
+ * worldwonderer/drama-skills 的身份/状态拆分）：
+ *  · portraitUrl 是「面部唯一真相」——高清 3/4 正脸特写，纯中性灰背景、平光；
+ *  · views 四个独立视角（正 / 3-4 / 侧 / 背）锁轮廓、比例、服装与鞋型；
+ *  · sheetUrl 保留旧的「一整张四视图拼图」链路，作为快速定妆的兼容锚点；
+ *  · 文本锁（身份描述 / 服装 / 声线 / 签名细节 / 禁改项）逐字复用到每个镜头提示词。
+ * 只有 portraitUrl + 四个 views 全部就位，人物才算「完成定义」。
+ */
+export type CharacterViewKey = 'front' | 'threeQuarter' | 'side' | 'back';
+
+export const CHARACTER_VIEW_KEYS: CharacterViewKey[] = [
+  'front',
+  'threeQuarter',
+  'side',
+  'back',
+];
+
+export const CHARACTER_VIEW_LABELS: Record<CharacterViewKey, string> = {
+  front: '正面全身',
+  threeQuarter: '3/4 侧',
+  side: '正侧面',
+  back: '背面全身',
+};
+
+export interface CharacterIdentityKit {
+  /** 面部唯一真相：高清 3/4 正脸特写 */
+  portraitUrl?: string;
+  /** 四个独立视角，可逐张上传 / 生成 / 替换 */
+  views: Partial<Record<CharacterViewKey, string>>;
+  /** 旧链路兼容：整张四视图拼图 */
+  sheetUrl?: string;
+  /** 逐字复用的身份锁：脸型、肤色、体态、发型、稳定配色 */
+  identityDescriptor?: string;
+  /** 服装标识（衣柜基线，换装另建变体） */
+  wardrobe?: string;
+  /** 声线锁：口音、音色、语速、压力下的变化 */
+  voiceLock?: string;
+  /** 至少两个不可变签名细节（如银戒、眉骨疤） */
+  signatureDetails?: string;
+  updatedAt?: string;
+}
+
+export const emptyIdentityKit = (): CharacterIdentityKit => ({ views: {} });
+
+/** 人物是否完成定义：一张主图 + 四视图齐全（拼图不算四张独立视图） */
+export const isCharacterFullyDefined = (c: Pick<Character, 'identityKit'>): boolean => {
+  const kit = c.identityKit;
+  if (!kit?.portraitUrl) return false;
+  return CHARACTER_VIEW_KEYS.every((k) => !!kit.views?.[k]);
+};
+
 export interface Character {
   id: string;
   projectId: string;
@@ -212,6 +267,8 @@ export interface Character {
   canonicalDescription?: string;
   forbiddenChanges?: string;
   referenceImageUrls: string[];
+  /** 人物视觉资产包（主图 + 四视图 + 文本锁） */
+  identityKit?: CharacterIdentityKit;
   locked: boolean;
   sortOrder: number;
   createdAt: string;
@@ -225,6 +282,7 @@ export interface CreateCharacterRequest {
   gender?: string;
   canonicalDescription?: string;
   referenceImageUrls?: string[];
+  identityKit?: CharacterIdentityKit;
 }
 
 export interface UpdateCharacterRequest {
@@ -244,6 +302,7 @@ export interface UpdateCharacterRequest {
   canonicalDescription?: string;
   forbiddenChanges?: string;
   referenceImageUrls?: string[];
+  identityKit?: CharacterIdentityKit;
   locked?: boolean;
 }
 
@@ -288,6 +347,109 @@ export interface UpdateLocationRequest {
   locked?: boolean;
 }
 
+/* ==================================================================
+ * 道具资产（Prop）· 长篇短剧的第三类可寻址一致性实体
+ * ------------------------------------------------------------------
+ * 参考 GitHub 项目：
+ *  · worldwonderer/drama-skills —— 持续身份(Prop) vs 可变状态(State)、
+ *    可读文字政策、持物归属、连续性锁；禁止把「开/关、完好/破损」
+ *    拆成两个假道具。
+ *  · billpar/ai-cinematic-pipeline —— 跨镜出现的物件必须有独立参考图
+ *    和明确的尺度描述（scale reference），否则模型会丢失比例。
+ *  · ahang1598/doubao-...-skills —— 只有「关键 / 复现」道具升级为 PROP，
+ *    生成前先查 asset_registry，approved 的复用而非重新生成。
+ *  · NINKCH/dsh-infinite_canvas —— 设定集里角色/场景/道具卡各有 @tag，
+ *    分镜生成后检查未登记实体并自动补全。
+ * ================================================================== */
+export type PropCategory = 'hero' | 'recurring' | 'stateful' | 'set_dressing';
+export const PROP_CATEGORIES: { key: PropCategory; label: string; hint: string }[] = [
+  { key: 'hero', label: '关键道具', hint: '推动剧情 / 承担身份或功能，必须出参考图' },
+  { key: 'recurring', label: '复现道具', hint: '跨镜多次出现，观众看得出不一致' },
+  { key: 'stateful', label: '状态道具', hint: '开合 / 破损 / 内容物 / 转手会变化' },
+  { key: 'set_dressing', label: '背景陈设', hint: '仅作环境，通常文字描述即可' },
+];
+
+/** 可读文字政策：带文字/标识的道具必须明确选一项，避免下游提示词互相打架 */
+export type PropTextPolicy =
+  | 'exact_readable'
+  | 'graphic_only'
+  | 'no_readable_text'
+  | 'pending_creator_text';
+
+export const PROP_TEXT_POLICIES: { key: PropTextPolicy; label: string }[] = [
+  { key: 'exact_readable', label: '精确可读（保存准确文字）' },
+  { key: 'graphic_only', label: '仅留图形轮廓' },
+  { key: 'no_readable_text', label: '表面无可读文字' },
+  { key: 'pending_creator_text', label: '文字待定（阻断依赖）' },
+];
+
+/** 状态变体：同一道具的身份不变，只有状态变化。每个变体有独立 ID 与图。 */
+export interface PropStateVariant {
+  id: string;
+  name: string;
+  description: string;
+  imageUrl?: string;
+}
+
+export interface Prop {
+  id: string;
+  projectId: string;
+  /** 稳定编号 PROP001…，分镜提示词用它做 @tag，改名不会断链 */
+  code: string;
+  name: string;
+  category: PropCategory;
+  /** 识别锚点：基本形制、部件关系、主要材料与工艺、永久唯一标记 */
+  identityAnchors: string;
+  /** 外观：形状 / 颜色 / 材质 / 磨损细节 */
+  appearance: string;
+  /** 尺度参照：与人体或熟悉物件的可比尺寸，防止模型缩放错锚点 */
+  scaleReference: string;
+  /** 原本功能与操作方式 */
+  functionDesc: string;
+  /** 剧情作用 */
+  storyRole: string;
+  /** 当前持有人 / 归属角色 id */
+  ownerCharacterId?: string;
+  /** 连续性锁：跨镜不可改变的最小名词短语 */
+  continuityLock: string;
+  forbiddenChanges: string;
+  textPolicy: PropTextPolicy;
+  /** textPolicy=exact_readable 时的准确文字 */
+  readableText?: string;
+  stateVariants: PropStateVariant[];
+  referenceImageUrls: string[];
+  locked: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePropRequest {
+  name: string;
+  category?: PropCategory;
+  code?: string;
+  identityAnchors?: string;
+  appearance?: string;
+  scaleReference?: string;
+  functionDesc?: string;
+  storyRole?: string;
+  ownerCharacterId?: string;
+  continuityLock?: string;
+  forbiddenChanges?: string;
+  textPolicy?: PropTextPolicy;
+  readableText?: string;
+  stateVariants?: PropStateVariant[];
+  referenceImageUrls?: string[];
+}
+
+export interface UpdatePropRequest extends Partial<CreatePropRequest> {
+  locked?: boolean;
+}
+
+/** 道具是否「可进片」：关键/复现/状态道具必须有参考图与识别锚点 */
+export const isPropReady = (p: Prop): boolean =>
+  !!p.identityAnchors?.trim() && p.referenceImageUrls.length > 0;
+
 /**
  * 一键生成制作圣经。
  * 剧本来源优先级：请求体 scriptText → projects.scriptText → scenes 汇总 → projects.description。
@@ -306,6 +468,8 @@ export interface GenerateBibleCounts {
   charactersUpdated: number;
   locationsCreated: number;
   locationsUpdated: number;
+  propsCreated: number;
+  propsUpdated: number;
 }
 
 export interface GenerateBibleResponse {
@@ -313,8 +477,18 @@ export interface GenerateBibleResponse {
   styleBible: StyleBible;
   characters: Character[];
   locations: Location[];
+  props: Prop[];
   counts: GenerateBibleCounts;
   /** llm = 模型生成；fallback = 无 Key / 模型失败时的确定性草稿 */
+  source: 'llm' | 'fallback';
+  note?: string;
+}
+
+/** 道具页「AI 生成道具」：只从剧本抽道具，不改动世界观/人物/场景 */
+export interface GeneratePropsResponse {
+  props: Prop[];
+  created: number;
+  updated: number;
   source: 'llm' | 'fallback';
   note?: string;
 }
@@ -1028,7 +1202,7 @@ export interface ProjectProgressResponse {
 
 export interface GenerateImageRequest {
   projectId: string;
-  targetType: 'character' | 'location' | 'shot';
+  targetType: 'character' | 'location' | 'shot' | 'prop';
   targetId: string;
   prompt?: string;
 }

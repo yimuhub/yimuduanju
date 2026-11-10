@@ -21,8 +21,9 @@ import {
 } from 'lucide-react';
 import { approveProject } from '@client/src/api/projects';
 import { listChatSessions } from '@client/src/api/chat';
-import { listCharacters, listLocations } from '@client/src/api/bible';
+import { listCharacters, listLocations, listProps } from '@client/src/api/bible';
 import type { ChatSession } from '@shared/api.interface';
+import { isCharacterFullyDefined, isPropReady } from '@shared/api.interface';
 import { styleOptions } from '@client/src/pages/CreateWizard/WizardSettings';
 import { useStudio } from './StudioShell';
 import { ChatTurns } from './chat/ChatTurns';
@@ -289,10 +290,11 @@ export const StudioChat = () => {
     return () => window.removeEventListener('yimu:bible-updated', onUpdate);
   }, []);
 
-  // 分镜门放行前先看清人物/场景定妆进度：参考图没到位就出首帧，人物一致性会明显变差
+  // 分镜门放行前先看人物/场景/道具的资产就绪度：
+  // 人物按「主图 + 四视图」判定，道具按「识别锚点 + 设定图」判定。
   const refStamp = useMemo(() => {
     const related = data.jobs.filter(
-      (j) => j.targetType === 'character' || j.targetType === 'location',
+      (j) => j.targetType === 'character' || j.targetType === 'location' || j.targetType === 'prop',
     );
     return `${related.length}:${related.reduce(
       (m, j) => (j.updatedAt && j.updatedAt > m ? j.updatedAt : m),
@@ -306,14 +308,15 @@ export const StudioChat = () => {
       return;
     }
     let alive = true;
-    Promise.all([listCharacters(projectId), listLocations(projectId)])
-      .then(([chars, locs]) => {
+    Promise.all([listCharacters(projectId), listLocations(projectId), listProps(projectId)])
+      .then(([chars, locs, props]) => {
         if (!alive) return;
         setRefStats({
           ready:
-            chars.filter((c) => c.referenceImageUrls.length > 0).length +
-            locs.filter((l) => l.referenceImageUrls.length > 0).length,
-          total: chars.length + locs.length,
+            chars.filter(isCharacterFullyDefined).length +
+            locs.filter((l) => l.referenceImageUrls.length > 0).length +
+            props.filter(isPropReady).length,
+          total: chars.length + locs.length + props.length,
         });
       })
       .catch(() => {

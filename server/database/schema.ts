@@ -1,7 +1,7 @@
 /* eslint-disable */
 /** auto generated, do not edit */
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, doublePrecision, foreignKey, integer, jsonb, numeric, pgTable, text, uuid, varchar, customType } from "drizzle-orm/pg-core"
+import { bigint, boolean, doublePrecision, foreignKey, integer, jsonb, numeric, pgTable, text, uuid, varchar, customType, uniqueIndex } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -487,6 +487,11 @@ export const characters = pgTable("characters", {
   canonicalDescription: text("canonical_description"),
   forbiddenChanges: text("forbidden_changes"),
   referenceImageUrls: text("reference_image_urls").array().default([]),
+  /**
+   * 人物视觉资产包：主图 + 正/3-4/侧/背四视图 + 身份/服装/声线文本锁。
+   * @type { portraitUrl?: string, views?: {front?:string,threeQuarter?:string,side?:string,back?:string}, sheetUrl?: string, identityDescriptor?: string, wardrobe?: string, voiceLock?: string, signatureDetails?: string }
+   */
+  identityKit: jsonb("identity_kit"),
   locked: boolean("locked").default(false),
   sortOrder: integer("sort_order").default(0),
   // System field: Creation time (auto-filled, do not modify)
@@ -505,6 +510,52 @@ export const characters = pgTable("characters", {
     foreignColumns: [projects.id],
     name: "characters_project_id_fkey",
   }).onDelete("cascade"),
+]);
+
+/**
+ * 道具资产表：跨镜复现的物件是第三类可寻址一致性实体。
+ * 身份（形制/材质/永久标记）与状态（开合/破损/转手/内容物）分离，
+ * 状态变体存 jsonb 数组，不拆成多个假道具。
+ */
+export const props = pgTable("props", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull(),
+  /** 稳定编号 PROP001，分镜提示词的 @tag */
+  code: varchar("code", { length: 20 }).notNull().default(''),
+  name: varchar("name", { length: 100 }).notNull(),
+  category: varchar("category", { length: 30 }).notNull().default('recurring'),
+  identityAnchors: text("identity_anchors"),
+  appearance: text("appearance"),
+  scaleReference: text("scale_reference"),
+  functionDesc: text("function_desc"),
+  storyRole: text("story_role"),
+  ownerCharacterId: uuid("owner_character_id"),
+  continuityLock: text("continuity_lock"),
+  forbiddenChanges: text("forbidden_changes"),
+  textPolicy: varchar("text_policy", { length: 30 }).notNull().default('no_readable_text'),
+  readableText: text("readable_text"),
+  /** @type { id, name, description, imageUrl? }[] */
+  stateVariants: jsonb("state_variants").default([]),
+  referenceImageUrls: text("reference_image_urls").array().default([]),
+  locked: boolean("locked").default(false),
+  sortOrder: integer("sort_order").default(0),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "props_project_id_fkey",
+  }).onDelete("cascade"),
+  uniqueIndex("props_project_code_uq").on(table.projectId, table.code),
 ]);
 
 export const projects = pgTable("projects", {
@@ -555,6 +606,7 @@ export const generationJobsTable = generationJobs;
 export const locationsTable = locations;
 export const modelProvidersTable = modelProviders;
 export const projectsTable = projects;
+export const propsTable = props;
 export const qcReportsTable = qcReports;
 export const scenesTable = scenes;
 export const shotsTable = shots;

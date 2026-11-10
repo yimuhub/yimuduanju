@@ -16,6 +16,8 @@ import { Clapperboard } from 'lucide-react';
 import { useStudio } from './StudioShell';
 import { clipSpan, shotLabel, stateShort, toTimecode } from './model';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
+import { listCharacters, listProps } from '@client/src/api/bible';
+import type { Prop } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1';
 
@@ -31,7 +33,9 @@ const readPreviewH = (): number => {
 };
 
 export const StudioPreview = () => {
-  const { data, sel, setSel, curT, playing, setPlaying } = useStudio();
+  const { data, sel, setSel, curT, playing, setPlaying, projectId } = useStudio();
+  const [charNames, setCharNames] = useState<Record<string, string>>({});
+  const [propByCode, setPropByCode] = useState<Record<string, Prop>>({});
   const [ratio, setRatio] = useState<Ratio>('9:16');
   const [videoBroken, setVideoBroken] = useState(false);
   const [openModal, setOpenModal] = useState(false);
@@ -42,6 +46,25 @@ export const StudioPreview = () => {
 
   const shots = data.shots;
   const shot = shots[sel];
+
+  /** 本镜一致性引用：人物名称 + 道具 @编号，来自与画布/时间线同一份设定表 */
+  useEffect(() => {
+    if (!projectId) return;
+    let alive = true;
+    const refresh = () => {
+      Promise.all([
+        listCharacters(projectId).catch(() => []),
+        listProps(projectId).catch(() => [] as Prop[]),
+      ]).then(([cs, ps]) => {
+        if (!alive) return;
+        setCharNames(Object.fromEntries(cs.map((c) => [c.id, c.name])));
+        setPropByCode(Object.fromEntries(ps.filter((p) => p.code).map((p) => [p.code, p])));
+      });
+    };
+    refresh();
+    window.addEventListener('yimu:bible-updated', refresh);
+    return () => { alive = false; window.removeEventListener('yimu:bible-updated', refresh); };
+  }, [projectId]);
 
   // ---------- 跟随 EDL：当前播放头覆盖的片段 ----------
   const tlClips = data.timeline?.clips ?? [];
@@ -396,6 +419,36 @@ export const StudioPreview = () => {
               </span>
             </div>
           </div>
+
+          {displayShot.characterIds.length > 0 || displayShot.propTags.length > 0 || displayShot.referenceImageUrls.length > 0 ? (
+            <div className="pv-refs">
+              <div className="pv-refs-head">
+                <b>一致性引用</b>
+                <small>本镜注入的身份锁 / 道具 / 参考图</small>
+              </div>
+              <div className="pv-refs-chips">
+                {displayShot.characterIds.map((cid) => (
+                  <span className="pv-ref char" key={cid} title={`人物 id ${cid}`}>
+                    {charNames[cid] ?? `人物 ${cid.slice(0, 6)}`}
+                  </span>
+                ))}
+                {displayShot.propTags.map((tag) => {
+                  const p = propByCode[tag.replace(/^@/, '')];
+                  return (
+                    <span className="pv-ref prop" key={tag} title={p?.identityAnchors || tag}>
+                      {p ? `${p.code} ${p.name}` : tag}
+                    </span>
+                  );
+                })}
+                {displayShot.referenceImageUrls.length > 0 ? (
+                  <span className="pv-ref img">参考图 ×{displayShot.referenceImageUrls.length}</span>
+                ) : null}
+                {displayShot.characterIds.length === 0 && displayShot.propTags.length === 0 ? (
+                  <span className="pv-ref dim">尚未登记人物/道具</span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           <div className="pv-quote">
             <span className="pv-quote-mark">“</span>

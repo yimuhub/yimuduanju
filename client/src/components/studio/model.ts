@@ -73,6 +73,14 @@ export interface StudioShot {
   inPoint?: number;
   /** 源媒体出点（秒）：缺省 inPoint + duration */
   outPoint?: number;
+  /** 本镜涉及的人物 id（与后端 shots.character_ids 一致，供一致性引用展示） */
+  characterIds: string[];
+  /** 所属场次的道具稳定编号（scenes.props，如 @PROP001） */
+  propTags: string[];
+  /** 本镜显式绑定的参考图 */
+  referenceImageUrls: string[];
+  /** 所属场景资产 id */
+  locationId?: string;
 }
 
 /** 场次分组（画布分带 / 剧本纸 / 时间线标签共用） */
@@ -181,6 +189,11 @@ export function normalizeShots(shots: Shot[], scenes: Scene[]): StudioShot[] {
       start: t,
       inPoint: shot.inPoint,
       outPoint: shot.outPoint,
+      // 一致性引用不再丢弃：右坞预览 / 分镜 / 画布 / 时间线看到的是同一份数据
+      characterIds: shot.characterIds ?? [],
+      propTags: scene?.props ?? [],
+      referenceImageUrls: shot.referenceImageUrls ?? [],
+      locationId: scene?.locationId,
     };
     t += dur;
     return result;

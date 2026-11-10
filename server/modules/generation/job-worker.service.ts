@@ -13,6 +13,7 @@ import {
   locations,
   modelProviders,
   projects,
+  props,
   scenes,
   shots,
 } from '@server/database/schema';
@@ -24,7 +25,7 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { mkdir, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
-import type { GenerationJob, ProfessionalPrefs } from '@shared/api.interface';
+import type { CharacterIdentityKit, GenerationJob, ProfessionalPrefs } from '@shared/api.interface';
 import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
 import { StageBindingsService } from '../providers/stage-bindings.service';
 import { GenerationService } from './generation.service';
@@ -896,37 +897,115 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.generationService.settleJobFailure(job.id, '图片任务缺少 prompt');
       return;
     }
-    // 收集参考图：优先使用 input.references，若为镜头生图且未传参考图则自动关联镜头绑定角色的参考图以保持角色一致性
+    /* ==================================================================
+     * 镜头生图的一致性上下文（参考 GitHub 无限画布的 [图N] 有序注入）
+     * ------------------------------------------------------------------
+     * 不可变块：人物身份锁 / 服装 / 禁改项、道具形制 / 尺度 / 连续性锁
+     * 可变块：本镜的动作、机位、光影（即原 prompt）
+     * 当前图片网关只支持单张 image，所以参考图按「人物主图 → 人物视角 →
+     * 道具设定图」有序排列，并把有序标签写进提示词；至少保证第一张是
+     * 面部唯一真相，而不是随便一张四视图拼图。
+     * ================================================================== */
     const refList: string[] = Array.isArray(input.references)
       ? (input.references as unknown[]).filter((r): r is string => typeof r === 'string' && r.length > 0)
       : [];
-    if (refList.length === 0 && job.targetType === 'shot' && job.targetId && job.projectId) {
+    const contextBlocks: string[] = [];
+    let enrichedPrompt = prompt;
+    if (job.targetType === 'shot' && job.targetId && job.projectId) {
+      const autoRefs: string[] = [];
       const shotRows = await this.db
-        .select({ characterIds: shots.characterIds, referenceImageUrls: shots.referenceImageUrls })
+        .select({
+          characterIds: shots.characterIds,
+          referenceImageUrls: shots.referenceImageUrls,
+          sceneId: shots.sceneId,
+        })
         .from(shots)
         .where(eq(shots.id, job.targetId))
         .limit(1);
-      const shotRefs = shotRows[0]?.referenceImageUrls ?? [];
-      for (const r of shotRefs) {
-        if (r) refList.push(r);
-      }
+      for (const r of shotRows[0]?.referenceImageUrls ?? []) if (r) autoRefs.push(r);
       const charIds = shotRows[0]?.characterIds ?? [];
-      if (refList.length === 0 && charIds.length > 0) {
+      if (charIds.length > 0) {
         const charRows = await this.db
-          .select({ id: characters.id, referenceImageUrls: characters.referenceImageUrls })
+          .select({
+            id: characters.id,
+            name: characters.name,
+            referenceImageUrls: characters.referenceImageUrls,
+            identityKit: characters.identityKit,
+            canonicalDescription: characters.canonicalDescription,
+            costume: characters.costume,
+            forbiddenChanges: characters.forbiddenChanges,
+          })
           .from(characters)
           .where(eq(characters.projectId, job.projectId));
         for (const c of charRows) {
-          if (charIds.includes(c.id) && c.referenceImageUrls && c.referenceImageUrls.length > 0) {
-            refList.push(c.referenceImageUrls[0]);
+          if (!charIds.includes(c.id)) continue;
+          const kit = (c.identityKit as CharacterIdentityKit | null) ?? null;
+          const primary = kit?.portraitUrl || c.referenceImageUrls?.[0] || kit?.sheetUrl;
+          const angleView =
+            kit?.views?.threeQuarter || kit?.views?.front ||
+            kit?.views?.side || kit?.sheetUrl;
+          if (primary) autoRefs.push(primary);
+          if (angleView && angleView !== primary) autoRefs.push(angleView);
+          const lock = [
+            kit?.identityDescriptor || c.canonicalDescription,
+            kit?.wardrobe || c.costume,
+            c.forbiddenChanges,
+          ].filter(Boolean).join('；');
+          if (lock) contextBlocks.push(`[图N] 角色：${c.name} —— ${lock}（身份与服装逐字保持一致）`);
+        }
+      }
+      const sceneId = shotRows[0]?.sceneId;
+      if (sceneId) {
+        const sceneRows = await this.db
+          .select({ propTags: scenes.props })
+          .from(scenes)
+          .where(eq(scenes.id, sceneId))
+          .limit(1);
+        const tags = sceneRows[0]?.propTags ?? [];
+        if (tags.length > 0) {
+          const propRows = await this.db
+            .select({
+              name: props.name,
+              code: props.code,
+              identityAnchors: props.identityAnchors,
+              scaleReference: props.scaleReference,
+              continuityLock: props.continuityLock,
+              referenceImageUrls: props.referenceImageUrls,
+            })
+            .from(props)
+            .where(eq(props.projectId, job.projectId));
+          for (const p of propRows) {
+            const hit = tags.some(
+              (t) => t === p.name || t === p.code || t === `@${p.code}` || t.endsWith(p.name),
+            );
+            if (!hit) continue;
+            const url = p.referenceImageUrls?.[0];
+            if (url) autoRefs.push(url);
+            const lock = [p.identityAnchors, p.scaleReference, p.continuityLock]
+              .filter(Boolean).join('；');
+            if (lock) contextBlocks.push(`[图N] 道具：${p.code || ''} ${p.name} —— ${lock}`);
           }
         }
+      }
+      if (refList.length === 0) {
+        for (const r of autoRefs) {
+          if (r && !refList.includes(r)) refList.push(r);
+        }
+      }
+      if (contextBlocks.length > 0) {
+        enrichedPrompt = [
+          '【一致性上下文 · 不可变】',
+          ...contextBlocks,
+          '',
+          '【本镜画面 · 可变】',
+          prompt,
+        ].join('\n');
       }
     }
     const seed = typeof input.seed === 'number' && Number.isFinite(input.seed) ? input.seed : undefined;
     const images = await this.modelGateway.generateImage(
       {
-        prompt,
+        prompt: enrichedPrompt,
         negativePrompt:
           typeof input.negativePrompt === 'string' ? input.negativePrompt : undefined,
         model: opts?.model,
@@ -1537,7 +1616,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           dialogues: [],
           actions: [],
           characterIds: [],
-          props: [],
+          props: await this.scenePropsFor(
+            job.projectId,
+            [title, ...list.map((b) => `${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`)].join('\n'),
+          ),
           sortOrder: sceneNumber,
         })
         .returning({ id: scenes.id });
@@ -1572,6 +1654,27 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ========== parse_script 启发式物化 ==========
+
+  /**
+   * 分镜物化时登记道具：按剧本文本匹配圣经里已登记的道具，写入 scenes.props。
+   * 用稳定 @PROP001 编号而非名称，改名不会断链；背景陈设不入镜。
+   * 这一步是「道具卡片 → 首帧生成参考图」链路的起点，之前写死 props: [] 导致
+   * 道具永远进不了镜头上下文。
+   */
+  private async scenePropsFor(projectId: string | undefined, text: string): Promise<string[]> {
+    if (!projectId) return [];
+    const rows = await this.db
+      .select({ name: props.name, code: props.code, category: props.category })
+      .from(props)
+      .where(eq(props.projectId, projectId));
+    return rows
+      .filter(
+        (p) =>
+          p.category !== 'set_dressing' &&
+          (text.includes(p.name) || (!!p.code && text.includes(p.code))),
+      )
+      .map((p) => `@${p.code || p.name}`);
+  }
 
   /**
    * 无需 LLM 的确定性剧本物化：按“第X场”标题或空行分块拆场景，
@@ -1636,7 +1739,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           dialogues: block.dialogues,
           actions: [],
           characterIds: [],
-          props: [],
+          props: await this.scenePropsFor(
+            job.projectId,
+            [block.title, block.summary, ...block.dialogues.map((d) => d.text ?? '')].join('\n'),
+          ),
           sortOrder: i + 1,
         })
         .returning({ id: scenes.id });
@@ -1943,6 +2049,64 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+
+    // 人物形象包：kitView 指定这一张是主图还是某个视角，分别写入 identity_kit，
+    // 不再把所有视角混进 reference_image_urls（网关只会吃到第一张）。
+    const kitView = typeof input.kitView === 'string' ? input.kitView : '';
+    if (job.targetType === 'character' && urls.imageUrl && kitView) {
+      const rows = await this.db
+        .select({
+          projectId: characters.projectId,
+          identityKit: characters.identityKit,
+          referenceImageUrls: characters.referenceImageUrls,
+        })
+        .from(characters)
+        .where(eq(characters.id, job.targetId))
+        .limit(1);
+      if (rows.length === 0) return;
+      if (projectGuard && rows[0].projectId !== projectGuard.projectId) return;
+      const kit: CharacterIdentityKit = {
+        ...((rows[0].identityKit as CharacterIdentityKit | null) ?? { views: {} }),
+      };
+      kit.views = { ...(kit.views ?? {}) };
+      if (kitView === 'portrait') kit.portraitUrl = urls.imageUrl;
+      else if (kitView === 'front' || kitView === 'threeQuarter' || kitView === 'side' || kitView === 'back') {
+        kit.views[kitView] = urls.imageUrl;
+      }
+      kit.updatedAt = new Date().toISOString();
+      // 主图同时作为首帧注入的权威参考图，保持旧链路的一致性保障
+      const existing = (rows[0].referenceImageUrls ?? []) as string[];
+      const refPatch = kit.portraitUrl
+        ? { referenceImageUrls: [kit.portraitUrl, ...existing.filter((u) => u !== kit.portraitUrl)].slice(0, 6) }
+        : {};
+      await this.db
+        .update(characters)
+        .set({ identityKit: kit, ...refPatch, updatedAt: new Date() })
+        .where(eq(characters.id, job.targetId));
+      await this.archiveOutputAssets(job, urls, { mock });
+      return;
+    }
+
+    // 道具设定图：与人物/场景同构，回写 props.reference_image_urls
+    if (job.targetType === 'prop' && urls.imageUrl) {
+      const rows = await this.db
+        .select({ projectId: props.projectId, referenceImageUrls: props.referenceImageUrls })
+        .from(props)
+        .where(eq(props.id, job.targetId))
+        .limit(1);
+      if (rows.length === 0) return;
+      if (projectGuard && rows[0].projectId !== projectGuard.projectId) return;
+      const existing = (rows[0].referenceImageUrls ?? []) as string[];
+      const next = [urls.imageUrl, ...existing.filter((u) => u !== urls.imageUrl)].slice(0, 6);
+      await this.db
+        .update(props)
+        .set({ referenceImageUrls: next, updatedAt: new Date() })
+        .where(eq(props.id, job.targetId));
+      await this.archiveOutputAssets(job, urls, { mock });
+      return;
+    }
+
     // 角色/场景：图片追加为参考图；V1 四视图定妆照（sheet 标记）插到首位当权威参考
     if ((job.targetType === 'character' || job.targetType === 'location') && urls.imageUrl) {
       const table = job.targetType === 'character' ? characters : locations;
@@ -1950,14 +2114,26 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       if (rows.length === 0) return;
       if (projectGuard && rows[0].projectId !== projectGuard.projectId) return;
       const existing = (rows[0].referenceImageUrls ?? []) as string[];
-      const input = (job.inputData ?? {}) as Record<string, unknown>;
       const next = input.sheet === true
         ? [urls.imageUrl, ...existing.filter((u) => u !== urls.imageUrl)]
         : [...existing, urls.imageUrl];
+      // 旧「整张四视图拼图」链路：登记为 identity_kit.sheetUrl，
+      // 让 UI 能区分「拼图」与「四张独立视图」，不冒充已完成定义。
+      const kitPatch: Record<string, unknown> = {};
+      if (job.targetType === 'character' && input.sheet === true) {
+        const curKit = (rows[0] as { identityKit?: CharacterIdentityKit | null }).identityKit;
+        kitPatch.identityKit = {
+          ...(curKit ?? { views: {} }),
+          views: { ...(curKit?.views ?? {}) },
+          sheetUrl: urls.imageUrl,
+          updatedAt: new Date().toISOString(),
+        };
+      }
       await this.db
         .update(table)
         .set({
           referenceImageUrls: next,
+          ...kitPatch,
           updatedAt: new Date(),
         })
         .where(eq(table.id, job.targetId));
@@ -1995,7 +2171,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           .where(eq(characters.id, job.targetId))
           .limit(1);
         const who = row[0]?.name ?? '人物';
-        name = input.sheet === true ? `${who}-四视图定妆照` : `${who}-人物参考图`;
+        const kitView = typeof input.kitView === 'string' ? input.kitView : '';
+        const kitLabels: Record<string, string> = {
+          portrait: '主图·正脸特写', front: '正面视图',
+          threeQuarter: '3/4 侧视图', side: '侧面视图', back: '背面视图',
+        };
+        name = kitView && kitLabels[kitView]
+          ? `${who}-${kitLabels[kitView]}`
+          : input.sheet === true ? `${who}-四视图定妆照` : `${who}-人物参考图`;
       } else if (job.targetType === 'location' && job.targetId) {
         const row = await this.db
           .select({ name: locations.name })
@@ -2003,6 +2186,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           .where(eq(locations.id, job.targetId))
           .limit(1);
         name = `${row[0]?.name ?? '场景'}-场景概念图`;
+      } else if (job.targetType === 'prop' && job.targetId) {
+        const row = await this.db
+          .select({ name: props.name, code: props.code })
+          .from(props)
+          .where(eq(props.id, job.targetId))
+          .limit(1);
+        name = `${row[0]?.code ? `${row[0].code} ` : ''}${row[0]?.name ?? '道具'}-道具设定图`;
       }
       entries.push({ assetType: 'image', url: urls.imageUrl, mime: 'image/png', name });
     }

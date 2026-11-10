@@ -1,10 +1,11 @@
 /**
  * Studio · 右产出坞（Graphite 重设计）
  * -------------------------------------------------------------
- * 7 个 Tab（与设计稿一致）：
+ * 8 个 Tab（与设计稿一致）：
  *   预览   —— StudioPreview（可上下拖拽分割预览高度）
  *   剧本   —— StudioScriptTab（结构化阅读 / 编辑双模式）
  *   圣经   —— 复用 ProjectBibleTab
+ *   道具   —— StudioPropsTab（道具资产 / 状态变体 / AI 生成）
  *   分镜   —— 复用 ProjectStoryboardTab
  *   资产   —— 复用 ProjectAssetsTab
  *   质检   —— 复用 ProjectQcTab
@@ -19,6 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
+  Box,
   ChevronDown,
   Clapperboard,
   Download,
@@ -31,6 +33,7 @@ import {
 import { useStudio } from './StudioShell';
 import { StudioPreview } from './StudioPreview';
 import { StudioScriptTab } from './StudioScriptTab';
+import { StudioPropsTab } from './StudioPropsTab';
 import { DOCK_TABS, type DockTabKey } from './studioRoutes';
 import ProjectBibleTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectBibleTab';
 import ProjectStoryboardTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectStoryboardTab';
@@ -68,13 +71,13 @@ const presetWidth = (key: PresetKey): number | null => {
  * 判定依据是「产出坞实际宽度」（ResizeObserver 量 .dock），
  * 不是 window.innerWidth：右坞能独立拖拽，视口宽度不能代表它的可用空间。
  *
- *   ≥ 580px   full      图标 + 文字 + 计数徽章，7 项全平铺，显示「产出」品牌标签
- *   450–579   compact   收起品牌标签与徽章，图标 + 文字，7 项全平铺（默认 548 落此档）
- *   400–449   icons     只留图标，7 项全平铺，选中项带品牌红指示点
- *   < 400     overflow  前 4 个图标 + 「更多」下拉，下拉里是全部 7 项的完整名称与徽章
+ *   ≥ 580px   full      图标 + 文字 + 计数徽章，8 项全平铺，显示「产出」品牌标签
+ *   450–579   compact   收起品牌标签与徽章，图标 + 文字，8 项全平铺（默认 548 落此档）
+ *   400–449   icons     只留图标，8 项全平铺，选中项带品牌红指示点
+ *   < 400     overflow  前 4 个图标 + 「更多」下拉，下拉里是全部 8 项的完整名称与徽章
  *
  * 不变式（回归时逐条验收）：
- *   1. 任何宽度下 7 个 Tab 都可达，「导出」永不消失、永不被静默裁切；
+ *   1. 任何宽度下 8 个 Tab 都可达，「导出」永不消失、永不被静默裁切；
  *   2. 不做横向滚动来藏内容——隐藏滚动条 + overflow:hidden 是旧版丢按钮的根因；
  *   3. 当前选中项若被收进下拉，「更多」按钮显示品牌红指示点并标注当前模块名；
  *   4. 分级只减少信息密度（徽章 → 文字 → 溢出），不改变导航语义与 URL 行为。
@@ -91,6 +94,7 @@ const TAB_META: Record<DockTabKey, { icon: LucideIcon; hint: string }> = {
   preview: { icon: Play, hint: '画面 · 属性 · 镜头' },
   script: { icon: FileText, hint: '剧本文稿' },
   bible: { icon: BookOpen, hint: '世界观与设定' },
+  props: { icon: Box, hint: '道具资产 · 状态变体 · AI 生成' },
   board: { icon: Clapperboard, hint: '分镜与镜头台账' },
   assets: { icon: ImageIcon, hint: '图片 / 视频 / 音频' },
   qc: { icon: ShieldCheck, hint: '质检与问题清单' },
@@ -235,6 +239,8 @@ export const StudioDock = () => {
         return <StudioScriptTab />;
       case 'bible':
         return <ProjectBibleTab />;
+      case 'props':
+        return <StudioPropsTab />;
       case 'board':
         return <ProjectStoryboardTab />;
       case 'assets':
@@ -301,13 +307,13 @@ export const StudioDock = () => {
               onClick={() => setMenuOpen((v) => !v)}
               aria-expanded={menuOpen}
               aria-label={`更多模块${selectedInMenu ? `（当前：${currentLabel}）` : ''}`}
-              title={selectedInMenu ? `当前：${currentLabel} · 点击展开全部 7 个模块` : '展开全部 7 个模块'}
+              title={selectedInMenu ? `当前：${currentLabel} · 点击展开全部 8 个模块` : '展开全部 8 个模块'}
             >
               <ChevronDown size={14} strokeWidth={2} />
             </button>
             {menuOpen ? (
               <div className="dock-menu" role="menu">
-                <div className="dock-menu-h">全部模块 · 7</div>
+                <div className="dock-menu-h">全部模块 · 8</div>
                 {DOCK_TABS.map((t) => {
                   const Icon = TAB_META[t.key].icon;
                   return (

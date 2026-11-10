@@ -6,20 +6,33 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { characters, locations, projects, scenes, generationJobs } from '@server/database/schema';
+import { characters, locations, projects, scenes, generationJobs, props } from '@server/database/schema';
 import { eq, desc, and, count } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import type {
   Character,
   Location,
+  Prop,
+  PropStateVariant,
+  CharacterIdentityKit,
+  CharacterViewKey,
   CreateCharacterRequest,
   UpdateCharacterRequest,
   CreateLocationRequest,
   UpdateLocationRequest,
+  CreatePropRequest,
+  UpdatePropRequest,
   GenerateBibleRequest,
   GenerateBibleResponse,
   GenerateBibleCounts,
+  GeneratePropsResponse,
   WorldView,
   StyleBible,
+} from '@shared/api.interface';
+import {
+  CHARACTER_VIEW_KEYS,
+  CHARACTER_VIEW_LABELS,
+  emptyIdentityKit,
 } from '@shared/api.interface';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { ModelGatewayService } from '../generation/model-gateway.service';
@@ -38,6 +51,11 @@ interface DraftCharacter {
   voiceType?: string;
   canonicalDescription?: string;
   forbiddenChanges?: string;
+  /** 人物文本锁：逐字复用到每个镜头提示词（identity / wardrobe / voice / signatures） */
+  identityDescriptor?: string;
+  wardrobe?: string;
+  voiceLock?: string;
+  signatureDetails?: string;
 }
 interface DraftLocation {
   name: string;
@@ -50,17 +68,37 @@ interface DraftLocation {
   colorPalette?: string;
   description?: string;
 }
+/** AI 生成道具的中间草稿；状态变体只是描述，落库时补齐 id */
+interface DraftProp {
+  name: string;
+  category: string;
+  identityAnchors: string;
+  appearance: string;
+  scaleReference: string;
+  functionDesc: string;
+  storyRole: string;
+  ownerName?: string;
+  continuityLock: string;
+  forbiddenChanges: string;
+  textPolicy: string;
+  readableText?: string;
+  states: { name: string; description: string }[];
+}
 interface BibleDraft {
   worldView: WorldView;
   styleBible: StyleBible;
   characters: DraftCharacter[];
   locations: DraftLocation[];
+  props: DraftProp[];
 }
 
 const WORLD_KEYS: (keyof WorldView)[] = ['era', 'geography', 'socialRules', 'artStyle', 'colorSystem'];
 const STYLE_KEYS: (keyof StyleBible)[] = ['visualStyle', 'cameraLanguage', 'colorPalette', 'lighting', 'texture', 'motionLanguage', 'subtitleStyle'];
 const CHAR_KEYS: (keyof DraftCharacter)[] = ['roleType', 'age', 'gender', 'faceFeatures', 'hairstyle', 'costume', 'accessories', 'personality', 'voiceType', 'canonicalDescription', 'forbiddenChanges'];
+/** 人物文本锁不占独立列，统一落 identity_kit jsonb */
+const CHAR_KIT_KEYS: (keyof DraftCharacter)[] = ['identityDescriptor', 'wardrobe', 'voiceLock', 'signatureDetails'];
 const LOC_KEYS: (keyof DraftLocation)[] = ['locationType', 'timeOfDay', 'weather', 'architecture', 'furniture', 'lighting', 'colorPalette', 'description'];
+const PROP_KEYS: (keyof DraftProp)[] = ['category', 'identityAnchors', 'appearance', 'scaleReference', 'functionDesc', 'storyRole', 'continuityLock', 'forbiddenChanges', 'textPolicy', 'readableText'];
 
 const emptyWorld = (): WorldView => ({ era: '', geography: '', socialRules: '', artStyle: '', colorSystem: '' });
 const emptyStyle = (): StyleBible => ({ visualStyle: '', cameraLanguage: '', colorPalette: '', lighting: '', texture: '', motionLanguage: '', subtitleStyle: '' });
@@ -112,6 +150,7 @@ export class BibleService {
         gender: dto.gender,
         canonicalDescription: dto.canonicalDescription,
         referenceImageUrls: dto.referenceImageUrls ?? [],
+        identityKit: dto.identityKit ?? null,
       })
       .returning();
     return this.mapCharacter(rows[0]);
@@ -142,6 +181,7 @@ export class BibleService {
       patch.forbiddenChanges = dto.forbiddenChanges;
     if (dto.referenceImageUrls !== undefined)
       patch.referenceImageUrls = dto.referenceImageUrls;
+    if (dto.identityKit !== undefined) patch.identityKit = dto.identityKit;
     if (dto.locked !== undefined) patch.locked = dto.locked;
 
     if (Object.keys(patch).length === 0) {
@@ -320,9 +360,212 @@ export class BibleService {
     return { jobId: rows[0].id };
   }
 
+  // ========== Props（道具资产） ==========
+  async listProps(projectId: string): Promise<Prop[]> {
+    const rows = await this.db
+      .select()
+      .from(props)
+      .where(eq(props.projectId, projectId))
+      .orderBy(desc(props.sortOrder), desc(props.createdAt));
+    return rows.map((r) => this.mapProp(r));
+  }
+
+  async getProp(projectId: string, id: string): Promise<Prop> {
+    const rows = await this.db.select().from(props).where(eq(props.id, id));
+    if (rows.length === 0 || rows[0].projectId !== projectId) {
+      throw new NotFoundException('道具不存在');
+    }
+    return this.mapProp(rows[0]);
+  }
+
+  /** 稳定编号 PROP001…：分镜提示词用 @PROP001 引用，改名不会断链 */
+  private async nextPropCode(projectId: string): Promise<string> {
+    const rows = await this.db
+      .select({ code: props.code })
+      .from(props)
+      .where(eq(props.projectId, projectId));
+    let max = 0;
+    for (const r of rows) {
+      const n = Number((r.code ?? '').replace(/^PROP/i, ''));
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    return `PROP${String(max + 1).padStart(3, '0')}`;
+  }
+
+  async createProp(projectId: string, dto: CreatePropRequest): Promise<Prop> {
+    const variants = (dto.stateVariants ?? []).map((v) => ({
+      ...v,
+      id: v.id || randomUUID(),
+    }));
+    const rows = await this.db
+      .insert(props)
+      .values({
+        projectId,
+        name: dto.name,
+        code: dto.code?.trim() || (await this.nextPropCode(projectId)),
+        category: dto.category ?? 'recurring',
+        identityAnchors: dto.identityAnchors,
+        appearance: dto.appearance,
+        scaleReference: dto.scaleReference,
+        functionDesc: dto.functionDesc,
+        storyRole: dto.storyRole,
+        ownerCharacterId: dto.ownerCharacterId || null,
+        continuityLock: dto.continuityLock,
+        forbiddenChanges: dto.forbiddenChanges,
+        textPolicy: dto.textPolicy ?? 'no_readable_text',
+        readableText: dto.readableText,
+        stateVariants: variants,
+        referenceImageUrls: dto.referenceImageUrls ?? [],
+      })
+      .returning();
+    return this.mapProp(rows[0]);
+  }
+
+  async updateProp(projectId: string, id: string, dto: UpdatePropRequest): Promise<Prop> {
+    const patch: Record<string, unknown> = {};
+    const direct: (keyof UpdatePropRequest)[] = [
+      'name', 'category', 'code', 'identityAnchors', 'appearance', 'scaleReference',
+      'functionDesc', 'storyRole', 'continuityLock', 'forbiddenChanges',
+      'textPolicy', 'readableText', 'referenceImageUrls', 'locked',
+    ];
+    for (const k of direct) {
+      if (dto[k] !== undefined) patch[k] = dto[k];
+    }
+    if (dto.ownerCharacterId !== undefined) {
+      patch.ownerCharacterId = dto.ownerCharacterId || null;
+    }
+    if (dto.stateVariants !== undefined) {
+      patch.stateVariants = dto.stateVariants.map((v) => ({
+        ...v,
+        id: v.id || randomUUID(),
+      }));
+    }
+    if (Object.keys(patch).length === 0) return this.getProp(projectId, id);
+    patch.updatedAt = new Date();
+    // P0 安全：与人物/场景一致，必须同时匹配 id + projectId
+    const rows = await this.db
+      .update(props)
+      .set(patch)
+      .where(and(eq(props.id, id), eq(props.projectId, projectId)))
+      .returning();
+    if (rows.length === 0) throw new NotFoundException('道具不存在');
+    return this.mapProp(rows[0]);
+  }
+
+  async deleteProp(projectId: string, id: string): Promise<void> {
+    const rows = await this.db
+      .delete(props)
+      .where(and(eq(props.id, id), eq(props.projectId, projectId)))
+      .returning({ id: props.id });
+    if (rows.length === 0) throw new NotFoundException('道具不存在');
+  }
+
+  /** 道具参考图生成任务：完成后由 job-worker 回写 props.reference_image_urls */
+  async generatePropImage(projectId: string, id: string): Promise<{ jobId: string }> {
+    await this.budgetCap.assertAllowed();
+    const item = await this.getProp(projectId, id);
+    const prompt = this.buildPropPrompt(item);
+    const rows = await this.db
+      .insert(generationJobs)
+      .values({
+        projectId,
+        jobType: 'image',
+        targetType: 'prop',
+        targetId: item.id,
+        status: 'pending',
+        inputData: {
+          prompt,
+          references: item.referenceImageUrls,
+          propCode: item.code,
+        },
+      })
+      .returning({ id: generationJobs.id });
+    return { jobId: rows[0].id };
+  }
+
+  /** 道具设定图提示词：形制/材质/尺度/永久标记/连续性锁，且明确纯中性背景 */
+  private buildPropPrompt(item: Prop): string {
+    return [
+      `道具设定图：${item.name}${item.code ? `（${item.code}）` : ''}。`,
+      item.identityAnchors ? `形制与识别锚点：${item.identityAnchors}。` : '',
+      item.appearance ? `外观材质：${item.appearance}。` : '',
+      item.scaleReference ? `尺度参照：${item.scaleReference}。` : '',
+      item.continuityLock ? `跨镜必须保持：${item.continuityLock}。` : '',
+      item.textPolicy === 'exact_readable' && item.readableText
+        ? `表面准确文字：${item.readableText}。`
+        : item.textPolicy === 'no_readable_text'
+          ? '表面不得出现任何可读文字或标识。'
+          : item.textPolicy === 'graphic_only'
+            ? '只保留标签图形轮廓，不出现可辨文字。'
+            : '表面文字待定，先不生成可辨文字。',
+      '单一物件、完整入框、纯中性灰影棚背景、均匀柔和布光、无人物、无场景、无强烈阴影、无水印，正交产品设定图。',
+    ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * 人物「1 张主图 + 四视图」形象包：一次提交 5 个独立生成任务。
+   * 每个任务带 kitView 标记，job-worker 完成后分别回写 identity_kit 的对应槽位，
+   * 而不是把所有图混进 reference_image_urls 让模型只吃到第一张。
+   */
+  async generateIdentityKit(projectId: string, id: string): Promise<{ jobIds: string[] }> {
+    await this.budgetCap.assertAllowed();
+    const char = await this.getCharacter(projectId, id);
+    const kit = char.identityKit ?? emptyIdentityKit();
+    const missing: ('portrait' | CharacterViewKey)[] = [];
+    if (!kit.portraitUrl) missing.push('portrait');
+    for (const v of CHARACTER_VIEW_KEYS) if (!kit.views?.[v]) missing.push(v);
+    const targets = missing.length ? missing : (['portrait', ...CHARACTER_VIEW_KEYS] as ('portrait' | CharacterViewKey)[]);
+
+    const rows = await this.db
+      .insert(generationJobs)
+      .values(
+        targets.map((view) => ({
+          projectId,
+          jobType: 'image',
+          targetType: 'character',
+          targetId: char.id,
+          status: 'pending',
+          inputData: {
+            prompt: this.buildViewPrompt(char, view),
+            references: char.referenceImageUrls,
+            kitView: view,
+          },
+          priority: 60,
+        })),
+      )
+      .returning({ id: generationJobs.id });
+    return { jobIds: rows.map((r) => r.id) };
+  }
+
+  /** 逐视角提示词：同一段身份锁逐字复用，只改变视角与画幅，避免身份漂移 */
+  private buildViewPrompt(char: Character, view: 'portrait' | CharacterViewKey): string {
+    const kit = char.identityKit ?? emptyIdentityKit();
+    const identity = [
+      kit.identityDescriptor || char.canonicalDescription || char.name,
+      kit.wardrobe ? `服装：${kit.wardrobe}` : char.costume ? `服装：${char.costume}` : '',
+      kit.signatureDetails ? `不可变签名细节：${kit.signatureDetails}` : '',
+      char.forbiddenChanges ? `禁改项：${char.forbiddenChanges}` : '',
+    ].filter(Boolean).join('；');
+    const viewText: Record<'portrait' | CharacterViewKey, string> = {
+      portrait: '高清 3/4 正面面部特写，头肩入框，面部占画面 40% 以上，五官与皮肤纹理清晰，作为面部唯一真相',
+      front: `${CHARACTER_VIEW_LABELS.front}，直立中性姿态，头顶到脚底完整可见`,
+      threeQuarter: `${CHARACTER_VIEW_LABELS.threeQuarter}，身体约 45 度转向，保留面部可辨识度`,
+      side: `${CHARACTER_VIEW_LABELS.side}，精确 90 度侧身，轮廓与发型厚度清晰`,
+      back: `${CHARACTER_VIEW_LABELS.back}，直立中性姿态，展示发型背面、服装背面与鞋型`,
+    };
+    return [
+      `角色设定图 · ${char.name} · ${view === 'portrait' ? '主图' : CHARACTER_VIEW_LABELS[view]}。`,
+      `身份锁（逐字保持一致）：${identity}。`,
+      viewText[view] + '。',
+      '同一人、同一套服装、同一发型与配色，比例一致，中性微表情。',
+      '纯中性灰影棚背景、均匀柔和布光、无场景、无道具、无强烈方向性阴影、无水印、无文字。',
+      '50–85mm 等效透视，无夸张姿势与广角畸变。',
+    ].join('\n');
+  }
+
   // ========== AI 一键生成制作圣经 ==========
   /**
-   * 剧本 → 完整制作圣经（世界观 5 项 + 风格 7 项 + 人物 + 场景），并写入数据库。
+   * 剧本 → 完整制作圣经（世界观 5 项 + 风格 7 项 + 人物 + 场景 + 道具），并写入数据库。
    *
    * 设计要点：
    *  · 这是「剧本分析后人物/场景为何一直为空」的断点：parse_script 只物化 scenes + shots，
@@ -388,9 +631,137 @@ export class BibleService {
     this.logger.log(
       `圣经生成完成 project=${projectId} source=${source} ` +
         `chars=${persisted.counts.charactersCreated}+${persisted.counts.charactersUpdated} ` +
-        `locs=${persisted.counts.locationsCreated}+${persisted.counts.locationsUpdated}`,
+        `locs=${persisted.counts.locationsCreated}+${persisted.counts.locationsUpdated} ` +
+        `props=${persisted.counts.propsCreated}+${persisted.counts.propsUpdated}`,
     );
     return { ...persisted, source, note };
+  }
+
+  /**
+   * 道具页专用：只从剧本抽取跨镜复现的道具，不触碰世界观 / 人物 / 场景。
+   * 模型不可用时走与一键生成圣经相同的确定性词表草稿，保证本地可用。
+   */
+  async generateProps(
+    projectId: string,
+    dto: GenerateBibleRequest,
+  ): Promise<GeneratePropsResponse> {
+    await this.budgetCap.assertAllowed();
+    const rows = await this.db
+      .select({
+        scriptText: projects.scriptText,
+        description: projects.description,
+        title: projects.title,
+        genre: projects.genre,
+        artStyle: projects.artStyle,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('项目不存在');
+    const project = rows[0];
+    const script = await this.resolveScript(projectId, project, dto.scriptText);
+    if (!script.trim()) {
+      throw new BadRequestException('尚未找到剧本内容：请先在「剧本」页写入剧本');
+    }
+    const meta = {
+      title: project.title ?? '', genre: project.genre ?? '', artStyle: project.artStyle ?? '',
+    };
+    let draftProps = this.fallbackDraft(script, meta).props;
+    let source: 'llm' | 'fallback' = 'fallback';
+    let note: string | undefined = '未接文本模型，已按剧本规则提取道具草稿，请逐项复核';
+    try {
+      const raw = await this.modelGateway.generateText(
+        { prompt: this.buildPropsPrompt(script, meta), temperature: 0.5 },
+        dto.providerName,
+      );
+      const parsed = this.parsePropsJson(raw);
+      if (parsed.length > 0) {
+        draftProps = parsed;
+        source = 'llm';
+        note = undefined;
+      }
+    } catch (e) {
+      note = `模型调用失败（${((e as Error)?.message ?? '未知').slice(0, 100)}），已按剧本规则提取道具草稿`;
+    }
+    const draft: BibleDraft = {
+      worldView: emptyWorld(), styleBible: emptyStyle(),
+      characters: [], locations: [], props: draftProps,
+    };
+    const res = await this.persistBible(projectId, draft, dto.mode ?? 'fill');
+    return {
+      props: res.props,
+      created: res.counts.propsCreated,
+      updated: res.counts.propsUpdated,
+      source,
+      note,
+    };
+  }
+
+  private buildPropsPrompt(script: string, meta: { title: string; genre: string; artStyle: string }): string {
+    return [
+      '你是影视美术道具统筹。请阅读剧本，只抽出「跨镜多次出现 / 承担剧情功能 / 会发生状态变化」的道具。',
+      `片名：${meta.title || '未命名'}；题材：${meta.genre || '未指定'}；画风：${meta.artStyle || '未指定'}。`,
+      '纯背景陈设不要建道具。道具名称沿用剧本原文，所有字段用简体中文，只输出一个合法 JSON 对象 {"props":[...]}，不要解释、不要 Markdown 围栏。',
+      '每项的 identityAnchors 写清形制、部件关系、材料工艺与永久唯一标记，禁止「神秘盒子」「高级质感」这类空话；scaleReference 必须给出与人体或熟悉物件的可比尺寸；states 是同一道具的状态变体（开合/破损/内容物/转手/消耗进度 + 变化原因与有效范围），不拆成两个假道具；textPolicy 从 exact_readable / graphic_only / no_readable_text / pending_creator_text 选一项。',
+      '最多 10 项，结构：',
+      JSON.stringify({
+        props: [{
+          name: '道具名', category: 'hero|recurring|stateful|set_dressing',
+          identityAnchors: '形制·部件关系·材料工艺·永久标记',
+          appearance: '形状·颜色·材质·磨损', scaleReference: '约手掌长，与成年人前臂相当',
+          functionDesc: '原本功能与操作方式', storyRole: '剧情作用', ownerName: '当前持有人（可空）',
+          continuityLock: '跨镜不可改变的最小名词短语', forbiddenChanges: '禁改细节',
+          textPolicy: 'no_readable_text', readableText: '',
+          states: [{ name: '闭合·内有号牌', description: '初始状态与有效范围' }, { name: '打开·空', description: '变化原因与后续沿用范围' }],
+        }],
+      }),
+      '剧本正文：', '---', script.slice(0, 8000), '---',
+    ].join('\n');
+  }
+
+  private parsePropsJson(raw: string): DraftProp[] {
+    const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start < 0 || end <= start) return [];
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+    const list = Array.isArray(obj.props) ? obj.props : [];
+    const validCategories = ['hero', 'recurring', 'stateful', 'set_dressing'];
+    const validPolicies = ['exact_readable', 'graphic_only', 'no_readable_text', 'pending_creator_text'];
+    return list
+      .slice(0, 12)
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object' && !!str((x as Record<string, unknown>).name))
+      .map((r) => {
+        const category = str(r.category, 30);
+        const textPolicy = str(r.textPolicy, 30);
+        const states = Array.isArray(r.states)
+          ? (r.states as unknown[])
+              .slice(0, 6)
+              .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+              .map((s) => ({ name: str(s.name, 60), description: str(s.description, 400) }))
+              .filter((s) => !!s.name)
+          : [];
+        return {
+          name: str(r.name, 100),
+          category: validCategories.includes(category) ? category : 'recurring',
+          identityAnchors: str(r.identityAnchors, 600),
+          appearance: str(r.appearance, 400),
+          scaleReference: str(r.scaleReference, 300),
+          functionDesc: str(r.functionDesc, 300),
+          storyRole: str(r.storyRole, 300),
+          ownerName: str(r.ownerName, 100),
+          continuityLock: str(r.continuityLock, 300),
+          forbiddenChanges: str(r.forbiddenChanges, 300),
+          textPolicy: validPolicies.includes(textPolicy) ? textPolicy : 'no_readable_text',
+          readableText: str(r.readableText, 200),
+          states,
+        };
+      });
   }
 
   /** 剧本来源优先级：请求体 → 项目剧本 → 场次汇总 → 项目简介 */
@@ -423,8 +794,13 @@ export class BibleService {
     return [
       '你是一位影视制作总美术与剧本统筹。请阅读剧本，产出一份可直接用于 AI 分镜生成的「制作圣经」。',
       `片名：${meta.title || '未命名'}；题材：${meta.genre || '未指定'}；画风：${meta.artStyle || '未指定'}。`,
-      '要求：人物姓名、场景名称必须尽量沿用剧本原文；所有字段用简体中文；不要写解释、不要 Markdown 围栏，只输出一个合法 JSON 对象。',
-      '人物 3–8 个，场景 2–8 个；每个字段都要有具体内容，不要留空字符串。',
+      '要求：人物姓名、场景名称、道具名称必须尽量沿用剧本原文；所有字段用简体中文；不要写解释、不要 Markdown 围栏，只输出一个合法 JSON 对象。',
+      '人物 3–8 个，场景 2–8 个，道具 2–10 个；每个字段都要有具体内容，不要留空字符串。',
+      '',
+      '【人物规范】每位主角必须有 identityDescriptor（可逐字复用的静态身份锁：脸型/肤色/体态/发型/稳定配色）、wardrobe（基础服装）、voiceLock（口音·音色·语速·受压变化）、signatureDetails（至少两个不可变签名细节，如银戒/眉骨疤）。canonicalDescription 是整合后的完整外貌锚点，不得写情绪或摄影机动作。',
+      '',
+      '【道具规范】只为「跨镜多次出现、承担剧情功能、或发生状态变化」的物件建立道具；纯背景陈设不建。identityAnchors 写清基本形制、部件关系、主要材料与表面工艺、永久唯一标记，不要用「神秘盒子」「高级质感」这类空话；scaleReference 必须给出与人体或熟悉物件的可比尺寸；states 是同一道具的状态变体（开合/破损/湿污/内容物/转手/消耗进度 + 变化原因与有效范围），绝不拆成两个假道具；textPolicy 从 exact_readable / graphic_only / no_readable_text / pending_creator_text 里选一项。',
+      '',
       'JSON 结构如下：',
       JSON.stringify({
         worldView: { era: '时代背景', geography: '地理环境', socialRules: '社会规则', artStyle: '美术风格', colorSystem: '色彩系统' },
@@ -435,11 +811,25 @@ export class BibleService {
           personality: '性格', voiceType: '音色',
           canonicalDescription: '一段可直接作为跨镜一致性锚点的完整外貌描述',
           forbiddenChanges: '跨镜头必须保持不变的特征',
+          identityDescriptor: '静态身份锁，逐字复用', wardrobe: '基础服装标识',
+          voiceLock: '口音·音色·语速·受压变化', signatureDetails: '两处不可变签名细节',
         }],
         locations: [{
           name: '场景名', locationType: '内景|外景', timeOfDay: '日|夜|黄昏', weather: '天气',
           architecture: '建筑结构', furniture: '陈设道具', lighting: '光线', colorPalette: '色彩',
           description: '一段可直接作为概念图提示的完整场景描述',
+        }],
+        props: [{
+          name: '道具名', category: 'hero|recurring|stateful|set_dressing',
+          identityAnchors: '形制·部件关系·材料工艺·永久唯一标记',
+          appearance: '形状·颜色·材质·磨损细节',
+          scaleReference: '约手掌长，与成年人前臂相当',
+          functionDesc: '原本功能与操作方式', storyRole: '在剧情中的作用',
+          ownerName: '当前持有人姓名（可空）',
+          continuityLock: '跨镜不可改变的最小名词短语',
+          forbiddenChanges: '禁止擅自改变的细节',
+          textPolicy: 'no_readable_text', readableText: '',
+          states: [{ name: '闭合·内有号牌', description: '初始状态，放于柜台下层' }, { name: '打开·空', description: 'SC004 被取走后，全片后续沿用' }],
         }],
       }),
       '剧本正文：',
@@ -489,6 +879,10 @@ export class BibleService {
         voiceType: str(r.voiceType, 50),
         canonicalDescription: str(r.canonicalDescription, 600),
         forbiddenChanges: str(r.forbiddenChanges),
+        identityDescriptor: str(r.identityDescriptor, 600),
+        wardrobe: str(r.wardrobe, 400),
+        voiceLock: str(r.voiceLock, 400),
+        signatureDetails: str(r.signatureDetails, 400),
       };
     });
     const locations: DraftLocation[] = readList(obj.locations, 'name').map((r) => ({
@@ -502,7 +896,35 @@ export class BibleService {
       colorPalette: str(r.colorPalette),
       description: str(r.description, 600),
     }));
-    return { worldView, styleBible, characters, locations };
+    const validCategories = ['hero', 'recurring', 'stateful', 'set_dressing'];
+    const validPolicies = ['exact_readable', 'graphic_only', 'no_readable_text', 'pending_creator_text'];
+    const draftProps: DraftProp[] = readList(obj.props, 'name').slice(0, 12).map((r) => {
+      const category = str(r.category, 30);
+      const textPolicy = str(r.textPolicy, 30);
+      const states = Array.isArray(r.states)
+        ? (r.states as unknown[])
+            .slice(0, 6)
+            .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+            .map((s) => ({ name: str(s.name, 60), description: str(s.description, 400) }))
+            .filter((s) => !!s.name)
+        : [];
+      return {
+        name: str(r.name, 100),
+        category: validCategories.includes(category) ? category : 'recurring',
+        identityAnchors: str(r.identityAnchors, 600),
+        appearance: str(r.appearance, 400),
+        scaleReference: str(r.scaleReference, 300),
+        functionDesc: str(r.functionDesc, 300),
+        storyRole: str(r.storyRole, 300),
+        ownerName: str(r.ownerName, 100),
+        continuityLock: str(r.continuityLock, 300),
+        forbiddenChanges: str(r.forbiddenChanges, 300),
+        textPolicy: validPolicies.includes(textPolicy) ? textPolicy : 'no_readable_text',
+        readableText: str(r.readableText, 200),
+        states,
+      };
+    });
+    return { worldView, styleBible, characters, locations, props: draftProps };
   }
 
   /** 题材模板：无模型时也要给出一套能直接用于后续生成的视觉基线 */
@@ -633,6 +1055,10 @@ export class BibleService {
             `${name}，${i === 0 ? '本片主要角色' : '本片出场角色'}。${clue || '请补充外貌与服装设定'}。` +
             '请在本页补全五官、发型、服装等一致性锚点，避免后续镜头形象漂移。',
           forbiddenChanges: '保持面部特征、发型与服装在所有镜头中一致，不得擅自更换',
+          identityDescriptor: `${name}：${i === 0 ? '主角' : '出场角色'}，请补全脸型、肤色、体态、发型与稳定配色的静态描述，跨镜逐字复用。`,
+          wardrobe: '请补充基础服装标识（款式、颜色、材质、鞋型）',
+          voiceLock: i === 0 ? '请补充口音、音色、语速与情绪受压时的变化' : '',
+          signatureDetails: '请补充至少两处不可变签名细节（如银戒、眉骨疤）',
         };
       });
 
@@ -649,7 +1075,50 @@ export class BibleService {
         description: `${name}。${theme.lighting}，${theme.colorPalette}。请补充可辨识的空间细节作为概念图一致性锚点。`,
       }));
 
-    return { worldView, styleBible, characters, locations };
+    // 确定性道具抽取：只认会被拿取 / 传递 / 打开 / 读取 / 反复出现的物件，
+    // 纯背景陈设不建资产（与 worldwonderer/drama-skills 的边界一致）。
+    const lexicon: {
+      key: RegExp; name: string; anchors: string; scale: string;
+      states: { name: string; description: string }[];
+    }[] = [
+      { key: /钥匙|门禁卡|房卡/g, name: '钥匙', anchors: '单柄齿状金属钥匙，齿形与钥匙头刻痕为永久标记', scale: '约成人手掌三分之一长', states: [{ name: '持有', description: '初始由所有人携带' }, { name: '转手', description: '交出后持有人变化，形制不变' }] },
+      { key: /手机|电话|通话/g, name: '手机', anchors: '直板触屏手机，边框磨损与保护壳颜色为永久标记', scale: '约成人手掌长', states: [{ name: '亮屏', description: '可读内容出现' }, { name: '熄屏', description: '仅外观可见' }] },
+      { key: /纸条|字条|便签|信纸|信封/g, name: '纸条', anchors: '矩形纸片，折痕、纸质与边缘缺口为永久标记', scale: '约手掌大小', states: [{ name: '折叠', description: '未展开，内容不可见' }, { name: '展开', description: '内容出镜，文字按政策处理' }] },
+      { key: /照片|相片|合影/g, name: '照片', anchors: '矩形相纸，边角磨损与背面笔迹为永久标记', scale: '约手掌大小', states: [{ name: '完好', description: '初始状态' }, { name: '破损', description: '撕裂或烧毁后全片沿用' }] },
+      { key: /盒子|匣子|铁匣|木盒|首饰盒/g, name: '匣子', anchors: '带铰链盖的扁长盒体，边角凹陷与合页样式为永久标记', scale: '手掌至小臂长', states: [{ name: '闭合·有内容物', description: '初始闭合，内置物未露面' }, { name: '打开·空', description: '被取走后全片沿用' }] },
+      { key: /合同|文件|档案|卷宗/g, name: '文件', anchors: '装订纸册，封面颜色、装订方式与印章位置为永久标记', scale: 'A4 纸张大小', states: [{ name: '合起', description: '仅封面可见' }, { name: '翻开', description: '内页按可读文字政策处理' }] },
+      { key: /录音笔|录音|监听器/g, name: '录音笔', anchors: '细长条状录音设备，按键排列与外壳划痕为永久标记', scale: '约手指长', states: [{ name: '待机', description: '未启用' }, { name: '录制中', description: '指示灯可见，启用后状态需写明来源' }] },
+      { key: /U盘|优盘|硬盘|存储卡/g, name: 'U盘', anchors: '小型直插式存储设备，外壳颜色与挂绳为永久标记', scale: '约拇指长', states: [{ name: '未插入', description: '随身携带' }, { name: '已读取', description: '内容已揭示，后续沿用' }] },
+      { key: /监控|摄像头|录像/g, name: '监控画面', anchors: '固定机位画面，网格、时间戳样式与机位视角为永久标记', scale: '屏幕内画幅，与人物按同框比例呈现', states: [{ name: '实时', description: '当前时段画面' }, { name: '回放', description: '带时间戳的历史画面' }] },
+      { key: /戒指|项链|手链|玉佩/g, name: '饰物', anchors: '贴身佩戴饰物，材质、镶嵌物与磨损位置为永久标记', scale: '指节至掌心大小', states: [{ name: '佩戴', description: '由所有人佩戴' }, { name: '摘下/转手', description: '归属变化需写清有效范围' }] },
+      { key: /手表|怀表|时钟/g, name: '表', anchors: '圆形表盘配表带，表盘刻度与表壳划痕为永久标记', scale: '腕部尺寸', states: [{ name: '走时', description: '正常状态' }, { name: '停摆', description: '停摆后时间不再变化' }] },
+      { key: /药|药瓶|药片|针剂/g, name: '药瓶', anchors: '小瓶装药剂，瓶身标签形状与封口方式为永久标记', scale: '约掌心高', states: [{ name: '未开封', description: '满瓶' }, { name: '已使用', description: '剩余量变化需逐场登记' }] },
+      { key: /茶盏|杯子|酒杯|咖啡杯/g, name: '杯', anchors: '单柄杯具，釉色与杯口缺口为永久标记', scale: '单手可握', states: [{ name: '满', description: '内有液体' }, { name: '空/摔碎', description: '破损后全片沿用' }] },
+      { key: /伞|雨伞/g, name: '伞', anchors: '长柄折伞，伞骨数量与握把材质为永久标记', scale: '约半人高', states: [{ name: '收拢', description: '未撑开' }, { name: '撑开', description: '雨天场景沿用' }] },
+      { key: /刀|匕首|剪刀/g, name: '利器', anchors: '短刃器具，刃口形状与柄部缠绳为永久标记', scale: '约小臂长', states: [{ name: '收纳', description: '未出鞘' }, { name: '持握', description: '出镜后需写明持有人' }] },
+      { key: /包裹|快递|箱子/g, name: '包裹', anchors: '封装箱体，封箱胶带走向与手写标记为永久标记', scale: '双手可抱', states: [{ name: '未拆', description: '内容物未知' }, { name: '已拆', description: '内容物露面后全片沿用' }] },
+      { key: /日记|笔记本|账本/g, name: '本子', anchors: '装订本册，封面材质与书脊磨损为永久标记', scale: '约 A5 大小', states: [{ name: '合起', description: '仅封面可见' }, { name: '翻开', description: '内页按可读文字政策处理' }] },
+    ];
+    const draftProps: DraftProp[] = lexicon
+      .map((p) => ({ p, n: (script.match(p.key) ?? []).length }))
+      .filter((x) => x.n > 0)
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 6)
+      .map(({ p }) => ({
+        name: p.name,
+        category: p.name === '匣子' || p.name === '文件' ? 'stateful' : 'recurring',
+        identityAnchors: p.anchors,
+        appearance: '请按剧本补充形状、颜色、材质与磨损细节',
+        scaleReference: p.scale,
+        functionDesc: '请按剧本补充原本功能与操作方式',
+        storyRole: `剧本中反复出现（${p.name}），需跨镜保持一致`,
+        continuityLock: `${p.name}的形制、材质与永久标记`,
+        forbiddenChanges: '不得擅自改变形制、颜色、材质与永久标记',
+        textPolicy: 'no_readable_text',
+        states: p.states,
+      }));
+
+    return { worldView, styleBible, characters, locations, props: draftProps };
   }
 
   /** 模型结果与确定性草稿合并，保证每个字段都有内容 */
@@ -664,12 +1133,24 @@ export class BibleService {
         c.canonicalDescription?.trim() || `${c.name}，请补充外貌与服装等跨镜一致性描述。`,
       forbiddenChanges:
         c.forbiddenChanges?.trim() || '保持面部特征、发型与服装在所有镜头中一致，不得擅自更换',
+      identityDescriptor:
+        c.identityDescriptor?.trim() || c.canonicalDescription?.trim() || `${c.name}，请补全静态身份锁。`,
+      wardrobe: c.wardrobe?.trim() || c.costume?.trim() || '',
+      voiceLock: c.voiceLock?.trim() || c.voiceType?.trim() || '',
+      signatureDetails: c.signatureDetails?.trim() || '',
     }));
     const locations = (primary.locations.length ? primary.locations : filler.locations).map((l) => ({
       ...l,
       description: l.description?.trim() || `${l.name}。请补充可辨识的空间细节。`,
     }));
-    return { worldView, styleBible, characters, locations };
+    const mergedProps = (primary.props.length ? primary.props : filler.props).map((p) => ({
+      ...p,
+      identityAnchors: p.identityAnchors?.trim() || `${p.name}。请补全形制、材质与永久唯一标记。`,
+      scaleReference: p.scaleReference?.trim() || '请补充与人体或熟悉物件的可比尺寸',
+      continuityLock: p.continuityLock?.trim() || `${p.name}的形制、材质与永久标记`,
+      states: p.states?.length ? p.states : [{ name: '初始', description: '初始状态，请按剧本补充' }],
+    }));
+    return { worldView, styleBible, characters, locations, props: mergedProps };
   }
 
   /** 落库：fill 只补空白、跳过 locked；overwrite 覆盖文本但保留参考图与锁定状态 */
@@ -682,6 +1163,7 @@ export class BibleService {
       worldViewFields: 0, styleFields: 0,
       charactersCreated: 0, charactersUpdated: 0,
       locationsCreated: 0, locationsUpdated: 0,
+      propsCreated: 0, propsUpdated: 0,
     };
 
     const curWv = (await this.getWorldview(projectId)) ?? emptyWorld();
@@ -722,6 +1204,22 @@ export class BibleService {
           if (mode === 'fill' && String(cur[k] ?? '').trim()) continue;
           (patch as Record<string, unknown>)[k] = incoming;
         }
+        // 文本锁落在 identity_kit jsonb：不覆盖已有的主图 / 四视图
+        const kit: CharacterIdentityKit = { ...(found.identityKit ?? emptyIdentityKit()) };
+        kit.views = { ...(kit.views ?? {}) };
+        let kitTouched = false;
+        for (const k of CHAR_KIT_KEYS) {
+          const incoming = str((c as unknown as Record<string, unknown>)[k], 600);
+          if (!incoming) continue;
+          const key = k as keyof CharacterIdentityKit;
+          if (mode === 'fill' && String(kit[key] ?? '').trim()) continue;
+          (kit as unknown as Record<string, unknown>)[key] = incoming;
+          kitTouched = true;
+        }
+        if (kitTouched) {
+          kit.updatedAt = new Date().toISOString();
+          patch.identityKit = kit;
+        }
         if (Object.keys(patch).length > 0) {
           await this.updateCharacter(projectId, found.id, patch);
           counts.charactersUpdated += 1;
@@ -742,6 +1240,14 @@ export class BibleService {
           canonicalDescription: c.canonicalDescription,
           forbiddenChanges: c.forbiddenChanges,
           referenceImageUrls: [],
+          identityKit: {
+            ...emptyIdentityKit(),
+            identityDescriptor: c.identityDescriptor,
+            wardrobe: c.wardrobe,
+            voiceLock: c.voiceLock,
+            signatureDetails: c.signatureDetails,
+            updatedAt: new Date().toISOString(),
+          },
           locked: false,
           sortOrder: charOrder++,
         });
@@ -790,11 +1296,76 @@ export class BibleService {
       }
     }
 
+    // 道具：身份只创建一次，fill 不覆盖用户已编辑的锚点与参考图；
+    // 状态变体是同一道具的状态，不拆成多个道具。
+    const existingProps = await this.listProps(projectId);
+    const propByName = new Map(existingProps.map((p) => [p.name.trim(), p]));
+    const allChars = await this.listCharacters(projectId);
+    const charIdByName = new Map(allChars.map((c) => [c.name.trim(), c.id]));
+    let propOrder = existingProps.length;
+    let propSeq = existingProps.length;
+    for (const p of draft.props) {
+      const name = p.name.trim().slice(0, 100);
+      if (!name) continue;
+      const states: PropStateVariant[] = (p.states ?? []).map((s) => ({
+        id: randomUUID(),
+        name: s.name,
+        description: s.description,
+      }));
+      const ownerId = p.ownerName ? charIdByName.get(p.ownerName.trim()) : undefined;
+      const found = propByName.get(name);
+      if (found) {
+        if (found.locked) continue;
+        const patch: UpdatePropRequest = {};
+        const cur = found as unknown as Record<string, unknown>;
+        for (const k of PROP_KEYS) {
+          const incoming = (p as unknown as Record<string, unknown>)[k];
+          if (incoming === undefined || incoming === '') continue;
+          if (mode === 'fill' && String(cur[k] ?? '').trim()) continue;
+          (patch as Record<string, unknown>)[k] = incoming;
+        }
+        if (states.length && (mode === 'overwrite' || !found.stateVariants?.length)) {
+          patch.stateVariants = states;
+        }
+        if (ownerId && (mode === 'overwrite' || !found.ownerCharacterId)) {
+          patch.ownerCharacterId = ownerId;
+        }
+        if (Object.keys(patch).length > 0) {
+          await this.updateProp(projectId, found.id, patch);
+          counts.propsUpdated += 1;
+        }
+      } else {
+        propSeq += 1;
+        await this.db.insert(props).values({
+          projectId,
+          name,
+          code: `PROP${String(propSeq).padStart(3, '0')}`,
+          category: p.category || 'recurring',
+          identityAnchors: p.identityAnchors,
+          appearance: p.appearance,
+          scaleReference: p.scaleReference,
+          functionDesc: p.functionDesc,
+          storyRole: p.storyRole,
+          ownerCharacterId: ownerId ?? null,
+          continuityLock: p.continuityLock,
+          forbiddenChanges: p.forbiddenChanges,
+          textPolicy: p.textPolicy || 'no_readable_text',
+          readableText: p.readableText,
+          stateVariants: states,
+          referenceImageUrls: [],
+          locked: false,
+          sortOrder: propOrder++,
+        });
+        counts.propsCreated += 1;
+      }
+    }
+
     return {
       worldView: nextWv,
       styleBible: nextSt,
-      characters: await this.listCharacters(projectId),
+      characters: allChars,
       locations: await this.listLocations(projectId),
+      props: await this.listProps(projectId),
       counts,
     };
   }
@@ -859,6 +1430,7 @@ export class BibleService {
       canonicalDescription: row.canonicalDescription ?? undefined,
       forbiddenChanges: row.forbiddenChanges ?? undefined,
       referenceImageUrls: row.referenceImageUrls ?? [],
+      identityKit: (row.identityKit as CharacterIdentityKit | null) ?? emptyIdentityKit(),
       locked: row.locked,
       sortOrder: row.sortOrder,
       createdAt: row.createdAt.toISOString(),
@@ -879,6 +1451,33 @@ export class BibleService {
       lighting: row.lighting ?? undefined,
       colorPalette: row.colorPalette ?? undefined,
       description: row.description ?? undefined,
+      referenceImageUrls: row.referenceImageUrls ?? [],
+      locked: row.locked,
+      sortOrder: row.sortOrder,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private mapProp(row: typeof props.$inferSelect): Prop {
+    const variants = (row.stateVariants as PropStateVariant[] | null) ?? [];
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      code: row.code ?? '',
+      name: row.name,
+      category: (row.category as Prop['category']) ?? 'recurring',
+      identityAnchors: row.identityAnchors ?? '',
+      appearance: row.appearance ?? '',
+      scaleReference: row.scaleReference ?? '',
+      functionDesc: row.functionDesc ?? '',
+      storyRole: row.storyRole ?? '',
+      ownerCharacterId: row.ownerCharacterId ?? undefined,
+      continuityLock: row.continuityLock ?? '',
+      forbiddenChanges: row.forbiddenChanges ?? '',
+      textPolicy: (row.textPolicy as Prop['textPolicy']) ?? 'no_readable_text',
+      readableText: row.readableText ?? undefined,
+      stateVariants: Array.isArray(variants) ? variants : [],
       referenceImageUrls: row.referenceImageUrls ?? [],
       locked: row.locked,
       sortOrder: row.sortOrder,

@@ -691,11 +691,12 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
     if (!projectId) return;
     try {
       const { projects, storyboard, bible } = await import('@client/src/api');
-      const [proj, , shotsList, charsList] = await Promise.all([
+      const [proj, , shotsList, charsList, propsList] = await Promise.all([
         projects.getProject(projectId).catch(() => null),
         storyboard.listScenes(projectId).catch(() => []),
         storyboard.listAllShots(projectId).catch(() => []),
         bible.listCharacters(projectId).catch(() => []),
+        bible.listProps(projectId).catch(() => []),
       ]);
       const s = get();
       const existingIds = new Set(s.nodes.map((n) => n.id));
@@ -724,7 +725,8 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
       charsList.slice(0, 8).forEach((ch, idx) => {
         const cid = `char-img-${ch.id.slice(0, 8)}`;
         if (existingIds.has(cid)) return;
-        const refUrl = ch.referenceImageUrls?.[0];
+        // 主图（正脸特写）优先于任意参考图，与首帧注入的权威锚点一致
+        const refUrl = ch.identityKit?.portraitUrl || ch.referenceImageUrls?.[0];
         newNodes.push({
           id: cid,
           type: 'pavo',
@@ -742,6 +744,36 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
           },
         });
         existingIds.add(cid);
+      });
+
+      // 2b. 道具节点：身份锚点 / 尺度 / 状态变体 / 设定图，与 props 表同源
+      propsList.slice(0, 12).forEach((pr, idx) => {
+        const pid = `prop-img-${pr.id.slice(0, 8)}`;
+        if (existingIds.has(pid)) return;
+        const refUrl = pr.referenceImageUrls?.[0];
+        const states = (pr.stateVariants ?? []).map((v) => v.name).filter(Boolean).join(' / ');
+        newNodes.push({
+          id: pid,
+          type: 'pavo',
+          position: { x: 60, y: 420 + (Math.min(charsList.length, 8) + idx) * 360 },
+          data: {
+            nodeType: 'prop',
+            title: `道具 · ${pr.code ? `${pr.code} ` : ''}${pr.name}`,
+            status: refUrl || pr.identityAnchors ? 'done' : 'idle',
+            progress: 100,
+            mediaUrl: refUrl,
+            mediaKind: refUrl ? 'image' : undefined,
+            profile: [
+              pr.identityAnchors,
+              pr.scaleReference ? `尺度：${pr.scaleReference}` : '',
+              states ? `状态变体：${states}` : '',
+              pr.continuityLock ? `连续性锁：${pr.continuityLock}` : '',
+            ].filter(Boolean).join('\n'),
+            markdown: !refUrl && !pr.identityAnchors ? pr.name : undefined,
+            backendPropId: pr.id,
+          },
+        });
+        existingIds.add(pid);
       });
 
       // 3. 分镜镜头节点（首帧图片节点 → 镜头视频节点）

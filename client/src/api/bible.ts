@@ -2,14 +2,18 @@ import { axiosForBackend } from '@client/src/api/http';
 import type {
   Character,
   Location,
+  Prop,
   WorldView,
   StyleBible,
   CreateCharacterRequest,
   UpdateCharacterRequest,
   CreateLocationRequest,
   UpdateLocationRequest,
+  CreatePropRequest,
+  UpdatePropRequest,
   GenerateBibleRequest,
   GenerateBibleResponse,
+  GeneratePropsResponse,
 } from '@shared/api.interface';
 
 export const getWorldView = (projectId: string) =>
@@ -124,8 +128,61 @@ export const generateLocationImage = (projectId: string, id: string) =>
     )
     .then((res) => res.data);
 
+/** 人物「1 张主图 + 四视图」形象包：一次提交缺口的独立生成任务 */
+export const generateIdentityKit = (projectId: string, id: string) =>
+  axiosForBackend
+    .post<{ jobIds: string[] }>(
+      `/api/projects/${projectId}/bible/characters/${id}/generate-identity-kit`,
+    )
+    .then((res) => res.data);
+
+export const listProps = (projectId: string) =>
+  axiosForBackend
+    .get<Prop[]>(`/api/projects/${projectId}/bible/props`)
+    .then((res) => res.data);
+
+export const getProp = (projectId: string, id: string) =>
+  axiosForBackend
+    .get<Prop>(`/api/projects/${projectId}/bible/props/${id}`)
+    .then((res) => res.data);
+
+export const createProp = (projectId: string, data: CreatePropRequest) =>
+  axiosForBackend
+    .post<Prop>(`/api/projects/${projectId}/bible/props`, data)
+    .then((res) => res.data);
+
+export const updateProp = (projectId: string, id: string, data: UpdatePropRequest) =>
+  axiosForBackend
+    .patch<Prop>(`/api/projects/${projectId}/bible/props/${id}`, data)
+    .then((res) => res.data);
+
+export const deleteProp = (projectId: string, id: string) =>
+  axiosForBackend
+    .delete<{ id: string }>(`/api/projects/${projectId}/bible/props/${id}`)
+    .then((res) => res.data);
+
+/** 道具页 AI 一键生成：只从剧本抽取道具，不改动世界观/人物/场景 */
+export const generateProps = (
+  projectId: string,
+  data: GenerateBibleRequest = {},
+) =>
+  axiosForBackend
+    .post<GeneratePropsResponse>(
+      `/api/projects/${projectId}/bible/props/generate`,
+      data,
+    )
+    .then((res) => res.data);
+
+/** 道具设定图生成任务：完成后自动回写 props.referenceImageUrls */
+export const generatePropImage = (projectId: string, id: string) =>
+  axiosForBackend
+    .post<{ jobId: string }>(
+      `/api/projects/${projectId}/bible/props/${id}/generate-image`,
+    )
+    .then((res) => res.data);
+
 /**
- * 一键生成完整制作圣经：世界观 + 风格 + 人物 + 场景。
+ * 一键生成完整制作圣经：世界观 + 风格 + 人物 + 场景 + 道具。
  * 不传 scriptText 时服务端自行读取项目剧本 / 场次 / 简介。
  * source=fallback 表示模型不可用，返回的是按剧本规则生成的可编辑草稿。
  */

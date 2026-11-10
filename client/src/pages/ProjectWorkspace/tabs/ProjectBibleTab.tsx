@@ -4,9 +4,10 @@
  * 设计标准（与右坞其它页一致）：
  *  · 容器驱动，不依赖视口断点：标准 548px 单列、≥700px 双列字段与卡片
  *  · 视觉只用发丝线 + 底色深浅差，强调色仅 --brand；无渐变/毛玻璃/上浮/厚影
- *  · 单一数据源：世界观 / 风格 / 人物 / 场景全部直接读写 bible 接口
- *  · AI 一键生成后所有内容可逐项手动修改；fill 模式不覆盖用户已填写内容
- *  · 人物形象图在此绑定（上传或 AI 定妆），作为后续首帧 / 视频的一致性锚点
+ *  · 单一数据源：世界观 / 风格 / 人物 / 场景 / 道具全部直接读写 bible 接口
+ *  · 人物按行业标准定义：1 张主图（正脸特写）+ 四视图（正/3-4/侧/背）独立成图，
+ *    再叠加身份 / 服装 / 声线 / 签名细节 / 禁改项五道文本锁。
+ *  · 道具是第三类可寻址资产：身份与状态变体分离，编号进分镜、设定图进首帧。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -15,6 +16,7 @@ import {
   Check,
   ChevronDown,
   ImagePlus,
+  Layers,
   Loader2,
   Lock,
   MapPin,
@@ -35,11 +37,21 @@ import { toast } from 'sonner';
 import { bible, storyboard } from '@client/src/api';
 import { uploadLocalFile } from '@client/src/api/assets';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
+import CharacterKitStrip, { type KitViewKey } from '@client/src/components/studio/CharacterKitStrip';
+import PropsPanel from '@client/src/components/studio/PropsPanel';
 import type {
   Character,
+  CharacterIdentityKit,
   Location,
+  Prop,
   WorldView,
   StyleBible,
+} from '@shared/api.interface';
+import {
+  CHARACTER_VIEW_KEYS,
+  emptyIdentityKit,
+  isCharacterFullyDefined,
+  isPropReady,
 } from '@shared/api.interface';
 
 const EMPTY_WORLD: WorldView = {
@@ -68,10 +80,29 @@ const STYLE_FIELDS: { key: keyof StyleBible; label: string; hint: string }[] = [
 ];
 
 type Kind = 'char' | 'loc';
-interface EditDraft { name: string; desc: string; role: string; locked: boolean }
+interface EditDraft {
+  name: string;
+  desc: string;
+  role: string;
+  locked: boolean;
+  identityDescriptor: string;
+  wardrobe: string;
+  voiceLock: string;
+  signatureDetails: string;
+  forbiddenChanges: string;
+}
+interface UploadTarget {
+  kind: Kind | 'kit';
+  id: string;
+  view?: KitViewKey;
+}
 
-/** 人物/场景设定变化后通知对话框上方的一致性卡与门控进度即时刷新 */
 const notifyBibleChanged = () => window.dispatchEvent(new Event('yimu:bible-updated'));
+
+const kitCellCount = (c: Character): number => {
+  const kit = c.identityKit ?? emptyIdentityKit();
+  return (kit.portraitUrl ? 1 : 0) + CHARACTER_VIEW_KEYS.filter((k) => !!kit.views?.[k]).length;
+};
 
 const ProjectBibleTab = () => {
   const { id } = useParams<{ id: string }>();
@@ -80,6 +111,7 @@ const ProjectBibleTab = () => {
   const [style, setStyle] = useState<StyleBible>(EMPTY_STYLE);
   const [chars, setChars] = useState<Character[]>([]);
   const [locs, setLocs] = useState<Location[]>([]);
+  const [propItems, setPropItems] = useState<Prop[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -88,33 +120,40 @@ const ProjectBibleTab = () => {
   const [genMenu, setGenMenu] = useState(false);
   const [collapsed, setCollapsed] = useState({ world: false, style: false });
   const [editing, setEditing] = useState<{ kind: Kind; id: string } | null>(null);
-  const [draft, setDraft] = useState<EditDraft>({ name: '', desc: '', role: '配角', locked: false });
+  const [draft, setDraft] = useState<EditDraft | null>(null);
   const [adding, setAdding] = useState<Kind | null>(null);
   const [newName, setNewName] = useState('');
   const [confirmDel, setConfirmDel] = useState<{ kind: Kind; id: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const uploadTarget = useRef<{ kind: Kind; id: string } | null>(null);
+  const uploadTarget = useRef<UploadTarget | null>(null);
   const genRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
-    const [wv, st, cs, ls] = await Promise.all([
+    const [wv, st, cs, ls, ps] = await Promise.all([
       bible.getWorldView(id).catch(() => null),
       bible.getStyleBible(id).catch(() => null),
       bible.listCharacters(id).catch(() => [] as Character[]),
       bible.listLocations(id).catch(() => [] as Location[]),
+      bible.listProps(id).catch(() => [] as Prop[]),
     ]);
     setWorldView(wv ?? EMPTY_WORLD);
     setStyle(st ?? EMPTY_STYLE);
     setChars(cs ?? []);
     setLocs(ls ?? []);
+    setPropItems(ps ?? []);
     setLoading(false);
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const onUpdate = () => { void load(); };
+    window.addEventListener('yimu:bible-updated', onUpdate);
+    return () => window.removeEventListener('yimu:bible-updated', onUpdate);
+  }, [load]);
 
   // 点空白处收起「生成模式」菜单
   useEffect(() => {
@@ -128,16 +167,19 @@ const ProjectBibleTab = () => {
 
   const worldFilled = WORLD_FIELDS.filter((f) => (worldView[f.key] ?? '').trim()).length;
   const styleFilled = STYLE_FIELDS.filter((f) => (style[f.key] ?? '').trim()).length;
-  const charReady = chars.filter((c) => c.referenceImageUrls?.length > 0).length;
+  const charDefined = chars.filter(isCharacterFullyDefined).length;
   const locReady = locs.filter((l) => l.referenceImageUrls?.length > 0).length;
-  const refTotal = chars.length + locs.length;
-  const refReady = charReady + locReady;
+  const propReady = propItems.filter(isPropReady).length;
+  /** 完成度按「人物 5 格 + 场景 1 格 + 道具 1 格」的资产格数计算，拼图不冒充四视图 */
+  const refUnits = chars.length * 5 + locs.length + propItems.length;
+  const refDone =
+    chars.reduce((n, c) => n + kitCellCount(c), 0) + locReady + propReady;
   const completeness = useMemo(() => {
     const fields = (worldFilled + styleFilled) / (WORLD_FIELDS.length + STYLE_FIELDS.length);
-    const refs = refTotal > 0 ? refReady / refTotal : 0;
-    return Math.round((fields * 0.62 + refs * 0.38) * 100);
-  }, [worldFilled, styleFilled, refTotal, refReady]);
-  const isBlank = worldFilled + styleFilled === 0 && refTotal === 0;
+    const refs = refUnits > 0 ? refDone / refUnits : 0;
+    return Math.round((fields * 0.55 + refs * 0.45) * 100);
+  }, [worldFilled, styleFilled, refUnits, refDone]);
+  const isBlank = worldFilled + styleFilled === 0 && refUnits === 0;
 
   /* ---------------- 操作 ---------------- */
   const generate = async (mode: 'fill' | 'overwrite') => {
@@ -150,8 +192,9 @@ const ProjectBibleTab = () => {
       setStyle(res.styleBible);
       setChars(res.characters);
       setLocs(res.locations);
+      setPropItems(res.props ?? []);
       setDirty(false);
-      setNote(res.note ?? `已由模型生成：新增 ${res.counts.charactersCreated} 位人物、${res.counts.locationsCreated} 个场景`);
+      setNote(res.note ?? `已由模型生成：新增 ${res.counts.charactersCreated} 位人物、${res.counts.locationsCreated} 个场景、${res.counts.propsCreated ?? 0} 件道具`);
       notifyBibleChanged();
       toast.success(res.source === 'llm' ? '制作圣经已生成，可逐项修改' : '已生成可编辑草稿，请复核');
     } catch (e) {
@@ -179,6 +222,7 @@ const ProjectBibleTab = () => {
   };
 
   const startEdit = (kind: Kind, item: Character | Location) => {
+    const kit = kind === 'char' ? (item as Character).identityKit ?? emptyIdentityKit() : null;
     setEditing({ kind, id: item.id });
     setConfirmDel(null);
     setDraft({
@@ -188,18 +232,34 @@ const ProjectBibleTab = () => {
         : (item as Location).description ?? '',
       role: kind === 'char' ? (item as Character).roleType : (item as Location).locationType,
       locked: item.locked,
+      identityDescriptor: kit?.identityDescriptor ?? '',
+      wardrobe: kit?.wardrobe ?? '',
+      voiceLock: kit?.voiceLock ?? '',
+      signatureDetails: kit?.signatureDetails ?? '',
+      forbiddenChanges: (item as Character).forbiddenChanges ?? '',
     });
   };
 
   const saveEdit = async () => {
-    if (!id || !editing) return;
+    if (!id || !editing || !draft) return;
     const name = draft.name.trim();
     if (!name) { toast.error('名称不能为空'); return; }
     setBusyId(editing.id);
     try {
       if (editing.kind === 'char') {
+        const cur = chars.find((c) => c.id === editing.id);
+        const kit: CharacterIdentityKit = {
+          ...(cur?.identityKit ?? emptyIdentityKit()),
+          views: { ...(cur?.identityKit?.views ?? {}) },
+          identityDescriptor: draft.identityDescriptor,
+          wardrobe: draft.wardrobe,
+          voiceLock: draft.voiceLock,
+          signatureDetails: draft.signatureDetails,
+          updatedAt: new Date().toISOString(),
+        };
         const updated = await bible.updateCharacter(id, editing.id, {
-          name, roleType: draft.role, canonicalDescription: draft.desc, locked: draft.locked,
+          name, roleType: draft.role, canonicalDescription: draft.desc,
+          forbiddenChanges: draft.forbiddenChanges, locked: draft.locked, identityKit: kit,
         });
         setChars((prev) => prev.map((c) => (c.id === editing.id ? updated : c)));
       } else {
@@ -209,6 +269,7 @@ const ProjectBibleTab = () => {
         setLocs((prev) => prev.map((l) => (l.id === editing.id ? updated : l)));
       }
       setEditing(null);
+      setDraft(null);
       notifyBibleChanged();
       toast.success('设定已更新');
     } catch (e) {
@@ -223,7 +284,9 @@ const ProjectBibleTab = () => {
     setBusyId('new');
     try {
       if (kind === 'char') {
-        const created = await bible.createCharacter(id, { name: newName.trim(), roleType: '配角' });
+        const created = await bible.createCharacter(id, {
+          name: newName.trim(), roleType: '配角', identityKit: emptyIdentityKit(),
+        });
         setChars((prev) => [created, ...prev]);
       } else {
         const created = await bible.createLocation(id, { name: newName.trim(), locationType: '内景', timeOfDay: '日' });
@@ -232,7 +295,7 @@ const ProjectBibleTab = () => {
       setNewName('');
       setAdding(null);
       notifyBibleChanged();
-      toast.success('已添加，记得补上参考图与标准描述');
+      toast.success('已添加，记得补上形象包与标准描述');
     } catch (e) {
       toast.error(`添加失败：${(e as Error).message}`);
     } finally {
@@ -286,6 +349,11 @@ const ProjectBibleTab = () => {
     fileRef.current?.click();
   };
 
+  const pickKitUpload = (charId: string, view: KitViewKey) => {
+    uploadTarget.current = { kind: 'kit', id: charId, view };
+    fileRef.current?.click();
+  };
+
   const onFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     const target = uploadTarget.current;
@@ -296,19 +364,39 @@ const ProjectBibleTab = () => {
     setBusyId(target.id);
     try {
       const { fileUrl } = await uploadLocalFile(id, file, file.name);
-      if (target.kind === 'char') {
+      if (target.kind === 'kit' && target.view) {
+        const cur = chars.find((c) => c.id === target.id);
+        if (!cur) return;
+        const kit: CharacterIdentityKit = {
+          ...(cur.identityKit ?? emptyIdentityKit()),
+          views: { ...(cur.identityKit?.views ?? {}) },
+          updatedAt: new Date().toISOString(),
+        };
+        if (target.view === 'portrait') kit.portraitUrl = fileUrl;
+        else kit.views[target.view] = fileUrl;
+        // 主图同步进旧参考图数组首位，保证首帧注入链路仍然生效
+        const refs = kit.portraitUrl
+          ? [kit.portraitUrl, ...(cur.referenceImageUrls ?? []).filter((u) => u !== kit.portraitUrl)].slice(0, 6)
+          : cur.referenceImageUrls;
+        const updated = await bible.updateCharacter(id, cur.id, {
+          identityKit: kit, referenceImageUrls: refs,
+        });
+        setChars((prev) => prev.map((c) => (c.id === cur.id ? updated : c)));
+        toast.success(target.view === 'portrait' ? '人物主图已绑定' : '视图已补齐');
+      } else if (target.kind === 'char') {
         const cur = chars.find((c) => c.id === target.id);
         const urls = [fileUrl, ...(cur?.referenceImageUrls ?? [])].slice(0, 6);
         const updated = await bible.updateCharacter(id, target.id, { referenceImageUrls: urls });
         setChars((prev) => prev.map((c) => (c.id === target.id ? updated : c)));
+        toast.success('形象参考图已绑定，建议同时补主图与四视图');
       } else {
         const cur = locs.find((l) => l.id === target.id);
         const urls = [fileUrl, ...(cur?.referenceImageUrls ?? [])].slice(0, 6);
         const updated = await bible.updateLocation(id, target.id, { referenceImageUrls: urls });
         setLocs((prev) => prev.map((l) => (l.id === target.id ? updated : l)));
+        toast.success('场景参考图已绑定');
       }
       notifyBibleChanged();
-      toast.success('形象参考图已绑定，后续镜头会以此为准');
     } catch (err) {
       toast.error(`上传失败：${(err as Error).message}`);
     } finally {
@@ -316,13 +404,28 @@ const ProjectBibleTab = () => {
     }
   };
 
+  /** 一键生成「主图 + 四视图」5 张独立形象图 */
+  const generateKit = async (itemId: string) => {
+    if (!id) return;
+    setBusyId(itemId);
+    try {
+      const res = await bible.generateIdentityKit(id, itemId);
+      toast.success(`形象包任务已提交（${res.jobIds.length} 张），完成后自动回写对应格`);
+    } catch (e) {
+      toast.error(`提交失败：${(e as Error).message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** 旧链路：一张四视图拼图，作为快速定妆的兼容锚点（不冒充 4 张独立视图） */
   const generateRef = async (kind: Kind, itemId: string) => {
     if (!id) return;
     setBusyId(itemId);
     try {
       if (kind === 'char') await storyboard.generateCharacterSheet(id, itemId, {});
       else await bible.generateLocationImage(id, itemId);
-      toast.success(kind === 'char' ? '定妆照任务已提交，完成后自动回写' : '场景概念图任务已提交，完成后自动回写');
+      toast.success(kind === 'char' ? '四视图拼图任务已提交，完成后自动登记' : '场景概念图任务已提交，完成后自动回写');
     } catch (e) {
       toast.error(`提交失败：${(e as Error).message}`);
     } finally {
@@ -341,31 +444,17 @@ const ProjectBibleTab = () => {
         {f.label}
         <i className={value.trim() ? 'on' : ''}>{value.trim() ? '已填' : '待补充'}</i>
       </span>
-      <textarea
-        value={value}
-        rows={2}
-        placeholder={f.hint}
-        onChange={(ev) => onChange(ev.target.value)}
-      />
+      <textarea value={value} rows={2} placeholder={f.hint} onChange={(ev) => onChange(ev.target.value)} />
     </label>
   );
 
   const sectionHead = (
-    icon: React.ReactNode,
-    title: string,
-    sub: string,
-    meta: string,
-    collapsible: boolean,
-    onToggle?: () => void,
-    open?: boolean,
-    action?: React.ReactNode,
+    icon: React.ReactNode, title: string, sub: string, meta: string,
+    collapsible: boolean, onToggle?: () => void, open?: boolean, action?: React.ReactNode,
   ) => (
     <div className="bi-sec-head">
       <span className="bi-sec-ico">{icon}</span>
-      <div className="bi-sec-txt">
-        <b>{title}</b>
-        <small>{sub}</small>
-      </div>
+      <div className="bi-sec-txt"><b>{title}</b><small>{sub}</small></div>
       <span className="bi-sec-meta">{meta}</span>
       {action}
       {collapsible ? (
@@ -376,56 +465,77 @@ const ProjectBibleTab = () => {
     </div>
   );
 
-  const editPanel = (kind: Kind) => (
-    <div className="bi-edit">
-      <div className="bi-edit-row">
-        <label>名称<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
-        <label>{kind === 'char' ? '角色定位' : '场景类型'}
-          <select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
-            {kind === 'char'
-              ? ['主角', '配角', '群演'].map((v) => <option key={v} value={v}>{v}</option>)
-              : ['内景', '外景'].map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
+  const editPanel = (kind: Kind) => {
+    if (!draft) return null;
+    const D = draft;
+    const set = (patch: Partial<EditDraft>) => setDraft({ ...D, ...patch });
+    return (
+      <div className="bi-edit">
+        <div className="bi-edit-row">
+          <label>名称<input value={D.name} onChange={(e) => set({ name: e.target.value })} /></label>
+          <label>{kind === 'char' ? '角色定位' : '场景类型'}
+            <select value={D.role} onChange={(e) => set({ role: e.target.value })}>
+              {kind === 'char'
+                ? ['主角', '配角', '群演'].map((v) => <option key={v} value={v}>{v}</option>)
+                : ['内景', '外景'].map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </label>
+        </div>
+        <label className="bi-edit-desc">
+          {kind === 'char' ? '完整外貌锚点（跨镜一致性）' : '场景描述（概念图提示）'}
+          <textarea rows={3} value={D.desc} onChange={(e) => set({ desc: e.target.value })} />
         </label>
+        {kind === 'char' ? (
+          <div className="bi-kit-fields">
+            <span className="bi-kit-h">人物五道文本锁 · 逐字复用到每个镜头提示词</span>
+            <label>身份锁 <small>脸型 / 肤色 / 体态 / 发型 / 稳定配色，不含摄影机动作</small>
+              <textarea rows={2} value={D.identityDescriptor} onChange={(e) => set({ identityDescriptor: e.target.value })} />
+            </label>
+            <div className="bi-edit-row">
+              <label>服装基线<input value={D.wardrobe} onChange={(e) => set({ wardrobe: e.target.value })} placeholder="款式 / 颜色 / 材质 / 鞋型" /></label>
+              <label>声线锁<input value={D.voiceLock} onChange={(e) => set({ voiceLock: e.target.value })} placeholder="口音 / 音色 / 语速 / 受压变化" /></label>
+            </div>
+            <div className="bi-edit-row">
+              <label>签名细节<input value={D.signatureDetails} onChange={(e) => set({ signatureDetails: e.target.value })} placeholder="至少两处，如银戒 / 眉骨疤" /></label>
+              <label>禁改项<input value={D.forbiddenChanges} onChange={(e) => set({ forbiddenChanges: e.target.value })} /></label>
+            </div>
+          </div>
+        ) : null}
+        <div className="bi-edit-foot">
+          <label className="bi-lock-chk">
+            <input type="checkbox" checked={D.locked} onChange={(e) => set({ locked: e.target.checked })} />
+            锁定设定（AI 生成不覆盖）
+          </label>
+          <button type="button" className="bi-btn ghost" onClick={() => { setEditing(null); setDraft(null); }}>取消</button>
+          <button type="button" className="bi-btn primary" onClick={() => void saveEdit()} disabled={busyId === editing?.id}>
+            {busyId === editing?.id ? <Loader2 size={12} className="spin" /> : <Check size={12} />} 保存
+          </button>
+        </div>
       </div>
-      <label className="bi-edit-desc">
-        {kind === 'char' ? '标准外貌描述（跨镜一致性锚点）' : '场景描述（概念图提示）'}
-        <textarea rows={3} value={draft.desc} onChange={(e) => setDraft({ ...draft, desc: e.target.value })} />
-      </label>
-      <div className="bi-edit-foot">
-        <label className="bi-lock-chk">
-          <input type="checkbox" checked={draft.locked} onChange={(e) => setDraft({ ...draft, locked: e.target.checked })} />
-          锁定设定（AI 生成不覆盖）
-        </label>
-        <button type="button" className="bi-btn ghost" onClick={() => setEditing(null)}>取消</button>
-        <button type="button" className="bi-btn primary" onClick={() => void saveEdit()} disabled={busyId === editing?.id}>
-          {busyId === editing?.id ? <Loader2 size={12} className="spin" /> : <Check size={12} />} 保存
-        </button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const addPanel = (kind: Kind) => (
     <div className="bi-add">
-      <input
-        autoFocus
-        value={newName}
+      <input autoFocus value={newName}
         placeholder={kind === 'char' ? '输入人物姓名，如：林晚' : '输入场景名称，如：旧城区天台'}
         onChange={(e) => setNewName(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void addItem(kind); if (e.key === 'Escape') setAdding(null); }}
-      />
-      <button type="button" className="bi-btn primary" onClick={() => void addItem(kind)} disabled={!newName.trim() || busyId === 'new'}>
-        创建
-      </button>
+        onKeyDown={(e) => { if (e.key === 'Enter') void addItem(kind); if (e.key === 'Escape') setAdding(null); }} />
+      <button type="button" className="bi-btn primary" onClick={() => void addItem(kind)} disabled={!newName.trim() || busyId === 'new'}>创建</button>
       <button type="button" className="bi-btn ghost" onClick={() => { setAdding(null); setNewName(''); }}><X size={12} /></button>
     </div>
   );
 
   const cardActions = (kind: Kind, item: Character | Location) => (
     <div className="bi-card-acts">
-      <button type="button" title="上传形象参考图" onClick={() => pickUpload(kind, item.id)}><Upload size={13} /> 上传</button>
-      <button type="button" title={kind === 'char' ? 'AI 生成四视图定妆照' : 'AI 生成场景概念图'} onClick={() => void generateRef(kind, item.id)} disabled={busyId === item.id}>
-        <Sparkles size={13} /> 生成
+      {kind === 'char' ? (
+        <button type="button" className="pri" title="一次生成主图 + 四视图 5 张独立形象图" onClick={() => void generateKit(item.id)} disabled={busyId === item.id}>
+          <Sparkles size={13} /> 形象包
+        </button>
+      ) : null}
+      <button type="button" title={kind === 'char' ? '上传额外参考图' : '上传场景参考图'} onClick={() => pickUpload(kind, item.id)}><Upload size={13} /> 上传</button>
+      <button type="button" title={kind === 'char' ? '快速生成一张四视图拼图（兼容旧链路）' : 'AI 生成场景概念图'} onClick={() => void generateRef(kind, item.id)} disabled={busyId === item.id}>
+        <Wand2 size={13} /> {kind === 'char' ? '拼图' : '生成'}
       </button>
       <button type="button" title="编辑设定" onClick={() => startEdit(kind, item)}><Pencil size={13} /></button>
       <button type="button" title={item.locked ? '解锁设定' : '锁定设定'} onClick={() => void toggleLock(kind, item)}>
@@ -446,30 +556,33 @@ const ProjectBibleTab = () => {
   const renderCard = (kind: Kind, item: Character | Location) => {
     const refs = item.referenceImageUrls ?? [];
     const desc = kind === 'char'
-      ? (item as Character).canonicalDescription
-      : (item as Location).description;
+      ? (item as Character).canonicalDescription : (item as Location).description;
     const tag = kind === 'char' ? (item as Character).roleType : (item as Location).locationType;
+    const char = kind === 'char' ? (item as Character) : null;
     return (
       <article className={`bi-card${item.locked ? ' locked' : ''}`} key={item.id}>
-        <button
-          type="button"
-          className="bi-card-thumb"
+        <button type="button" className="bi-card-thumb"
           title={refs[0] ? '点击放大参考图' : '尚未绑定参考图'}
-          onClick={() => refs[0] ? setPreview({ url: refs[0], title: `${item.name} · 参考图` }) : pickUpload(kind, item.id)}
-        >
+          onClick={() => refs[0] ? setPreview({ url: refs[0], title: `${item.name} · 参考图` }) : pickUpload(kind, item.id)}>
           {refs[0] ? <img src={refs[0]} alt="" loading="lazy" /> : (
             <span className="bi-card-ph">{kind === 'char' ? <Users size={20} /> : <MapPin size={20} />}<small>点击上传</small></span>
           )}
           {busyId === item.id ? <span className="bi-card-busy"><Loader2 size={16} className="spin" /></span> : null}
-          <i className={`bi-card-state${refs.length ? ' ok' : ''}`}>{refs.length ? '已绑定' : '未定妆'}</i>
+          <i className={`bi-card-state${kind === 'char' ? (isCharacterFullyDefined(char!) ? ' ok' : '') : (refs.length ? ' ok' : '')}`}>
+            {kind === 'char' ? (isCharacterFullyDefined(char!) ? '形象完整' : `${kitCellCount(char!)}/5`) : (refs.length ? '已绑定' : '未定妆')}
+          </i>
         </button>
         <div className="bi-card-body">
           <div className="bi-card-title">
-            <b title={item.name}>{item.name}</b>
-            <i>{tag}</i>
+            <b title={item.name}>{item.name}</b><i>{tag}</i>
             {item.locked ? <Lock size={11} className="bi-lock" /> : null}
           </div>
           <p className="bi-card-desc">{desc || '尚未填写标准描述，点击编辑补充一致性锚点'}</p>
+          {char ? (
+            <CharacterKitStrip char={char}
+              onPick={(view) => pickKitUpload(char.id, view)}
+              onPreview={(url, title) => setPreview({ url, title })} />
+          ) : null}
           {cardActions(kind, item)}
           {confirmBar(kind, item.id)}
         </div>
@@ -482,18 +595,19 @@ const ProjectBibleTab = () => {
     return <div className="bi-root"><div className="bi-loading"><Loader2 size={16} className="spin" /> 正在读取制作圣经…</div></div>;
   }
 
+  const missingChars = chars.filter((c) => !isCharacterFullyDefined(c));
+  const missingLocs = locs.filter((l) => !l.referenceImageUrls?.length);
+  const missingProps = propItems.filter((p) => !isPropReady(p));
+  const preflightOk = missingChars.length === 0 && missingLocs.length === 0 && missingProps.length === 0 && refUnits > 0;
+
   return (
     <div className="bi-root">
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void onFilePicked(e)} />
 
-      {/* 头部：完整度 + 主操作 */}
       <header className="bi-hero">
         <div className="bi-hero-top">
           <span className="bi-hero-ico"><BookOpen size={16} /></span>
-          <div className="bi-hero-txt">
-            <h2>制作圣经</h2>
-            <p>世界观 · 视觉风格 · 人物与场景一致性</p>
-          </div>
+          <div className="bi-hero-txt"><h2>制作圣经</h2><p>世界观 · 视觉风格 · 人物 · 场景 · 道具</p></div>
           <button type="button" className="bi-icon-btn" title="重新读取" onClick={() => void load()}><RefreshCw size={14} /></button>
         </div>
 
@@ -502,8 +616,9 @@ const ProjectBibleTab = () => {
           <div className="bi-progress-meta">
             <b className="num">{completeness}%</b> 完成度
             <span>设定 {worldFilled + styleFilled}/{WORLD_FIELDS.length + STYLE_FIELDS.length}</span>
-            <span>人物 {chars.length} · 场景 {locs.length}</span>
-            <span>参考图 {refReady}/{refTotal}</span>
+            <span>人物 {charDefined}/{chars.length} 完整</span>
+            <span>道具 {propReady}/{propItems.length}</span>
+            <span>资产格 {refDone}/{refUnits}</span>
           </div>
         </div>
 
@@ -513,85 +628,86 @@ const ProjectBibleTab = () => {
               {generating ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
               {generating ? '生成中…' : 'AI 一键生成'}
             </button>
-            <button type="button" className="bi-btn primary lg arrow" onClick={() => setGenMenu((v) => !v)} title="生成选项" disabled={generating}>
-              <ChevronDown size={13} />
-            </button>
+            <button type="button" className="bi-btn primary lg arrow" onClick={() => setGenMenu((v) => !v)} title="生成选项" disabled={generating}><ChevronDown size={13} /></button>
             {genMenu ? (
               <div className="bi-gen-menu">
-                <button type="button" onClick={() => void generate('fill')}>
-                  <b>仅补空白</b><small>保留你已填写和锁定的内容</small>
-                </button>
-                <button type="button" onClick={() => void generate('overwrite')}>
-                  <b>重新生成</b><small>覆盖文本设定，参考图与锁定项保留</small>
-                </button>
+                <button type="button" onClick={() => void generate('fill')}><b>仅补空白</b><small>保留你已填写和锁定的内容</small></button>
+                <button type="button" onClick={() => void generate('overwrite')}><b>重新生成</b><small>覆盖文本设定，参考图与锁定项保留</small></button>
               </div>
             ) : null}
           </div>
           <button type="button" className="bi-btn ghost lg" onClick={() => void saveAll()} disabled={saving || !dirty}>
-            {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
-            {dirty ? '保存修改' : '已保存'}
+            {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}{dirty ? '保存修改' : '已保存'}
           </button>
-          <button type="button" className="bi-btn ghost lg" onClick={() => navigate(`/project/${id}/canvas-free3`)}>
-            去自由画布
-          </button>
+          <button type="button" className="bi-btn ghost lg" onClick={() => navigate(`/project/${id}/props`)}>道具页</button>
+          <button type="button" className="bi-btn ghost lg" onClick={() => navigate(`/project/${id}/canvas-free3`)}>去自由画布</button>
         </div>
         {note ? <div className="bi-note"><ShieldCheck size={13} /><span>{note}</span><button type="button" onClick={() => setNote(null)}><X size={12} /></button></div> : null}
       </header>
+
+      {/* 一致性预检：分镜生成后检查未登记/未定妆实体（参考无限画布的 preflight） */}
+      <section className={`bi-preflight${preflightOk ? ' ok' : ''}`}>
+        <span className="bi-preflight-ico"><ShieldCheck size={14} /></span>
+        <div className="bi-preflight-txt">
+          <b>{preflightOk ? '一致性预检通过' : '出首帧前还需补齐'}</b>
+          <p>{preflightOk
+            ? '人物主图 + 四视图、场景概念图、道具设定图均已就绪，分镜会按稳定编号注入参考图。'
+            : [
+                missingChars.length ? `${missingChars.length} 位人物缺主图/四视图` : '',
+                missingLocs.length ? `${missingLocs.length} 个场景缺概念图` : '',
+                missingProps.length ? `${missingProps.length} 件道具缺识别锚点或设定图` : '',
+              ].filter(Boolean).join(' · ') || '请从剧本一键生成设定'}
+          </p>
+        </div>
+        {missingProps.length ? (
+          <button type="button" className="bi-btn ghost" onClick={() => navigate(`/project/${id}/props`)}>去补道具</button>
+        ) : null}
+      </section>
 
       {isBlank ? (
         <section className="bi-empty">
           <span className="bi-empty-ico"><Sparkles size={22} /></span>
           <b>这部作品还没有制作圣经</b>
-          <p>从剧本自动提取人物与场景，填好世界观、视觉风格和一致性描述；生成后每一条都能手动修改、锁定，人物还可以直接绑定形象图。</p>
+          <p>从剧本自动提取人物、场景与道具，填好世界观、视觉风格和一致性描述；生成后每一条都能手动修改、锁定，人物可补齐主图与四视图。</p>
           <button type="button" className="bi-btn primary lg" onClick={() => void generate('fill')} disabled={generating}>
             {generating ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />} 生成完整设定
           </button>
         </section>
       ) : null}
 
-      {/* 世界观 */}
       <section className="bi-sec">
-        {sectionHead(
-          <BookOpen size={15} />, '世界观', '时代 · 地理 · 社会规则 · 美术 · 色彩',
+        {sectionHead(<BookOpen size={15} />, '世界观', '时代 · 地理 · 社会规则 · 美术 · 色彩',
           `${worldFilled}/${WORLD_FIELDS.length}`, true,
-          () => setCollapsed((p) => ({ ...p, world: !p.world })), !collapsed.world,
-        )}
+          () => setCollapsed((p) => ({ ...p, world: !p.world })), !collapsed.world)}
         {!collapsed.world ? (
           <div className="bi-fields">
             {WORLD_FIELDS.map((f) => field(f, worldView[f.key] ?? '', (v) => {
-              setWorldView((prev) => ({ ...prev, [f.key]: v } as WorldView));
-              setDirty(true);
+              setWorldView((prev) => ({ ...prev, [f.key]: v } as WorldView)); setDirty(true);
             }))}
           </div>
         ) : null}
       </section>
 
-      {/* 风格圣经 */}
       <section className="bi-sec">
-        {sectionHead(
-          <Wand2 size={15} />, '风格圣经', '视觉 · 镜头 · 色彩 · 光影 · 运动 · 字幕',
+        {sectionHead(<Wand2 size={15} />, '风格圣经', '视觉 · 镜头 · 色彩 · 光影 · 运动 · 字幕',
           `${styleFilled}/${STYLE_FIELDS.length}`, true,
-          () => setCollapsed((p) => ({ ...p, style: !p.style })), !collapsed.style,
-        )}
+          () => setCollapsed((p) => ({ ...p, style: !p.style })), !collapsed.style)}
         {!collapsed.style ? (
           <div className="bi-fields">
             {STYLE_FIELDS.map((f) => field(f, style[f.key] ?? '', (v) => {
-              setStyle((prev) => ({ ...prev, [f.key]: v } as StyleBible));
-              setDirty(true);
+              setStyle((prev) => ({ ...prev, [f.key]: v } as StyleBible)); setDirty(true);
             }))}
           </div>
         ) : null}
       </section>
 
-      {/* 人物一致性 */}
       <section className="bi-sec">
-        {sectionHead(
-          <Users size={15} />, '人物 · 一致性锚点', '形象图与标准描述会进入每一个镜头的生成上下文',
-          `${charReady}/${chars.length} 已定妆`, false, undefined, true,
+        {sectionHead(<Users size={15} />, '人物 · 一致性锚点',
+          '1 张主图 + 四视图，身份/服装/声线逐字复用',
+          `${charDefined}/${chars.length} 完整`, false, undefined, true,
           <button type="button" className="bi-add-btn" onClick={() => { setAdding(adding === 'char' ? null : 'char'); setNewName(''); }}>
             <Plus size={12} /> 添加
-          </button>,
-        )}
+          </button>)}
         {adding === 'char' ? addPanel('char') : null}
         {chars.length === 0 ? (
           <div className="bi-sec-empty">还没有人物设定。用「AI 一键生成」从剧本提取，或手动添加。</div>
@@ -600,15 +716,12 @@ const ProjectBibleTab = () => {
         )}
       </section>
 
-      {/* 场景一致性 */}
       <section className="bi-sec">
-        {sectionHead(
-          <MapPin size={15} />, '场景 · 空间基线', '概念图与场景描述保证同一场地跨镜不漂移',
+        {sectionHead(<MapPin size={15} />, '场景 · 空间基线', '概念图与场景描述保证同一场地跨镜不漂移',
           `${locReady}/${locs.length} 已定妆`, false, undefined, true,
           <button type="button" className="bi-add-btn" onClick={() => { setAdding(adding === 'loc' ? null : 'loc'); setNewName(''); }}>
             <Plus size={12} /> 添加
-          </button>,
-        )}
+          </button>)}
         {adding === 'loc' ? addPanel('loc') : null}
         {locs.length === 0 ? (
           <div className="bi-sec-empty">还没有场景设定。用「AI 一键生成」从剧本场次提取，或手动添加。</div>
@@ -617,11 +730,16 @@ const ProjectBibleTab = () => {
         )}
       </section>
 
+      {/* 道具：与右坞「道具」专页共用同一份数据实现 */}
+      <section className="bi-sec bi-props-sec">
+        {id ? <PropsPanel projectId={id} variant="embedded" /> : null}
+      </section>
+
       <footer className="bi-foot">
-        <ImagePlus size={14} />
+        <Layers size={14} />
         <div>
           <b>一致性如何生效</b>
-          <p>人物/场景的参考图与标准描述会作为首帧、镜头视频的生成依据；锁定后的设定不会被 AI 一键生成覆盖。建议在出首帧前把所有出场人物都定妆。</p>
+          <p>人物主图作为面部唯一真相、四视图锁轮廓与服装；道具按 @PROP 编号把形制与尺度注入分镜。生成首帧时这些不可变块与文本锁会和本镜动作一起送给模型；锁定后的设定不会被 AI 一键生成覆盖。</p>
         </div>
       </footer>
 

@@ -12,9 +12,11 @@ import {
 import type {
   Character,
   Location,
+  Prop,
   WorldView,
   StyleBible,
   GenerateBibleResponse,
+  GeneratePropsResponse,
 } from '@shared/api.interface';
 import { BibleService } from './bible.service';
 import {
@@ -22,6 +24,8 @@ import {
   CreateLocationDto,
   UpdateCharacterDto,
   UpdateLocationDto,
+  CreatePropDto,
+  UpdatePropDto,
   GenerateBibleDto,
 } from './dto';
 
@@ -133,6 +137,71 @@ export class BibleController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<{ jobId: string }> {
     return this.bibleService.generateLocationImage(projectId, id);
+  }
+
+  // ========== Character identity kit（主图 + 四视图） ==========
+  @Post('characters/:id/generate-identity-kit')
+  async generateIdentityKit(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ jobIds: string[] }> {
+    return this.bibleService.generateIdentityKit(projectId, id);
+  }
+
+  // ========== Props（道具资产） ==========
+  @Get('props')
+  async listProps(@Param('projectId', ParseUUIDPipe) projectId: string): Promise<Prop[]> {
+    return this.bibleService.listProps(projectId);
+  }
+
+  /** 道具页「AI 生成道具」：只抽道具，不动世界观/人物/场景 */
+  @Post('props/generate')
+  async generateProps(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: GenerateBibleDto,
+  ): Promise<GeneratePropsResponse> {
+    return this.bibleService.generateProps(projectId, body);
+  }
+
+  @Get('props/:id')
+  async getProp(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Prop> {
+    return this.bibleService.getProp(projectId, id);
+  }
+
+  @Post('props')
+  async createProp(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: CreatePropDto,
+  ): Promise<Prop> {
+    return this.bibleService.createProp(projectId, body);
+  }
+
+  @Patch('props/:id')
+  async updateProp(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdatePropDto,
+  ): Promise<Prop> {
+    return this.bibleService.updateProp(projectId, id, body);
+  }
+
+  @Delete('props/:id')
+  async deleteProp(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    return this.bibleService.deleteProp(projectId, id);
+  }
+
+  @Post('props/:id/generate-image')
+  async generatePropImage(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ jobId: string }> {
+    return this.bibleService.generatePropImage(projectId, id);
   }
 
   // ========== AI 一键生成完整制作圣经 ==========

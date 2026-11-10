@@ -136,15 +136,15 @@ export const GateCard = ({
         <div className="gate-warn info">
           <Users />
           <span>
-            人物/场景参考图还有 <b>{consistency.total - consistency.ready}</b> 个没定妆
-            （{consistency.ready}/{consistency.total}），先定妆再出首帧一致性更稳
+            人物主图/四视图、场景与道具资产还有 <b>{consistency.total - consistency.ready}</b> 项没就绪
+            （{consistency.ready}/{consistency.total}），补齐后再出首帧一致性更稳
           </span>
           <button
             type="button"
             className="gate-warn-act"
-            onClick={() => onNavigate(`/project/${projectId}/characters`)}
+            onClick={() => onNavigate(`/project/${projectId}/bible`)}
           >
-            去定妆 <ArrowRight />
+            去补齐 <ArrowRight />
           </button>
         </div>
       ) : null}

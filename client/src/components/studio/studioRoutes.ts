@@ -1,12 +1,13 @@
 /**
  * Studio · 路由映射（URL 是唯一真源）
  * -------------------------------------------------------------
- * 方案 F 的右产出坞 7 个 Tab 与项目既有页面，共用一条 URL 约定：
+ * 方案 F 的右产出坞 8 个 Tab 与项目既有页面，共用一条 URL 约定：
  *
  *   /project/:id                 → 舞台=对话，右坞=预览
  *   /project/:id/canvas          → 舞台=无限画布，右坞=预览
  *   /project/:id/script          → 舞台=对话，右坞=剧本
  *   /project/:id/bible           → 舞台=对话，右坞=圣经
+ *   /project/:id/props           → 舞台=对话，右坞=道具（专门生成/管理道具资产）
  *   /project/:id/storyboard      → 舞台=对话，右坞=分镜
  *   /project/:id/assets          → 舞台=对话，右坞=资产
  *   /project/:id/qc              → 舞台=对话，右坞=质检
@@ -33,6 +34,7 @@ export type DockTabKey =
   | 'preview'
   | 'script'
   | 'bible'
+  | 'props'
   | 'board'
   | 'assets'
   | 'qc'
@@ -42,6 +44,7 @@ export const DOCK_TABS: { key: DockTabKey; label: string }[] = [
   { key: 'preview', label: '预览' },
   { key: 'script', label: '剧本' },
   { key: 'bible', label: '圣经' },
+  { key: 'props', label: '道具' },
   { key: 'board', label: '分镜' },
   { key: 'assets', label: '资产' },
   { key: 'qc', label: '质检' },
@@ -52,6 +55,7 @@ export const DOCK_TABS: { key: DockTabKey; label: string }[] = [
 export const DOCK_SEG: Record<string, DockTabKey> = {
   script: 'script',
   bible: 'bible',
+  props: 'props',
   storyboard: 'board',
   assets: 'assets',
   qc: 'qc',
@@ -63,6 +67,7 @@ export const DOCK_SEG_OF: Record<DockTabKey, string | null> = {
   preview: null,
   script: 'script',
   bible: 'bible',
+  props: 'props',
   board: 'storyboard',
   assets: 'assets',
   qc: 'qc',

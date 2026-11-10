@@ -35,6 +35,7 @@ export const NODE_TYPES: NodeTypeMeta[] = [
   { type: 'script', label: '剧本', hint: '全剧 / 分集剧本文本，双击编辑' },
   { type: 'character', label: '角色', hint: '角色人设与定妆参考，双击编辑属性' },
   { type: 'scene', label: '场景', hint: '场地设定与场景概念，双击编辑属性' },
+  { type: 'prop', label: '道具', hint: '道具形制 / 尺度 / 状态变体 / 设定图，双击编辑' },
   { type: 'storyboard', label: '分镜', hint: '单镜头信息（景别 / 台词 / 时长），双击编辑' },
   { type: 'note', label: '备注', hint: '创作便签，双击记录想法' },
 ];
@@ -50,6 +51,7 @@ export const NODE_COLORS: Record<string, string> = {
   script: '#F5A623',
   character: '#E85D75',
   scene: '#8E6FE8',
+  prop: '#E08A3C',
   storyboard: '#5B8DEF',
   note: '#FFC53D',
 };
@@ -57,7 +59,7 @@ export const NODE_COLORS: Record<string, string> = {
 /** 左侧元素面板 / 添加菜单的分组结构 */
 export const NODE_GROUPS: { title: string; types: PavoNodeType[] }[] = [
   { title: '媒体', types: ['text', 'image', 'video', 'audio', 'composite', 'director'] },
-  { title: '短剧创作', types: ['script', 'character', 'scene', 'storyboard', 'note'] },
+  { title: '短剧创作', types: ['script', 'character', 'scene', 'prop', 'storyboard', 'note'] },
 ];
 
 /** 全类型空计数器（重置 / 恢复画布共用，避免漏掉新增类型） */
@@ -71,6 +73,7 @@ export const EMPTY_COUNTERS: Record<PavoNodeType, number> = {
   script: 0,
   character: 0,
   scene: 0,
+  prop: 0,
   storyboard: 0,
   note: 0,
 };
@@ -96,6 +99,7 @@ export const FILTERS: { key: string; label: string }[] = [
   { key: 'script', label: '剧本' },
   { key: 'character', label: '角色' },
   { key: 'scene', label: '场景' },
+  { key: 'prop', label: '道具' },
   { key: 'storyboard', label: '分镜' },
   { key: 'note', label: '备注' },
 ];

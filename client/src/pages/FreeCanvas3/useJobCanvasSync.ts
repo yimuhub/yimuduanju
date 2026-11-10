@@ -62,6 +62,11 @@ function matchNodes(job: GenerationJob, nodes: PavoFlowNode[]): PavoFlowNode[] {
       (n) => n.id.startsWith('char-img') && (n.data as PavoNodeData).backendCharId === job.targetId,
     );
   }
+  if (job.targetType === 'prop' && job.targetId) {
+    return nodes.filter(
+      (n) => n.id.startsWith('prop-img') && (n.data as PavoNodeData).backendPropId === job.targetId,
+    );
+  }
   return [];
 }
 
