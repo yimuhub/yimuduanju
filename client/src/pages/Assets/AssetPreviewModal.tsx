@@ -1,4 +1,20 @@
+/**
+ * 资产预览 · 两种明确形态
+ * -------------------------------------------------------------
+ *  simple（默认，无边框沉浸版）
+ *    没有卡片容器、没有边框 / 圆角 / 阴影 / 顶栏底栏分割线；
+ *    媒体直接浮在暗场里，工具是半透明圆形悬浮按钮，点击遮罩即关。
+ *  detail（详情版）
+ *    保留完整的带边框卡片：标题栏、媒体区、元信息网格、操作栏。
+ * 两态共用同一份媒体渲染与键盘 / 翻页逻辑，模式由资产页顶部的
+ * 「精简 / 详情」开关控制并持久化到 localStorage。
+ *
+ * 通过 createPortal 挂到 document.body：弹框原本嵌在右坞 .dock 的
+ * stacking context 里，自身 z-index 再高也盖不过 IDE 状态栏，会导致
+ * 底部下载 / 删除按钮被压住不可点。
+ */
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Download,
@@ -80,8 +96,8 @@ interface AssetPreviewModalProps {
   /** 第几张 / 共几张 */
   position?: { index: number; total: number };
   /**
-   * 预览模式：simple 只看媒体本身（默认）；detail 展示类型/大小/来源/模型/提示词。
-   * 由资产库顶部的「精简 / 详情」开关控制并持久到本机。
+   * 预览模式：simple 无边框沉浸看媒体（默认）；detail 带边框展示完整元信息。
+   * 由资产库 / 项目资产顶部的「精简 / 详情」开关控制并持久到本机。
    */
   mode?: AssetPreviewMode;
 }
@@ -120,183 +136,170 @@ const AssetPreviewModal = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, hasPrev, hasNext, onPrev, onNext]);
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={onClose}
+  const media = (
+    <>
+      {asset.assetType === 'image' && canShowMedia ? (
+        <img
+          src={url}
+          alt={asset.name}
+          className="apm-media"
+          onError={() => setMediaFailed(true)}
+        />
+      ) : asset.assetType === 'video' && canShowMedia ? (
+        <video
+          src={url}
+          controls
+          autoPlay
+          playsInline
+          className="apm-media"
+          onError={() => setMediaFailed(true)}
+        />
+      ) : asset.assetType === 'audio' && canShowMedia ? (
+        <audio src={url} controls className="apm-audio" onError={() => setMediaFailed(true)} />
+      ) : mediaFailed || (asset.assetType === 'image' && !canShowMedia) || (asset.assetType === 'video' && !canShowMedia) ? (
+        <span className="apm-missing">未获取</span>
+      ) : (
+        <Icon className="apm-bigico" />
+      )}
+      {canShowMedia && asset.durationSeconds ? (
+        <span className="apm-dur num">{formatDuration(asset.durationSeconds)}</span>
+      ) : null}
+      {url && mediaFailed ? <span className="apm-missing-hint">未获取（源地址不可达）</span> : null}
+    </>
+  );
+
+  const navButtons = (
+    <>
+      {hasPrev ? (
+        <button type="button" onClick={onPrev} className="apm-rbtn apm-nav prev" aria-label="上一个">
+          <ChevronLeft size={17} />
+        </button>
+      ) : null}
+      {hasNext ? (
+        <button type="button" onClick={onNext} className="apm-rbtn apm-nav next" aria-label="下一个">
+          <ChevronRight size={17} />
+        </button>
+      ) : null}
+    </>
+  );
+
+  const deleteBtn = (
+    <button type="button" className="apm-rbtn danger" onClick={() => onDelete(asset.id)} title="删除资产" aria-label="删除资产">
+      <Trash2 size={15} />
+    </button>
+  );
+  const downloadBtn = (
+    <a
+      href={url || '#'}
+      download={asset.name || undefined}
+      className={`apm-rbtn${!url ? ' disabled' : ''}`}
+      title="下载资产"
+      aria-label="下载资产"
     >
-      <div
-        className={`w-full overflow-hidden rounded-2xl bg-card shadow-2xl ${
-          simple ? 'max-w-3xl' : 'max-w-2xl'
-        }`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-3 border-b p-4">
-          <div className="min-w-0">
-            <h3 className="truncate text-base font-semibold text-foreground">
-              {asset.name}
-            </h3>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-              {!simple && projectName && (
-                <span className="inline-flex items-center gap-1">
-                  <FolderKanban className="h-3 w-3" />
-                  {projectName}
-                </span>
-              )}
-              {position && (
-                <span>
-                  {position.index} / {position.total}
-                </span>
-              )}
+      <Download size={15} />
+    </a>
+  );
+
+  /* ---------------- 精简版：无边框沉浸 ---------------- */
+  if (simple) {
+    return createPortal(
+      <div className="apm-mask apm-mask-simple" onClick={onClose} role="presentation">
+        <div className="apm-immersive" onClick={(e) => e.stopPropagation()}>
+          <div className="apm-float top">
+            <span className="apm-caption">
+              {position ? <b className="num">{position.index} / {position.total}</b> : null}
+              <span>{typeLabel}</span>
+            </span>
+            <button type="button" className="apm-rbtn" onClick={onClose} title="关闭 (Esc)" aria-label="关闭">
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="apm-canvas">
+            {media}
+            {navButtons}
+          </div>
+
+          <div className="apm-float bottom">
+            <span className="apm-name" title={asset.name}>{asset.name || '未命名资产'}</span>
+            <div className="apm-tools">
+              {downloadBtn}
+              {deleteBtn}
+              <span className="apm-hint">点击空白处关闭 · ← → 切换</span>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
-          >
-            <X className="h-4 w-4" />
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  /* ---------------- 详情版：带边框卡片 ---------------- */
+  return createPortal(
+    <div className="apm-mask" onClick={onClose} role="presentation">
+      <div className="apm-card" onClick={(e) => e.stopPropagation()}>
+        <div className="apm-card-h">
+          <div className="apm-card-h-l">
+            <h3 title={asset.name}>{asset.name}</h3>
+            <div className="apm-card-sub">
+              {projectName ? (
+                <span><FolderKanban size={11} />{projectName}</span>
+              ) : null}
+              <span>{typeLabel}</span>
+              {position ? <span className="num">{position.index} / {position.total}</span> : null}
+            </div>
+          </div>
+          <button type="button" className="apm-rbtn" onClick={onClose} title="关闭 (Esc)" aria-label="关闭">
+            <X size={16} />
           </button>
         </div>
 
-        <div
-          className={`relative flex items-center justify-center bg-gradient-to-br ${getTypeGradient(
-            asset.assetType,
-          )} overflow-hidden aspect-video ${simple ? 'min-h-[320px]' : 'min-h-[240px]'}`}
-        >
-          {asset.assetType === 'image' && canShowMedia ? (
-            <img
-              src={url}
-              alt={asset.name}
-              className="max-h-full max-w-full object-contain"
-              onError={() => setMediaFailed(true)}
-            />
-          ) : asset.assetType === 'video' && canShowMedia ? (
-            <video
-              src={url}
-              controls
-              autoPlay
-              playsInline
-              className="max-h-full max-w-full"
-              onError={() => setMediaFailed(true)}
-            />
-          ) : asset.assetType === 'audio' && canShowMedia ? (
-            <audio src={url} controls className="w-4/5" onError={() => setMediaFailed(true)} />
-          ) : mediaFailed || (asset.assetType === 'image' && !canShowMedia) || (asset.assetType === 'video' && !canShowMedia) ? (
-            <span className="text-sm font-medium text-muted-foreground">未获取</span>
-          ) : (
-            <Icon className="h-20 w-20 text-primary/40" />
-          )}
-          {/* 左右切换：同一份过滤结果内逐张浏览 */}
-          {hasPrev && (
-            <button
-              onClick={onPrev}
-              className="absolute left-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-transform hover:scale-110"
-              aria-label="上一个"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </button>
-          )}
-          {hasNext && (
-            <button
-              onClick={onNext}
-              className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-transform hover:scale-110"
-              aria-label="下一个"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
-          )}
-          {canShowMedia && asset.durationSeconds && (
-            <span className="absolute right-4 top-4 rounded-md bg-black/60 px-2 py-1 text-sm text-white">
-              {formatDuration(asset.durationSeconds)}
-            </span>
-          )}
-          {url && mediaFailed && (
-            <span className="absolute bottom-3 rounded-md bg-black/60 px-2 py-1 text-xs text-white">
-              未获取（源地址不可达）
-            </span>
-          )}
+        <div className="apm-card-media">
+          {media}
+          {navButtons}
         </div>
 
-        {!simple && (
-          <>
-            <div className="grid grid-cols-3 gap-4 p-5">
-              <div>
-                <div className="text-xs text-muted-foreground">类型</div>
-                <div className="mt-1 text-sm font-medium text-foreground">
-                  {typeLabel}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">大小</div>
-                <div className="mt-1 text-sm font-medium text-foreground">
-                  {formatFileSize(asset.fileSize)}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">来源</div>
-                <div className="mt-1 text-sm font-medium text-foreground">
-                  {getSourceLabel(asset.sourceType)}
-                  {asset.mock && (
-                    <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-                      演示占位
-                    </span>
-                  )}
-                </div>
-              </div>
-              {asset.width && asset.height && (
-                <div>
-                  <div className="text-xs text-muted-foreground">分辨率</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">
-                    {asset.width} × {asset.height}
-                  </div>
-                </div>
-              )}
-              {asset.generationModel && (
-                <div>
-                  <div className="text-xs text-muted-foreground">生成模型</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">
-                    {asset.generationModel}
-                  </div>
-                </div>
-              )}
-              <div>
-                <div className="text-xs text-muted-foreground">版本</div>
-                <div className="mt-1 text-sm font-medium text-foreground">
-                  v{asset.version}
-                </div>
-              </div>
-            </div>
+        <div className="apm-fields">
+          <div><span>类型</span><b>{typeLabel}</b></div>
+          <div><span>大小</span><b>{formatFileSize(asset.fileSize)}</b></div>
+          <div>
+            <span>来源</span>
+            <b>
+              {getSourceLabel(asset.sourceType)}
+              {asset.mock ? <em>演示占位</em> : null}
+            </b>
+          </div>
+          {asset.width && asset.height ? (
+            <div><span>分辨率</span><b className="num">{asset.width} × {asset.height}</b></div>
+          ) : null}
+          {asset.generationModel ? (
+            <div><span>生成模型</span><b>{asset.generationModel}</b></div>
+          ) : null}
+          <div><span>版本</span><b className="num">v{asset.version}</b></div>
+        </div>
 
-            {asset.generationPrompt && (
-              <div className="border-t px-5 py-4">
-                <div className="text-xs text-muted-foreground">生成提示词</div>
-                <div className="mt-1 text-sm text-foreground">
-                  {asset.generationPrompt}
-                </div>
-              </div>
-            )}
-          </>
-        )}
+        {asset.generationPrompt ? (
+          <div className="apm-prompt">
+            <span>生成提示词</span>
+            <p>{asset.generationPrompt}</p>
+          </div>
+        ) : null}
 
-        <div className="flex justify-end gap-2 border-t p-4">
-          <button
-            onClick={() => onDelete(asset.id)}
-            className="flex items-center gap-1.5 rounded-xl border border-input px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/15"
-          >
-            <Trash2 className="h-4 w-4" />
-            删除
+        <div className="apm-card-f">
+          <button type="button" className="apm-btn danger" onClick={() => onDelete(asset.id)}>
+            <Trash2 size={14} /> 删除
           </button>
           <a
             href={url || '#'}
             download={asset.name || undefined}
-            className={`flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 ${!url ? 'pointer-events-none opacity-50' : ''}`}
+            className={`apm-btn primary${!url ? ' disabled' : ''}`}
           >
-            <Download className="h-4 w-4" />
-            下载
+            <Download size={14} /> 下载
           </a>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

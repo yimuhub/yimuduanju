@@ -1,6 +1,27 @@
+/**
+ * 项目资产 · Studio 右坞版
+ * -------------------------------------------------------------
+ * 旧版 `lg:grid-cols-6` 用的是「视口断点」，1680 宽的屏幕会命中 6 列，
+ * 但右坞实际只有 548px，每列被压到 ~80px，图与文字都糊成一团。
+ * 这里改成容器驱动的网格：
+ *   repeat(auto-fill, minmax(140px, 1fr))
+ *   → 标准 548px 得 3 列；宽屏 820px 得 5 列；超宽 1100px 得 6–7 列；
+ *     窄坞 320px 自动降为 1 列，全程不依赖 window 宽度、无横向滚动。
+ * 筛选、搜索、预览模式、删除、左右切换预览全部保留。
+ */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { FolderOpen, Image as ImageIcon, Film, Music, FileText, Upload, Search, Eye } from 'lucide-react';
+import {
+  FolderOpen,
+  Image as ImageIcon,
+  Film,
+  Music,
+  FileText,
+  Search,
+  Eye,
+  ScanEye,
+  ListFilter,
+} from 'lucide-react';
 import { assets } from '@client/src/api';
 import type { Asset } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
@@ -24,10 +45,24 @@ const typeFilter = (t: string): string | undefined => {
 
 const typeIcon = (t?: string) => {
   const v = (t || '').toLowerCase();
-  if (v.includes('video')) return <Film className="h-4 w-4" />;
-  if (v.includes('audio') || v.includes('voice') || v.includes('music')) return <Music className="h-4 w-4" />;
-  if (v.includes('document') || v.includes('text') || v.includes('script')) return <FileText className="h-4 w-4" />;
-  return <ImageIcon className="h-4 w-4" />;
+  if (v.includes('video')) return <Film size={16} />;
+  if (v.includes('audio') || v.includes('voice') || v.includes('music')) return <Music size={16} />;
+  if (v.includes('document') || v.includes('text') || v.includes('script')) return <FileText size={16} />;
+  return <ImageIcon size={16} />;
+};
+
+const typeLabel = (t?: string) => {
+  const v = (t || '').toLowerCase();
+  if (v.includes('video')) return '视频';
+  if (v.includes('audio') || v.includes('voice') || v.includes('music')) return '音频';
+  if (v.includes('document') || v.includes('text') || v.includes('script')) return '文档';
+  return '图片';
+};
+
+const metaText = (a: Asset) => {
+  if (a.durationSeconds) return `${a.durationSeconds}s`;
+  if (a.fileSize) return `${(a.fileSize / 1024).toFixed(0)} KB`;
+  return a.sourceType || '—';
 };
 
 const ProjectAssetsTab = () => {
@@ -81,95 +116,94 @@ const ProjectAssetsTab = () => {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">项目资产</h2>
-          <p className="mt-1 text-sm text-muted-foreground">本项目生成的全部图片、视频、音频资产 · 共 {items.length} 个</p>
+    <div className="as">
+      {/* ① 标题 + 搜索 + 预览模式 */}
+      <header className="as-head">
+        <div className="as-head-l">
+          <span className="as-kicker">ASSETS / 项目资产</span>
+          <h2>项目资产</h2>
+          <p>本项目生成的图片、视频与音频 · 共 {items.length} 个</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex overflow-hidden rounded-lg border border-input bg-card text-xs">
-            {([
-              ['simple', '精简预览'],
-              ['detail', '详情预览'],
-            ] as const).map(([m, label]) => (
-              <button
-                key={m}
-                onClick={() => setPreviewMode(m)}
-                className={`px-2.5 py-1.5 transition-colors ${
-                  previewMode === m
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="as-head-r">
+          <label className="as-search">
+            <Search size={13} />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索资产..."
-              className="h-9 w-56 rounded-lg border border-input bg-card pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              placeholder="搜索资产"
+              aria-label="搜索资产"
             />
+            {search ? <button type="button" onClick={() => setSearch('')} aria-label="清空搜索">×</button> : null}
+          </label>
+          <div className="as-mode" role="group" aria-label="预览模式">
+            <button
+              type="button"
+              className={previewMode === 'simple' ? 'on' : ''}
+              onClick={() => setPreviewMode('simple')}
+              title="精简预览：无边框沉浸查看"
+            >
+              <ScanEye size={12} /> 精简
+            </button>
+            <button
+              type="button"
+              className={previewMode === 'detail' ? 'on' : ''}
+              onClick={() => setPreviewMode('detail')}
+              title="详情预览：带边框与完整元信息"
+            >
+              <ListFilter size={12} /> 详情
+            </button>
           </div>
         </div>
+      </header>
+
+      {/* ② 类型筛选 */}
+      <div className="as-bar">
+        <div className="as-types">
+          {typeTabs.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={activeType === t ? 'on' : ''}
+              onClick={() => setActiveType(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <span className="as-count num">{filtered.length} / {items.length}</span>
       </div>
 
-      <div className="flex gap-2">
-        {typeTabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => setActiveType(t)}
-            className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
-              activeType === t
-                ? 'bg-primary text-primary-foreground'
-                : 'border border-input bg-card text-foreground hover:border-primary hover:text-primary'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      {error ? <div className="as-alert">{error}</div> : null}
 
-      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-3 text-sm text-red-400">{error}</div>}
-
+      {/* ③ 资产网格：列数由容器宽度决定 */}
       {loading ? (
-        <div className="rounded-xl border bg-card p-12 text-center text-sm text-muted-foreground">加载中...</div>
+        <div className="as-loading">正在读取项目资产…</div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-            <FolderOpen className="h-6 w-6 text-muted-foreground" />
-          </div>
-          <div className="text-sm text-muted-foreground">
-            {items.length === 0 ? '暂无资产，生成的图片、视频、音频会自动归档到此处' : '没有匹配的资产'}
-          </div>
+        <div className="as-empty">
+          <span className="as-empty-ico"><FolderOpen size={20} /></span>
+          <b>{items.length === 0 ? '还没有资产' : '没有匹配的资产'}</b>
+          <p>{items.length === 0 ? '生成的图片、视频、音频会自动归档到此处' : '换个关键词或类型筛选试试'}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
+        <div className="as-grid">
           {filtered.map((a) => (
             <div
               key={a.id}
+              className="as-card"
               onClick={() => setSelected(a)}
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') setSelected(a); }}
-              className="group cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(a); } }}
+              title={`${a.name || '未命名资产'} · ${typeLabel(a.assetType)}`}
             >
-              <div className="relative aspect-square">
+              <div className="as-thumb">
                 {isImage(a) ? (
-                  <MediaOrMissing
-                    src={mediaSrc(a)}
-                    alt={a.name}
-                    className="h-full w-full"
-                  />
+                  <MediaOrMissing src={mediaSrc(a)} alt={a.name} className="as-media" />
                 ) : isVideo(a) ? (
                   mediaSrc(a) ? (
                     <video
                       src={mediaSrc(a)}
-                      className="h-full w-full object-cover"
+                      className="as-media"
                       muted
                       playsInline
                       preload="metadata"
@@ -179,41 +213,23 @@ const ProjectAssetsTab = () => {
                         if (parent && !parent.querySelector('[data-missing]')) {
                           const span = document.createElement('span');
                           span.dataset.missing = '1';
-                          span.className =
-                            'absolute inset-0 flex items-center justify-center bg-muted text-xs font-medium text-muted-foreground';
+                          span.className = 'as-ph';
                           span.textContent = '未获取';
                           parent.appendChild(span);
                         }
                       }}
                     />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-muted">
-                      <span className="text-xs font-medium text-muted-foreground">未获取</span>
-                    </div>
-                  )
+                  ) : <span className="as-ph">未获取</span>
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-primary/5">
-                    {typeIcon(a.assetType)}
-                  </div>
+                  <span className="as-ph as-ph-ico">{typeIcon(a.assetType)}</span>
                 )}
-                <span className="absolute left-2 top-2 rounded bg-black/40 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-sm">
-                  {a.assetType || 'asset'} · v{a.version}
-                </span>
-                {a.locked && <span className="absolute right-2 top-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-white">锁定</span>}
-                <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity group-hover:opacity-100">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-foreground shadow-lg">
-                    <Eye className="h-4 w-4" />
-                  </span>
-                </div>
+                <span className="as-badge">{typeLabel(a.assetType)} · v{a.version}</span>
+                {a.locked ? <span className="as-badge as-badge-lock">锁定</span> : null}
+                <span className="as-hover"><Eye size={14} /> 预览</span>
               </div>
-              <div className="p-2.5">
-                <div className="truncate text-xs font-medium text-foreground">{a.name || '未命名资产'}</div>
-                <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{a.durationSeconds ? `${a.durationSeconds}s` : a.fileSize ? `${(a.fileSize / 1024).toFixed(0)}KB` : a.sourceType}</span>
-                  <span className="flex items-center gap-0.5 text-primary">
-                    <Eye className="h-3 w-3" /> 点击预览
-                  </span>
-                </div>
+              <div className="as-meta">
+                <b title={a.name}>{a.name || '未命名资产'}</b>
+                <span>{metaText(a)}<i />{a.sourceType === 'generated' ? 'AI 生成' : a.sourceType === 'uploaded' ? '上传' : '资产'}</span>
               </div>
             </div>
           ))}

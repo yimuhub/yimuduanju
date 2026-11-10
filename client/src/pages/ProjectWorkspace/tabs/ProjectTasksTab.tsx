@@ -1,3 +1,15 @@
+/**
+ * 任务队列 · Studio 舞台版（重设计）
+ * -------------------------------------------------------------
+ * 旧版把「任务数 / SSE 状态 / 消费器并发」全塞进一行副标题，
+ * 再配一张 8 列密表，视觉上又长又挤。这里改成：
+ *   ① 概览指标卡（总数 / 进行中 / 已完成 / 失败 / 累计费用）
+ *   ② 连接状态独立成 pill，消费器信息收进说明
+ *   ③ 状态筛选带实时计数，类型筛选独立
+ *   ④ 任务行改为卡片式列表，主次信息分层，详情展开区独立
+ * 所有原有能力（SSE 实时流、断线降级轮询、完成通知、单任务刷新进度、
+ * 重试 / 取消 / 一键重试全部失败、变体组采纳、详情展开）一律保留。
+ */
 import { useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -8,6 +20,11 @@ import {
   ChevronDown,
   Layers,
   RotateCcw,
+  Activity,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Radio,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { generation } from '@client/src/api';
@@ -61,6 +78,8 @@ const typeLabelMap: Record<JobType, string> = {
   boards: '分镜表',
 };
 
+const ACTIVE_STATUSES = ['pending', 'queued', 'running', 'retrying'];
+
 const ProjectTasksTab = () => {
   const { id } = useParams<{ id: string }>();
   // 全量任务（SSE 快照或兜底轮询写入），展示时在前端做状态/类型过滤
@@ -100,7 +119,7 @@ const ProjectTasksTab = () => {
     const prevActive = prevActiveRef.current;
     const nowActive = new Set<string>();
     for (const job of items) {
-      if (['pending', 'queued', 'running', 'retrying'].includes(job.status)) {
+      if (ACTIVE_STATUSES.includes(job.status)) {
         nowActive.add(job.id);
       } else if (job.status === 'succeeded' && prevActive.has(job.id)) {
         notifyCompleted(job);
@@ -158,9 +177,7 @@ const ProjectTasksTab = () => {
   );
 
   // P1 修复：仅当存在未完成任务时轮询，且页面不可见时跳过；之前无条件 5s 请求
-  const hasActiveJobs = allJobs.some((j) =>
-    ['pending', 'queued', 'running', 'retrying'].includes(j.status),
-  );
+  const hasActiveJobs = allJobs.some((j) => ACTIVE_STATUSES.includes(j.status));
   useEffect(() => {
     if (!sseDown || !hasActiveJobs) return;
     const timer = setInterval(() => {
@@ -180,6 +197,17 @@ const ProjectTasksTab = () => {
     () => allJobs.filter((j) => j.status === 'failed'),
     [allJobs],
   );
+
+  const stats = useMemo(() => ({
+    total: allJobs.length,
+    active: allJobs.filter((j) => ACTIVE_STATUSES.includes(j.status)).length,
+    done: allJobs.filter((j) => j.status === 'succeeded').length,
+    failed: allJobs.filter((j) => j.status === 'failed').length,
+    cost: allJobs.reduce((sum, j) => sum + (j.cost || 0), 0),
+  }), [allJobs]);
+
+  const countOf = (v: JobStatus | 'all') =>
+    v === 'all' ? allJobs.length : allJobs.filter((j) => j.status === v).length;
 
   // P2 断点9：失败任务聚合重试入口（之前只有逐任务重试）
   const handleRetryAllFailed = async () => {
@@ -290,243 +318,205 @@ const ProjectTasksTab = () => {
       }
     }
     return (
-      <div className="space-y-1.5 px-1 py-1">
+      <div className="tq-detail-grid">
         {rows.map((r) => (
-          <div key={r.label} className="flex gap-2 text-xs">
-            <span className="shrink-0 text-muted-foreground">{r.label}：</span>
-            <span className="break-all text-foreground">{r.value}</span>
+          <div key={r.label} className="tq-detail-row">
+            <span>{r.label}</span>
+            <b>{r.value}</b>
           </div>
         ))}
       </div>
     );
   };
 
-  return (
-    <div className="space-y-6">
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/15 p-4 text-sm text-red-400">
-          {error}
-        </div>
-      )}
+  const workerText = workerInfo
+    ? workerInfo.mode === 'queue'
+      ? `消费器并发 ${workerInfo.concurrency} · 排队 ${workerInfo.waiting} · 执行 ${workerInfo.active}`
+      : workerInfo.mode === 'inline' ? '单机串行降级' : '消费器未启动'
+    : '';
 
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">任务队列</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            共 {allJobs.length} 个任务
-            {sseDown
-              ? hasActiveJobs
-                ? ' · SSE 不可用，已降级轮询（有进行中任务时每 5 秒刷新）'
-                : ' · SSE 不可用，已降级轮询（无进行中任务，已暂停刷新）'
-              : ' · SSE 实时推送中'}
-            {workerInfo && ` · 消费器${workerInfo.mode === 'queue' ? `并发${workerInfo.concurrency}（排队${workerInfo.waiting}，执行${workerInfo.active}）` : workerInfo.mode === 'inline' ? '单机串行降级' : '未启动'}`}
-          </p>
+  return (
+    <div className="tq">
+      {error ? <div className="tq-alert"><AlertCircle size={14} />{error}</div> : null}
+
+      {/* ① 页头 */}
+      <header className="tq-head">
+        <div className="tq-head-l">
+          <span className="tq-kicker">QUEUE / 生产队列</span>
+          <h2>任务队列</h2>
+          <p>后台生成任务的实时进度、重试与取消</p>
         </div>
-        <div className="flex items-center gap-2">
-          {failedJobs.length > 0 && (
+        <div className="tq-head-r">
+          <span className={`tq-conn${sseDown ? ' warn' : ''}`} title={workerText}>
+            <Radio size={12} />
+            {sseDown ? '降级轮询 · 5s' : 'SSE 实时推送'}
+          </span>
+          {failedJobs.length > 0 ? (
             <button
+              type="button"
+              className="tq-btn tq-btn-danger"
               onClick={handleRetryAllFailed}
               disabled={retryingAll}
               title="一键重试全部失败任务"
-              className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/15 px-3 py-2 text-sm font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
             >
-              <RotateCcw className={`h-4 w-4 ${retryingAll ? 'animate-spin' : ''}`} />
-              {retryingAll ? '重试中…' : `重试全部失败（${failedJobs.length}）`}
+              {retryingAll ? <Loader2 size={13} className="spin" /> : <RotateCcw size={13} />}
+              重试全部失败 <b className="num">{failedJobs.length}</b>
             </button>
-          )}
-          <button
-            onClick={fetchJobs}
-            className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
-          >
-            <RefreshCw className="h-4 w-4" />
-            刷新
+          ) : null}
+          <button type="button" className="tq-btn" onClick={fetchJobs} title="刷新任务列表">
+            <RefreshCw size={13} /> 刷新
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 rounded-lg border border-input bg-card p-1">
-          {statusFilters.map((filter) => (
+      {/* ② 概览指标 */}
+      <div className="tq-stats">
+        <div className="tq-stat">
+          <span className="tq-stat-ico"><Activity size={14} /></span>
+          <span>任务总数</span><b className="num">{stats.total}</b>
+        </div>
+        <div className="tq-stat run">
+          <span className="tq-stat-ico"><Loader2 size={14} /></span>
+          <span>进行中</span><b className="num">{stats.active}</b>
+        </div>
+        <div className="tq-stat ok">
+          <span className="tq-stat-ico"><CheckCircle2 size={14} /></span>
+          <span>已完成</span><b className="num">{stats.done}</b>
+        </div>
+        <div className="tq-stat bad">
+          <span className="tq-stat-ico"><AlertCircle size={14} /></span>
+          <span>失败</span><b className="num">{stats.failed}</b>
+        </div>
+        <div className="tq-stat">
+          <span className="tq-stat-ico"><Layers size={14} /></span>
+          <span>累计费用</span><b className="num">¥{stats.cost.toFixed(2)}</b>
+        </div>
+      </div>
+      {workerText ? <div className="tq-worker">{workerText}</div> : null}
+
+      {/* ③ 筛选 */}
+      <div className="tq-bar">
+        <div className="tq-status" role="group" aria-label="按状态筛选">
+          {statusFilters.map((f) => (
             <button
-              key={filter.value}
-              onClick={() => setStatusFilter(filter.value)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                statusFilter === filter.value
-                  ? 'bg-primary text-white'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              key={f.value}
+              type="button"
+              className={statusFilter === f.value ? 'on' : ''}
+              onClick={() => setStatusFilter(f.value)}
             >
-              {filter.label}
+              {f.label}<i className="num">{countOf(f.value)}</i>
             </button>
           ))}
         </div>
-
-        <div className="flex items-center gap-1.5">
-          <Filter className="h-4 w-4 text-muted-foreground" />
+        <label className="tq-type">
+          <Filter size={13} />
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as JobType | 'all')}
-            className="h-9 rounded-lg border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            aria-label="按任务类型筛选"
           >
-            {typeFilters.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
+            {typeFilters.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
-        </div>
+          <ChevronDown size={12} />
+        </label>
       </div>
 
-      {/* Table */}
+      {/* ④ 变体组 + 任务列表 */}
       <VariantGroups jobs={jobs} onAdopted={fetchJobs} onError={setError} />
-      <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+
+      <div className="tq-list">
+        <div className="tq-list-h">
+          <span>任务 / 目标</span><span>状态</span><span>进度</span>
+          <span>模型</span><span>费用</span><span>开始时间</span><span>操作</span>
+        </div>
         {loading ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">加载中...</div>
+          <div className="tq-empty">正在读取任务队列…</div>
         ) : jobs.length === 0 ? (
-          <div className="p-12 text-center text-sm text-muted-foreground">
-            暂无任务
-          </div>
+          <div className="tq-empty">当前筛选条件下暂无任务</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/30">
-                <tr>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">任务类型</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">目标</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">状态</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">进度</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">模型</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">费用</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">开始时间</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => {
-                  // P1 修复：未知状态兜底（之前新增状态直接 info undefined 崩溃）
-                  const info = statusInfoMap[job.status] ?? {
-                    label: job.status,
-                    className: 'bg-muted text-muted-foreground',
-                    barClass: 'bg-muted-foreground/50',
-                  };
-                  const isRunning = job.status === 'running';
-                  const expanded = expandedId === job.id;
-                  const polling = pollingIds.has(job.id);
-                  // mock 演练产物：占位内容、未计费，必须在列表里就能看出来
-                  const isMock =
-                    (job.outputData as Record<string, unknown> | undefined)?.mock === true;
-                  return (
-                    <Fragment key={job.id}>
-                      <tr className="border-t border-border hover:bg-muted/20">
-                      <td className="px-4 py-3 font-medium text-foreground whitespace-nowrap">
-                        {typeLabelMap[job.jobType] || job.jobType}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground max-w-[160px] truncate">
-                        {job.targetType || '-'}
-                        {job.targetId && ` · ${job.targetId.slice(0, 8)}`}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={`pill ${info.className}`}>
-                          {info.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 min-w-[140px]">
-                        <div className="flex items-center gap-2">
-                          <div className="relative h-1.5 flex-1 min-w-[80px] overflow-hidden rounded-full bg-muted">
-                            <div
-                              className={`h-full rounded-full ${info.barClass} ${isRunning ? 'animate-pulse' : ''}`}
-                              style={{ width: `${Math.min(job.progress || 0, 100)}%` }}
-                            />
-                          </div>
-                          <span className="w-10 text-right text-xs text-muted-foreground">
-                            {job.progress || 0}%
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                        {job.modelName || job.providerName || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-foreground whitespace-nowrap">
-                        ¥{job.cost?.toFixed(2) || '0.00'}
-                        {isMock && (
-                          <span
-                            className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600"
-                            title="占位产物（mock 演练通道），未计费，不能当作真实出片"
-                          >
-                            演示
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
-                        {job.startedAt
-                          ? new Date(job.startedAt).toLocaleString('zh-CN', {
-                              month: '2-digit',
-                              day: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
-                          : '-'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setExpandedId(expanded ? null : job.id)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-                            title={expanded ? '收起详情' : '查看详情'}
-                          >
-                            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                          </button>
-                          {(job.status === 'running' || job.status === 'pending') && (
-                            <button
-                              onClick={() => handlePoll(job.id)}
-                              disabled={polling}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-primary disabled:opacity-50"
-                              title="立即刷新该任务进度"
-                            >
-                              <RefreshCw className={`h-3.5 w-3.5 ${polling ? 'animate-spin' : ''}`} />
-                            </button>
-                          )}
-                          {job.status === 'failed' && (
-                            <button
-                              onClick={() => handleRetry(job.id)}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-primary"
-                              title="重试"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          {(job.status === 'running' || job.status === 'pending' || job.status === 'queued') && (
-                            <button
-                              onClick={() => handleCancel(job.id)}
-                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-red-300"
-                              title="取消"
-                            >
-                              <XCircle className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {expanded && (
-                      <tr className="border-t border-border bg-muted/10">
-                        <td colSpan={8} className="px-4 py-3">
-                          {renderDetail(job)}
-                        </td>
-                      </tr>
-                    )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          jobs.map((job) => {
+            // P1 修复：未知状态兜底（之前新增状态直接 info undefined 崩溃）
+            const info = statusInfoMap[job.status] ?? {
+              label: job.status,
+              className: 'pill-neutral',
+              barClass: 'bg-muted-foreground/50',
+            };
+            const isRunning = job.status === 'running';
+            const expanded = expandedId === job.id;
+            const polling = pollingIds.has(job.id);
+            // mock 演练产物：占位内容、未计费，必须在列表里就能看出来
+            const isMock =
+              (job.outputData as Record<string, unknown> | undefined)?.mock === true;
+            return (
+              <Fragment key={job.id}>
+                <div className={`tq-row${expanded ? ' open' : ''}`}>
+                  <div className="tq-row-main">
+                    <span className="tq-row-ico"><Layers size={13} /></span>
+                    <div>
+                      <b>{typeLabelMap[job.jobType] || job.jobType}</b>
+                      <span>{job.targetType || '—'}{job.targetId ? ` · ${job.targetId.slice(0, 8)}` : ''}</span>
+                    </div>
+                  </div>
+                  <div className="tq-row-st">
+                    <span className={`pill ${info.className}`}>{info.label}</span>
+                  </div>
+                  <div className="tq-row-pg">
+                    <div className="tq-bar-mini"><span className={info.barClass} style={{ width: `${Math.min(job.progress || 0, 100)}%` }} /></div>
+                    <i className="num">{job.progress || 0}%</i>
+                  </div>
+                  <div className="tq-row-model" title={job.modelName || job.providerName || ''}>
+                    {job.modelName || job.providerName || '—'}
+                  </div>
+                  <div className="tq-row-cost num">
+                    ¥{job.cost?.toFixed(2) || '0.00'}
+                    {isMock ? <em title="占位产物（mock 演练通道），未计费，不能当作真实出片">演示</em> : null}
+                  </div>
+                  <div className="tq-row-time num">
+                    {job.startedAt
+                      ? new Date(job.startedAt).toLocaleString('zh-CN', {
+                          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                        })
+                      : '—'}
+                  </div>
+                  <div className="tq-row-act">
+                    <button
+                      type="button"
+                      className={`tq-ico${expanded ? ' on' : ''}`}
+                      onClick={() => setExpandedId(expanded ? null : job.id)}
+                      title={expanded ? '收起详情' : '查看详情'}
+                      aria-label={expanded ? '收起详情' : '查看详情'}
+                    >
+                      {expanded ? <ChevronDown size={13} /> : <Eye size={13} />}
+                    </button>
+                    {(job.status === 'running' || job.status === 'pending') ? (
+                      <button type="button" className="tq-ico" onClick={() => handlePoll(job.id)} disabled={polling} title="立即刷新该任务进度" aria-label="刷新进度">
+                        <RefreshCw size={13} className={polling ? 'spin' : ''} />
+                      </button>
+                    ) : null}
+                    {job.status === 'failed' ? (
+                      <button type="button" className="tq-ico" onClick={() => handleRetry(job.id)} title="重试" aria-label="重试">
+                        <RotateCcw size={13} />
+                      </button>
+                    ) : null}
+                    {(job.status === 'running' || job.status === 'pending' || job.status === 'queued') ? (
+                      <button type="button" className="tq-ico danger" onClick={() => handleCancel(job.id)} title="取消" aria-label="取消">
+                        <XCircle size={13} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {expanded ? <div className="tq-detail">{renderDetail(job)}</div> : null}
+              </Fragment>
+            );
+          })
         )}
       </div>
+      <div className="tq-foot">共 {jobs.length} 条 · {sseDown ? 'SSE 不可用，已降级轮询' : 'SSE 实时推送中'}{isRunningHint(hasActiveJobs)}</div>
     </div>
   );
 };
+
+const isRunningHint = (active: boolean) => (active ? ' · 有进行中的任务，进度持续更新' : '');
 
 export default ProjectTasksTab;
 
@@ -570,17 +560,15 @@ const VariantGroups = ({
   };
 
   return (
-    <div className="mb-4 space-y-3">
+    <div className="tq-vg">
       {[...groups.entries()].map(([gid, list]) => (
-        <div key={gid} className="rounded-xl border bg-card p-4 shadow-sm">
-          <div className="mb-2 flex items-center gap-2">
-            <Layers className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold text-foreground">变体组 {gid}</span>
-            <span className="text-xs text-muted-foreground">
-              {list.filter((j) => j.status === 'succeeded').length} / {list.length} 成功
-            </span>
+        <div key={gid} className="tq-vg-card">
+          <div className="tq-vg-h">
+            <Layers size={13} />
+            <b>变体组 {gid}</b>
+            <span>{list.filter((j) => j.status === 'succeeded').length} / {list.length} 成功</span>
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="tq-vg-grid">
             {list.map((j) => {
               const input = (j.inputData as Record<string, unknown> | undefined) ?? {};
               const movement = typeof input.variantMovement === 'string' ? input.variantMovement : '—';
@@ -588,23 +576,21 @@ const VariantGroups = ({
               const url = typeof out.url === 'string' ? out.url : undefined;
               const done = j.status === 'succeeded' && url;
               return (
-                <div key={j.id} className="rounded-lg border border-border/60 p-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-foreground">运镜 {movement}</span>
-                    <span className="text-[10px] text-muted-foreground">{j.status}</span>
+                <div key={j.id} className="tq-vg-item">
+                  <div className="tq-vg-item-h">
+                    <span>运镜 {movement}</span><em>{j.status}</em>
                   </div>
                   {url && j.status === 'succeeded' ? (
-                    <video src={url} controls preload="metadata" className="mt-1.5 aspect-video w-full rounded-md bg-black" />
+                    <video src={url} controls preload="metadata" className="tq-vg-video" />
                   ) : (
-                    <div className="mt-1.5 flex aspect-video w-full items-center justify-center rounded-md bg-muted text-[11px] text-muted-foreground">
-                      {j.status === 'failed' ? '生成失败' : '等待成片'}
-                    </div>
+                    <div className="tq-vg-ph">{j.status === 'failed' ? '生成失败' : '等待成片'}</div>
                   )}
                   <button
+                    type="button"
+                    className="tq-vg-btn"
                     onClick={() => adopt(j.id)}
                     disabled={!done || adopting === j.id}
                     title={done ? '设为该镜头的成片视频' : '仅已成功的变体可采纳'}
-                    className="mt-1.5 w-full rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground disabled:opacity-40"
                   >
                     {adopting === j.id ? '采纳中…' : '采纳为成片'}
                   </button>
