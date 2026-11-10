@@ -588,6 +588,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // providerName 为 NULL 的任务（路由决策尚未落盘）必须放行，
     // 否则 NOT IN 遇 NULL 结果为 NULL，会把全部未路由任务一起排除掉。
     const cooling = this.coolingProviders();
+    // 本地任务不调用供应商，冷却名单不能挡住它们（否则整条本地链被限流误伤）
+    const localJobs = inArray(generationJobs.jobType, ['parse_script', 'edit', 'qc']);
     // 有 blockedReason 的视频在等首帧，必须跳过，避免队头阻塞整条队列。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
     const where =
@@ -596,6 +598,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             eq(generationJobs.status, 'pending'),
             dependencyReady,
             or(
+              localJobs,
               isNull(generationJobs.providerName),
               notInArray(generationJobs.providerName, cooling),
             ),
@@ -735,16 +738,23 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 内存对象同步：后续 writeback 判定 mock 用的是这个对象，不跟着改会按旧供应商误判
     if (providerName) job.providerName = providerName;
     const modelOpts = { model: stage.model, temperature: stage.temperature };
+    // 修复（本地任务被上游冷却误伤）：parse_script/edit/qc 完全不调用供应商，
+    // 不能因为路由给它们的 provider 正在限流冷却就被反复放回 pending，
+    // 否则「确认剧本 → 物化分镜」整条本地链会被无关通道的限流冻住。
+    const localJob =
+      job.jobType === 'parse_script' || job.jobType === 'edit' || job.jobType === 'qc';
     // 修复（按 provider 冷却）：冷却期内不触碰该通道，直接放回 pending 等下一轮，
     // 避免继续打爆对端池；其他 provider 的任务不受影响。
     const holdKey = providerName ?? DEFAULT_PROVIDER_KEY;
     const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
-    if (holdUntil > Date.now()) {
+    if (!localJob && holdUntil > Date.now()) {
       await this.releaseToPending(job.id);
       return;
     }
-    this.providerHoldUntil.delete(holdKey);
-    this.providerHoldCount.delete(holdKey);
+    if (!localJob) {
+      this.providerHoldUntil.delete(holdKey);
+      this.providerHoldCount.delete(holdKey);
+    }
     try {
       switch (job.jobType) {
         case 'parse_script':
@@ -1360,15 +1370,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       ? input.kind
       : 'novel_to_script';
     // 风格回落：未显式指定则用项目画风（风格包 id 与 ArtStyle 同源）
-    let styleId = input.styleId;
-    if (!styleId) {
-      const artRows = await this.db
-        .select({ artStyle: projects.artStyle })
-        .from(projects)
-        .where(eq(projects.id, job.projectId))
-        .limit(1);
-      styleId = artRows[0]?.artStyle ?? undefined;
-    }
+    // 时长同理：一句话扩写按项目目标时长控制分场体量（90 秒项目不能写成 60 秒）
+    const artRows = await this.db
+      .select({ artStyle: projects.artStyle, durationSeconds: projects.durationSeconds })
+      .from(projects)
+      .where(eq(projects.id, job.projectId))
+      .limit(1);
+    const styleId = input.styleId ?? artRows[0]?.artStyle ?? undefined;
+    const targetSeconds = artRows[0]?.durationSeconds ?? undefined;
     const result = await this.storySkills.runSkill({
       skillId: kind,
       source: input.source ?? '',
@@ -1379,9 +1388,17 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       rewriteEnabled: input.rewriteEnabled,
       directives: input.directives,
       providerName: providerName ?? job.providerName,
+      targetSeconds,
     });
-    if (!result.scriptText.trim()) {
-      await this.generationService.settleJobFailure(job.id, '技能未产出可用剧本');
+    if (!result.scriptText.trim() || result.scenesCount === 0) {
+      // 解析不出场景时不能假装成功：否则项目卡在 parsing、用户无任何可继续的入口。
+      // 走 noteJobError 按重试预算自动重跑（模型偶发返回损坏 JSON），耗尽后才是真失败。
+      await this.generationService.noteJobError(
+        job.id,
+        result.scriptText.trim()
+          ? '剧本已生成但分场解析失败（模型返回格式不完整），正在自动重试；仍失败请到「剧本」页手动粘贴'
+          : '技能未产出可用剧本',
+      );
       return;
     }
     await this.db
@@ -1396,6 +1413,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         title: result.title,
         scenesCount: result.scenesCount,
         dialoguesCount: result.dialoguesCount,
+        ...(result.degraded ? { degraded: true } : {}),
         awaitingApproval: 'script',
       });
       this.logger.log(`剧本技能完成，等待剧本确认门（项目 ${job.projectId}）`);
@@ -1406,6 +1424,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       title: result.title,
       scenesCount: result.scenesCount,
       dialoguesCount: result.dialoguesCount,
+      ...(result.degraded ? { degraded: true } : {}),
     });
     // 链式物化：改写类任务替换旧分镜，避免重复堆积
     await this.db.insert(generationJobs).values({
@@ -1966,7 +1985,26 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     // data:（b64 兜底）也要归档，archiveLocalFile 负责解码落盘
     if (urls.imageUrl) {
-      entries.push({ assetType: 'image', url: urls.imageUrl, mime: 'image/png', name: '首帧' });
+      // 命名按产物归属：人物定妆照 / 场景概念图 / 镜头首帧，
+      // 旧实现一律叫「首帧」，资产库里分不清是哪个人物或场景。
+      let name = '首帧';
+      if (job.targetType === 'character' && job.targetId) {
+        const row = await this.db
+          .select({ name: characters.name })
+          .from(characters)
+          .where(eq(characters.id, job.targetId))
+          .limit(1);
+        const who = row[0]?.name ?? '人物';
+        name = input.sheet === true ? `${who}-四视图定妆照` : `${who}-人物参考图`;
+      } else if (job.targetType === 'location' && job.targetId) {
+        const row = await this.db
+          .select({ name: locations.name })
+          .from(locations)
+          .where(eq(locations.id, job.targetId))
+          .limit(1);
+        name = `${row[0]?.name ?? '场景'}-场景概念图`;
+      }
+      entries.push({ assetType: 'image', url: urls.imageUrl, mime: 'image/png', name });
     }
     if (urls.voiceUrl && !urls.voiceUrl.startsWith('data:')) {
       entries.push({ assetType: 'audio', url: urls.voiceUrl, mime: 'audio/mpeg', name: '配音' });

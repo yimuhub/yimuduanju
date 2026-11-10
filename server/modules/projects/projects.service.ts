@@ -18,6 +18,7 @@ import type {
   ProjectProgressResponse,
   GenerationProgress,
   ProjectStatus,
+  JobStatus,
   Shot,
 } from '@shared/api.interface';
 
@@ -368,7 +369,8 @@ export class ProjectsService {
       const inserted = await tx
         .insert(projects)
         .values({
-          title: dto.prompt.slice(0, 50) || '极速创作项目',
+          // 对话中确认的作品名优先；否则沿用一句话截断
+          title: (dto.title?.trim() || dto.prompt.slice(0, 50) || '极速创作项目').slice(0, 255),
           description: dto.prompt,
           mode: dto.mode ?? 'quick',
           contentMode: dto.contentMode ?? 'general',
@@ -470,6 +472,21 @@ export class ProjectsService {
     if (stage === 'script' && (approvals.storyboard || approvals.final)) {
       throw new BadRequestException('确认门顺序错误：分镜/成片门已通过，不能回退重新确认剧本门');
     }
+    if (stage === 'script') {
+      // 剧本仍在生成时不允许确认：否则会拿创建时的原始 prompt 提前物化出空分镜
+      const latestScript = await this.db
+        .select({ status: generationJobs.status })
+        .from(generationJobs)
+        .where(and(eq(generationJobs.projectId, id), eq(generationJobs.jobType, 'script')))
+        .orderBy(desc(generationJobs.createdAt))
+        .limit(1);
+      if (
+        latestScript[0] &&
+        ['pending', 'queued', 'running', 'retrying'].includes(latestScript[0].status)
+      ) {
+        throw new BadRequestException('剧本仍在生成中，请等待任务完成后再确认');
+      }
+    }
     approvals[stage] = new Date().toISOString();
     pipeline.approvals = approvals;
     meta.pipeline = pipeline;
@@ -563,14 +580,6 @@ export class ProjectsService {
       storyboard: Boolean(approvals.storyboard),
       final: Boolean(approvals.final),
     };
-    const nextGate: ProjectProgressResponse['nextGate'] =
-      ['parsing', 'planning'].includes(projectStatus) && !gates.script
-        ? 'script'
-        : projectStatus === 'storyboard_ready' && !gates.storyboard
-          ? 'storyboard'
-          : projectStatus === 'qc' && !gates.final
-            ? 'final'
-            : null;
 
     // 统计各阶段任务进度
     const jobRows = await this.db
@@ -578,9 +587,41 @@ export class ProjectsService {
         jobType: generationJobs.jobType,
         status: generationJobs.status,
         progress: generationJobs.progress,
+        errorMessage: generationJobs.errorMessage,
+        createdAt: generationJobs.createdAt,
       })
       .from(generationJobs)
       .where(eq(generationJobs.projectId, id));
+
+    // 最新一次剧本技能任务：只有「已产出剧本」才开放剧本确认门，
+    // 否则创建后立刻显示「等待确认」，而实际剧本还在生成/已失败，用户无从判断。
+    const latestScriptJob = jobRows
+      .filter((j) => j.jobType === 'script')
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    const scriptJob = latestScriptJob
+      ? {
+          status: latestScriptJob.status as JobStatus,
+          // 重试后成功的历史任务可能残留上一轮报错，只有 failed 才把它带给前端
+          ...(latestScriptJob.status === 'failed' && latestScriptJob.errorMessage
+            ? { errorMessage: latestScriptJob.errorMessage }
+            : {}),
+        }
+      : null;
+    const scriptReady = latestScriptJob?.status === 'succeeded';
+    // 门的顺序必须与 approve() 的校验一致（script → storyboard → final）：
+    // 旧项目可能停在 storyboard_ready/qc 却没有剧本门记录，若只按当前状态给门，
+    // 会显示一个「点了必然 400」的后置门，前面的门反而无处可点。
+    const legacyPreFinal = !['draft', 'failed', 'ready', 'exported'].includes(projectStatus);
+    const nextGate: ProjectProgressResponse['nextGate'] =
+      !gates.script && scriptReady && legacyPreFinal
+        ? 'script'
+        : projectStatus === 'storyboard_ready' && !gates.storyboard
+          ? 'storyboard'
+          : projectStatus === 'qc' && !gates.storyboard
+            ? 'storyboard'
+            : projectStatus === 'qc' && !gates.final
+              ? 'final'
+              : null;
 
     // 构建状态机步骤
     const steps: GenerationProgress[] = STATUS_ORDER
@@ -626,6 +667,16 @@ export class ProjectsService {
           }
         }
 
+        // 这些状态本身就是里程碑：进入即代表该步已完成，不应显示成「进行中 5%」
+        if (
+          (step === 'bible_ready' && projectStatus === 'bible_ready') ||
+          (step === 'storyboard_ready' && projectStatus === 'storyboard_ready') ||
+          (step === 'ready' && projectStatus === 'ready')
+        ) {
+          status = 'completed';
+          progress = 100;
+        }
+
         // 失败状态
         if (projectStatus === 'failed') {
           status = stepIndex < currentIndex ? 'completed' :
@@ -660,6 +711,7 @@ export class ProjectsService {
       currentStep,
       gates,
       nextGate,
+      scriptJob,
     };
   }
 }

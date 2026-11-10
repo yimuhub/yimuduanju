@@ -99,6 +99,13 @@ describe('new builders', () => {
     expect(mod.buildCharacterPrompt('测试', style)).toContain('人物卡');
     expect(mod.buildBoardsPrompt('测试', style)).toContain('分镜');
   });
+
+  test('一句话扩写按项目时长控制体量（90 秒不再写成 60 秒）', async () => {
+    const mod = await import('@server/modules/story-skills/skills');
+    const style = { id: 'x', artStyle: 'realistic', label: 'x', description: 'd', visual: 'v', negative: 'n', tone: 't', camera: 'c' };
+    expect(mod.buildExpandPrompt('穿越唐朝', style, true, '', 90)).toContain('约90秒');
+    expect(mod.buildExpandPrompt('穿越唐朝', style, false, '', 30)).toContain('约30秒');
+  });
 });
 
 describe('model-classify', () => {

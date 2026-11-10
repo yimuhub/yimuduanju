@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Play,
   Download,
@@ -18,9 +18,13 @@ import {
   ListTodo,
   ShieldCheck,
   Maximize2,
+  Hand,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { projects } from '@client/src/api';
-import type { Project, ProjectStatus } from '@shared/api.interface';
+import type { Project, ProjectProgressResponse, ProjectStatus } from '@shared/api.interface';
+import { toast } from 'sonner';
 import { logger } from '@client/src/utils/logger';
 
 // 左侧竖导航（与全站侧栏一致的「图标 + 文字」紧凑语言；fullscreen 画布项点击后进入沉浸全屏路由）
@@ -82,9 +86,11 @@ const ProjectWorkspacePage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
+  const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
+  const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!id) return;
     projects.getProject(id)
       .then((data) => setProject(data))
@@ -92,10 +98,40 @@ const ProjectWorkspacePage = () => {
         logger.error('Failed to load project:', String(err));
         setError('加载项目信息失败');
       });
+    // 进度轮询：剧本生成/等待确认都靠它驱动横幅，避免用户以为卡死
+    projects.getProgress(id)
+      .then(setProgress)
+      .catch((err) => logger.error('load progress failed:', String(err)));
   }, [id]);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  /** 门 1 放行：确认剧本 → 后端自动创建物化任务 */
+  const approveScript = async () => {
+    if (!id || approving) return;
+    setApproving(true);
+    try {
+      await projects.approveProject(id, 'script');
+      toast.success('剧本已确认，正在物化分镜');
+      load();
+    } catch (err) {
+      toast.error(`确认失败：${(err as Error).message}`);
+    } finally {
+      setApproving(false);
+    }
+  };
 
   const displayTitle = project?.title || `短剧项目 · ${id?.slice(0, 8) || ''}`;
   const displayStatus: ProjectStatus = project?.status || 'draft';
+  const nextGate = progress?.nextGate ?? null;
+  const scriptJob = progress?.scriptJob ?? null;
+  const scriptJobRunning =
+    !!scriptJob &&
+    ['pending', 'queued', 'running', 'retrying'].includes(scriptJob.status);
 
   return (
     <div className="space-y-5">
@@ -142,6 +178,94 @@ const ProjectWorkspacePage = () => {
           </button>
         </div>
       </div>
+
+      {/* 剧本阶段状态横幅：生成中 / 待确认 / 失败 三态都必须可见可操作 */}
+      {nextGate === 'script' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/15 px-4 py-3 text-sm text-amber-300">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <Hand className="h-4 w-4" /> 剧本已生成，等待你确认
+            </div>
+            <p className="mt-1 text-xs text-amber-300/80">
+              确认后系统自动物化分镜；不喜欢可以直接去「剧本」页修改或重新生成。
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              onClick={() => navigate(`/project/${id}/script`)}
+              className="rounded-lg border border-amber-500/40 bg-card px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
+            >
+              先看剧本
+            </button>
+            <button
+              onClick={() => void approveScript()}
+              disabled={approving}
+              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-50"
+            >
+              {approving ? '确认中…' : '确认剧本，物化分镜'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!nextGate && scriptJob?.status === 'failed' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/15 px-4 py-3 text-sm text-red-300">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <AlertTriangle className="h-4 w-4" /> 剧本生成失败
+            </div>
+            <p className="mt-1 break-words text-xs text-red-300/80">
+              {scriptJob.errorMessage || '模型返回异常，请到任务队列重试或手动粘贴剧本'}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              onClick={() => navigate(`/project/${id}/tasks`)}
+              className="rounded-lg border border-red-500/40 bg-card px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-red-500/20"
+            >
+              去任务队列重试
+            </button>
+            <button
+              onClick={() => navigate(`/project/${id}/script`)}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              手动粘贴剧本
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!nextGate && scriptJobRunning && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/30 bg-sky-500/15 px-4 py-3 text-sm text-sky-300">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="font-semibold">AI 正在生成剧本…</span>
+            <span className="text-xs text-sky-300/80">通常 1-2 分钟，完成后这里会出现确认按钮</span>
+          </div>
+          <button
+            onClick={() => navigate(`/project/${id}/tasks`)}
+            className="rounded-lg border border-sky-500/40 bg-card px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-500/20"
+          >
+            查看任务队列
+          </button>
+        </div>
+      )}
+
+      {nextGate && nextGate !== 'script' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/15 px-4 py-3 text-sm text-amber-300">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <Hand className="h-4 w-4" />
+            等待
+            {nextGate === 'storyboard' ? '分镜确认' : '成片确认'}
+          </div>
+          <button
+            onClick={() => navigate(`/project/${id}/flow`)}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:opacity-90"
+          >
+            去流程总控确认
+          </button>
+        </div>
+      )}
 
       {/* 新手流程引导横幅：消除极速模式进入工作台后的“假完成”困惑 */}
       {(displayStatus === 'storyboard_ready' || displayStatus === 'assets_generating' || displayStatus === 'video_generating') && (

@@ -74,6 +74,8 @@ export interface StudioData {
   jobs: GenerationJob[];
   worker: { mode: string; concurrency: number; waiting: number; active: number } | null;
   progress: ProjectProgressResponse | null;
+  /** 立即重拉生产链进度（确认门通过后不必等 5s 轮询） */
+  reloadProgress: () => Promise<void>;
   /** 费用汇总（真实落库求和） */
   cost: CostSummary | null;
   /** 全局统计 */
@@ -151,6 +153,19 @@ export function useStudioData(projectId?: string): StudioData {
     }
   }, []);
 
+  const reloadProgress = useCallback(async () => {
+    if (!projectId) {
+      setProgress(null);
+      return;
+    }
+    try {
+      const pr = await getProgress(projectId);
+      if (mounted.current) setProgress(pr);
+    } catch {
+      /* 进度不可用不阻断主界面 */
+    }
+  }, [projectId]);
+
   const reloadShots = useCallback(async () => {
     if (!projectId) {
       setRawShots([]);
@@ -180,6 +195,9 @@ export function useStudioData(projectId?: string): StudioData {
   // 项目列表
   useEffect(() => {
     void reloadProjects();
+    // 后台状态会持续变化（脚本完成/确认门放行/生成推进），列表状态也要跟上
+    const timer = setInterval(() => void reloadProjects(), 20000);
+    return () => clearInterval(timer);
   }, [reloadProjects]);
 
   // 当前项目 + 其镜头/场次
@@ -209,6 +227,29 @@ export function useStudioData(projectId?: string): StudioData {
     void reloadTimeline(true);
   }, [projectId, reloadShots, reloadTimeline]);
 
+  // 当前项目状态 + 进度轮询：此前只在进入项目时拉一次，剧本生成完成/确认门放行后
+  // 界面仍停在旧状态，用户会以为任务卡死（这是「等了好久没继续」的直接原因之一）。
+  useEffect(() => {
+    if (!projectId) return;
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const p = await getProject(projectId);
+          if (mounted.current) setProject(p);
+        } catch {
+          /* 瞬时错误忽略，下一轮再试 */
+        }
+        try {
+          const pr = await getProgress(projectId);
+          if (mounted.current) setProgress(pr);
+        } catch {
+          /* 同上 */
+        }
+      })();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [projectId]);
+
   // 任务队列：SSE 优先，失败降级轮询
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -216,7 +257,7 @@ export function useStudioData(projectId?: string): StudioData {
 
     const poll = async () => {
       try {
-        const res = await listJobs({ page: 1, pageSize: 50 });
+        const res = await listJobs({ projectId, page: 1, pageSize: 50 });
         if (mounted.current) setJobs(res.items ?? []);
         const wstats = await workerStats();
         if (mounted.current) setWorker(wstats);
@@ -280,6 +321,7 @@ export function useStudioData(projectId?: string): StudioData {
     jobs,
     worker,
     progress,
+    reloadProgress,
     cost,
     stats,
     reloadShots,

@@ -158,6 +158,11 @@ export class QuickCreateDto {
   prompt!: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  title?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(5)

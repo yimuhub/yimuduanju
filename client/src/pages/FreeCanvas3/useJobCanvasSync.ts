@@ -72,7 +72,7 @@ export const useJobCanvasSync = (projectId: string | undefined) => {
   const seenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!projectId || typeof EventSource === 'undefined') return;
+    if (!projectId || typeof fetch === 'undefined') return;
 
     const applyJob = (job: GenerationJob) => {
       // 多项目串扰防护：SSE 免 projectId 订阅时为平台级全量流（降级轮询同理）。

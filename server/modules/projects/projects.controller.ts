@@ -60,6 +60,7 @@ export class ProjectsController {
     return this.projectsService.quickCreate(
       {
         prompt: dto.prompt,
+        title: dto.title,
         durationSeconds: dto.durationSeconds ?? 90,
         aspectRatio: dto.aspectRatio ?? '9:16',
         artStyle: dto.artStyle ?? 'realistic',

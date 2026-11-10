@@ -309,6 +309,8 @@ export class GenerationService {
             },
           } as Record<string, unknown>,
           cost: finalCost.toFixed(4),
+          // 重试后成功：清掉上一轮失败留下的报错，避免「已完成但错误信息还在」的误导
+          errorMessage: null,
           completedAt: new Date(),
           updatedAt: new Date(),
         })

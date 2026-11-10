@@ -298,6 +298,24 @@ const CreateWizardPage = () => {
         if (cancelled) return;
         setProgress(data);
 
+        // 剧本技能失败：立即停下并给出可操作原因，不能一直停在「正在创建项目」
+        if (data.scriptJob?.status === 'failed') {
+          setGenerating(false);
+          setError(
+            `剧本生成失败：${data.scriptJob.errorMessage ?? '请到任务队列查看并重试'}`,
+          );
+          return;
+        }
+        // 剧本已产出、等待门 1 确认：跳到流程总控，让用户看到「确认剧本」按钮
+        if (data.nextGate === 'script') {
+          setGenerating(false);
+          toast.success('剧本已生成，确认后自动物化分镜');
+          setTimeout(() => {
+            if (!cancelled) navigate(`/project/${projectId}/flow`);
+          }, 800);
+          return;
+        }
+
         // 分镜就绪即可进工作台：极速模式物化后若死等 ready/exported，进度会永远停在
         // 「分镜故事板」（后续图/视频在工作台可见）
         const enterable: ProjectStatus[] = [

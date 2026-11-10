@@ -30,6 +30,8 @@ export interface SkillRunInput {
   rewriteEnabled?: boolean;
   directives?: string;
   providerName?: string;
+  /** 目标成片时长（秒）：一句话扩写/广告创意按此控制分场数量与节奏 */
+  targetSeconds?: number;
 }
 
 export interface SkillRunResult {
@@ -39,6 +41,8 @@ export interface SkillRunResult {
   title?: string;
   scenesCount: number;
   dialoguesCount: number;
+  /** true = 模型 JSON 不完整/非法，已用容错解析抢救（仍需人工审阅） */
+  degraded?: boolean;
 }
 
 export interface RigBeat {
@@ -212,10 +216,16 @@ export class StorySkillsService {
         : input.skillId === 'script_rewrite'
           ? buildRewritePrompt(source, style, input.directives, genreBlock(genre))
           : input.skillId === 'ad_creative'
-            ? buildAdPrompt(source, style, undefined, genreBlock(genre))
+            ? buildAdPrompt(source, style, input.targetSeconds, genreBlock(genre))
             : ((input.skillId as string) === 'scene_to_rig'
               ? buildRigPrompt(source)
-              : buildExpandPrompt(source, style, rewriteEnabled, genreBlock(genre)));
+              : buildExpandPrompt(
+                  source,
+                  style,
+                  rewriteEnabled,
+                  genreBlock(genre),
+                  input.targetSeconds,
+                ));
 
     let raw: string;
     try {
@@ -239,6 +249,7 @@ export class StorySkillsService {
       title: parsed.title,
       scenesCount: parsed.scenes.length,
       dialoguesCount,
+      ...(parsed.degraded ? { degraded: true } : {}),
     };
   }
 
@@ -413,11 +424,17 @@ export class StorySkillsService {
     return [{ rig: 'static', durationSeconds: 5, note: '解析失败回落：固定机位' }];
   }
 
-  /** 解析 LLM 的 JSON（容忍 ```json 围栏与前后杂文本）；失败则降级用原文 */
+  /**
+   * 解析 LLM 的 JSON（容忍 ```json 围栏与前后杂文本）。
+   * 模型偶发输出损坏 JSON（缺括号/被截断）时，不能用原文直存——
+   * 下游启发式物化器按空行切分正文，JSON 原文会切出乱码镜头。
+   * 因此先尝试严格解析，再按字段做容错提取，最后才降级原文。
+   */
   private parseScriptJson(raw: string): {
     title?: string;
     scenes: { heading: string; summary: string; dialogues: { character: string; text: string }[] }[];
     fallbackRaw?: string;
+    degraded?: boolean;
   } {
     const cleaned = raw
       .replace(/```json\s*/gi, '')
@@ -455,11 +472,60 @@ export class StorySkillsService {
           };
         }
       } catch {
-        // 落到降级分支
+        // 落到容错提取
       }
     }
+    const salvaged = this.salvageScenes(cleaned);
+    if (salvaged.scenes.length > 0) {
+      this.logger.warn(
+        `剧本 JSON 不完整，已容错提取 ${salvaged.scenes.length} 场（建议人工审阅）`,
+      );
+      return { ...salvaged, degraded: true };
+    }
     // 降级：原文直存，启发式物化器仍可按空行切分
-    return { scenes: [], title: undefined, fallbackRaw: raw.slice(0, 12000) };
+    return { scenes: [], title: undefined, fallbackRaw: raw.slice(0, 12000), degraded: true };
+  }
+
+  /** 损坏 JSON 的容错提取：按 heading 分段，逐段用正则取 summary/dialogues */
+  private salvageScenes(raw: string): {
+    title?: string;
+    scenes: { heading: string; summary: string; dialogues: { character: string; text: string }[] }[];
+  } {
+    const unescape = (s: string): string => {
+      try {
+        return JSON.parse(`"${s}"`) as string;
+      } catch {
+        return s.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      }
+    };
+    const titleMatch = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(raw);
+    const headings: { heading: string; index: number }[] = [];
+    const headingRe = /"heading"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+    for (let m = headingRe.exec(raw); m; m = headingRe.exec(raw)) {
+      headings.push({ heading: unescape(m[1]), index: m.index });
+    }
+    if (headings.length === 0) return { scenes: [] };
+    const scenes = headings.slice(0, 12).map((h, i) => {
+      const block = raw.slice(h.index, headings[i + 1]?.index ?? raw.length);
+      const summaryMatch = /"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(block);
+      const dialogues: { character: string; text: string }[] = [];
+      const dialogueRe =
+        /"character"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+      for (let d = dialogueRe.exec(block); d; d = dialogueRe.exec(block)) {
+        const text = unescape(d[2]);
+        if (text) dialogues.push({ character: unescape(d[1]) || '旁白', text });
+        if (dialogues.length >= 20) break;
+      }
+      return {
+        heading: h.heading || `第 ${i + 1} 场`,
+        summary: summaryMatch ? unescape(summaryMatch[1]) : '',
+        dialogues,
+      };
+    }).filter((s) => s.dialogues.length > 0 || s.summary);
+    return {
+      title: titleMatch ? unescape(titleMatch[1]) : undefined,
+      scenes,
+    };
   }
 
   /** 转为启发式物化器可读的纯文本（标题行 + 角色：台词），保证下游零改造可用 */

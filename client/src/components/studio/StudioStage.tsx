@@ -11,6 +11,7 @@
  * 让方案 F 右坞之外的既有页面也能被完整触达。
  */
 import type { ReactNode } from 'react';
+import type { ProjectStatus } from '@shared/api.interface';
 import { Search } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useStudio } from './StudioShell';
@@ -32,6 +33,20 @@ const PAGE_TITLES: Record<string, string> = {
   '/canvases': '画布模式',
 };
 
+/** 项目状态 → 舞台头部状态文案（确认门等待也算「阶段已到」） */
+const PROJECT_STATUS_TEXT: Partial<Record<ProjectStatus, string>> = {
+  draft: '待启动',
+  parsing: '剧本解析中',
+  planning: '制作规划中',
+  bible_ready: '设定就绪',
+  storyboard_ready: '分镜就绪',
+  assets_generating: '资产生产中',
+  video_generating: '视频生产中',
+  audio_generating: '音频生产中',
+  editing: '剪辑中',
+  qc: '质检中',
+};
+
 export const StudioStage = ({ children }: { children?: ReactNode }) => {
   const { data, stageView, projectId } = useStudio();
   const location = useLocation();
@@ -42,22 +57,32 @@ export const StudioStage = ({ children }: { children?: ReactNode }) => {
   const progress = data.progress?.overallProgress ?? 0;
   const running = data.shotStats.render > 0 || (data.jobs ?? []).some((j) => j.status === 'running');
 
+  // 以项目状态为准：不能只用「已渲镜头数」判断，否则剧本/分镜就绪、正等确认门的项目
+  // 会一直显示「待启动」，用户会误以为流程没往前走
   const statusText = project
     ? running
       ? '生产链运行中'
-      : data.shotStats.done > 0
+      : project.status === 'ready' || project.status === 'exported'
         ? '生产链已完成'
-        : '待启动'
+        : project.status === 'failed'
+          ? '生产链失败'
+          : PROJECT_STATUS_TEXT[project.status] ?? '待启动'
     : '未进入项目';
 
   const showPage = stageView === 'page' && !!children;
+  // 工作台首页不再重复「工作台 / 工作台」，只在非首页时给上一级
+  const crumbRoot = project ? '我的项目' : crumbTitle === '工作台' ? null : '工作台';
 
   return (
     <section className="stage">
       <div className="stage-head">
         <div className="crumb">
-          <span className="crumb-t">{project ? '我的项目' : '工作台'}</span>
-          <span className="crumb-sep">/</span>
+          {crumbRoot ? (
+            <>
+              <span className="crumb-t">{crumbRoot}</span>
+              <span className="crumb-sep">/</span>
+            </>
+          ) : null}
           <span className="crumb-t on">{crumbTitle}</span>
         </div>
         <div className="spacer" />

@@ -286,6 +286,136 @@ export class ModelGatewayService {
     return text;
   }
 
+  /**
+   * 流式文本生成（对话用）：逐 token 回调 onDelta，返回完整文本。
+   * 兼容 OpenAI 兼容站的 SSE（data: {...choices[0].delta.content}）。
+   * signal 用于用户点「停止生成」时中断上游请求；中断后保留已产出文本。
+   */
+  async streamText(
+    params: TextGenerateParams,
+    onDelta: (delta: string) => void,
+    options?: { providerName?: string; signal?: AbortSignal },
+  ): Promise<{ text: string; model: string }> {
+    const provider = await this.getProvider(options?.providerName, 'text');
+    const model = params.model ?? provider.textModel;
+    if (this.isMockProvider(provider)) {
+      const text = this.mockTextResponse(params.prompt, model);
+      // 演练通道也分片下发，前端流式体验一致
+      const size = Math.max(8, Math.ceil(text.length / 40));
+      for (let i = 0; i < text.length; i += size) {
+        if (options?.signal?.aborted) break;
+        onDelta(text.slice(i, i + size));
+        await new Promise((r) => setTimeout(r, 24));
+      }
+      return { text, model: model ?? 'mock-text' };
+    }
+    const apiKey = provider.apiKey;
+    if (!apiKey) throw new BadRequestException('Provider 未配置 API Key');
+    if (!model) throw new BadRequestException('未配置文本模型');
+
+    const prefix = (provider.promptPrefix ?? '').trim();
+    const base = this.normalizeBaseUrl(provider.baseUrl);
+    const body = {
+      model,
+      messages: [
+        ...(prefix ? [{ role: 'system', content: prefix }] : []),
+        ...(params.systemPrompt ? [{ role: 'system', content: params.systemPrompt }] : []),
+        { role: 'user', content: params.prompt },
+      ],
+      temperature: params.temperature ?? 0.7,
+      ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
+      stream: true,
+    };
+
+    // 流式读取要覆盖整段回复时间，不能用默认 60s 的整请求超时
+    const timeout = AbortSignal.timeout(180_000);
+    const signal = options?.signal
+      ? AbortSignal.any([options.signal, timeout])
+      : timeout;
+    const init: RequestInit = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+    };
+
+    const attempt = async (endpoint: string) => fetch(`${base}${endpoint}`, init);
+    let response = await attempt('/chat/completions');
+    let url = `${base}/chat/completions`;
+    if (response.status === 404 && !/\/v1$/.test(base)) {
+      await response.body?.cancel().catch(() => {});
+      url = `${base}/v1/chat/completions`;
+      response = await attempt('/v1/chat/completions');
+    }
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new BadRequestException(
+        `文本生成失败 (${response.status}, ${url}): ${errText.slice(0, 200)}`,
+      );
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    // 部分中转忽略 stream 参数、直接返回整包 JSON：按普通响应兜底
+    if (contentType.includes('application/json') || !response.body) {
+      const data = (await response.json()) as {
+        choices?: { message?: { content?: string } }[];
+        output?: { text?: string };
+      };
+      const text =
+        data.choices?.[0]?.message?.content ?? data.output?.text ?? JSON.stringify(data);
+      onDelta(text);
+      return { text, model };
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let text = '';
+    const consume = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) return;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') return;
+      try {
+        const json = JSON.parse(payload) as {
+          choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+        };
+        const delta = json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content;
+        if (delta) {
+          text += delta;
+          onDelta(delta);
+        }
+      } catch {
+        /* 单帧坏数据跳过，不打断整段回复 */
+      }
+    };
+
+    try {
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) consume(line);
+      }
+      if (buffer) consume(buffer);
+    } catch (e) {
+      // 用户中止：保留已生成内容；其它错误在已有内容时也按部分成功返回
+      if (!text) {
+        const aborted = (e as { name?: string } | null)?.name === 'AbortError';
+        throw new BadRequestException(
+          aborted ? '已停止生成' : `文本生成流中断：${(e as Error).message}`,
+        );
+      }
+    }
+    return { text, model };
+  }
+
   // ========== Image Generation ==========
   async generateImage(
     params: ImageGenerateParams,

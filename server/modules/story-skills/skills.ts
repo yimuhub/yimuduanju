@@ -121,14 +121,18 @@ export function buildExpandPrompt(
   style: StoryStylePreset,
   rewriteEnabled: boolean,
   genreRules = '',
+  targetSeconds = 60,
 ): string {
+  const secs = Math.max(15, Math.min(600, Math.round(targetSeconds || 60)));
+  // 每场按 10-15 秒有效内容估算，避免 90 秒项目被写成 60 秒体量
+  const sceneHint = Math.max(3, Math.min(12, Math.round(secs / 12)));
   const mode = rewriteEnabled
     ? `创作模式：爆款改造。从一句话出发自由发挥完整短剧，套用全部吸引力铁律。\n${ATTRACTIVENESS_RULES}`
     : `创作模式：朴素展开。把一句话扩展为结构完整的短剧剧本，不刻意堆砌反转，保持原意。`;
   const genre = genreRules ? `\n${genreRules}\n` : '';
   return (
-    `你是资深竖屏短剧编剧，用户只给一句话创意，请输出一部时长约60秒、可直接拍摄的短剧剧本。\n${styleBlock(style)}\n${genre}${mode}\n` +
-    `产出要求：分场标题用“第X场 地点·时间”格式；每场配2-6条对白；\n${SCRIPT_JSON_CONTRACT}\n\n【一句话创意】\n${idea.slice(0, 2000)}`
+    `你是资深竖屏短剧编剧，用户只给一句话创意，请输出一部时长约${secs}秒、可直接拍摄的短剧剧本。\n${styleBlock(style)}\n${genre}${mode}\n` +
+    `产出要求：共 ${sceneHint} 场左右（按 ${secs} 秒分配，单场内容约 10-15 秒）；分场标题用“第X场 地点·时间”格式；每场配2-6条对白；\n${SCRIPT_JSON_CONTRACT}\n\n【一句话创意】\n${idea.slice(0, 2000)}`
   );
 }
 

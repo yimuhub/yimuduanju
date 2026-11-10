@@ -702,3 +702,37 @@ export const timelineClips = pgTable("timeline_clips", {
   }).onDelete("set null"),
 ]);
 export const timelineClipsTable = timelineClips;
+
+// 0018 对话持久化：草稿会话（project_id 为空）+ 项目会话；消息只增不改，保证可追溯
+export const chatSessions = pgTable("chat_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id"),
+  title: varchar("title", { length: 255 }),
+  kind: varchar("kind", { length: 20 }).notNull().default('draft'),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "chat_sessions_project_id_fkey",
+  }).onDelete("cascade"),
+]);
+export const chatSessionsTable = chatSessions;
+
+export const chatMessages = pgTable("chat_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id").notNull(),
+  role: varchar("role", { length: 20 }).notNull(),
+  content: text("content").notNull(),
+  attachments: jsonb("attachments").default([]),
+  metadata: jsonb("metadata"),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  foreignKey({
+    columns: [table.sessionId],
+    foreignColumns: [chatSessions.id],
+    name: "chat_messages_session_id_fkey",
+  }).onDelete("cascade"),
+]);
+export const chatMessagesTable = chatMessages;

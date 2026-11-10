@@ -18,45 +18,19 @@ import {
   LayoutTemplate,
   MessageSquare,
   Network,
+  Plus,
   Settings,
   Sparkles,
   ClipboardCheck,
 } from 'lucide-react';
-import type { ProjectStatus } from '@shared/api.interface';
 import { getAvatarInitial, getNickname } from '@client/src/lib/identity';
 import { useStudio } from './StudioShell';
-
-/** 项目状态 → (chip 样式, 文案) */
-function projectChip(status: ProjectStatus): { cls: 'ok' | 'run' | 'warn' | ''; text: string } {
-  switch (status) {
-    case 'video_generating':
-    case 'assets_generating':
-    case 'audio_generating':
-    case 'parsing':
-    case 'planning':
-    case 'editing':
-      return { cls: 'run', text: '生产中' };
-    case 'bible_ready':
-      return { cls: '', text: '设定就绪' };
-    case 'storyboard_ready':
-      return { cls: 'ok', text: '分镜就绪' };
-    case 'qc':
-      return { cls: 'warn', text: '质检中' };
-    case 'ready':
-      return { cls: 'ok', text: '成片就绪' };
-    case 'exported':
-      return { cls: 'ok', text: '已导出' };
-    case 'failed':
-      return { cls: 'warn', text: '失败' };
-    default:
-      return { cls: '', text: '草稿' };
-  }
-}
+import { projectStatusMeta } from './projectStatus';
 
 export const StudioRail = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { data, stageView, setStageView, sel, projectId } = useStudio();
+  const { data, stageView, setStageView, sel, projectId, chatMsgs, openNewWork } = useStudio();
 
   const runningJobs = useMemo(
     () => data.jobs.filter((j) => j.status === 'running' || j.status === 'queued' || j.status === 'retrying'),
@@ -106,6 +80,15 @@ export const StudioRail = () => {
         <div className="mark">幕</div>
         <div className="mark-txt">一幕</div>
         <div className="mark-sub">v{APP_VERSION || '3.4.3'}</div>
+        <button
+          type="button"
+          className="rail-new"
+          title="新建对话：先聊清楚方向，再创建作品"
+          aria-label="新建对话"
+          onClick={() => openNewWork()}
+        >
+          <Plus />
+        </button>
       </div>
 
       <div className="rail-body">
@@ -115,13 +98,20 @@ export const StudioRail = () => {
           {navItem(
             'chat',
             <MessageSquare className="ico" />,
-            '对话',
+            // 顶部入口：未进入项目时是「新建对话」，进入项目后跟随会话状态
+            projectId ? (chatMsgs.length > 0 ? '进行中的对话' : '对话') : '新建对话',
             () => {
+              if (!projectId) {
+                openNewWork();
+                return;
+              }
               setStageView('chat');
-              if (!projectId && location.pathname !== '/') navigate('/');
+              if (location.pathname !== `/project/${projectId}`) {
+                navigate(`/project/${projectId}`);
+              }
             },
             undefined,
-            stageView === 'chat',
+            !!projectId && stageView === 'chat',
           )}
           {projectId &&
             navItem(
@@ -192,7 +182,7 @@ export const StudioRail = () => {
             </div>
           ) : (
             data.projects.slice(0, 12).map((p) => {
-              const chip = projectChip(p.status);
+              const chip = projectStatusMeta(p.status);
               const running = chip.cls === 'run';
               return (
                 <div
@@ -211,7 +201,9 @@ export const StudioRail = () => {
                     <span className="proj-name">{p.title}</span>
                   </div>
                   <div className="proj-meta">
-                    <span className={`chip${chip.cls ? ` ${chip.cls}` : ''}`}>{chip.text}</span>
+                    <span className={`chip${chip.cls === 'idle' ? '' : ` ${chip.cls}`}`}>
+                      {chip.text}
+                    </span>
                     <span className="proj-pct num">
                       {p.totalCost ? `¥${p.totalCost.toFixed(2)}` : '—'}
                     </span>

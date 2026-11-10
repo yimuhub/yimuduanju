@@ -711,8 +711,63 @@ export interface AssistantChatResponse {
   reply: string;
 }
 
+/** 对话附件元数据（正文已并入消息 content，供模型与追溯使用） */
+export interface ChatAttachmentMeta {
+  name: string;
+  size?: number;
+  chars?: number;
+}
+
+export type ChatRole = 'user' | 'agent' | 'system';
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: ChatRole;
+  content: string;
+  attachments: ChatAttachmentMeta[];
+  createdAt: string;
+  /** 追溯信息：用户消息的附件正文、助手消息的生成模型 */
+  metadata?: {
+    attachments?: { name?: string; text?: string }[];
+    model?: string;
+  } | null;
+}
+
+export interface ChatSession {
+  id: string;
+  projectId: string | null;
+  title: string | null;
+  kind: 'draft' | 'project';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatSessionDetail {
+  session: ChatSession;
+  messages: ChatMessage[];
+}
+
+export interface CreateChatSessionRequest {
+  projectId?: string;
+  title?: string;
+}
+
+export interface LinkChatSessionRequest {
+  projectId: string;
+  title?: string;
+}
+
+/** 流式对话请求：message 已包含用户输入；附件正文由服务端拼接进上下文 */
+export interface StreamChatRequest {
+  message: string;
+  attachments?: { name: string; text?: string; size?: number }[];
+}
+
 export interface QuickCreateRequest {
   prompt: string;
+  /** 作品名（对话中确认的标题）；缺省用 prompt 截断 */
+  title?: string;
   durationSeconds: number;
   aspectRatio: AspectRatio;
   artStyle: ArtStyle;
@@ -936,6 +991,8 @@ export interface ProjectProgressResponse {
   gates?: { script: boolean; storyboard: boolean; final: boolean };
   /** 当前等待用户确认的门（null=无门可过，流水线自动段进行中） */
   nextGate?: 'script' | 'storyboard' | 'final' | null;
+  /** 最新一次剧本技能任务状态：用于区分「仍在生成 / 已生成待确认 / 生成失败」 */
+  scriptJob?: { status: JobStatus; errorMessage?: string } | null;
 }
 
 export interface GenerateImageRequest {
