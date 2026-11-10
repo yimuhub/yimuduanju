@@ -10,9 +10,13 @@
  *   320–459  icons     只留图标，9 项全平铺，选中项带品牌红指示线
  *   < 320    overflow  前 3 个图标 + 「更多」下拉（含全部 9 项的完整名称）
  * 不变式：任何宽度下 9 个入口都可达，不做隐藏滚动条的静默裁切。
+ *
+ * 「时间线」是外壳动作项，不是内容页：点击直接展开底部真时间线
+ * （EDL / timeline_clips 是唯一数据源），避免旧假页与底部时间线各写各的。
  */
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useStudio } from './StudioShell';
 import {
   Bot,
   ChevronDown,
@@ -32,6 +36,8 @@ interface Section {
   group: string;
   icon: React.ReactNode;
   title: string;
+  /** 外壳动作：不切 URL，直接展开底部真时间线 */
+  action?: 'timeline';
 }
 
 const SECTIONS: Section[] = [
@@ -40,7 +46,14 @@ const SECTIONS: Section[] = [
   { seg: 'characters', label: '人物', group: '设定', icon: <Users />, title: '角色外貌、参考图与配音音色' },
   { seg: 'scenes', label: '场景', group: '设定', icon: <MapPin />, title: '场地设定与场景概念图' },
   { seg: 'director', label: '导演台', group: '生产', icon: <Video />, title: '景别 / 机位 / 焦段 / 运镜调节' },
-  { seg: 'timeline', label: '时间线', group: '生产', icon: <Clock />, title: '多轨时间线：按秒拖拽调整节奏' },
+  {
+    seg: 'timeline',
+    label: '时间线',
+    group: '生产',
+    icon: <Clock />,
+    title: '展开底部多轨时间线 · EDL 落库，可修剪 / 加字幕音频 / 分割 / 导出成片',
+    action: 'timeline',
+  },
   { seg: 'agents', label: 'AI助手', group: '运维', icon: <Bot />, title: '8 大影视工种智能体协同对话' },
   { seg: 'tasks', label: '任务队列', group: '运维', icon: <ListTodo />, title: '后台生成队列进度、重试与取消' },
 ];
@@ -64,10 +77,21 @@ const densityOf = (w: number): NavDensity => {
 export const ProjectSectionNav = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { setTlCollapsed } = useStudio();
   const [density, setDensity] = useState<NavDensity>('full');
   const [menuOpen, setMenuOpen] = useState(false);
+  /** 点「时间线」后的短暂高亮，明确告诉用户入口在底部面板 */
+  const [pulse, setPulse] = useState(false);
+  const pulseTimer = useRef<number | null>(null);
   const navRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(
+    () => () => {
+      if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+    },
+    [],
+  );
 
   const m = location.pathname.match(/^\/project\/([^/]+)(?:\/([^/]+))?/);
   const projectId = m?.[1];
@@ -105,6 +129,15 @@ export const ProjectSectionNav = () => {
 
   const go = (s: Section) => {
     setMenuOpen(false);
+    if (s.action === 'timeline') {
+      // 一个入口、一个数据源：只操作底部真时间线，不再跳到会写 shots.duration 的旧页
+      setTlCollapsed(false);
+      window.dispatchEvent(new CustomEvent('yimu:timeline-focus'));
+      setPulse(true);
+      if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+      pulseTimer.current = window.setTimeout(() => setPulse(false), 2200);
+      return;
+    }
     navigate(`/project/${projectId}/${s.seg}`);
   };
   const all = [...SECTIONS, CANVAS];
@@ -116,10 +149,10 @@ export const ProjectSectionNav = () => {
     <button
       key={s.seg}
       type="button"
-      className={`secnav-i${seg === s.seg ? ' on' : ''}${s.seg === CANVAS.seg ? ' secnav-primary' : ''}`}
+      className={`secnav-i${!s.action && seg === s.seg ? ' on' : ''}${s.action === 'timeline' && pulse ? ' pulse' : ''}${s.seg === CANVAS.seg ? ' secnav-primary' : ''}`}
       title={s.title}
       aria-label={s.label}
-      aria-current={seg === s.seg ? 'page' : undefined}
+      aria-current={!s.action && seg === s.seg ? 'page' : undefined}
       onClick={() => go(s)}
     >
       {s.icon}
@@ -163,12 +196,12 @@ export const ProjectSectionNav = () => {
                   key={s.seg}
                   type="button"
                   role="menuitem"
-                  className={`secnav-menu-i${seg === s.seg ? ' on' : ''}`}
+                  className={`secnav-menu-i${!s.action && seg === s.seg ? ' on' : ''}`}
                   onClick={() => go(s)}
                 >
                   {s.icon}
                   <span>{s.label}</span>
-                  <em>{s.group}</em>
+                  <em>{s.action === 'timeline' ? '底部面板' : s.group}</em>
                 </button>
               ))}
             </div>

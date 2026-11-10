@@ -273,6 +273,7 @@ const RoutesComponent = () => {
             <Route path="scenes" element={<ProjectScenesTab />} />
             <Route path="storyboard" element={<ProjectStoryboardTab />} />
             <Route path="director" element={<ProjectDirectorTab />} />
+            {/* 经典 / 极客：时间线已并入 Studio 底部，这里只保留一键迁移引导 */}
             <Route path="timeline" element={<ProjectTimelineTab />} />
             <Route path="assets" element={<ProjectAssetsTab />} />
             <Route path="agents" element={<ProjectAgentsTab />} />

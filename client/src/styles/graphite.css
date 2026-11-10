@@ -2864,6 +2864,228 @@
 }
 
 
+/* ---------- 时间线：镜头条 / 底部信息栏 / 入口聚焦 ---------- */
+.tl {
+  transition: box-shadow 200ms var(--ease);
+}
+.tl.tl-focus {
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+.tl.tl-focus .tl-head h3 {
+  color: var(--brand-hi);
+}
+.tl-strip {
+  flex: 0 0 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-panel);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tl-strip::-webkit-scrollbar {
+  display: none;
+}
+.tl-strip-h {
+  flex: 0 0 auto;
+  padding-right: 4px;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--fg-4);
+}
+.tl-strip-empty {
+  font-size: 10px;
+  color: var(--fg-4);
+}
+.tl-strip-i {
+  flex: 0 0 auto;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--fg-3);
+  font-size: 9.5px;
+  cursor: pointer;
+  transition:
+    background 140ms var(--ease),
+    color 140ms var(--ease),
+    border-color 140ms var(--ease);
+}
+.tl-strip-i:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.tl-strip-i.on {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+}
+.tl-strip-i b {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+.tl-strip-i .num {
+  font-family: var(--mono);
+  color: var(--fg-4);
+}
+.tl-strip-i.on .num {
+  color: var(--brand-hi);
+}
+.tl-strip-st {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fg-4);
+  flex: 0 0 5px;
+}
+.tl-strip-st.done {
+  background: var(--ok);
+}
+.tl-strip-st.render {
+  background: var(--brand);
+}
+.tl-info {
+  flex: 0 0 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 0 11px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-rail);
+}
+.tl-info .sp {
+  flex: 1 1 auto;
+}
+.tl-info-m {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 10px;
+}
+.tl-info-m b {
+  color: var(--fg-4);
+  font-weight: 500;
+}
+.tl-info-m em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-2);
+}
+.tl-info-div {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 14px;
+  background: var(--line-strong);
+}
+.tl-info-sel {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.tl-info-no {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--brand-hi);
+}
+.tl-info-tag,
+.tl-info-dur {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  font-size: 9.5px;
+  color: var(--fg-3);
+}
+.tl-info-dur {
+  font-family: var(--mono);
+}
+.tl-info-txt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.tl-info-tc,
+.tl-info-none {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--fg-4);
+}
+.tl-info-tc {
+  font-family: var(--mono);
+}
+.tl-info-keys {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+.tl-info-btn {
+  flex: 0 0 auto;
+  height: 21px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms var(--ease),
+    color 140ms var(--ease);
+}
+.tl-info-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.tl-info-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (max-width: 1180px) {
+  .tl-info-keys {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .tl-info-m:nth-of-type(4),
+  .tl-info-tc {
+    display: none;
+  }
+}
+
+/* 项目功能条「时间线」动作项的短暂反馈 */
+.secnav-i.pulse {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+}
+.secnav-i.pulse svg {
+  color: var(--brand-hi);
+  opacity: 1;
+}
+
 /* ---------- 底：IDE 状态栏 ---------- */
 .statusbar {
   grid-area: status;

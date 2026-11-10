@@ -16,13 +16,16 @@
  * 这样刷新、分享链接、浏览器前进后退都能落到同一处；
  * 画布 / 时间线 / 右坞预览 / 分镜四者又共用同一份 StudioShot[]，
  * 不会出现「时间码不自洽、引用索引错位」。
+ *
+ * 时间线不是内容页：它是 Studio 外壳的底部面板（EDL / timeline_clips），
+ * 由项目功能条的「时间线」动作直接展开。旧的 /project/:id/timeline
+ * 链接由 StudioShell 兼容重定向，避免与底部面板形成两份互相冲突的数据源。
  */
 import ProjectFlowTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectFlowTab';
 import ProjectOverviewTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectOverviewTab';
 import ProjectCharactersTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectCharactersTab';
 import ProjectScenesTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectScenesTab';
 import ProjectDirectorTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectDirectorTab';
-import ProjectTimelineTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectTimelineTab';
 import ProjectAgentsTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectAgentsTab';
 import ProjectTasksTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectTasksTab';
 
@@ -73,7 +76,6 @@ export const PAGE_SEGS: Record<string, React.ComponentType> = {
   characters: ProjectCharactersTab,
   scenes: ProjectScenesTab,
   director: ProjectDirectorTab,
-  timeline: ProjectTimelineTab,
   agents: ProjectAgentsTab,
   tasks: ProjectTasksTab,
 };

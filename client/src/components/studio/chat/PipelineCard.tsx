@@ -62,8 +62,9 @@ const STEP_VIEW: Record<string, { path: string; label: string }> = {
   storyboard_ready: { path: 'storyboard', label: '查看分镜' },
   assets_generating: { path: 'assets', label: '查看资产' },
   video_generating: { path: 'storyboard', label: '查看镜头' },
-  audio_generating: { path: 'timeline', label: '打开时间线' },
-  editing: { path: 'timeline', label: '打开时间线' },
+  // timeline 已并入 Studio 外壳底部：StudioShell 会把它重定向回项目并展开面板
+  audio_generating: { path: 'timeline', label: '展开时间线' },
+  editing: { path: 'timeline', label: '展开时间线' },
   qc: { path: 'qc', label: '查看质检' },
   ready: { path: 'export', label: '去导出' },
 };

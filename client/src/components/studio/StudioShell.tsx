@@ -255,6 +255,15 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
 
   const hasChildren = !!children;
 
+  // 旧「智能剪辑助手」内容页已并入底部真时间线：老链接 /project/:id/timeline
+  // 回到项目对话并展开面板，避免旧页与 EDL 各写各的、也避免刷新时落到空白舞台。
+  useEffect(() => {
+    if (!projectId || seg !== 'timeline') return;
+    setTlCollapsed(false);
+    window.dispatchEvent(new CustomEvent('yimu:timeline-focus'));
+    navigate(`/project/${projectId}`, { replace: true });
+  }, [projectId, seg, navigate, setTlCollapsed]);
+
   // URL → 状态（唯一真源）
   useEffect(() => {
     if (projectId) {

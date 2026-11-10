@@ -18,6 +18,7 @@
  * 所有编辑走 useEdlEditor：乐观更新 + 400ms 防抖 PUT 整体替换（事务落库）。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import interact from 'interactjs';
 import { toast } from 'sonner';
 import {
@@ -111,6 +112,8 @@ const makeRow = (track: RowTrack, lane: number): Row => {
 export const StudioTimeline = () => {
   const {
     data,
+    projectId,
+    sel,
     setSel,
     curT,
     setCurT,
@@ -124,6 +127,23 @@ export const StudioTimeline = () => {
   const clips = useMemo(() => data.timeline?.clips ?? [], [data.timeline]);
   const collapsed = tlCollapsed;
   const editor = useEdlEditor();
+  const navigate = useNavigate();
+
+  /** 项目功能条「时间线」动作 / 旧链接重定向：短暂高亮，明确落点在底部面板 */
+  const [focused, setFocused] = useState(false);
+  const focusTimer = useRef<number | null>(null);
+  useEffect(() => {
+    const onFocus = () => {
+      setFocused(true);
+      if (focusTimer.current) window.clearTimeout(focusTimer.current);
+      focusTimer.current = window.setTimeout(() => setFocused(false), 2200);
+    };
+    window.addEventListener('yimu:timeline-focus', onFocus);
+    return () => {
+      window.removeEventListener('yimu:timeline-focus', onFocus);
+      if (focusTimer.current) window.clearTimeout(focusTimer.current);
+    };
+  }, []);
 
   const [pxPerSec, setPxPerSec] = useState(PX_DEFAULT);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -151,6 +171,29 @@ export const StudioTimeline = () => {
   editorRef.current = editor;
 
   const shotMap = useMemo(() => new Map(shots.map((s) => [s.id, s])), [shots]);
+
+  /** 底部信息栏：当前选中镜 + 它在 EDL 上的真实起点（不再用 shots.duration 另算一份） */
+  const selShot = shots[sel];
+  const selClip = useMemo(
+    () => clips.find((c) => c.track === 'video' && c.sourceShotId === selShot?.id),
+    [clips, selShot?.id],
+  );
+
+  /** 镜头条定位：选中镜、选中片段、播放头、横向滚动一次同步 */
+  const jumpToShot = (i: number) => {
+    const shot = shots[i];
+    if (!shot) return;
+    setSel(i);
+    const clip = clips.find((c) => c.track === 'video' && c.sourceShotId === shot.id);
+    setSelectedClipId(clip?.id ?? null);
+    const el = scrollRef.current;
+    if (clip && el) {
+      const x = clip.timelineStart * pxPerSec;
+      if (x < el.scrollLeft || x > el.scrollLeft + el.clientWidth - 80) {
+        el.scrollLeft = Math.max(0, x - 80);
+      }
+    }
+  };
 
   const total = useMemo(() => {
     let end = 0;
@@ -201,7 +244,8 @@ export const StudioTimeline = () => {
       app.style.removeProperty('--tl-h');
       return undefined;
     }
-    const h = clamp(32 + 16 + rows.length * ROW_H + 8, 198, 470);
+    // 32 头部 + 16 标尺 + 轨道 + 8 余量 + 28 镜头条 + 34 底部信息栏
+    const h = clamp(32 + 16 + rows.length * ROW_H + 8 + 62, 236, 520);
     app.style.setProperty('--tl-h', `${h}px`);
     return () => {
       app.style.removeProperty('--tl-h');
@@ -571,7 +615,7 @@ export const StudioTimeline = () => {
   // ---------- 收起态 ----------
   if (collapsed) {
     return (
-      <section className="tl tl-collapsed-bar" id="tl">
+      <section className={`tl tl-collapsed-bar${focused ? ' tl-focus' : ''}`} id="tl">
         <div className="tl-head">
           <h3>时间线</h3>
           <span className="tl-count num">
@@ -698,7 +742,7 @@ export const StudioTimeline = () => {
 
   return (
     <section
-      className="tl"
+      className={`tl${focused ? ' tl-focus' : ''}`}
       id="tl"
       onPointerEnter={() => {
         hoverRef.current = true;
@@ -933,6 +977,88 @@ export const StudioTimeline = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 旧内容页里唯一有用的「镜头列表」：只读定位条，时间码统一取 EDL */}
+      <div className="tl-strip" role="group" aria-label="镜头列表">
+        <span className="tl-strip-h">镜头</span>
+        {shots.length === 0 ? (
+          <span className="tl-strip-empty">暂无镜头 · 生成分镜后自动出现在时间线</span>
+        ) : (
+          shots.map((s, i) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`tl-strip-i${i === sel ? ' on' : ''}`}
+              title={`${shotLabel(s.no)} ${s.sceneLabel} · ${s.tag} · ${s.dur.toFixed(1)}s · ${s.txt}`}
+              onClick={() => jumpToShot(i)}
+            >
+              <b>{shotLabel(s.no)}</b>
+              <span className="num">{s.dur.toFixed(1)}s</span>
+              <i className={`tl-strip-st ${s.st}`} />
+            </button>
+          ))
+        )}
+      </div>
+
+      {/* 总时长 / 片段数 / 选中镜详情 / 常用入口：全部来自同一份 EDL */}
+      <div className="tl-info">
+        <span className="tl-info-m">
+          <b>总时长</b>
+          <em className="num">{toTimecode(total)}</em>
+        </span>
+        <span className="tl-info-m">
+          <b>镜头</b>
+          <em>{shots.length}</em>
+        </span>
+        <span className="tl-info-m">
+          <b>片段</b>
+          <em>{clips.length}</em>
+        </span>
+        <span className="tl-info-m">
+          <b>轨道</b>
+          <em>{rows.length}</em>
+        </span>
+        <span className="tl-info-div" />
+        <div className="tl-info-sel">
+          {selShot ? (
+            <>
+              <span className="tl-info-no">{shotLabel(selShot.no)}</span>
+              <span className="tl-info-tag">{selShot.tag || '未设景别'}</span>
+              <span className="tl-info-dur num">{selShot.dur.toFixed(1)}s</span>
+              <span className="tl-info-txt" title={selShot.txt}>
+                {selShot.txt || selShot.dialogue || '暂无画面描述'}
+              </span>
+              <span className="tl-info-tc num">
+                @ {toTimecode(selClip?.timelineStart ?? selShot.start)}
+              </span>
+            </>
+          ) : (
+            <span className="tl-info-none">暂无选中镜头 · 点击上方镜头条或时间线片段定位</span>
+          )}
+        </div>
+        <span className="sp" />
+        <span className="tl-info-keys">S 分割 · ⌘Z 撤销 · ⌥T 收起</span>
+        <button
+          type="button"
+          className="tl-info-btn"
+          disabled={!selShot || !projectId}
+          title="在分镜页编辑当前镜头"
+          onClick={() =>
+            projectId && navigate(`/project/${projectId}/storyboard?shot=${selShot?.id}`)
+          }
+        >
+          编辑分镜
+        </button>
+        <button
+          type="button"
+          className="tl-info-btn"
+          disabled={!projectId}
+          title="打开全屏自由画布"
+          onClick={() => projectId && navigate(`/project/${projectId}/canvas-free3`)}
+        >
+          自由画布
+        </button>
       </div>
 
       {pickerOpen ? (

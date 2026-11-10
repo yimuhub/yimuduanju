@@ -38,7 +38,7 @@ const tabs = [
   { to: 'assets', label: '资产', group: '美术资产', icon: Image, hint: '项目生成的全部图片、视频、音频与合成成片' },
   { to: 'storyboard', label: '分镜', group: '镜头', icon: Film, hint: '结构化分镜表：逐镜生成首帧、视频与配音' },
   { to: 'director', label: '导演台', group: '镜头', icon: Video, hint: '三栏导演监视器：实时调节景别、机位、焦段与运镜' },
-  { to: 'timeline', label: '时间线', group: '镜头', icon: Clock, hint: '五轨时间线：按秒拖拽调整镜头时长与音画节奏' },
+  { to: 'timeline', label: '时间线', group: '镜头', icon: Clock, hint: '多轨时间线已并入 Studio 底部：点此查看迁移说明并一键切换' },
   { to: 'canvas-free3', label: '自由画布', fullscreen: true, group: '画布', icon: PenTool, hint: '旗舰自由画布（1:1 Pavo 交互 + 角色/场景/剧本/分镜节点 + AI 助手 + 集数切换 + 3D 导演台）' },
   { to: 'agents', label: 'AI助手', group: '交付', icon: Bot, hint: '8 大影视工种智能体协同对话' },
   { to: 'tasks', label: '任务队列', group: '交付', icon: ListTodo, hint: '查看后台生成队列进度、重试或取消任务' },
