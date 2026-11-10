@@ -29,6 +29,15 @@ import { RoutingService } from './routing.service';
  */
 const OPEN_JOB_STATUSES: JobStatus[] = ['pending', 'queued', 'running', 'retrying'];
 
+/**
+ * 分类型并发水位的环境变量兜底：非法值（"abc"→NaN）、空串（Number("")→0）、
+ * 负数都会让该类型的水位判定永不成立 → 任务永久饿死。统一回退默认值。
+ */
+function envCapOr(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
 /** 可选时间列 → ISO 字符串；null/非法值返回 undefined（不再无保护调用 toISOString） */
 function iso(value: Date | string | null | undefined): string | undefined {
   if (value === null || value === undefined) return undefined;
@@ -410,14 +419,14 @@ export class GenerationService {
    * 快任务（队头阻塞）。各类型独立并发上限（环境变量可覆盖），互不占坑。
    */
   private static readonly TYPE_CONCURRENCY: Record<string, number> = {
-    video: Number(process.env.JOB_CONCURRENCY_VIDEO ?? 2),
-    image: Number(process.env.JOB_CONCURRENCY_IMAGE ?? 4),
-    text: Number(process.env.JOB_CONCURRENCY_TEXT ?? 4),
-    tts: Number(process.env.JOB_CONCURRENCY_TTS ?? 6),
-    parse_script: Number(process.env.JOB_CONCURRENCY_TEXT ?? 4),
-    script: Number(process.env.JOB_CONCURRENCY_TEXT ?? 4),
-    edit: Number(process.env.JOB_CONCURRENCY_EDIT ?? 1),
-    qc: Number(process.env.JOB_CONCURRENCY_EDIT ?? 1),
+    video: envCapOr(process.env.JOB_CONCURRENCY_VIDEO, 2),
+    image: envCapOr(process.env.JOB_CONCURRENCY_IMAGE, 4),
+    text: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
+    tts: envCapOr(process.env.JOB_CONCURRENCY_TTS, 6),
+    parse_script: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
+    script: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
+    edit: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
+    qc: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
   };
 
   async claimNextPendingJob(): Promise<GenerationJob | null> {

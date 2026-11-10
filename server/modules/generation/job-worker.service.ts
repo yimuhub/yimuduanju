@@ -752,10 +752,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.releaseToPending(job.id);
       return;
     }
-    if (!localJob) {
-      this.providerHoldUntil.delete(holdKey);
-      this.providerHoldCount.delete(holdKey);
-    }
+    // 注意：此处不再预清零退避计数。旧实现在执行前删除 hold 记录，
+    // 导致冷却到期后的下一次尝试即使再次限流，计数也已归位 ——
+    // 指数退避永远停在第一档，无法逐级升到 80s/160s/300s。
+    // 清零时机改为任务真实成功后（见 switch 之后的成功清零）。
     try {
       switch (job.jobType) {
         case 'parse_script':
@@ -803,6 +803,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       // 修复（缓慢泄漏）：执行成功即从 awaitingProvider 移除，
       // 避免任务后来成功或被删除时 id 永远留在 Set 里。
       this.awaitingProvider.delete(job.id);
+      // W 指数退避成功清零：真实成功（未抛错）才恢复基线，上游过载解除后 20s 冷却即刻回归。
+      if (!localJob) {
+        this.providerHoldUntil.delete(holdKey);
+        this.providerHoldCount.delete(holdKey);
+      }
     } catch (e) {
       const message = (e as Error)?.message ?? '未知错误';
       // 未配置 Provider：保持 pending 等待配置，不消耗重试次数
@@ -824,10 +829,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       // 改为按 provider 维度冷却，未受影响的通道继续跑。
       if (isRateLimitMessage(message)) {
         const key = providerName ?? DEFAULT_PROVIDER_KEY;
-        // W 指数退避：连续限流时冷却翻倍（封顶 300s），上游过载时不再以固定
-        // 20s 高频重试打爆对端队列；任一任务成功后清零恢复基线。
+        // W 指数退避：连续限流时冷却翻倍（20s→40s→…→300s 封顶），上游过载时
+        // 不再以固定 20s 高频重试打爆对端队列；任一任务成功后清零恢复基线。
+        // （旧式 consecutive ?? 1 + 1 会让首次失败就直接翻倍到 40s，与注释档位不符）
         const prev = this.providerHoldUntil.get(key) ?? 0;
-        const consecutive = prev > Date.now() ? (this.providerHoldCount.get(key) ?? 1) : 1;
+        const consecutive = prev > Date.now() ? (this.providerHoldCount.get(key) ?? 0) : 0;
         const nextCount = Math.min(consecutive + 1, 8);
         this.providerHoldCount.set(key, nextCount);
         const cooldown = Math.min(RATE_LIMIT_COOLDOWN_MS * 2 ** (nextCount - 1), RATE_LIMIT_COOLDOWN_MAX_MS);
