@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Check,
@@ -18,6 +18,7 @@ import { projects } from '@client/src/api';
 import type { GenerationProgress, ProjectProgressResponse } from '@shared/api.interface';
 import { toast } from 'sonner';
 import { logger } from '@client/src/utils/logger';
+import { useVisibleInterval } from '@client/src/lib/hooks';
 
 /**
  * 流程总控页（docs/流程重构方案-v2.md S3/S5）：
@@ -89,11 +90,8 @@ const ProjectFlowTab = () => {
       });
   }, [id]);
 
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+  // 页签不可见时暂停轮询（useVisibleInterval 挂载即拉一次 + 回前台补拉）
+  useVisibleInterval(load, 5000);
 
   const handleApprove = async (gate: NonNullable<ProjectProgressResponse['nextGate']>) => {
     if (!id || approving) return;

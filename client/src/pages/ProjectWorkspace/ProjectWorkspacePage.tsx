@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useParams, useNavigate } from 'react-router-dom';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Play,
   Download,
@@ -26,6 +26,7 @@ import { projects } from '@client/src/api';
 import type { Project, ProjectProgressResponse, ProjectStatus } from '@shared/api.interface';
 import { toast } from 'sonner';
 import { logger } from '@client/src/utils/logger';
+import { useVisibleInterval } from '@client/src/lib/hooks';
 
 // 左侧竖导航（与全站侧栏一致的「图标 + 文字」紧凑语言；fullscreen 画布项点击后进入沉浸全屏路由）
 const tabs = [
@@ -104,11 +105,8 @@ const ProjectWorkspacePage = () => {
       .catch((err) => logger.error('load progress failed:', String(err)));
   }, [id]);
 
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+  // 页签不可见时暂停轮询（useVisibleInterval 挂载即拉一次 + 回前台补拉）
+  useVisibleInterval(load, 5000);
 
   /** 门 1 放行：确认剧本 → 后端自动创建物化任务 */
   const approveScript = async () => {

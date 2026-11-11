@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, Clapperboard, Coins, Film, FolderKanban, Images,
@@ -7,6 +7,7 @@ import {
 import { dashboard as dashboardApi, generation as generationApi } from '@client/src/api';
 import type { DashboardStats, GenerationJob, ProjectListItem } from '@shared/api.interface';
 import { getNickname } from '@client/src/lib/identity';
+import { useVisibleInterval } from '@client/src/lib/hooks';
 
 /**
  * 数据看板（3.0 生产力工作台版）：
@@ -67,11 +68,8 @@ const DashboardPage = () => {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 5000);
-    return () => clearInterval(t);
-  }, [load]);
+  // 页签不可见时暂停轮询（useVisibleInterval 挂载即拉一次 + 回前台补拉）
+  useVisibleInterval(() => void load(), 5000);
 
   const kpis = [
     { label: '项目总数', value: stats?.totalProjects ?? 0, icon: FolderKanban, cls: 'bg-sky-500/15 text-sky-400' },

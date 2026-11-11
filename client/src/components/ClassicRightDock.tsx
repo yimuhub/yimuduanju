@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ListTodo, Image as ImageIcon, Activity, PanelRightClose, Loader2, Film } from 'lucide-react';
 import { assets as assetsApi, dashboard as dashboardApi, generation as generationApi } from '@client/src/api';
 import type { Asset, GenerationJob } from '@shared/api.interface';
+import { useVisibleInterval } from '@client/src/lib/hooks';
 
 /**
  * 经典模式 · 右侧助手坞
@@ -55,12 +56,8 @@ const ClassicRightDock = ({ onClose }: { onClose: () => void }) => {
     }
   }, []);
 
-  useEffect(() => {
-    if (tab !== 'jobs') return;
-    void loadJobs();
-    const timer = setInterval(() => void loadJobs(), 5000);
-    return () => clearInterval(timer);
-  }, [tab, loadJobs]);
+  // 页签不可见时暂停任务轮询（useVisibleInterval 挂载即拉一次 + 回前台补拉）
+  useVisibleInterval(() => { if (tab === 'jobs') void loadJobs(); }, 5000);
 
   useEffect(() => {
     if (tab === 'assets') {

@@ -21,6 +21,7 @@ import { assets as assetsApi, assistant as assistantApi, dashboard as dashboardA
 import type { Template } from '@shared/api.interface';
 import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
 import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
+import { useVisibleInterval } from '@client/src/lib/hooks';
 import TriPane from '@client/src/components/TriPane';
 import WorkspaceRightDock from '@client/src/components/workspace/WorkspaceRightDock';
 import SidebarUserCard from '@client/src/components/SidebarUserCard';
@@ -225,19 +226,15 @@ const AgentStudio = () => {
   }, [active?.projectId]);
 
   // 流程总控进度：会话绑定项目后轮询 progress（项目卡片 mini 进度条 + 右侧面板）
+  // 页签不可见时暂停轮询（useVisibleInterval 挂载/回前台即拉一次）
+  const activeProjectId = active?.projectId;
   useEffect(() => {
-    const pid = active?.projectId;
-    if (!pid) {
-      setProgress(null);
-      return;
-    }
-    const load = () => {
-      void projectsApi.getProgress(pid).then(setProgress).catch(() => { /* 静默 */ });
-    };
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [active?.projectId]);
+    if (!activeProjectId) setProgress(null);
+  }, [activeProjectId]);
+  useVisibleInterval(() => {
+    if (!activeProjectId) return;
+    void projectsApi.getProgress(activeProjectId).then(setProgress).catch(() => { /* 静默 */ });
+  }, 5000);
 
   // 任务面板：SSE 实时推送（2s 快照），EventSource 失败时降级回 5s 轮询
   useEffect(() => {
@@ -247,6 +244,7 @@ const AgentStudio = () => {
     const startPolling = () => {
       if (timer) return;
       timer = setInterval(() => {
+        if (document.hidden) return; // 页签不可见时跳过，回前台下一轮恢复
         void generationApi.listJobs(jobParams).then((r) => setPanelJobs(r.items ?? [])).catch(() => { /* 静默 */ });
       }, 5000);
     };

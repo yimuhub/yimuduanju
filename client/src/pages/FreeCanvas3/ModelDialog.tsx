@@ -21,6 +21,7 @@ import { P3, RATIOS, RESOLUTIONS, PRESETS, COUNTS, STYLE_LIBRARY, VIDEO_DURATION
 import { useCanvasModels } from './pavo3DynamicModels';
 import type { DialogKind } from './pavo3Types';
 import { pavo3 as pavo3Api } from '@client/src/api';
+import { ComposePanel } from './ComposePanel';
 
 const PLACEHOLDERS: Record<string, string> = {
   text: '写下你想讲的故事、场景或角色设定。例如:一个来自未来的机器人，在城市屋顶看星星。',
@@ -59,6 +60,9 @@ export const ModelDialog = () => {
 function DialogBody({ nodeId, kind }: { nodeId: string; kind: DialogKind }) {
   if (kind === 'image') return <ImageGenPanel nodeId={nodeId} />;
   if (kind === 'video') return <VideoGenPanel nodeId={nodeId} />;
+  // 视频合成节点：成片合成面板（把画布上的视频片段拼接为可交付 MP4）。
+  // 修复：ComposePanel 实现完整但从未挂载，双击合成节点此前会误入文本生成弹窗。
+  if (kind === 'composite') return <ComposePanel nodeId={nodeId} />;
   // 创作类节点（剧本/角色/场景/分镜/备注）：属性面板 = 富文本编辑（与「自己编写」同通道保存）
   if (kind === 'write' || kind === 'script' || kind === 'character' || kind === 'scene' || kind === 'prop' || kind === 'storyboard' || kind === 'note') {
     return <WritePanel nodeId={nodeId} />;

@@ -73,13 +73,14 @@ import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-pro
 import { uploadDir } from '../assets/upload-dir';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
+import {
+  DEFAULT_PROVIDER_KEY,
+  isMissingProviderMessage,
+  isRateLimitMessage,
+  RATE_LIMIT_COOLDOWN_MAX_MS,
+  RATE_LIMIT_COOLDOWN_MS,
+} from './rate-limit.util';
 
-/** 上游限流冷却时长（按 provider 维度，见 providerHoldUntil） */
-const RATE_LIMIT_COOLDOWN_MS = 20_000;
-/** 连续限流的指数退避上限（20s→40s→…→300s 封顶），成功生成后清零 */
-const RATE_LIMIT_COOLDOWN_MAX_MS = 300_000;
-/** 未被路由到具体 provider 的任务在冷却表里的占位键 */
-const DEFAULT_PROVIDER_KEY = '__default__';
 /**
  * queued 滞留回收阈值。
  * 修复：claimForQueue 先置 status='queued' 再 queue.add()，两步之间崩溃、
@@ -93,42 +94,6 @@ interface AssetIndex {
   characters: { id: string; name: string; roleType: string | null }[];
   locations: { id: string; name: string; timeOfDay: string | null }[];
   props: { id: string; code: string | null; name: string; category: string | null }[];
-}
-
-/**
- * 上游限流 / 瞬时故障判定。
- * 说明：这仍是基于错误文案的匹配 —— 网关抛的是 BadRequestException(message)，
- * 没有携带结构化 code。彻底修复需要让 ModelGatewayService 抛带 code 的类型化错误，
- * 那是一次跨模块重构；此处先把判定集中到一处并收紧正则：
- * 旧的 /\b503\b/ 会命中被回显的用户 prompt 文本（例如剧本里出现「503」），
- * 把一次真实的业务失败误判成限流，从而无限重试且不消耗重试次数。
- */
-const RATE_LIMIT_PATTERNS: RegExp[] = [
-  /pool saturated/i,
-  /rate[_\s-]?limit/i,
-  /too many requests/i,
-  /\b429\b/,
-  /\(\s*503\s*[,)]/, // 网关错误文案形如「视频生成失败 (503, https://…)」
-  /HTTP\s*503\b/i,
-  /status(?:\s*code)?[:=]?\s*503\b/i,
-];
-
-function isRateLimitMessage(message: string): boolean {
-  return RATE_LIMIT_PATTERNS.some((re) => re.test(message));
-}
-
-/**
- * Provider / API Key 未配置：确定性配置缺失，重试不会改变结果，
- * 保持 pending 等人工配置，且不消耗重试次数。
- */
-const MISSING_PROVIDER_PATTERNS: RegExp[] = [
-  /API Key/i,
-  /未配置/,
-  /不存在或已禁用/,
-];
-
-function isMissingProviderMessage(message: string): boolean {
-  return MISSING_PROVIDER_PATTERNS.some((re) => re.test(message));
 }
 
 type FirstFrameDependencyResult =

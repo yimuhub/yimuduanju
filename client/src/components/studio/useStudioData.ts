@@ -25,6 +25,7 @@ import {
 } from '@client/src/api/generation';
 import { getCostSummary, getStats } from '@client/src/api/dashboard';
 import { getTimeline } from '@client/src/api/timeline';
+import { useVisibleInterval } from '@client/src/lib/hooks';
 import type {
   CostSummary,
   DashboardStats,
@@ -193,12 +194,9 @@ export function useStudioData(projectId?: string): StudioData {
   }, [projectId]);
 
   // 项目列表
-  useEffect(() => {
-    void reloadProjects();
-    // 后台状态会持续变化（脚本完成/确认门放行/生成推进），列表状态也要跟上
-    const timer = setInterval(() => void reloadProjects(), 20000);
-    return () => clearInterval(timer);
-  }, [reloadProjects]);
+  // 后台状态会持续变化（脚本完成/确认门放行/生成推进），列表状态也要跟上；
+  // 页签不可见时暂停轮询（useVisibleInterval 挂载即拉一次 + 回前台补拉）
+  useVisibleInterval(() => void reloadProjects(), 20000);
 
   // 当前项目 + 其镜头/场次
   useEffect(() => {
@@ -229,26 +227,24 @@ export function useStudioData(projectId?: string): StudioData {
 
   // 当前项目状态 + 进度轮询：此前只在进入项目时拉一次，剧本生成完成/确认门放行后
   // 界面仍停在旧状态，用户会以为任务卡死（这是「等了好久没继续」的直接原因之一）。
-  useEffect(() => {
+  // 页签不可见时暂停轮询（useVisibleInterval 挂载即拉一次 + 回前台补拉）
+  useVisibleInterval(() => {
     if (!projectId) return;
-    const timer = setInterval(() => {
-      void (async () => {
-        try {
-          const p = await getProject(projectId);
-          if (mounted.current) setProject(p);
-        } catch {
-          /* 瞬时错误忽略，下一轮再试 */
-        }
-        try {
-          const pr = await getProgress(projectId);
-          if (mounted.current) setProgress(pr);
-        } catch {
-          /* 同上 */
-        }
-      })();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [projectId]);
+    void (async () => {
+      try {
+        const p = await getProject(projectId);
+        if (mounted.current) setProject(p);
+      } catch {
+        /* 瞬时错误忽略，下一轮再试 */
+      }
+      try {
+        const pr = await getProgress(projectId);
+        if (mounted.current) setProgress(pr);
+      } catch {
+        /* 同上 */
+      }
+    })();
+  }, 5000);
 
   // 任务队列：SSE 优先，失败降级轮询
   useEffect(() => {

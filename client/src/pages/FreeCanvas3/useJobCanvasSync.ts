@@ -187,6 +187,7 @@ export const useJobCanvasSync = (projectId: string | undefined) => {
     const startPolling = () => {
       if (pollTimer) return;
       pollTimer = setInterval(async () => {
+        if (document.hidden) return; // 页签不可见时跳过，回前台下一轮恢复
         try {
           const res = await listJobs({ projectId, pageSize: 50, page: 1 });
           (res.items ?? []).forEach(applyJob);
