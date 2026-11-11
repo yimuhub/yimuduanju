@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { Switch } from '@client/src/components/ui/switch';
 
 export const GEN_DEFAULTS_KEY = 'yimu-gen-defaults';
 
@@ -145,18 +146,11 @@ const GenerationSection = () => {
                   新建项目时自动生成字幕
                 </div>
               </div>
-              <button
-                onClick={() => setSubtitleEnabled(!subtitleEnabled)}
-                className={`relative h-6 w-11 rounded-full transition-colors ${
-                  subtitleEnabled ? 'bg-primary' : 'bg-muted'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-card shadow-sm transition-transform ${
-                    subtitleEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
+              <Switch
+                checked={subtitleEnabled}
+                onChange={setSubtitleEnabled}
+                aria-label="字幕默认开启"
+              />
             </div>
           </div>
         </div>

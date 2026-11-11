@@ -6816,6 +6816,10 @@ select.nw-input {
 }
 .studio-page p {
   font-size: 12px;
+}
+/* 带类名的段落一律交给 Tailwind 颜色工具类（如会员卡 text-white/70），
+   只给完全无类的裸段落兜底弱化色——否则浅色主题下会出现「深字压红卡」 */
+.studio-page p:not([class]) {
   color: var(--fg-3);
 }
 .studio-page .bg-card {

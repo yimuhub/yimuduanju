@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh" data-theme="dark">
 
 <head>
   <meta charset="UTF-8">
@@ -7,6 +7,13 @@
   <link rel="icon" href="/favicon.svg">
   <title>一幕·YIMU AI 短剧工坊</title>
   <!-- 已去平台化：不再注入 window.__platform__，不依赖云端模板运行时 -->
+  <script>
+    // 首帧防闪色：渲染前按 localStorage 档位落 data-theme（默认深色）
+    try {
+      var t = localStorage.getItem('yimu.theme');
+      if (t === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (e) { /* ignore */ }
+  </script>
 </head>
 
 <body>

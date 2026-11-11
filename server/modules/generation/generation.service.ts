@@ -29,6 +29,15 @@ import { RoutingService } from './routing.service';
  */
 const OPEN_JOB_STATUSES: JobStatus[] = ['pending', 'queued', 'running', 'retrying'];
 
+/**
+ * 分类型并发水位的环境变量兜底：非法值（"abc"→NaN）、空串（Number("")→0）、
+ * 负数都会让该类型的水位判定永不成立 → 任务永久饿死。统一回退默认值。
+ */
+function envCapOr(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
 /** 可选时间列 → ISO 字符串；null/非法值返回 undefined（不再无保护调用 toISOString） */
 function iso(value: Date | string | null | undefined): string | undefined {
   if (value === null || value === undefined) return undefined;
@@ -404,22 +413,60 @@ export class GenerationService {
   }
 
   /** 认领一个待处理任务（worker 用；无可领返回 null） */
+  /**
+   * W 分类型并发队列：按 jobType 分道认领——文本/图片是秒级-分钟级任务，
+   * 视频是十分钟级任务。混在一条队列里时，队头的慢视频会阻塞后面所有
+   * 快任务（队头阻塞）。各类型独立并发上限（环境变量可覆盖），互不占坑。
+   */
+  private static readonly TYPE_CONCURRENCY: Record<string, number> = {
+    video: envCapOr(process.env.JOB_CONCURRENCY_VIDEO, 2),
+    image: envCapOr(process.env.JOB_CONCURRENCY_IMAGE, 4),
+    text: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
+    tts: envCapOr(process.env.JOB_CONCURRENCY_TTS, 6),
+    parse_script: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
+    script: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
+    edit: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
+    qc: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
+  };
+
   async claimNextPendingJob(): Promise<GenerationJob | null> {
     // 有 blockedReason 的视频仍在等待首帧，必须在 SQL 层排除，避免 limit(1) 队头阻塞。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
-    const rows = await this.db
-      .select()
+    // 候选按优先级/时间排序取一小批，再按"分类型并发水位"挑第一个未满道的
+    const candidates = await this.db
+      .select({ id: generationJobs.id, jobType: generationJobs.jobType })
       .from(generationJobs)
       .where(and(eq(generationJobs.status, 'pending'), dependencyReady))
       .orderBy(desc(generationJobs.priority), generationJobs.createdAt)
-      .limit(1);
-    if (rows.length === 0) return null;
+      .limit(24);
+    if (candidates.length === 0) return null;
+
+    // 各类型当前占用水位（running/queued 都计入）
+    const active = await this.db
+      .select({ jobType: generationJobs.jobType, count: sql<number>`count(*)::int` })
+      .from(generationJobs)
+      .where(sql`${generationJobs.status} in ('running','queued')`)
+      .groupBy(generationJobs.jobType);
+    const used = new Map<string, number>();
+    for (const row of active) used.set(row.jobType, row.count);
+
+    let pickedId: string | null = null;
+    for (const cand of candidates) {
+      const cap = GenerationService.TYPE_CONCURRENCY[cand.jobType] ?? 4;
+      if ((used.get(cand.jobType) ?? 0) < cap) {
+        pickedId = cand.id;
+        used.set(cand.jobType, (used.get(cand.jobType) ?? 0) + 1);
+        break;
+      }
+    }
+    if (!pickedId) return null; // 所有候选的类型道都已满
+
     const claimed = await this.db
       .update(generationJobs)
       .set({ status: 'running', startedAt: new Date(), updatedAt: new Date() })
       .where(
         and(
-          eq(generationJobs.id, rows[0].id),
+          eq(generationJobs.id, pickedId),
           eq(generationJobs.status, 'pending'),
           dependencyReady,
         ),

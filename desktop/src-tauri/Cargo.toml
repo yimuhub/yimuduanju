@@ -1,6 +1,6 @@
 [package]
 name = "yimu-desktop"
-version = "3.0.0"
+version = "3.7.1"
 description = "一幕·YIMU AI 短剧创作平台 桌面壳（Tauri 2 v0）"
 edition = "2021"
 rust-version = "1.77.2"

@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom';
 import { logger } from '@client/src/utils/logger';
 import { assistant as assistantApi, skills as skillsApi } from '@client/src/api';
 import type { SkillItem } from '@client/src/api/skills';
+import { Switch } from '@client/src/components/ui/switch';
 
 interface ChatMessage {
   id: string;
@@ -274,21 +275,14 @@ const AiAssistantPage = () => {
                           <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
                             {skill.name}
                           </span>
-                          <button
-                            onClick={() => handleToggleSkill(skill)}
+                          <Switch
+                            size="sm"
+                            checked={skill.enabled}
+                            onChange={() => handleToggleSkill(skill)}
                             disabled={togglingSlug === skill.slug}
                             title={skill.enabled ? '停用该技能' : '启用该技能'}
                             aria-label={`切换技能 ${skill.name}`}
-                            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
-                              skill.enabled ? 'bg-primary' : 'bg-muted'
-                            }`}
-                          >
-                            <span
-                              className={`absolute top-0.5 h-4 w-4 rounded-full bg-card shadow-sm transition-transform ${
-                                skill.enabled ? 'translate-x-4' : 'translate-x-0.5'
-                              }`}
-                            />
-                          </button>
+                          />
                         </div>
                         {skill.description && (
                           <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
