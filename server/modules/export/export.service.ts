@@ -841,6 +841,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     });
 
     const ffmpegBin = this.resolveFfmpegBin();
+    // 与生成侧、画布合成共用同一张画幅映射表：项目设 9:16，成片就必须是 720x1280。
+    // 旧实现直接 concat 原始镜头，输出尺寸跟随第一个片段（实测项目 9:16 却导出
+    // 384x384 方形），且多来源片段尺寸/编码不一致时 concat 会失败或画面错乱。
+    const target = videoSizeForAspect(project.aspectRatio);
+    const [tw, th] = target
+      .split('x')
+      .map((n) => Math.max(2, Math.round(Number(n) / 2) * 2)) as [number, number];
+    const scaleFilter =
+      `scale=${tw}:${th}:force_original_aspect_ratio=decrease,` +
+      `pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
     const work = join(tmpdir(), `yimu-assemble-${randomUUID()}`);
     await mkdir(work, { recursive: true });
     const listPath = join(work, 'list.txt');
@@ -862,37 +872,47 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const st = await stat(rawLocal);
         if (st.size < 1024) throw new BadRequestException(`镜头 ${clip.shotNumber} 成片文件异常（过小）`);
 
-        let segmentForConcat = rawLocal;
-        // 若全片存在配音，则将每个镜头统一混流为带 AAC 音轨的片段（有 voiceUrl 混入配音，无则补静音轨保证 concat 音轨一致）
-        if (hasAnyVoice) {
-          const muxedLocal = join(work, `clip_mux_${String(i).padStart(3, '0')}.mp4`);
-          cleanup.push(muxedLocal);
-          let voiceLocal: string | null = null;
-          if (clip.voiceUrl) {
-            const candidateVoice = join(work, `voice_${String(i).padStart(3, '0')}.wav`);
-            cleanup.push(candidateVoice);
-            // eslint-disable-next-line no-await-in-loop
-            const voiceOk = await this.materializeMediaToFile(clip.voiceUrl, candidateVoice, cacheDir);
-            if (voiceOk) voiceLocal = candidateVoice;
-          }
-          const muxArgs = voiceLocal
-            ? [
-                '-y', '-i', rawLocal, '-i', voiceLocal,
-                '-map', '0:v:0', '-map', '1:a:0',
-                '-c:v', 'copy', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
-                '-shortest', muxedLocal,
-              ]
-            : [
-                '-y', '-i', rawLocal,
-                '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-                '-map', '0:v:0', '-map', '1:a:0',
-                '-c:v', 'copy', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
-                '-shortest', muxedLocal,
-              ];
+        // 每段先归一到项目画幅并统一编码，concat 才能稳定地 -c copy；
+        // 全片存在配音时每段都补齐 AAC 音轨（无配音段补静音），避免 concat 音轨错位。
+        const normLocal = join(work, `clip_norm_${String(i).padStart(3, '0')}.mp4`);
+        cleanup.push(normLocal);
+        const normArgs: string[] = ['-y', '-i', rawLocal];
+        let voiceLocal: string | null = null;
+        if (hasAnyVoice && clip.voiceUrl) {
+          const candidateVoice = join(work, `voice_${String(i).padStart(3, '0')}.wav`);
+          cleanup.push(candidateVoice);
           // eslint-disable-next-line no-await-in-loop
-          const muxOk = await this.runFfmpeg(ffmpegBin, muxArgs, work);
-          if (muxOk) segmentForConcat = muxedLocal;
+          if (await this.materializeMediaToFile(clip.voiceUrl, candidateVoice, cacheDir)) {
+            voiceLocal = candidateVoice;
+            normArgs.push('-i', candidateVoice);
+          }
         }
+        if (hasAnyVoice) {
+          if (!voiceLocal) {
+            normArgs.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+          }
+          normArgs.push(
+            '-filter_complex', `[0:v]${scaleFilter}[v]`,
+            '-map', '[v]', '-map', '1:a:0',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+            '-r', '30', '-shortest', normLocal,
+          );
+        } else {
+          normArgs.push(
+            '-vf', scaleFilter,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+            '-r', '30', '-an', normLocal,
+          );
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const normOk = await this.runFfmpeg(ffmpegBin, normArgs, work);
+        if (!normOk) {
+          throw new BadRequestException(
+            `镜头 ${clip.shotNumber} 画幅归一失败：素材可能已损坏或编码不受支持`,
+          );
+        }
+        const segmentForConcat = normLocal;
 
         lines.push(`file '${segmentForConcat.replace(/'/g, "'\\''")}'`);
         downloaded += 1;
@@ -914,7 +934,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       await mkdir(dir, { recursive: true });
       const outAbs = join(dir, outName);
       const aigcMeta = ['-metadata', 'comment=AIGC-Generated-By-YIMU-AI-Workshop'];
-      // 先试流拷贝（同源片段通常同编码）；若含软字幕则一并封装 mov_text
+      // 每段已在上面归一到同一画幅/编码/帧率，这里可直接流拷贝；含软字幕则一并封装 mov_text
       const copyArgs = hasSrt
         ? [
             '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
@@ -928,7 +948,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         // 重编码兜底：保留音轨（若存在配音），不再一刀切 -an 抹除声音
         const reArgs = [
           '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
-          '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+          '-vf', scaleFilter,
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
           ...(hasAnyVoice ? ['-c:a', 'aac', '-b:a', '128k'] : ['-an']),
           ...aigcMeta,
@@ -939,7 +959,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           // 终极兜底：纯视频合成
           const fallbackArgs = [
             '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
-            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-vf', scaleFilter,
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
             '-an', ...aigcMeta, outAbs,
           ];
@@ -965,8 +985,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           durationSeconds: durationSeconds !== undefined ? String(durationSeconds) : undefined,
           sourceType: 'generated',
           sourceId: `assemble-${randomUUID()}`,
-          generationPrompt: `服务端拼接 ${downloaded} 条镜头成片（${hasAnyVoice ? '含配音音轨混流' : '纯画面'}${hasSrt ? '+内嵌字幕轨' : ''}）`,
-          metadata: { aigcGenerated: true, hasAudio: hasAnyVoice, hasSubtitles: hasSrt } as any,
+          generationPrompt: `服务端拼接 ${downloaded} 条镜头成片（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}，${hasAnyVoice ? '含配音音轨混流' : '纯画面'}${hasSrt ? '+内嵌字幕轨' : ''}）`,
+          metadata: {
+            aigcGenerated: true,
+            hasAudio: hasAnyVoice,
+            hasSubtitles: hasSrt,
+            width: tw,
+            height: th,
+            aspectRatio: project.aspectRatio ?? '16:9',
+          } as any,
           status: 'ready',
         })
         .returning();
