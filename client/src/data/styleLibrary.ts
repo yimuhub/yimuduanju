@@ -122,8 +122,8 @@ export const STYLE_LIBRARY: StylePreset[] = [
   },
   {
     id: 'shinkai-sky',
-    nameZh: '新海诚风',
-    nameEn: 'Makoto Shinkai Style',
+    nameZh: '逆光云海',
+    nameEn: 'Luminous Sky Drama',
     tagline: '逆光云海与极致天空，情绪向漫剧的画面记忆点',
     positivePrompt:
       'anime film still in the style of luminous sky drama, hyper-detailed cumulus clouds and gradient sunset sky, lens flare, radiant backlight, reflective wet streets, delicate light particles, emotional distance shot, painterly background art, crisp character line art',

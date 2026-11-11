@@ -32,3 +32,6 @@ dump.rdb
 .vscode/
 .idea/
 *.swp
+
+# AI 生成封面的原始大图（本地留存，交付产物是 client/public/styles/*.webp）
+/vibe_images/styles-2026-11-12/

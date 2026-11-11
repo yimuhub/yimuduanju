@@ -233,8 +233,8 @@ export const STYLE_LIBRARY: StyleItem[] = [
     strength: 0.5,
   },
   {
-    id: 'tezuka', name: '手冢治虫时代卡通插画风格', cat: '2D', hue: '#F0C9A0',
-    prompt: 'tezuka era cartoon illustration, 1960s manga style, big expressive eyes, classic round faces, retro newspaper print feel',
+    id: 'tezuka', name: '复古手绘卡通插画风格', cat: '2D', hue: '#F0C9A0',
+    prompt: '1960s retro manga cartoon illustration, big expressive eyes, classic round faces, retro newspaper print feel',
     negative: 'photorealistic, 3d, modern digital anime',
     tone: 'warm paper tones, soft cel shading, vintage texture',
     strength: 0.55,
@@ -254,8 +254,8 @@ export const STYLE_LIBRARY: StyleItem[] = [
     strength: 0.5,
   },
   {
-    id: 'ghibli', name: '宫崎骏画风', cat: '2D', hue: '#B8E0C8',
-    prompt: 'studio ghibli style, hand-drawn animation, lush nature backgrounds, soft watercolor skies, gentle characters, whimsical atmosphere',
+    id: 'ghibli', name: '手绘童话风', cat: '2D', hue: '#B8E0C8',
+    prompt: 'hand-drawn anime style, lush nature backgrounds, soft watercolor skies, gentle characters, whimsical storybook atmosphere',
     negative: 'photorealistic, 3d, dark, gritty',
     tone: 'soft natural lighting, pastel skies, dreamy atmosphere',
     strength: 0.6,
@@ -367,7 +367,7 @@ export const STYLE_LIBRARY: StyleItem[] = [
   },
   {
     id: 'cartoon3d', name: '3D卡通渲染风格', cat: '3D', hue: '#9FD0FF',
-    prompt: '3d cartoon render style, toon shading, stylized proportions, pixar-like quality, cute character design',
+    prompt: '3d cartoon render style, toon shading, stylized proportions, high-end family animation quality, cute character design',
     negative: 'photorealistic, dark, flat 2d',
     tone: 'soft global illumination, rim light, playful colors',
     strength: 0.55,
