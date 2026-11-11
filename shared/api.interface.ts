@@ -625,7 +625,24 @@ export interface AssetListResponse {
 }
 
 export type JobStatus = 'pending' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'retrying';
-export type JobType = 'text' | 'image' | 'video' | 'tts' | 'parse_script' | 'storyboard' | 'qc' | 'edit' | 'script' | 'boards';
+/**
+ * 任务类型：
+ * - `asset_prep`：资产前置（清单补齐 + 定妆图排产）。剧本确认后第一个跑，
+ *   资产未全就绪时把后续 parse_script 任务置 `blockedReason=waiting_assets`，
+ *   由 worker 对账解封 —— 这是「人物/场景必须先有图才出片」的落点。
+ */
+export type JobType =
+  | 'text'
+  | 'image'
+  | 'video'
+  | 'tts'
+  | 'parse_script'
+  | 'storyboard'
+  | 'qc'
+  | 'edit'
+  | 'script'
+  | 'boards'
+  | 'asset_prep';
 
 export interface GenerationJob {
   id: string;

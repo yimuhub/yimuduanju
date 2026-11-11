@@ -80,6 +80,7 @@ const JOB_LABEL: Record<JobType, string> = {
   edit: '合成',
   script: '剧本生成',
   boards: '分镜物化',
+  asset_prep: '资产定妆',
 };
 
 const STATUS_LABEL: Record<JobStatus, string> = {

@@ -76,6 +76,7 @@ const typeLabelMap: Record<JobType, string> = {
   edit: '剪辑',
   script: '剧本技能',
   boards: '分镜表',
+  asset_prep: '资产定妆',
 };
 
 const ACTIVE_STATUSES = ['pending', 'queued', 'running', 'retrying'];

@@ -1440,6 +1440,13 @@ export class StoryboardService {
 
   // ========== Parse Script ==========
   // P1 DTO 对齐：签名收敛为实际消费的字段（旧 ParseScriptRequest.projectId 从未被读取，来源以 URL 参数为准）
+  /**
+   * 手动触发剧本 → 分镜物化。
+   * 注意：这里**不直接**建 parse_script，而是先建 asset_prep。
+   * 人物/场景定妆图是一切跨镜一致性的前提，任何进入物化的入口都必须经过资产门，
+   * 否则「解析剧本」按钮就成了绕过资产阶段的后门（旧实现正是如此）。
+   * asset_prep 会在资产就绪后自动链式接上 parse_script。
+   */
   async parseScript(
     projectId: string,
     dto: { scriptText: string },
@@ -1449,7 +1456,7 @@ export class StoryboardService {
       .insert(generationJobs)
       .values({
         projectId,
-        jobType: 'parse_script',
+        jobType: 'asset_prep',
         targetType: 'project',
         targetId: projectId,
         status: 'pending',
