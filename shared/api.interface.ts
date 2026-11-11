@@ -1399,3 +1399,48 @@ export interface ExportTimelineResult {
   clips: number;
   durationSeconds: number;
 }
+
+/**
+ * 自由画布 · 成片合成（POST /api/pavo3/compose）
+ * ------------------------------------------------------------------
+ * 与 `assembleFinalVideo` 的区别：那个按「数据库镜头成片」拼，
+ * 这个按「用户在画布上排好的片段顺序」拼 —— 画布节点是种自由的引用集合，
+ * 可能来自多个项目 / 多次重生成，不能假设它们在 shots 表里有序。
+ * 纯本地 ffmpeg 拼接，不消耗模型额度。
+ */
+export interface CanvasComposeClipInput {
+  url: string;
+  /** 该片段的配音轨（可选），有则混流进这一段 */
+  voiceUrl?: string;
+  /** 已知时长（秒），用于合成前预估与结果回报 */
+  duration?: number;
+  /** 片段名，仅用于日志与资产描述 */
+  label?: string;
+}
+
+export interface CanvasComposeInput {
+  /** 传入则合成落盘到该项目目录并可登记资产；画布不挂在项目上时留空 */
+  projectId?: string;
+  clips: CanvasComposeClipInput[];
+  /** 全片 BGM（可选），会循环铺满并压到 0.3 音量后与原声混合 */
+  bgmUrl?: string;
+  /** 输出画幅，缺省 16:9 */
+  aspectRatio?: string;
+  /** 成片名称（登记资产用） */
+  title?: string;
+  /** 是否登记为项目资产，默认 true（仅 projectId 存在时生效） */
+  registerAsset?: boolean;
+}
+
+export interface CanvasComposeResult {
+  fileUrl: string;
+  /** 实际拼入的片段数 */
+  clips: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  /** 字节数 */
+  size: number;
+  registered: boolean;
+  assetId?: string;
+}

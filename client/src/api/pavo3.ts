@@ -54,3 +54,19 @@ export const generate = (data: P3GenerateRequest) =>
   axiosForBackend
     .post<P3GenerateResult>('/api/pavo3/generate', data)
     .then((res) => res.data);
+
+/** 画布成片合成：契约与后端共用 shared 定义，避免两边各写一份形状 */
+export type {
+  CanvasComposeClipInput,
+  CanvasComposeInput,
+  CanvasComposeResult,
+} from '@shared/api.interface';
+
+/**
+ * 按画布排定的片段顺序合成可交付 MP4（服务端 ffmpeg，纯本地拼接、不计费）。
+ * 片段若挂在项目上可顺带登记为项目资产。
+ */
+export const composeCanvas = (data: import('@shared/api.interface').CanvasComposeInput) =>
+  axiosForBackend
+    .post<import('@shared/api.interface').CanvasComposeResult>('/api/pavo3/compose', data)
+    .then((res) => res.data);

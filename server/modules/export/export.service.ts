@@ -21,7 +21,13 @@ import { eq, desc, asc } from 'drizzle-orm';
 // （它逼着导出服务在模块加载期拉起整条 Controller → Service → DI 依赖链）。
 import { uploadDir } from '../assets/upload-dir';
 import { isSafeExternalUrl, isSafeExternalUrlStatic } from '../../common/url-guard';
-import type { Asset } from '@shared/api.interface';
+import { videoSizeForAspect } from '@shared/aspect';
+import type {
+  Asset,
+  CanvasComposeClipInput,
+  CanvasComposeInput,
+  CanvasComposeResult,
+} from '@shared/api.interface';
 
 /**
  * P1 导出真实化：分镜 JSON / 字幕 / 发布包为确定性序列化；
@@ -989,6 +995,227 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       for (const f of cleanup) await unlink(f).catch(() => {});
       await unlink(join(work, 'list.txt')).catch(() => {});
     }
+  }
+
+  /**
+   * 自由画布成片合成：按用户排定的片段顺序拼接，不假设这些片段在 shots 表里有序。
+   * 每段先归一到目标画幅（scale + pad，兜住多来源片段尺寸不一致），再按需混入
+   * 配音与 BGM，最后 concat 成一条可交付 MP4，可选登记项目资产。纯本地 ffmpeg。
+   */
+  async composeCanvas(input: CanvasComposeInput): Promise<CanvasComposeResult> {
+    const clips = (input?.clips ?? []).filter(
+      (c): c is CanvasComposeClipInput => Boolean(c && typeof c.url === 'string' && c.url.trim()),
+    );
+    if (clips.length === 0) {
+      throw new BadRequestException('暂无可合成的片段：请先在画布上生成视频');
+    }
+    if (clips.length > 60) {
+      throw new BadRequestException('单次最多合成 60 段，请分批导出');
+    }
+    const projectId = input.projectId?.trim() || null;
+    if (projectId) await this.requireProject(projectId);
+
+    // 与生成侧共用同一张画幅映射表：生成什么尺寸，就交付什么尺寸
+    const target = videoSizeForAspect(input.aspectRatio);
+    const [tw, th] = target
+      .split('x')
+      .map((n) => Math.max(2, Math.round(Number(n) / 2) * 2)) as [number, number];
+    const hasVoice = clips.some((c) => Boolean(c.voiceUrl));
+    const bgmUrl = input.bgmUrl?.trim() || undefined;
+    // 只要最终需要音轨，每段都得统一成「带 AAC 音轨」，否则 concat 时音轨缺失会错位
+    const needsAudio = hasVoice || Boolean(bgmUrl);
+
+    const ffmpegBin = this.resolveFfmpegBin();
+    const work = join(tmpdir(), `yimu-compose-${randomUUID()}`);
+    await mkdir(work, { recursive: true });
+    const listPath = join(work, 'list.txt');
+    const lines: string[] = [];
+    const cleanup: string[] = [];
+    let done = 0;
+    try {
+      const cacheDir = join(uploadDir(), projectId ?? '_canvas', 'compose-cache');
+      const scaleFilter =
+        `scale=${tw}:${th}:force_original_aspect_ratio=decrease,` +
+        `pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+      for (let i = 0; i < clips.length; i += 1) {
+        const clip = clips[i];
+        const idx = String(i).padStart(3, '0');
+        const raw = join(work, `raw_${idx}.mp4`);
+        cleanup.push(raw);
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await this.materializeMediaToFile(clip.url, raw, cacheDir);
+        if (!ok) {
+          throw new BadRequestException(`第 ${i + 1} 段素材获取失败，请确认该片段已生成完成`);
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const st = await stat(raw);
+        if (st.size < 1024) {
+          throw new BadRequestException(`第 ${i + 1} 段素材文件异常（过小）`);
+        }
+
+        const seg = join(work, `seg_${idx}.mp4`);
+        cleanup.push(seg);
+        const args: string[] = [];
+        if (needsAudio) {
+          let voiceLocal: string | null = null;
+          args.push('-y', '-i', raw);
+          if (clip.voiceUrl) {
+            const cand = join(work, `vo_${idx}.media`);
+            cleanup.push(cand);
+            // eslint-disable-next-line no-await-in-loop
+            if (await this.materializeMediaToFile(clip.voiceUrl, cand, cacheDir)) {
+              voiceLocal = cand;
+              args.push('-i', cand);
+            }
+          }
+          // 本段无配音时补静音轨，保证每段音轨数一致
+          if (!voiceLocal) {
+            args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+          }
+          args.push(
+            '-filter_complex', `[0:v]${scaleFilter}[v]`,
+            '-map', '[v]', '-map', '1:a:0',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+            '-shortest', seg,
+          );
+        } else {
+          args.push(
+            '-y', '-i', raw,
+            '-vf', scaleFilter,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-an', seg,
+          );
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const segOk = await this.runFfmpeg(ffmpegBin, args, work);
+        if (!segOk) {
+          throw new BadRequestException(`第 ${i + 1} 段转码失败：素材可能已损坏或编码不受支持`);
+        }
+        lines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
+        done += 1;
+      }
+      await writeFile(listPath, lines.join('\n'), 'utf8');
+      cleanup.push(listPath);
+
+      const joined = join(work, 'joined.mp4');
+      cleanup.push(joined);
+      const joinOk = await this.runFfmpeg(
+        ffmpegBin,
+        ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', joined],
+        work,
+      );
+      if (!joinOk) {
+        throw new BadRequestException('ffmpeg 拼接失败：请检查本机 ffmpeg 是否可用');
+      }
+
+      const aigcMeta = ['-metadata', 'comment=AIGC-Generated-By-YIMU-AI-Workshop'];
+      const outDir = join(uploadDir(), projectId ?? '_canvas');
+      await mkdir(outDir, { recursive: true });
+      const outName = `compose_${randomUUID().slice(0, 8)}.mp4`;
+      const outAbs = join(outDir, outName);
+
+      if (bgmUrl) {
+        const bgmLocal = join(work, 'bgm.media');
+        cleanup.push(bgmLocal);
+        const bgmOk = await this.materializeMediaToFile(bgmUrl, bgmLocal, cacheDir);
+        if (!bgmOk) throw new BadRequestException('BGM 素材获取失败，请换一首或检查文件');
+        const mixOk = await this.runFfmpeg(
+          ffmpegBin,
+          [
+            '-y', '-i', joined, '-stream_loop', '-1', '-i', bgmLocal,
+            '-filter_complex',
+            '[1:a]volume=0.3[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]',
+            '-map', '0:v', '-map', '[a]',
+            '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+            ...aigcMeta, outAbs,
+          ],
+          work,
+        );
+        if (!mixOk) throw new BadRequestException('BGM 混音失败：请检查 BGM 文件格式');
+      } else {
+        await copyFile(joined, outAbs);
+      }
+
+      const outStat = await stat(outAbs);
+      // 时长以实际产物为准；探不到时退回前端声明的时长之和
+      const declared = clips.reduce(
+        (sum, c) => sum + (Number(c.duration) > 0 ? Number(c.duration) : 0),
+        0,
+      );
+      const probed = await this.probeSeconds(outAbs);
+      const durationSeconds = probed > 0 ? probed : Number(declared.toFixed(1));
+
+      const fileUrl = `/uploads/${projectId ?? '_canvas'}/${outName}`;
+      let registered = false;
+      let assetId: string | undefined;
+      if (projectId && input.registerAsset !== false) {
+        const name = (input.title?.trim() || '画布成片').slice(0, 120);
+        const rows = await this.db
+          .insert(assets)
+          .values({
+            projectId,
+            assetType: 'video',
+            name,
+            fileUrl,
+            filePath: outAbs,
+            mimeType: 'video/mp4',
+            fileSize: outStat.size,
+            durationSeconds: durationSeconds > 0 ? String(durationSeconds) : undefined,
+            sourceType: 'generated',
+            sourceId: `canvas-compose-${randomUUID()}`,
+            generationPrompt:
+              `画布成片：拼接 ${done} 段` +
+              `${hasVoice ? '（含配音混流）' : ''}${bgmUrl ? '（含 BGM）' : ''}，目标画幅 ${tw}x${th}`,
+            metadata: { aigcGenerated: true, hasAudio: needsAudio, hasBgm: Boolean(bgmUrl) } as any,
+            status: 'ready',
+          })
+          .returning();
+        registered = true;
+        assetId = rows[0].id;
+      }
+      this.logger.log(
+        `画布成片完成 ${projectId ?? '(free)'}：${done} 段 → ${fileUrl}` +
+          `（${outStat.size}B, ${tw}x${th}, ${durationSeconds}s）`,
+      );
+      return {
+        fileUrl,
+        clips: done,
+        durationSeconds,
+        width: tw,
+        height: th,
+        size: outStat.size,
+        registered,
+        assetId,
+      };
+    } finally {
+      for (const f of cleanup) await unlink(f).catch(() => {});
+      await unlink(listPath).catch(() => {});
+    }
+  }
+
+  /** 读媒体时长（秒）；ffprobe 不可用时返回 0，不阻断合成 */
+  private async probeSeconds(file: string): Promise<number> {
+    const probeBin = this.resolveFfmpegBin().replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+    return new Promise<number>((resolve) => {
+      try {
+        const child = spawn(
+          probeBin,
+          ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        let out = '';
+        child.stdout?.on('data', (d: Buffer) => {
+          out += d.toString();
+        });
+        child.on('error', () => resolve(0));
+        child.on('close', () => {
+          const n = Number(String(out).trim());
+          resolve(Number.isFinite(n) && n > 0 ? Number(n.toFixed(2)) : 0);
+        });
+      } catch {
+        resolve(0);
+      }
+    });
   }
 
   /** curl 拉取镜头成片：带 SSRF 校验，.cn/.space 互为镜像优先 space，退避重试；curl 失败走 node fetch */
