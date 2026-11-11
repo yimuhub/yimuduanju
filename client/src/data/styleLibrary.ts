@@ -134,8 +134,8 @@ export const STYLE_LIBRARY: StylePreset[] = [
   },
   {
     id: 'ghibli-fairytale',
-    nameZh: '吉卜力童话',
-    nameEn: 'Ghibli Fairytale',
+    nameZh: '手绘童话',
+    nameEn: 'Storybook Fantasy',
     tagline: '手绘水彩自然光，治愈系童话漫剧的标配',
     positivePrompt:
       'hand-painted anime fairytale style, lush watercolor backgrounds, warm pastoral countryside, gentle afternoon light through leaves, whimsical cozy atmosphere, soft rounded character design, gouache texture, nostalgic storybook feeling',
@@ -246,11 +246,11 @@ export const STYLE_LIBRARY: StylePreset[] = [
   /* ---------------- 3D 写实 ---------------- */
   {
     id: 'pixar-family',
-    nameZh: '皮克斯合家欢',
-    nameEn: 'Pixar Family 3D',
+    nameZh: '3D 合家欢',
+    nameEn: 'Family 3D',
     tagline: '圆润讨喜的合家欢 3D，全年龄段通吃',
     positivePrompt:
-      'pixar-style 3d animation still, stylized rounded character with exaggerated expressive features, soft subsurface scattering skin, warm cinematic lighting, detailed cozy set design, family-friendly adventure mood, octane render, 8k, shallow depth of field',
+      'family-friendly 3d animation still, stylized rounded character with exaggerated expressive features, soft subsurface scattering skin, warm cinematic lighting, detailed cozy set design, lighthearted adventure mood, octane render, 8k, shallow depth of field',
     negativePrompt: `${BASE_NEGATIVE}, uncanny realistic face, horror mood, flat 2d, low poly`,
     productLines: ['漫剧', '广告'],
     gradient: ['#2E86C1', '#F5B041'],

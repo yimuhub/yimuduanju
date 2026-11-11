@@ -12,6 +12,7 @@ import {
   type StylePreset,
   type StyleCategory,
 } from '@client/src/data/styleLibrary';
+import { STYLE_LIBRARY_COVERS } from '@client/src/data/styleCovers';
 import PageHeader from '@client/src/components/PageHeader';
 
 type TabKey = StyleCategory | 'all';
@@ -25,7 +26,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'stylized', label: '赛博朋克' },
 ];
 
-/** 封面：优先用静态生成的 /covers/styles-<id>.svg（3:4），加载失败回退纯渐变底 */
+/** 封面：优先用原创风格图 /styles/*.webp（3:4），加载失败回退 SVG 海报与渐变底 */
 const StyleCover = ({ style, className = 'aspect-[3/4]' }: { style: StylePreset; className?: string }) => (
   <div
     className={`relative overflow-hidden ${className}`}
@@ -34,14 +35,16 @@ const StyleCover = ({ style, className = 'aspect-[3/4]' }: { style: StylePreset;
     }}
   >
     <img
-      src={`/covers/styles-${style.id}.svg`}
+      src={STYLE_LIBRARY_COVERS[style.id] ?? `/covers/styles-${style.id}.svg`}
       alt={style.nameZh}
       loading="lazy"
-      className="absolute inset-0 h-full w-full object-cover"
+      className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
       onError={(e) => {
         e.currentTarget.style.display = 'none';
       }}
     />
+    {/* 底部压暗，保证卡片标题与详情弹窗文字可读 */}
+    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/10" />
     <div className="absolute left-3 top-3 flex max-w-[calc(100%-24px)] flex-wrap gap-1">
       {style.productLines.map((line) => (
         <span

@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Loader2, Sparkles, X, ArrowRight } from 'lucide-react';
+import { Check, Loader2, Sparkles, X, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   createChatSession,
@@ -24,6 +24,7 @@ import type {
   ChatMessage,
 } from '@shared/api.interface';
 import { budgetOptions, styleOptions } from '@client/src/pages/CreateWizard/WizardSettings';
+import { styleCover, styleFamily } from '@client/src/data/styleCovers';
 import { ChatTurns } from './chat/ChatTurns';
 import { ChatComposer, type PendingAttachment } from './chat/ChatComposer';
 import { useStreamingChat } from './chat/useStreamingChat';
@@ -456,24 +457,14 @@ export const NewWorkDialog = ({ open, onClose, onCreated, options }: NewWorkDial
               </div>
             ) : null}
 
-            <label className="nw-label" htmlFor="nw-style">
-              画风
-            </label>
-            <div className="nw-style-select">
-              <i className={`nw-style-dot bg-gradient-to-br ${currentStyle.gradient}`} />
-              <select
-                id="nw-style"
-                className="nw-input"
-                value={artStyle}
-                onChange={(e) => setArtStyle(e.target.value as ArtStyle)}
-              >
-                {styleOptions.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="nw-style-car" />
+            <label className="nw-label">画风 · 定长相</label>
+            <div className="nw-style-current">
+              <img src={styleCover(artStyle)} alt="" />
+              <span className="nw-style-current-main">
+                <b>{currentStyle.label}</b>
+                <span>{currentStyle.desc}</span>
+              </span>
+              <span className="nw-style-current-tag">{styleFamily(artStyle)}</span>
             </div>
 
             <label className="nw-label">画幅</label>
@@ -551,6 +542,36 @@ export const NewWorkDialog = ({ open, onClose, onCreated, options }: NewWorkDial
             ) : null}
           </aside>
         </div>
+
+        {/* 底部完整风格条：21 种画风一屏可扫，3D / 国漫 / 真人 / 写实 一眼区分 */}
+        <section className="nw-styles" aria-label="画风选择">
+          <div className="nw-styles-h">
+            <span className="nw-styles-title">画风 · 定长相</span>
+            <span className="nw-styles-sub">21 种主流画风 · 真人 / 2D 漫 / 3D / 风格化</span>
+            <span className="nw-styles-selected">已选：{currentStyle.label}</span>
+          </div>
+          <div className="nw-style-rail" role="radiogroup" aria-label="画风">
+            {styleOptions.map((s) => {
+              const on = artStyle === s.value;
+              return (
+                <button
+                  key={s.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  className={`nw-style-card${on ? ' on' : ''}`}
+                  onClick={() => setArtStyle(s.value)}
+                  title={`${s.label} · ${s.desc}`}
+                >
+                  <img src={styleCover(s.value)} alt="" loading="lazy" />
+                  <span className="nw-style-card-b">{styleFamily(s.value)}</span>
+                  {on ? <Check className="nw-style-check" /> : null}
+                  <span className="nw-style-card-n">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </div>,
     document.body,

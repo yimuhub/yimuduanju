@@ -7,6 +7,7 @@ import { logger } from '@client/src/utils/logger';
 import { toast } from 'sonner';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import PageHeader from '@client/src/components/PageHeader';
+import { templateCover } from '@client/src/data/styleCovers';
 import TemplateDetailModal, {
   getGradient,
   getTypeLabel,
@@ -43,22 +44,10 @@ const DURATION_OPTIONS = [
 ];
 
 /**
- * 内置模板封面：与 scripts/db-init.sql 种子一一对应（模板 id 是运行时 uuid，
- * 静态 SVG 按内置模板序号命名）。未匹配的自定义模板按名称 hash 复用 6 张封面。
+ * 内置模板封面：按模板名匹配原创风格图（见 data/styleCovers）。
+ * 模板 id 是运行时 uuid，自定义模板按名称 hash 复用同一套封面。
  */
-const BUILTIN_TPL_COVERS: Record<string, number> = {
-  都市情感: 1,
-  古风仙侠: 2,
-  悬疑推理: 3,
-  热血动漫: 4,
-  三分钟成片: 5,
-  九宫格漫剧: 6,
-};
-const tplCoverUrl = (name: string): string => {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return `/covers/tpl-${BUILTIN_TPL_COVERS[name] ?? (h % 6) + 1}.svg`;
-};
+const tplCoverUrl = templateCover;
 
 const TemplatesPage = () => {
   const navigate = useNavigate();

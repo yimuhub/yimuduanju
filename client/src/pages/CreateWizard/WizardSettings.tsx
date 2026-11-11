@@ -12,6 +12,7 @@ import type {
   ArtStyle,
   AspectRatio,
 } from '@shared/api.interface';
+import { styleCover, styleFamily } from '@client/src/data/styleCovers';
 
 const durationOptions = [
   { label: '30s', value: 30 },
@@ -194,16 +195,19 @@ const WizardSettings = ({
               <div
                 className={`absolute inset-0 bg-gradient-to-br ${opt.gradient}`}
               />
-              {/* 样式图：/styles/<id>.png 由样式图管线生成，缺失时自动隐藏走渐变底 */}
+              {/* 样式图：/styles/*.webp 为项目自制原创封面，缺失时自动隐藏走渐变底 */}
               <img
-                src={opt.image}
+                src={styleCover(opt.value)}
                 alt={opt.label}
                 loading="lazy"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
-                className="relative mb-1.5 aspect-square w-full rounded-md object-cover"
+                className="relative mb-1.5 aspect-[3/4] w-full rounded-md object-cover"
               />
+              <span className="relative mb-0.5 inline-block rounded bg-background/60 px-1.5 py-0.5 text-[9px] font-medium text-foreground/70 backdrop-blur">
+                {styleFamily(opt.value)}
+              </span>
               <span className="relative block text-foreground">{opt.label}</span>
               <span className="relative mt-0.5 block text-[10px] font-normal text-foreground/60">{opt.desc}</span>
               {artStyle === opt.value && (
