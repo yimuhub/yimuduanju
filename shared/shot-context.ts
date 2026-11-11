@@ -256,8 +256,12 @@ export function renderShotMentions(text: string, refs: ComposedRef[]): string {
   for (const r of refs) {
     // 同一资产的后续图不覆盖首个图号：指认一律指向第一张
     if (!map.has(r.name)) map.set(r.name, r.label);
-    const shortName = r.name.replace(/^PROP\d+\s*/i, '').trim();
-    if (shortName && !map.has(shortName)) map.set(shortName, r.label);
+    // 道具的 name 是「PROP001 怀表」这种合成串，正文里往往只写 @PROP001 或 @怀表，
+    // 所以按空格拆词分别登记别名，否则道具 mention 永远替换不掉。
+    for (const token of r.name.split(/\s+/)) {
+      const t = token.trim();
+      if (t && !map.has(t)) map.set(t, r.label);
+    }
   }
   const names = [...map.keys()].sort((a, b) => b.length - a.length);
   if (names.length === 0) return text;
