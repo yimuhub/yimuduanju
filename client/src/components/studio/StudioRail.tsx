@@ -18,6 +18,7 @@ import {
   LayoutTemplate,
   MessageSquare,
   Network,
+  Palette,
   Plus,
   Settings,
   Sparkles,
@@ -157,6 +158,16 @@ export const StudioRail = () => {
             <LayoutTemplate className="ico" />,
             '模板中心',
             () => navigate('/templates'),
+            undefined,
+            location.pathname === '/templates',
+          )}
+          {navItem(
+            'styles',
+            <Palette className="ico" />,
+            '风格中心',
+            () => navigate('/styles'),
+            undefined,
+            location.pathname === '/styles',
           )}
           {navItem(
             'assets',

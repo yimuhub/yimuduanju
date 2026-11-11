@@ -24,7 +24,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/': '工作台',
   '/projects': '我的项目',
   '/templates': '模板中心',
-  '/styles': '风格库',
+  '/styles': '风格中心',
   '/assets': '资产库',
   '/ai-assistant': 'AI助手',
   '/account': '账户',
