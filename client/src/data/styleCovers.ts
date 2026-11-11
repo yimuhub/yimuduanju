@@ -1,9 +1,16 @@
 /**
- * 风格封面 · 21 种画风 + 22 个风格中心条目的原创封面映射
+ * 风格封面 · 两套互不混用的原创封面映射
  *
  * 图片为项目自制 AI 生成（原创虚构角色，不含任何影视/游戏 IP 角色与品牌标识），
  * 统一 3:4 竖构图、单人半身、电影级环境光，裁成 768×1024 存于 /public/styles/*.webp。
- * 21 种画风各有专属封面；风格中心的 22 个条目按视觉最接近一一对应。
+ *
+ * ① ART_STYLE_COVER：新建作品弹窗「21 种画风条」，键为 ArtStyle（realistic / anime_2d …），
+ *    文件为 /styles/<画风>.webp（21 张）。
+ * ② STYLE_LIBRARY_COVERS：风格中心「22 个语义化风格预设」（悬疑冷调 / 敦煌壁画 / 末世废土 …），
+ *    键为 styleLibrary.ts 的 id，文件为 /styles/lib-<id>.webp。
+ *
+ * 这两套是**不同的分类体系**，不要把 ① 的图硬映射给 ②：否则会出现语义错配
+ * （例如「末世废土」配成室内人像）和多张卡片视觉雷同。风格中心每个条目必须指向独立文件。
  */
 import type { ArtStyle } from '@shared/api.interface';
 
@@ -65,32 +72,32 @@ export const styleFamily = (style?: string): StyleFamily =>
   ART_STYLE_FAMILY[(style ?? '') as ArtStyle] ?? '真人';
 
 /**
- * 风格中心 22 个条目 → 视觉最接近的专属封面。
- * 每个条目仍有独立提示词；只有 3D 写实组两例共用一张 PBR 渲染图。
+ * 风格中心 22 个条目 → 各自语义对应的专属封面，严格 1:1，无复用。
+ * lib-*.webp 为按本条目的画风语义单独生成；其余 8 条复用画风条中语义一致的图。
  */
 export const STYLE_LIBRARY_COVERS: Record<string, string> = {
   'cinematic-realism': '/styles/realistic.webp',
   'urban-romance': '/styles/urban-romance.webp',
-  'thriller-coldtone': '/styles/modern-city-real.webp',
-  'hk-neon-noir': '/styles/guofeng-cyber.webp',
-  'retro-film': '/styles/anime-90s.webp',
+  'thriller-coldtone': '/styles/lib-thriller-coldtone.webp',
+  'hk-neon-noir': '/styles/lib-hk-neon-noir.webp',
+  'retro-film': '/styles/lib-retro-film.webp',
   'jp-cel-anime': '/styles/anime-2d.webp',
-  'shinkai-sky': '/styles/anime-3d.webp',
-  'ghibli-fairytale': '/styles/otome.webp',
+  'shinkai-sky': '/styles/lib-shinkai-sky.webp',
+  'ghibli-fairytale': '/styles/lib-ghibli-fairytale.webp',
   'korean-webtoon': '/styles/manhwa.webp',
-  'american-comic': '/styles/cartoon.webp',
-  'impasto-fantasy': '/styles/traditional-3d.webp',
-  'chibi-cute': '/styles/clay-stopmotion.webp',
-  'ink-wash': '/styles/chinese-comic.webp',
+  'american-comic': '/styles/lib-american-comic.webp',
+  'impasto-fantasy': '/styles/lib-impasto-fantasy.webp',
+  'chibi-cute': '/styles/lib-chibi-cute.webp',
+  'ink-wash': '/styles/lib-ink-wash.webp',
   'gongbi-illustration': '/styles/guofeng-2d.webp',
   'xianxia-fantasy': '/styles/xianxia.webp',
-  'dunhuang-mural': '/styles/ancient-real.webp',
-  'pixar-family': '/styles/urban-sweet-real.webp',
+  'dunhuang-mural': '/styles/lib-dunhuang-mural.webp',
+  'pixar-family': '/styles/lib-pixar-family.webp',
   'guofeng-3d': '/styles/guofeng-3d.webp',
-  'realistic-3d': '/styles/traditional-3d.webp',
+  'realistic-3d': '/styles/lib-realistic-3d.webp',
   'cyberpunk-neon': '/styles/cg-cyberpunk.webp',
-  'post-apocalyptic': '/styles/live-action.webp',
-  vaporwave: '/styles/flat-2d.webp',
+  'post-apocalyptic': '/styles/lib-post-apocalyptic.webp',
+  vaporwave: '/styles/lib-vaporwave.webp',
 };
 
 /** 内置模板封面（按模板名匹配，缺失时按 hash 复用） */

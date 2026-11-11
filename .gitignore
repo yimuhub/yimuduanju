@@ -35,3 +35,4 @@ dump.rdb
 
 # AI 生成封面的原始大图（本地留存，交付产物是 client/public/styles/*.webp）
 /vibe_images/styles-2026-11-12/
+/vibe_images/lib-styles-2026-11-12/
