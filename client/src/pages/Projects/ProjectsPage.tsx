@@ -14,6 +14,8 @@ import {
   Workflow,
   Trash2,
   ArrowRight,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 import { projects, storyboard } from '@client/src/api';
 import type { ProjectListItem, ProjectStatus } from '@shared/api.interface';
@@ -21,6 +23,13 @@ import { DEMO_SCRIPT } from '@client/src/utils/demoScript';
 import { toast } from 'sonner';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import PageHeader from '@client/src/components/PageHeader';
+import { styleOptions } from '@client/src/pages/CreateWizard/WizardSettings';
+import { styleCover } from '@client/src/data/styleCovers';
+
+type ViewMode = 'card' | 'list';
+const VIEW_KEY = 'yimu.projectsView';
+const artStyleLabel = (style?: string): string =>
+  styleOptions.find((s) => s.value === style)?.label ?? style ?? '';
 
 /** 状态徽章：小圆点 + 文案（面向流程语义分色，而非每个状态一色） */
 const statusBadge = (status: ProjectStatus): { label: string; dot: string; pill: string } => {
@@ -90,8 +99,43 @@ const ProjectsPage = () => {
     (searchParams.get('status') as ProjectStatus) || '',
   );
   const [sortKey, setSortKey] = useState<SortKey>('updatedAt');
+  const [view, setView] = useState<ViewMode>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'card';
+    } catch {
+      return 'card';
+    }
+  });
   const [creatingDemo, setCreatingDemo] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const changeView = (next: ViewMode) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      /* 隐私模式写失败：本次会话仍生效 */
+    }
+  };
+
+  /** 封面：优先项目缩略图，其次按画风取原创风格图，最后回退 hash 静态封面 */
+  const coverOf = (project: ProjectListItem) =>
+    project.thumbnailUrl || styleCover(project.artStyle) || projCoverUrl(project.title);
+
+  const handleCoverError = (e: React.SyntheticEvent<HTMLImageElement>, project: ProjectListItem) => {
+    const img = e.currentTarget;
+    if (img.dataset.fallback === '1') {
+      img.src = projCoverUrl(project.title);
+      img.dataset.fallback = '2';
+      return;
+    }
+    if (img.dataset.fallback === '2') {
+      img.style.display = 'none';
+      return;
+    }
+    img.dataset.fallback = '1';
+    img.src = styleCover(project.artStyle);
+  };
 
   // P1 Onboarding：一键创建示例项目（真实管线，消费器自动物化分镜）
   const handleCreateDemo = async () => {
@@ -258,6 +302,39 @@ const ProjectsPage = () => {
               </option>
             ))}
           </select>
+          {/* 卡片 / 列表 双视图切换 */}
+          <div
+            className="flex items-center gap-0.5 rounded-lg border border-input bg-background p-0.5"
+            role="group"
+            aria-label="视图切换"
+          >
+            <button
+              type="button"
+              title="卡片视图"
+              aria-label="卡片视图"
+              onClick={() => changeView('card')}
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                view === 'card'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground/60 hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title="列表视图"
+              aria-label="列表视图"
+              onClick={() => changeView('list')}
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                view === 'list'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground/60 hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -267,20 +344,34 @@ const ProjectsPage = () => {
         </div>
       )}
 
-      {/* 列表体 */}
+      {/* 列表体：卡片 / 列表双视图（偏好持久化） */}
       {loading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="flex animate-pulse items-center gap-4 rounded-xl border bg-card p-4">
-              <div className="h-9 w-9 rounded-lg bg-muted" />
-              <div className="flex-1 space-y-2">
-                <div className="h-3.5 w-40 rounded bg-muted" />
-                <div className="h-3 w-24 rounded bg-muted" />
+        view === 'card' ? (
+          <div className="grid grid-cols-1 gap-5 @sm:grid-cols-2 @4xl:grid-cols-3 @5xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="animate-pulse overflow-hidden rounded-xl border bg-card">
+                <div className="aspect-[3/4] bg-muted" />
+                <div className="space-y-2 p-4">
+                  <div className="h-3.5 w-3/4 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                </div>
               </div>
-              <div className="h-3 w-16 rounded bg-muted" />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex animate-pulse items-center gap-4 rounded-xl border bg-card p-4">
+                <div className="h-[72px] w-[108px] rounded-lg bg-muted" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3.5 w-40 rounded bg-muted" />
+                  <div className="h-3 w-24 rounded bg-muted" />
+                </div>
+                <div className="h-3 w-16 rounded bg-muted" />
+              </div>
+            ))}
+          </div>
+        )
       ) : items.length === 0 ? (
         /* 空状态：回作战室开拍 */
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card py-20">
@@ -311,6 +402,103 @@ const ProjectsPage = () => {
             </button>
           </div>
         </div>
+      ) : view === 'card' ? (
+        <div className="grid grid-cols-1 gap-5 @sm:grid-cols-2 @4xl:grid-cols-3 @5xl:grid-cols-4">
+          {sortedItems.map((project) => {
+            const badge = statusBadge(project.status);
+            return (
+              <article
+                key={project.id}
+                onClick={() => navigate(`/project/${project.id}`)}
+                className="group cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
+              >
+                {/* 大封面：缩略图 / 画风封面 / 静态封面三级回退 */}
+                <div className="relative aspect-[3/4] overflow-hidden bg-muted">
+                  <img
+                    src={coverOf(project)}
+                    alt={project.title}
+                    loading="lazy"
+                    className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    onError={(e) => handleCoverError(e, project)}
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-black/25" />
+                  <div className="absolute left-3 top-3">
+                    <span
+                      className={`pill ${badge.pill} bg-black/50 backdrop-blur`}
+                      title={project.status}
+                    >
+                      <span
+                        className={`pill-dot ${deletingId === project.id ? 'animate-pulse' : ''}`}
+                      />
+                      {badge.label}
+                    </span>
+                  </div>
+
+                  {/* hover 操作：打开 / 画布 / 删除 */}
+                  <div className="absolute right-3 top-3 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/project/${project.id}`);
+                      }}
+                      title="打开项目"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur hover:bg-black/65"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/project/${project.id}/canvas-free3`);
+                      }}
+                      title="进入画布"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur hover:bg-black/65"
+                    >
+                      <Workflow className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(project);
+                      }}
+                      title="删除项目"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur hover:bg-red-500/80"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* 标题 + 关键元信息压在封面底部 */}
+                  <div className="absolute inset-x-0 bottom-0 p-4">
+                    <h3 className="truncate text-base font-semibold text-white">
+                      {project.title}
+                    </h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-white/70">
+                      <span>{formatDuration(project.durationSeconds || 0)}</span>
+                      {project.artStyle && <span>· {artStyleLabel(project.artStyle)}</span>}
+                      <span>· {formatTimeAgo(project.updatedAt)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <p className="min-w-0 truncate text-xs text-muted-foreground">
+                    {project.description || '点击进入项目工作台'}
+                  </p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/project/${project.id}`);
+                    }}
+                    className="shrink-0 text-xs font-medium text-primary hover:underline"
+                  >
+                    打开
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       ) : (
         <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           {sortedItems.map((project) => {
@@ -321,25 +509,22 @@ const ProjectsPage = () => {
                 onClick={() => navigate(`/project/${project.id}`)}
                 className="group flex cursor-pointer items-center gap-4 border-b border-border px-4 py-3.5 transition-colors last:border-b-0 hover:bg-muted/50"
               >
-                {/* 项目封面：有 thumbnail 用实图，否则用生成的通用封面小图 */}
-                <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
+                {/* 项目封面：108×72 大封面 + 缩略图 / 画风封面 / 静态封面三级回退 */}
+                <div className="h-[72px] w-[108px] shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
                   <img
-                    src={project.thumbnailUrl || projCoverUrl(project.title)}
+                    src={coverOf(project)}
                     alt=""
                     loading="lazy"
                     className="h-full w-full object-cover"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none';
-                    }}
+                    onError={(e) => handleCoverError(e, project)}
                   />
                 </div>
 
                 {/* 状态小圆点徽章 */}
-                <span
-                  className={`pill ${badge.pill}`}
-                  title={project.status}
-                >
-                  <span className={`pill-dot ${deletingId === project.id ? 'animate-pulse' : ''}`} />
+                <span className={`pill ${badge.pill}`} title={project.status}>
+                  <span
+                    className={`pill-dot ${deletingId === project.id ? 'animate-pulse' : ''}`}
+                  />
                   {badge.label}
                 </span>
 
@@ -350,8 +535,13 @@ const ProjectsPage = () => {
                   </div>
                   <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                     <span className="shrink-0">{formatDuration(project.durationSeconds || 0)}</span>
+                    {project.artStyle && (
+                      <span className="shrink-0">· {artStyleLabel(project.artStyle)}</span>
+                    )}
                     {project.description && (
-                      <span className="hidden min-w-0 truncate @sm:inline">· {project.description}</span>
+                      <span className="hidden min-w-0 truncate @sm:inline">
+                        · {project.description}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -359,7 +549,6 @@ const ProjectsPage = () => {
                 {/* 元信息（窄容器内隐藏，避免挤压行内文字） */}
                 <div className="hidden shrink-0 text-right text-xs text-muted-foreground @md:block">
                   <div>更新于 {formatTimeAgo(project.updatedAt)}</div>
-                  {project.artStyle && <div className="mt-0.5">{project.artStyle}</div>}
                 </div>
 
                 {/* hover 操作：打开 / 画布 / 删除 */}
