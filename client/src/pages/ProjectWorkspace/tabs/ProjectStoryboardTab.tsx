@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Captions,
   ShieldCheck,
+  Timer,
 } from 'lucide-react';
 import { storyboard, assets, projects } from '@client/src/api';
 import type { Shot, Scene, Segment, Asset, BlockedVideoSummary } from '@shared/api.interface';
@@ -253,6 +254,26 @@ const ProjectStoryboardTab = () => {
       setError('批量生成发起失败');
     } finally {
       setBatching(false);
+    }
+  };
+
+  const [normalizingDurations, setNormalizingDurations] = useState(false);
+  const handleNormalizeDurations = async () => {
+    if (!id || normalizingDurations) return;
+    setNormalizingDurations(true);
+    try {
+      const res = await storyboard.normalizeShotDurations(id);
+      if (res.updated > 0) {
+        toast.success(`已补齐 ${res.updated} 个旧镜头时长按内容（8-15s）`);
+        const allShots = await storyboard.listAllShots(id);
+        setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));
+      } else {
+        toast.info('当前镜头时长已符合内容驱动策略');
+      }
+    } catch {
+      toast.error('旧镜头时长补齐失败');
+    } finally {
+      setNormalizingDurations(false);
     }
   };
 
@@ -507,6 +528,17 @@ const ProjectStoryboardTab = () => {
             <span className="flex items-center gap-1.5">
               <Clapperboard className="h-4 w-4" />
               {batching ? '发起中...' : '一键成片'}
+            </span>
+          </button>
+          <button
+            onClick={() => void handleNormalizeDurations()}
+            disabled={normalizingDurations || shots.length === 0}
+            title="把历史 4s/短镜头抬到内容驱动的 8-15s；不触发新图新片，避免多花钱"
+            className="rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground/70 hover:border-primary hover:text-primary disabled:opacity-50"
+          >
+            <span className="flex items-center gap-1.5">
+              <Timer className={`h-4 w-4 ${normalizingDurations ? 'animate-spin' : ''}`} />
+              {normalizingDurations ? '补齐中...' : '补齐旧镜头时长'}
             </span>
           </button>
         </div>

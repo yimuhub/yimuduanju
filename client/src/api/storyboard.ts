@@ -297,6 +297,15 @@ export const oneClickGenerate = (projectId: string, data: { shotIds?: string[] }
     )
     .then((res) => res.data);
 
+/** 旧分镜时长补齐：把低于内容下限的镜头抬到 8-15s，不触发新任务 */
+export const normalizeShotDurations = (projectId: string) =>
+  axiosForBackend
+    .post<{ updated: number; total: number }>(
+      `/api/projects/${projectId}/storyboard/normalize-durations`,
+      {},
+    )
+    .then((res) => res.data);
+
 export const generateCharacterSheet = (
   projectId: string,
   characterId: string,

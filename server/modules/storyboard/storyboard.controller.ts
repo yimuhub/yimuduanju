@@ -253,6 +253,14 @@ export class StoryboardController {
     return this.storyboardService.oneClick(projectId, body);
   }
 
+  /** 旧分镜时长补齐：把低于内容下限（默认 8s）的历史镜头抬到 8-15s，不触发新任务 */
+  @Post('normalize-durations')
+  async normalizeDurations(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<{ updated: number; total: number }> {
+    return this.storyboardService.normalizeShotDurations(projectId);
+  }
+
   // ========== Parse Script ==========
   @Post('parse-script')
   async parseScript(

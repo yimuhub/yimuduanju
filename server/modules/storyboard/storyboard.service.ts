@@ -46,6 +46,7 @@ import {
   ruleWhitemodelMismatch,
   type RuleHit,
 } from '@shared/qc-rules';
+import { contentDrivenShotSeconds } from '@shared/shot-duration';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { StorySkillsService, type RigRunResult } from '../story-skills/story-skills.service';
 import { buildSheetPrompt } from '../story-skills/skills';
@@ -1383,6 +1384,43 @@ export class StoryboardService {
     }
     this.logger.log(`人物卡建成 ${projectId}：${created.length} 个人物`);
     return { characters: created };
+  }
+
+  /**
+   * 旧数据时长修复：把内容驱动时长写回已有分镜（不改图/视频任务，不触发花钱）。
+   * 只对缺时长或低于 8s 的镜头做抬升；已合规的镜头保持原值。
+   */
+  async normalizeShotDurations(projectId: string): Promise<{ updated: number; total: number }> {
+    const all = await this.db
+      .select({
+        id: shots.id,
+        dialogue: shots.dialogue,
+        shotSize: shots.shotSize,
+        movement: shots.movement,
+        duration: shots.duration,
+      })
+      .from(shots)
+      .where(eq(shots.projectId, projectId));
+    let updated = 0;
+    for (const s of all) {
+      const current = Number(s.duration);
+      const next = contentDrivenShotSeconds({
+        dialogue: s.dialogue ?? undefined,
+        shotSize: s.shotSize ?? undefined,
+        movement: s.movement ?? undefined,
+        suggested: Number.isFinite(current) ? current : undefined,
+      });
+      if (next <= 0) continue;
+      if (Math.abs(next - current) < 0.05) continue;
+      // 只抬升：已经合规的长镜头（如手动改过 20s）不被压回 15s 内
+      if (next < current) continue;
+      await this.db
+        .update(shots)
+        .set({ duration: next.toFixed(1), updatedAt: new Date() })
+        .where(eq(shots.id, s.id));
+      updated += 1;
+    }
+    return { updated, total: all.length };
   }
 
   /**
