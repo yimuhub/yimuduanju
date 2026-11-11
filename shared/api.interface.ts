@@ -511,11 +511,71 @@ export interface Scene {
   updatedAt: string;
 }
 
+/** 空间基准九宫格（左中右 × 前中后），用于跨镜空间一致性 */
+export type SpaceAnchor =
+  | 'left_front' | 'mid_front' | 'right_front'
+  | 'left_mid' | 'mid_mid' | 'right_mid'
+  | 'left_back' | 'mid_back' | 'right_back';
+
+/** 轴线方向：决定反打时谁看哪边，跨镜不得随意翻转 */
+export type AxisDirection = 'left_to_right' | 'right_to_left' | 'frontal' | 'depth';
+
+/** 画面主体运动/视线方向（单镜） */
+export type ScreenDirection =
+  | 'left_to_right'
+  | 'right_to_left'
+  | 'toward_camera'
+  | 'away_from_camera'
+  | 'static';
+
+/** 单镜内的 3 秒节拍：视频提示词按此分段，避免一句话描述整段运动 */
+export interface ShotBeat {
+  /** 起始秒 */
+  from: number;
+  /** 结束秒 */
+  to: number;
+  /** 这段时间里画面发生什么（可见的物理现象） */
+  description: string;
+  /** 这段时间的台词（无对白留空） */
+  dialogue?: string;
+}
+
+/**
+ * 片段：场之下、镜之上的中间层（Toonflow 的「场 → 片段 → 镜」）。
+ * 一段 = 同一空间内一段连续动作，时长 ≤15s、含 2-4 镜；
+ * 资产引用挂在片段级，轴线与空间基准在这里定，镜只服从。
+ */
+export interface Segment {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  segmentNumber: number;
+  title?: string;
+  summary?: string;
+  /** 叙事功能：establish / develop / turn / payoff / transition */
+  intent?: string;
+  spaceAnchor?: SpaceAnchor;
+  axisDirection?: AxisDirection;
+  characterIds: string[];
+  locationId?: string;
+  props: string[];
+  durationSeconds: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Shot {
   id: string;
   projectId: string;
   sceneId: string;
+  /** 所属片段；历史数据为空表示未归段 */
+  segmentId?: string;
   shotNumber: number;
+  /** 画面主体运动/视线方向，供轴线连续性校验 */
+  screenDirection?: ScreenDirection;
+  /** 3 秒分段节拍，视频提示词按此拼装 */
+  beats?: ShotBeat[];
   duration: number;
   shotSize: string;
   cameraAngle: string;

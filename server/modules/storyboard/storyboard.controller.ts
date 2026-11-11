@@ -11,12 +11,14 @@ import {
 } from '@nestjs/common';
 import type {
   Scene,
+  Segment,
   Shot,
   ParseScriptResponse,
   ScriptJobResponse,
   BlockedVideoSummary,
   SplitShotResult,
 } from '@shared/api.interface';
+import type { ProjectDiagnosis } from '@shared/artifact-state';
 import type { RigRunResult } from '../story-skills/story-skills.service';
 import { StoryboardService } from './storyboard.service';
 import {
@@ -41,6 +43,27 @@ import {
 @Controller('api/projects/:projectId/storyboard')
 export class StoryboardController {
   constructor(private readonly storyboardService: StoryboardService) {}
+
+  // ========== 一致性体检 ==========
+
+  /** 产物四态 + 跳轴/景别/段超长/未绑资产体检（requireVideo=true 时把缺视频也算进去） */
+  @Get('consistency')
+  async consistency(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query('requireVideo') requireVideo?: string,
+  ): Promise<ProjectDiagnosis> {
+    return this.storyboardService.diagnose(projectId, {
+      requireVideo: requireVideo === 'true' || requireVideo === '1',
+    });
+  }
+
+  /** 片段列表（场 → 片段 → 镜 的中间层） */
+  @Get('segments')
+  async listSegments(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<Segment[]> {
+    return this.storyboardService.listSegments(projectId);
+  }
 
   // ========== Scenes ==========
   @Get('scenes')

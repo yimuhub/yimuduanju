@@ -17,9 +17,11 @@ import {
   RotateCcw,
   AlertTriangle,
   Captions,
+  ShieldCheck,
 } from 'lucide-react';
 import { storyboard, assets, projects } from '@client/src/api';
-import type { Shot, Scene, Asset, BlockedVideoSummary } from '@shared/api.interface';
+import type { Shot, Scene, Segment, Asset, BlockedVideoSummary } from '@shared/api.interface';
+import type { ProjectDiagnosis } from '@shared/artifact-state';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { toast } from 'sonner';
@@ -81,6 +83,24 @@ const ProjectStoryboardTab = () => {
   // 只影响保存之后提交的视频任务，已生成/已排队的任务不回溯。
   const [videoSubtitles, setVideoSubtitles] = useState(false);
   const [subtitlePrefSaving, setSubtitlePrefSaving] = useState(false);
+  // 片段（场 → 片段 → 镜）与一致性体检：把「哪里不连贯」在分镜阶段就摆出来
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [diagnosis, setDiagnosis] = useState<ProjectDiagnosis | null>(null);
+
+  const refreshDiagnosis = async () => {
+    if (!id) return;
+    try {
+      const [d, segs] = await Promise.all([
+        storyboard.getConsistency(id),
+        storyboard.listSegments(id),
+      ]);
+      setDiagnosis(d);
+      setSegments(segs);
+    } catch (err) {
+      // 体检是辅助信息，失败不挡住分镜主流程
+      logger.error('Load consistency failed:', String(err));
+    }
+  };
 
   const toggleVideoSubtitles = async () => {
     if (!id || subtitlePrefSaving) return;
@@ -272,6 +292,7 @@ const ProjectStoryboardTab = () => {
     if (!id) return;
     setLoading(true);
     void refreshBlocked();
+    void refreshDiagnosis();
     // 画面字幕开关：读项目 metadata（旧项目无字段 = 默认关）
     projects.getProject(id)
       .then((p) => {
@@ -391,7 +412,7 @@ const ProjectStoryboardTab = () => {
         <div>
           <h2 className="text-lg font-semibold text-foreground">分镜故事板</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            共 {shots.length} 个分镜 · {scenes.length} 个场景
+            共 {shots.length} 个分镜 · {segments.length} 个片段 · {scenes.length} 个场景
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -474,6 +495,72 @@ const ProjectStoryboardTab = () => {
           </button>
         </div>
       </div>
+
+      {/* 一致性体检：产物四态 + 跳轴/景别/段超长/未绑资产。
+          这一块的存在意义是「把不连贯的原因提前摆出来」，而不是等成片才发现。 */}
+      {diagnosis && (() => {
+        const all = [
+          ...diagnosis.issues,
+          ...diagnosis.shots.flatMap((d) => d.issues),
+        ];
+        const errors = all.filter((i) => i.level === 'error');
+        const warns = all.filter((i) => i.level === 'warn');
+        const top = [...errors, ...warns].slice(0, 4);
+        return (
+          <div className="rounded-xl border border-input bg-card p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <ShieldCheck className={`h-4 w-4 ${diagnosis.passed ? 'text-emerald-600' : 'text-amber-600'}`} />
+                一致性体检
+                <span className={diagnosis.passed ? 'text-emerald-600' : 'text-amber-600'}>
+                  {diagnosis.passed ? '通过' : `${errors.length} 项阻塞`}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span>可用 {diagnosis.counts.current}</span>
+                {diagnosis.counts.missing > 0 && (
+                  <span className="text-amber-600">缺失 {diagnosis.counts.missing}</span>
+                )}
+                {diagnosis.counts.stale > 0 && (
+                  <span className="text-amber-600">过期 {diagnosis.counts.stale}</span>
+                )}
+                {diagnosis.counts.blocked > 0 && (
+                  <span className="text-red-500">阻塞 {diagnosis.counts.blocked}</span>
+                )}
+                <button
+                  onClick={() => void refreshDiagnosis()}
+                  className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 hover:text-foreground"
+                  title="重新体检"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  重新体检
+                </button>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">{diagnosis.summary}</p>
+            {top.length > 0 && (
+              <ul className="mt-3 space-y-1.5">
+                {top.map((it, idx) => (
+                  <li key={`${it.code}-${idx}`} className="flex items-start gap-2 text-xs">
+                    <span
+                      className={`shrink-0 rounded px-1.5 py-0.5 ${
+                        it.level === 'error'
+                          ? 'bg-red-500/10 text-red-500'
+                          : it.level === 'warn'
+                            ? 'bg-amber-500/10 text-amber-600'
+                            : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {it.level === 'error' ? '阻塞' : it.level === 'warn' ? '告警' : '建议'}
+                    </span>
+                    <span className="text-muted-foreground">{it.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 首帧受阻恢复入口：把「视频为什么不动」变成可执行动作 */}
       {blocked && blocked.totalJobs > 0 && (

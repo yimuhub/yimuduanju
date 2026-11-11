@@ -64,6 +64,8 @@ export interface ComposeShotReferencesInput {
   scene?: SceneRefInput | null;
   props?: PropRefInput[];
   previousShot?: PreviousShotRefInput | null;
+  /** 空间与轴线说明（九宫格站位 / 轴线方向 / 本镜画面方向），会作为独立锁块拼进不可变段 */
+  spatialNote?: string | null;
   max?: number;
 }
 
@@ -242,6 +244,10 @@ export function composeShotReferences(
     );
   }
 
+  // 空间与轴线压在锁块之后：它约束的是「怎么摆」，不是「长什么样」
+  const spatial = clean(input.spatialNote);
+  if (spatial) blocks.push(`空间与轴线 —— ${spatial}`);
+
   return { refs, declaration: renderReferenceDeclaration(refs), blocks, dropped };
 }
 
@@ -274,7 +280,9 @@ export function renderShotMentions(text: string, refs: ComposedRef[]): string {
 
 /** 拼装最终提示词：【一致性上下文 · 不可变】+【本镜画面 · 可变】 */
 export function buildShotPrompt(variablePart: string, result: ComposeShotReferencesResult): string {
-  if (result.refs.length === 0) return variablePart;
+  // 没有参考图但有空间/轴线约束时同样要拼 —— 否则「一个资产都没绑」的镜头
+  // 会连九宫格站位一起丢掉，正好是最需要约束的那一类镜头。
+  if (result.refs.length === 0 && result.blocks.length === 0) return variablePart;
   const head: string[] = ['【一致性上下文 · 不可变】'];
   if (result.declaration) head.push(result.declaration);
   head.push(...result.blocks);

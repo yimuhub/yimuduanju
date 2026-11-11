@@ -15,6 +15,7 @@ import {
   projects,
   props,
   scenes,
+  segments,
   shots,
 } from '@server/database/schema';
 // 修复：新增 isNull / lt / notInArray / or，供「陈旧 queued 回收」与
@@ -25,14 +26,23 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { mkdir, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
-import type { CharacterIdentityKit, GenerationJob, ProfessionalPrefs } from '@shared/api.interface';
+import type {
+  AxisDirection,
+  CharacterIdentityKit,
+  GenerationJob,
+  ProfessionalPrefs,
+  PropStateVariant,
+  ScreenDirection,
+  ShotBeat,
+  SpaceAnchor,
+} from '@shared/api.interface';
 import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
 import { StageBindingsService } from '../providers/stage-bindings.service';
 import { GenerationService } from './generation.service';
 import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
 import { RoutingService } from './routing.service';
-import { StorySkillsService } from '../story-skills/story-skills.service';
+import { StorySkillsService, type BoardsShot } from '../story-skills/story-skills.service';
 import { StoryboardService } from '../storyboard/storyboard.service';
 import { ExportService } from '../export/export.service';
 import { QcService } from '../qc/qc.service';
@@ -46,6 +56,17 @@ import {
   type PropRefInput,
   type SceneRefInput,
 } from '@shared/shot-context';
+// 片段（场→片段→镜）+ 空间轴线 + 3 秒节拍：分镜物化与首帧/视频提示词共用同一套纯函数
+import {
+  AXIS_LABELS,
+  deriveBeats,
+  matchPropVariant as matchPropVariantPure,
+  planPieces,
+  SEGMENT_MAX_SECONDS,
+  SPACE_ANCHOR_LABELS,
+} from '@shared/shot-craft';
+// 3 秒分段视频提示词 + 段内续接：一句话描述整镜必然被模型各做各的
+import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-prompt';
 // 修复（分层）：uploadDir 直接从工具模块导入。
 // 旧写法依赖 uploads.controller 里的再导出，使消费器在模块加载期
 // 就被迫拉起整条 Controller → Service → DI 依赖链。
@@ -66,6 +87,13 @@ const DEFAULT_PROVIDER_KEY = '__default__';
  * 而 running 回收原本只在 onModuleInit 跑一次，queued 态没有任何回收路径。
  */
 const STALE_QUEUED_MS = 5 * 60 * 1000;
+
+/** 项目资产索引：分镜表给出的 cast/location/props 直接按名字或编号解析成 id */
+interface AssetIndex {
+  characters: { id: string; name: string; roleType: string | null }[];
+  locations: { id: string; name: string; timeOfDay: string | null }[];
+  props: { id: string; code: string | null; name: string; category: string | null }[];
+}
 
 /**
  * 上游限流 / 瞬时故障判定。
@@ -1020,9 +1048,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const shotRows = await this.db
       .select({
         sceneId: shots.sceneId,
+        segmentId: shots.segmentId,
         shotNumber: shots.shotNumber,
         characterIds: shots.characterIds,
         referenceImageUrls: shots.referenceImageUrls,
+        screenDirection: shots.screenDirection,
+        shotSize: shots.shotSize,
+        visualPrompt: shots.visualPrompt,
+        dialogue: shots.dialogue,
+        action: shots.action,
       })
       .from(shots)
       .where(eq(shots.id, shotId))
@@ -1033,6 +1067,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     let sceneInput: SceneRefInput | null = null;
     let sceneCharIds: string[] = [];
     let propTags: string[] = [];
+    let spatialNote: string | null = null;
     if (shot.sceneId) {
       const sceneRows = await this.db
         .select({
@@ -1071,6 +1106,30 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
               .join('；'),
           };
         }
+      }
+    }
+
+    // 片段级空间基准与轴线：镜只能服从段，不能段段自说自话
+    if (shot.segmentId) {
+      const segRows = await this.db
+        .select({
+          spaceAnchor: segments.spaceAnchor,
+          axisDirection: segments.axisDirection,
+          title: segments.title,
+        })
+        .from(segments)
+        .where(eq(segments.id, shot.segmentId))
+        .limit(1);
+      const seg = segRows[0];
+      if (seg) {
+        const bits: string[] = [];
+        if (seg.title) bits.push(`片段「${seg.title}」`);
+        if (seg.spaceAnchor) bits.push(`空间基准 ${SPACE_ANCHOR_LABELS[seg.spaceAnchor as SpaceAnchor] ?? seg.spaceAnchor}`);
+        if (seg.axisDirection) bits.push(`本段轴线 ${AXIS_LABELS[seg.axisDirection as AxisDirection] ?? seg.axisDirection}`);
+        if (shot.screenDirection) {
+          bits.push(`本镜画面方向 ${shot.screenDirection}`);
+        }
+        if (bits.length > 0) spatialNote = bits.join('；');
       }
     }
 
@@ -1139,43 +1198,75 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           identityAnchors: props.identityAnchors,
           scaleReference: props.scaleReference,
           continuityLock: props.continuityLock,
+          stateVariants: props.stateVariants,
           referenceImageUrls: props.referenceImageUrls,
         })
         .from(props)
         .where(eq(props.projectId, projectId));
+      const shotText = [shot.visualPrompt, shot.action, shot.dialogue]
+        .filter((v): v is string => typeof v === 'string')
+        .join(' ');
       for (const p of propRows) {
         const hit = propTags.some(
           (t) => t === p.name || t === p.code || t === `@${p.code}` || t.endsWith(p.name),
         );
         if (!hit) continue;
+        /*
+         * 道具是持续身份，状态是变体（开合/破损/消耗/转手）。
+         * 旧实现只注入形制锁，于是「已经打开的怀表」每镜都被画成合着的。
+         * 这里按本镜文字命中变体名/描述，把状态也写进锁块 —— 只写身份不写状态，
+         * 等于让模型每镜重新决定该道具此刻是什么形态。
+         */
+        const variant = this.matchPropVariant(
+          p.stateVariants as PropStateVariant[] | null,
+          shotText,
+        );
         propInputs.push({
           id: p.id,
           code: p.code,
           name: p.name,
           url: (p.referenceImageUrls ?? [])[0],
-          lock: [p.identityAnchors, p.scaleReference, p.continuityLock]
+          lock: [
+            p.identityAnchors,
+            p.scaleReference,
+            p.continuityLock,
+            variant ? `本镜状态：${variant.name}${variant.description ? `（${variant.description}）` : ''}` : null,
+          ]
             .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
             .join('；'),
         });
       }
     }
 
-    // 上一镜成帧：同场前一镜（同段镜像链，ArcReel 的 previous_storyboard）。
+    // 上一镜成帧（ArcReel 的 previous_storyboard）：优先取**同片段内**前一镜，
+    // 段内没有才回落到同场前一镜。段内镜像链才是真正需要接住的那一段连续动作；
+    // 跨段参考会把上一段的收尾光位硬套到新空间，反而制造跳变。
     // 只给构图与色调，不给姿态 —— 否则相邻镜会变成复制粘贴的同角度。
     let previousShot: { shotNumber: number; url: string } | null = null;
     if (shot.sceneId && shot.shotNumber > 1) {
-      const prevRows = await this.db
-        .select({ shotNumber: shots.shotNumber, startFrameUrl: shots.startFrameUrl })
-        .from(shots)
-        .where(
-          and(
-            eq(shots.sceneId, shot.sceneId),
-            lt(shots.shotNumber, shot.shotNumber),
-            isNotNull(shots.startFrameUrl),
-          ),
-        )
-        .orderBy(desc(shots.shotNumber))
-        .limit(1);
+      const sameScene = and(
+        eq(shots.sceneId, shot.sceneId),
+        lt(shots.shotNumber, shot.shotNumber),
+        isNotNull(shots.startFrameUrl),
+      );
+      const inSegment =
+        shot.segmentId != null
+          ? await this.db
+              .select({ shotNumber: shots.shotNumber, startFrameUrl: shots.startFrameUrl })
+              .from(shots)
+              .where(and(eq(shots.segmentId, shot.segmentId), sameScene))
+              .orderBy(desc(shots.shotNumber))
+              .limit(1)
+          : [];
+      const prevRows =
+        inSegment.length > 0
+          ? inSegment
+          : await this.db
+              .select({ shotNumber: shots.shotNumber, startFrameUrl: shots.startFrameUrl })
+              .from(shots)
+              .where(sameScene)
+              .orderBy(desc(shots.shotNumber))
+              .limit(1);
       if (prevRows[0]?.startFrameUrl) {
         previousShot = { shotNumber: prevRows[0].shotNumber, url: prevRows[0].startFrameUrl };
       }
@@ -1186,16 +1277,25 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       scene: sceneInput,
       props: propInputs,
       previousShot,
+      spatialNote,
     });
   }
 
   private async processVideo(job: GenerationJob, providerName?: string, opts?: { model?: string }): Promise<void> {
     const input = (job.inputData ?? {}) as Record<string, unknown>;
-    const prompt = this.inputPrompt(job);
-    if (!prompt.trim()) {
+    const rawPrompt = this.inputPrompt(job);
+    if (!rawPrompt.trim()) {
       await this.generationService.settleJobFailure(job.id, '视频任务缺少 prompt');
       return;
     }
+    /*
+     * 视频提示词必须按 3 秒分段重写，不能把分镜表那句整体描述直接丢给模型：
+     * 一句「把怀表放进抽屉回头看向门口」在 8 秒里既可能 1 秒做完、也可能做一半循环。
+     * 火宝的做法是 0-3s / 3-6s 各写一段可见动作与该段台词 —— 段内密度可控，
+     * 段间衔接才有依据。这里再把同段的上一镜结束状态接上（ArcReel 的镜像链）。
+     */
+    const composed = await this.buildVideoPrompt(job, rawPrompt, input);
+    const prompt = composed.prompt;
     const refs = Array.isArray(input.references)
       ? (input.references as unknown[]).filter(
           (r): r is string => typeof r === 'string' && r.length > 0,
@@ -1226,7 +1326,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       {
         prompt,
         duration:
-          typeof input.duration === 'number' ? input.duration : 5,
+          typeof input.duration === 'number'
+            ? input.duration
+            : composed.duration || 5,
         imageUrl,
         referenceVideoUrl: refs[1],
         lastFrameUrl,
@@ -1239,7 +1341,153 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .update(generationJobs)
       .set({ externalTaskId: taskId, progress: 10, updatedAt: new Date() })
       .where(eq(generationJobs.id, job.id));
-    this.logger.log(`视频远端任务已创建 ${job.id} → ${taskId}`);
+    this.logger.log(
+      `视频远端任务已创建 ${job.id} → ${taskId}` +
+        (composed.degraded ? `（无 3 秒节拍，按整段描述兜底）` : `（${composed.beatCount} 段节拍）`),
+    );
+  }
+
+  /**
+   * 组装一个镜头的分段视频提示词。
+   *
+   * 取数：镜头（时长/景别/运镜/画面方向/台词/节拍）→ 片段（空间基准/轴线）
+   * → 同段上一镜（结束状态）。任何一环缺失都降级而不是报错：
+   * 视频是付费环节，宁可给一段保守描述，也不要因为缺节拍直接失败。
+   */
+  private async buildVideoPrompt(
+    job: GenerationJob,
+    rawPrompt: string,
+    input: Record<string, unknown>,
+  ): Promise<{ prompt: string; degraded: boolean; beatCount: number; duration: number }> {
+    if (job.targetType !== 'shot' || !job.targetId) {
+      const dur = typeof input.duration === 'number' ? input.duration : 5;
+      const r = buildSegmentedVideoPrompt({ duration: dur, description: rawPrompt });
+      return { prompt: r.prompt, degraded: r.degraded, beatCount: r.beats.length, duration: dur };
+    }
+    const rows = await this.db
+      .select({
+        segmentId: shots.segmentId,
+        sceneId: shots.sceneId,
+        shotNumber: shots.shotNumber,
+        duration: shots.duration,
+        shotSize: shots.shotSize,
+        movement: shots.movement,
+        screenDirection: shots.screenDirection,
+        dialogue: shots.dialogue,
+        visualPrompt: shots.visualPrompt,
+        action: shots.action,
+        beats: shots.beats,
+        characterIds: shots.characterIds,
+      })
+      .from(shots)
+      .where(eq(shots.id, job.targetId))
+      .limit(1);
+    const shot = rows[0];
+    if (!shot) {
+      const dur = typeof input.duration === 'number' ? input.duration : 5;
+      const r = buildSegmentedVideoPrompt({ duration: dur, description: rawPrompt });
+      return { prompt: r.prompt, degraded: r.degraded, beatCount: r.beats.length, duration: dur };
+    }
+    const duration = Number(shot.duration) || (typeof input.duration === 'number' ? input.duration : 5);
+
+    // 片段级空间基准与轴线
+    let spatialNote: string | null = null;
+    if (shot.segmentId) {
+      const segRows = await this.db
+        .select({
+          title: segments.title,
+          spaceAnchor: segments.spaceAnchor,
+          axisDirection: segments.axisDirection,
+        })
+        .from(segments)
+        .where(eq(segments.id, shot.segmentId))
+        .limit(1);
+      const seg = segRows[0];
+      if (seg) {
+        spatialNote =
+          [
+            seg.title ? `片段「${seg.title}」` : null,
+            seg.spaceAnchor
+              ? `空间基准 ${SPACE_ANCHOR_LABELS[seg.spaceAnchor as SpaceAnchor] ?? seg.spaceAnchor}`
+              : null,
+            seg.axisDirection
+              ? `本段轴线 ${AXIS_LABELS[seg.axisDirection as AxisDirection] ?? seg.axisDirection}`
+              : null,
+          ]
+            .filter((v): v is string => Boolean(v))
+            .join('；') || null;
+      }
+    }
+
+    // 同段上一镜的结束状态（先段内、再同场）
+    let previousEndState: string | null = null;
+    if (shot.sceneId && shot.shotNumber > 1) {
+      const sameScene = and(eq(shots.sceneId, shot.sceneId), lt(shots.shotNumber, shot.shotNumber));
+      const prevRows =
+        shot.segmentId != null
+          ? await this.db
+              .select({
+                shotNumber: shots.shotNumber,
+                dialogue: shots.dialogue,
+                action: shots.action,
+                visualPrompt: shots.visualPrompt,
+              })
+              .from(shots)
+              .where(and(eq(shots.segmentId, shot.segmentId), sameScene))
+              .orderBy(desc(shots.shotNumber))
+              .limit(1)
+          : [];
+      const prev =
+        prevRows[0] ??
+        (
+          await this.db
+            .select({
+              shotNumber: shots.shotNumber,
+              dialogue: shots.dialogue,
+              action: shots.action,
+              visualPrompt: shots.visualPrompt,
+            })
+            .from(shots)
+            .where(sameScene)
+            .orderBy(desc(shots.shotNumber))
+            .limit(1)
+        )[0];
+      if (prev) {
+        previousEndState = describeContinuity({
+          previousShotNumber: prev.shotNumber,
+          previousDialogue: prev.dialogue,
+          previousAction: prev.action || prev.visualPrompt,
+          shotSize: shot.shotSize,
+        });
+      }
+    }
+
+    // 在场人物：视频也要锁人数与身份，否则模型会自己加人
+    let castNames: string[] = [];
+    if ((shot.characterIds ?? []).length > 0 && job.projectId) {
+      const charRows = await this.db
+        .select({ id: characters.id, name: characters.name })
+        .from(characters)
+        .where(eq(characters.projectId, job.projectId));
+      castNames = charRows
+        .filter((c) => (shot.characterIds ?? []).includes(c.id))
+        .map((c) => c.name);
+    }
+
+    const beats = Array.isArray(shot.beats) ? (shot.beats as ShotBeat[]) : null;
+    const r = buildSegmentedVideoPrompt({
+      duration,
+      beats,
+      description: shot.visualPrompt || rawPrompt,
+      dialogue: shot.dialogue,
+      shotSize: shot.shotSize,
+      movement: shot.movement,
+      screenDirection: (shot.screenDirection as ScreenDirection | null) ?? null,
+      characters: castNames,
+      previousEndState,
+      spatialNote,
+    });
+    return { prompt: r.prompt, degraded: r.degraded, beatCount: r.beats.length, duration };
   }
 
   /**
@@ -1719,7 +1967,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         .limit(1);
       styleId = artRows[0]?.artStyle ?? undefined;
     }
-    let boards: { scene: string; shotSize: string; movement: string; durationSeconds: number; dialogue?: string; visualPrompt?: string }[];
+    let boards: BoardsShot[];
+    // 已确认资产清单：分镜只能引用真实存在的人/景/道具，避免 LLM 新造角色
+    const assetIndex = await this.loadAssetIndex(job.projectId);
     try {
       // 目标总时长：项目 durationSeconds 传入分镜技能，镜头时长之和贴齐（如 90s）
       const projDurRows = await this.db
@@ -1736,6 +1986,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         temperature: opts?.temperature,
         providerName: providerName ?? job.providerName,
         targetSeconds,
+        catalog: {
+          characters: assetIndex.characters.map((c) => ({ name: c.name, roleType: c.roleType ?? undefined })),
+          locations: assetIndex.locations.map((l) => ({ name: l.name, timeOfDay: l.timeOfDay ?? undefined })),
+          props: assetIndex.props.map((p) => ({ code: p.code ?? undefined, name: p.name, category: p.category ?? undefined })),
+        },
       });
       boards = result.shots;
     } catch (e) {
@@ -1780,11 +2035,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     if (input.replaceExisting) {
+      // 片段先删（shots.segment_id 是 SET NULL，但段随 scenes 级联，清干净更省事）
+      await this.db.delete(segments).where(eq(segments.projectId, job.projectId));
       await this.db.delete(shots).where(eq(shots.projectId, job.projectId));
       await this.db.delete(scenes).where(eq(scenes.projectId, job.projectId));
     }
     // 按 scene 分组建场（保持出现顺序），镜号场内递增
-    const groups = new Map<string, typeof boards>();
+    const groups = new Map<string, BoardsShot[]>();
     for (const b of boards) {
       const list = groups.get(b.scene) ?? [];
       list.push(b);
@@ -1792,14 +2049,24 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     let sceneNumber = 0;
     let shotTotal = 0;
-    // 分镜表同样必须落在资产上：场 → locations，镜 → characters
-    const cast = await this.loadCastIndex(job.projectId);
+    let segmentTotal = 0;
+    // 分镜表同样必须落在资产上：场 → locations，片段/镜 → characters
+    const cast = new Map(assetIndex.characters.map((c) => [this.normalizeName(c.name), c.id]));
     for (const [title, list] of groups) {
       sceneNumber += 1;
       const sceneCast = this.matchCastIds(cast, [
         title,
         ...list.map((b) => `${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`),
       ]);
+      // 场的地点：优先用分镜表明确写的 location（命中资产清单），再按标题/描述猜
+      const explicitLocation = list.map((b) => b.location?.trim()).find((v): v is string => Boolean(v));
+      // eslint-disable-next-line no-await-in-loop
+      const locationId = await this.resolveSceneLocation(
+        job.projectId,
+        title,
+        explicitLocation ?? list[0]?.visualPrompt,
+        assetIndex,
+      );
       // eslint-disable-next-line no-await-in-loop
       const [scene] = await this.db
         .insert(scenes)
@@ -1811,7 +2078,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           dialogues: [],
           actions: [],
           characterIds: sceneCast,
-          locationId: await this.resolveSceneLocation(job.projectId, title, list[0]?.visualPrompt),
+          locationId,
           props: await this.scenePropsFor(
             job.projectId,
             [title, ...list.map((b) => `${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`)].join('\n'),
@@ -1819,31 +2086,83 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           sortOrder: sceneNumber,
         })
         .returning({ id: scenes.id });
-      let n = 0;
-      for (const b of list) {
-        n += 1;
-        shotTotal += 1;
-        const shotCast = this.matchCastIds(cast, [
-          `${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`,
-        ]);
+
+      // 场 → 片段 → 镜：LLM 给了段号就用它的叙事边界，没给就按 ≤15s/2-4 镜归段
+      const pieces = planPieces(
+        list.map((b, i) => ({ ...b, shotNumber: i + 1, duration: b.durationSeconds })),
+      );
+      let shotNo = 0;
+      for (const piece of pieces) {
+        const head = piece.shots[0];
+        segmentTotal += 1;
+        // 段级资产引用：本段所有镜声明过的 cast/props 取并集
+        const pieceCast = this.uniqueIds(
+          piece.shots.flatMap((s) => this.resolveCastByName(assetIndex, s.cast)),
+        );
+        const pieceProps = [...new Set(piece.shots.flatMap((s) => this.resolvePropTags(assetIndex, s.props)))];
         // eslint-disable-next-line no-await-in-loop
-        await this.db.insert(shots).values({
-          projectId: job.projectId,
-          sceneId: scene.id,
-          shotNumber: n,
-          duration: b.durationSeconds.toFixed(1),
-          shotSize: b.shotSize,
-          cameraAngle: 'eye_level',
-          lens: '50mm',
-          movement: b.movement,
-          dialogue: b.dialogue,
-          subtitleText: b.dialogue,
-          visualPrompt: b.visualPrompt,
-          subject: b.visualPrompt?.slice(0, 200),
-          characterIds: shotCast.length > 0 ? shotCast : sceneCast.slice(0, 2),
-          status: 'draft',
-          sortOrder: n,
-        });
+        const [segment] = await this.db
+          .insert(segments)
+          .values({
+            projectId: job.projectId,
+            sceneId: scene.id,
+            segmentNumber: piece.segmentNumber,
+            title: (head.segmentTitle ?? `片段 ${piece.segmentNumber}`).slice(0, 200),
+            summary: head.visualPrompt?.slice(0, 300),
+            intent: head.intent,
+            spaceAnchor: head.spaceAnchor,
+            axisDirection: head.axisDirection,
+            characterIds: pieceCast.length > 0 ? pieceCast : sceneCast.slice(0, 2),
+            locationId: locationId ?? null,
+            props: pieceProps,
+            durationSeconds: piece.durationSeconds.toFixed(1),
+            sortOrder: piece.segmentNumber,
+          })
+          .returning({ id: segments.id });
+        if (piece.durationSeconds > SEGMENT_MAX_SECONDS + 0.01) {
+          this.logger.warn(
+            `片段超长 ${scene.id}#${piece.segmentNumber}：${piece.durationSeconds}s > ${SEGMENT_MAX_SECONDS}s（保留 LLM 叙事边界，不强行拆）`,
+          );
+        }
+
+        for (const b of piece.shots) {
+          shotNo += 1;
+          shotTotal += 1;
+          const shotCast = this.uniqueIds([
+            ...this.resolveCastByName(assetIndex, b.cast),
+            ...this.matchCastIds(cast, [`${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`]),
+          ]);
+          const duration = b.durationSeconds;
+          // eslint-disable-next-line no-await-in-loop
+          await this.db.insert(shots).values({
+            projectId: job.projectId,
+            sceneId: scene.id,
+            segmentId: segment.id,
+            shotNumber: shotNo,
+            duration: duration.toFixed(1),
+            shotSize: b.shotSize,
+            cameraAngle: 'eye_level',
+            lens: '50mm',
+            movement: b.movement,
+            screenDirection: b.screenDirection,
+            beats:
+              b.beats && b.beats.length > 0
+                ? b.beats
+                : deriveBeats({
+                    duration,
+                    dialogue: b.dialogue,
+                    visualPrompt: b.visualPrompt,
+                    shotSize: b.shotSize,
+                  }),
+            dialogue: b.dialogue,
+            subtitleText: b.dialogue,
+            visualPrompt: b.visualPrompt,
+            subject: b.visualPrompt?.slice(0, 200),
+            characterIds: shotCast.length > 0 ? shotCast : sceneCast.slice(0, 2),
+            status: 'draft',
+            sortOrder: shotNo,
+          });
+        }
       }
     }
     // 分镜表落库即代表「分镜已产出」，推进到 storyboard_ready 等门2确认。
@@ -1855,12 +2174,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const bindings = await this.countSceneBindings(job.projectId);
     await this.generationService.settleJobSuccess(job.id, {
       scenesCount: groups.size,
+      segmentsCount: segmentTotal,
       shotsCount: shotTotal,
       scenesWithLocation: bindings.withLocation,
       scenesWithCast: bindings.withCast,
     });
     this.logger.log(
-      `分镜表物化完成 ${job.id}：${groups.size} 场 ${shotTotal} 镜，` +
+      `分镜表物化完成 ${job.id}：${groups.size} 场 ${segmentTotal} 片段 ${shotTotal} 镜，` +
         `绑定场景 ${bindings.withLocation}/${groups.size}，绑定人物 ${bindings.withCast}/${groups.size}`,
     );
   }
@@ -1940,6 +2260,83 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * 资产索引：LLM 分镜表直接给出 cast / location / props 时，按名字或编号解析成 id。
+   * 这比「事后拿画面描述去猜谁在场」可靠得多 —— 猜出来的 cast 会漏人、会把
+   * 画外音当成在场、也会把背景路人当成角色，首帧自然就换人。
+   */
+  private async loadAssetIndex(projectId: string): Promise<AssetIndex> {
+    const [charRows, locRows, propRows] = await Promise.all([
+      this.db
+        .select({ id: characters.id, name: characters.name, roleType: characters.roleType })
+        .from(characters)
+        .where(eq(characters.projectId, projectId)),
+      this.db
+        .select({ id: locations.id, name: locations.name, timeOfDay: locations.timeOfDay })
+        .from(locations)
+        .where(eq(locations.projectId, projectId)),
+      this.db
+        .select({ id: props.id, code: props.code, name: props.name, category: props.category })
+        .from(props)
+        .where(eq(props.projectId, projectId)),
+    ]);
+    return { characters: charRows, locations: locRows, props: propRows };
+  }
+
+  /** 名称列表 → 人物 id（精确优先，其次包含匹配；保持给定顺序以稳定参考图顺序） */
+  private resolveCastByName(index: AssetIndex, names?: string[] | null): string[] {
+    const ids: string[] = [];
+    for (const raw of names ?? []) {
+      const key = this.normalizeName(raw);
+      if (!key) continue;
+      const hit =
+        index.characters.find((c) => this.normalizeName(c.name) === key) ??
+        index.characters.find((c) => {
+          const n = this.normalizeName(c.name);
+          return n.length >= 2 && (key.includes(n) || n.includes(key));
+        });
+      if (hit && !ids.includes(hit.id)) ids.push(hit.id);
+    }
+    return ids;
+  }
+
+  /** 名称/编号列表 → 道具标签（优先用 PROP 编号，兼容 scenes.props 的字符串语义） */
+  private resolvePropTags(index: AssetIndex, names?: string[] | null): string[] {
+    const tags: string[] = [];
+    for (const raw of names ?? []) {
+      const key = this.normalizeName(raw);
+      if (!key) continue;
+      const hit =
+        index.props.find((p) => {
+          const code = this.normalizeName(p.code ?? '');
+          return (code && (code === key || key.includes(code))) || this.normalizeName(p.name) === key;
+        }) ??
+        index.props.find((p) => {
+          const n = this.normalizeName(p.name);
+          return n.length >= 2 && (key.includes(n) || n.includes(key));
+        });
+      if (!hit) continue;
+      const tag = (hit.code ?? '').trim() || hit.name;
+      if (tag && !tags.includes(tag)) tags.push(tag);
+    }
+    return tags;
+  }
+
+  private uniqueIds(ids: string[]): string[] {
+    return [...new Set(ids.filter(Boolean))];
+  }
+
+  /**
+   * 从道具的状态变体里挑出本镜该用哪个 —— 判定逻辑在 shared 里，
+   * 前端道具面板与首帧编排共用同一套规则，避免两边各判一套。
+   */
+  private matchPropVariant(
+    variants: PropStateVariant[] | null | undefined,
+    shotText: string,
+  ): PropStateVariant | null {
+    return matchPropVariantPure(variants, shotText);
+  }
+
+  /**
    * 从一段剧本文字里认出出场人物。
    * 这是「分镜绑资产」的第一步：旧实现给每场写死 `characterIds: []`，
    * 镜头和人物之间没有任何连线，首帧自然拿不到人物参考图。
@@ -1969,13 +2366,22 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     projectId: string,
     title: string | undefined,
     summary?: string,
+    assetIndex?: AssetIndex,
   ): Promise<string | undefined> {
     const raw = [title ?? '', summary ?? ''].join(' ').trim();
     if (!raw) return undefined;
-    const rows = await this.db
-      .select({ id: locations.id, name: locations.name })
-      .from(locations)
-      .where(eq(locations.projectId, projectId));
+    // 分镜表明确写了地点名时先按它精确/包含匹配（比标题匹配可靠）
+    if (assetIndex && summary) {
+      const hint = this.normalizeName(summary);
+      const direct = assetIndex.locations.find((l) => this.normalizeName(l.name) === hint);
+      if (direct) return direct.id;
+    }
+    const rows = assetIndex?.locations.length
+      ? assetIndex.locations
+      : await this.db
+          .select({ id: locations.id, name: locations.name })
+          .from(locations)
+          .where(eq(locations.projectId, projectId));
     if (rows.length === 0) return undefined;
     const t = this.normalizeName(raw);
     const exact = rows.find((r) => this.normalizeName(r.name) === t);
@@ -2272,6 +2678,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const replaceExisting =
       ((job.inputData ?? {}) as Record<string, unknown>).replaceExisting === true;
     if (replaceExisting && job.projectId) {
+      await this.db.delete(segments).where(eq(segments.projectId, job.projectId));
       await this.db.delete(shots).where(eq(shots.projectId, job.projectId));
       await this.db.delete(scenes).where(eq(scenes.projectId, job.projectId));
       this.logger.log(`物化前已清空旧分镜（技能链 ${job.id}）`);
@@ -2296,9 +2703,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       prefs.shotCount ??
       Math.max(4, Math.min(60, Math.round(totalDuration / prefs.shotDuration)));
 
-    // 分镜必须建在资产之上：先把人物名映射成 characters.id、场标题映射成 locations.id。
+    // 分镜必须建在资产之上：人物名 → characters.id、场标题 → locations.id、道具 → PROP 编号。
     // 旧实现给每场写死 characterIds: []，镜头与资产零连线，首帧必然拿不到参考图。
-    const cast = await this.loadCastIndex(job.projectId);
+    const assetIndex = await this.loadAssetIndex(job.projectId);
+    const cast = new Map(assetIndex.characters.map((c) => [this.normalizeName(c.name), c.id]));
 
     const blocks = this.splitScenes(scriptText);
     const perSceneTarget = Math.max(
@@ -2306,6 +2714,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       Math.min(6, Math.ceil(targetShots / Math.max(1, blocks.length))),
     );
     let shotTotal = 0;
+    let segmentTotal = 0;
     const imageTargets: { shotId: string; prompt: string }[] = [];
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
@@ -2314,7 +2723,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         block.summary,
         ...block.dialogues.map((d) => `${d.character}：${d.text ?? ''}`),
       ]);
-      const locationId = await this.resolveSceneLocation(job.projectId, block.title, block.summary);
+      const locationId = await this.resolveSceneLocation(
+        job.projectId,
+        block.title,
+        block.summary,
+        assetIndex,
+      );
+      const sceneProps = await this.scenePropsFor(
+        job.projectId,
+        [block.title, block.summary, ...block.dialogues.map((d) => d.text ?? '')].join('\n'),
+      );
       const [scene] = await this.db
         .insert(scenes)
         .values({
@@ -2326,47 +2744,90 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           actions: [],
           characterIds: blockCast,
           locationId,
-          props: await this.scenePropsFor(
-            job.projectId,
-            [block.title, block.summary, ...block.dialogues.map((d) => d.text ?? '')].join('\n'),
-          ),
+          props: sceneProps,
           sortOrder: i + 1,
         })
         .returning({ id: scenes.id });
 
       const shotsToInsert = this.buildShots(block, prefs, perSceneTarget);
-      for (let j = 0; j < shotsToInsert.length; j++) {
-        const s = shotsToInsert[j];
-        // 对白镜只锁说话者（避免把无关角色塞进参考图稀释权重），无人对白则带全场 cast
-        const speakerId = s.speaker
-          ? [...cast.entries()].find(([name]) => this.normalizeName(s.speaker ?? '') === name)?.[1]
-          : undefined;
-        const shotCast = speakerId ? [speakerId] : blockCast.slice(0, 2);
-        const [inserted] = await this.db
-          .insert(shots)
+      /*
+       * 确定性拆分没有片段概念，但下游（段内镜像链、轴线校验、视频续接）
+       * 全都以片段为落点。这里按「≤15 秒、2-4 镜」自动归段，
+       * 让启发式路径与 LLM 路径共用同一套三级结构，而不是长期两套数据。
+       */
+      const pieces = planPieces(
+        shotsToInsert.map((s, j) => ({
+          ...s,
+          shotNumber: j + 1,
+          duration: prefs.shotDuration,
+        })),
+      );
+      let shotNo = 0;
+      for (const piece of pieces) {
+        const head = piece.shots[0];
+        segmentTotal += 1;
+        // eslint-disable-next-line no-await-in-loop
+        const [segment] = await this.db
+          .insert(segments)
           .values({
             projectId: job.projectId,
             sceneId: scene.id,
-            shotNumber: j + 1,
-            duration: prefs.shotDuration.toFixed(1),
-            shotSize: s.shotSize,
-            cameraAngle: 'eye_level',
-            lens: '50mm',
-            movement: s.movement,
-            dialogue: s.dialogue,
-            subtitleText: prefs.subtitleEnabled ? s.dialogue : undefined,
-            visualPrompt: s.visualPrompt,
-            subject: s.visualPrompt?.slice(0, 200),
-            characterIds: shotCast,
-            status: 'draft',
-            sortOrder: j + 1,
+            segmentNumber: piece.segmentNumber,
+            // 标题取首镜画面描述前 12 字，比「片段 1」可读；无描述时才用序号兜底
+            title: (head.visualPrompt ?? '').trim().slice(0, 12) || `第 ${piece.segmentNumber} 组`,
+            summary: head.visualPrompt?.slice(0, 300),
+            // 每场第一段承担定场功能，其余是推进；启发式不做更细的判断，不自称 turn/payoff
+            intent: i === 0 && piece.segmentNumber === 1 ? 'establish' : 'develop',
+            characterIds: blockCast,
+            locationId: locationId ?? null,
+            // 道具挂在首段：同场道具不变，段级重复挂会让参考图重复占名额
+            props: piece.segmentNumber === 1 ? sceneProps : [],
+            durationSeconds: piece.durationSeconds.toFixed(1),
+            sortOrder: piece.segmentNumber,
           })
-          .returning({ id: shots.id });
-        imageTargets.push({
-          shotId: inserted.id,
-          prompt: s.visualPrompt || s.dialogue || '全景 establishing shot',
-        });
-        shotTotal += 1;
+          .returning({ id: segments.id });
+
+        for (const s of piece.shots) {
+          shotNo += 1;
+          // 对白镜只锁说话者（避免把无关角色塞进参考图稀释权重），无人对白则带全场 cast
+          const speakerId = s.speaker
+            ? [...cast.entries()].find(([name]) => this.normalizeName(s.speaker ?? '') === name)?.[1]
+            : undefined;
+          const shotCast = speakerId ? [speakerId] : blockCast.slice(0, 2);
+          // eslint-disable-next-line no-await-in-loop
+          const [inserted] = await this.db
+            .insert(shots)
+            .values({
+              projectId: job.projectId,
+              sceneId: scene.id,
+              segmentId: segment.id,
+              shotNumber: shotNo,
+              duration: prefs.shotDuration.toFixed(1),
+              shotSize: s.shotSize,
+              cameraAngle: 'eye_level',
+              lens: '50mm',
+              movement: s.movement,
+              beats: deriveBeats({
+                duration: prefs.shotDuration,
+                dialogue: s.dialogue,
+                visualPrompt: s.visualPrompt,
+                shotSize: s.shotSize,
+              }),
+              dialogue: s.dialogue,
+              subtitleText: prefs.subtitleEnabled ? s.dialogue : undefined,
+              visualPrompt: s.visualPrompt,
+              subject: s.visualPrompt?.slice(0, 200),
+              characterIds: shotCast,
+              status: 'draft',
+              sortOrder: shotNo,
+            })
+            .returning({ id: shots.id });
+          imageTargets.push({
+            shotId: inserted.id,
+            prompt: s.visualPrompt || s.dialogue || '全景 establishing shot',
+          });
+          shotTotal += 1;
+        }
       }
     }
 
@@ -2410,6 +2871,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const bindings = await this.countSceneBindings(job.projectId);
     await this.generationService.settleJobSuccess(job.id, {
       scenesCount: blocks.length,
+      segmentsCount: segmentTotal,
       shotsCount: shotTotal,
       voicePreset: prefs.voicePreset,
       imageJobs: imageTargets.length,
@@ -2424,7 +2886,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       );
     }
     this.logger.log(
-      `剧本物化完成 ${job.id}：${blocks.length} 场 ${shotTotal} 镜，首帧任务 ${imageTargets.length}`,
+      `剧本物化完成 ${job.id}：${blocks.length} 场 ${segmentTotal} 片段 ${shotTotal} 镜，首帧任务 ${imageTargets.length}`,
     );
   }
 

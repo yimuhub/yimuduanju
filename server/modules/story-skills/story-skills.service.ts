@@ -9,8 +9,10 @@ import {
   buildNovelAdaptPrompt,
   buildRewritePrompt,
   buildRigPrompt,
+  type BoardsAssetCatalog,
 } from './skills';
 import { CAMERA_RIGS } from '@shared/camera-rigs';
+import { SPACE_ANCHORS } from '@shared/shot-craft';
 import { GENRE_PRESETS, genreBlock, getGenrePreset } from './genres';
 import { getStylePreset, getStylePresetById, STYLE_PRESETS } from './styles';
 import { mkdir, writeFile } from 'fs/promises';
@@ -67,11 +69,26 @@ export interface CharacterCard {
 
 export interface BoardsShot {
   scene: string;
+  /** 场次地点名（应命中资产清单里的 location） */
+  location?: string;
+  /** 片段号：同一场里相同 segment 归为一段 */
+  segment?: number;
+  segmentTitle?: string;
+  intent?: string;
+  spaceAnchor?: string;
+  axisDirection?: string;
+  /** 本镜真正出现在画面里的人物（只写清单内的名字） */
+  cast?: string[];
+  /** 本镜真正看见的道具（只写清单内的名字或编号） */
+  props?: string[];
   shotSize: string;
   movement: string;
+  screenDirection?: string;
   durationSeconds: number;
   dialogue?: string;
   visualPrompt?: string;
+  /** 3 秒分段节拍 */
+  beats?: { from: number; to: number; description: string; dialogue?: string }[];
 }
 
 export interface RigRunResult {
@@ -97,7 +114,7 @@ export class StorySkillsService {
    */
   private checkSkillsLock(): void {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports, global-require
       const lock = require('./skills-lock.json') as {
         skills?: Record<string, string>;
       };
@@ -317,6 +334,8 @@ export class StorySkillsService {
     temperature?: number;
     providerName?: string;
     targetSeconds?: number;
+    /** 已确认的资产清单：分镜只能引用清单里的人/景/道具 */
+    catalog?: BoardsAssetCatalog | null;
   }): Promise<{ skillId: StorySkillId; shots: BoardsShot[] }> {
     const scriptText = (input.scriptText ?? '').trim();
     if (!scriptText) throw new BadRequestException('剧本为空');
@@ -326,6 +345,7 @@ export class StorySkillsService {
       style,
       genreBlock(getGenrePreset(input.genreId)),
       input.targetSeconds,
+      input.catalog,
     );
     let raw: string;
     try {
@@ -351,17 +371,63 @@ export class StorySkillsService {
       if (!Array.isArray(arr)) return [];
       const sizes = new Set(['extreme_close_up', 'close_up', 'medium_close_up', 'medium', 'wide', 'long']);
       const moves = new Set(CAMERA_RIGS.map((r) => r.movement));
-      return arr.slice(0, 60).flatMap((b) => {
+      const anchors = new Set(SPACE_ANCHORS);
+      const axes = new Set(['left_to_right', 'right_to_left', 'frontal', 'depth']);
+      const dirs = new Set([
+        'left_to_right',
+        'right_to_left',
+        'toward_camera',
+        'away_from_camera',
+        'static',
+      ]);
+      const intents = new Set(['establish', 'develop', 'turn', 'payoff', 'transition']);
+      const pick = (v: unknown, allowed: Set<string>) =>
+        typeof v === 'string' && allowed.has(v) ? v : undefined;
+      const names = (v: unknown, cap: number) =>
+        Array.isArray(v)
+          ? v
+              .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+              .map((x) => x.trim().slice(0, 60))
+              .slice(0, cap)
+          : undefined;
+      return arr.slice(0, 80).flatMap((b) => {
         const r = (b ?? {}) as Record<string, unknown>;
         const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 1000) : undefined);
         const dur = Number(r.durationSeconds);
+        const beatsRaw = Array.isArray(r.beats) ? r.beats : [];
+        const beats = beatsRaw
+          .slice(0, 8)
+          .flatMap((x) => {
+            const o = (x ?? {}) as Record<string, unknown>;
+            const from = Number(o.from);
+            const to = Number(o.to);
+            const description = str(o.description);
+            if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || !description) return [];
+            return [{
+              from: Math.max(0, Math.round(from * 10) / 10),
+              to: Math.min(60, Math.round(to * 10) / 10),
+              description,
+              dialogue: str(o.dialogue) || undefined,
+            }];
+          });
+        const segNo = Number(r.segment);
         return [{
           scene: typeof r.scene === 'string' && r.scene.trim() ? r.scene.slice(0, 200) : '未命名场',
+          location: str(r.location),
+          segment: Number.isFinite(segNo) && segNo > 0 ? Math.round(segNo) : undefined,
+          segmentTitle: str(r.segmentTitle),
+          intent: pick(r.intent, intents),
+          spaceAnchor: pick(r.spaceAnchor, anchors),
+          axisDirection: pick(r.axisDirection, axes),
+          cast: names(r.cast, 6),
+          props: names(r.props, 6),
           shotSize: typeof r.shotSize === 'string' && sizes.has(r.shotSize) ? r.shotSize : 'medium',
           movement: typeof r.movement === 'string' && moves.has(r.movement) ? r.movement : 'static',
+          screenDirection: pick(r.screenDirection, dirs),
           durationSeconds: Number.isFinite(dur) ? Math.max(1, Math.min(30, Math.round(dur))) : 8,
           dialogue: str(r.dialogue),
           visualPrompt: str(r.visualPrompt),
+          beats: beats.length > 0 ? beats : undefined,
         }];
       });
     } catch {
