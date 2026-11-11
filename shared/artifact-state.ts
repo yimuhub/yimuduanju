@@ -62,6 +62,8 @@ export interface DiagnoseShotInput {
   duration: number;
   shotSize?: string | null;
   dialogue?: string | null;
+  /** 当前分镜画面描述：与 framePrompt 比对来判断首帧是否过期 */
+  visualPrompt?: string | null;
   characterIds?: string[];
   referenceImageUrls?: string[];
   startFrameUrl?: string | null;
@@ -69,9 +71,13 @@ export interface DiagnoseShotInput {
   voiceUrl?: string | null;
   screenDirection?: ScreenDirection | null;
   axisDirection?: AxisDirection | null;
-  /** 产物生成时间与镜头最后修改时间（ISO）；两者都有才能判 stale */
-  frameProducedAt?: string | null;
-  updatedAt?: string | null;
+  /**
+   * 生成当前首帧时实际送出的提示词（来自成功任务）。
+   * 与当前 visualPrompt 不一致 = 这张首帧代表的不是这版分镜 → stale。
+   * 不能用 shots.updated_at 与任务时间比较：产物回写（video_url / status）
+   * 本身就会刷新 updated_at，那样会把「刚出完图」的镜头全判成过期。
+   */
+  framePrompt?: string | null;
 }
 
 export interface DiagnoseSegmentInput {
@@ -119,13 +125,15 @@ export interface ProjectDiagnosis {
   summary: string;
 }
 
+/**
+ * 产物是否还代表当前分镜：比对「生成时用的提示词」与「现在的提示词」。
+ * 拿不到生成时的提示词就不判 —— 宁可漏报，也不要把整片误标成过期。
+ */
 function isStale(shot: DiagnoseShotInput): boolean {
-  if (!shot.frameProducedAt || !shot.updatedAt) return false;
-  const produced = Date.parse(shot.frameProducedAt);
-  const updated = Date.parse(shot.updatedAt);
-  if (!Number.isFinite(produced) || !Number.isFinite(updated)) return false;
-  // 镜头在出图之后又被改过 → 这张首帧已经不代表当前分镜
-  return updated - produced > 1000;
+  const current = (shot.visualPrompt ?? '').trim();
+  const used = (shot.framePrompt ?? '').trim();
+  if (!current || !used) return false;
+  return current !== used;
 }
 
 /**
@@ -192,13 +200,13 @@ export function diagnoseShot(
     issues.push({ ...base, level: 'info', code: 'artifact_missing', message: '有台词但还没有配音' });
   }
 
-  // 3) 过期：首帧产出之后镜头又被改过
+  // 3) 过期：首帧是按旧提示词生成的，分镜改过之后它已经不代表这版
   if (shot.startFrameUrl && isStale(shot)) {
     issues.push({
       ...base,
       level: 'warn',
       code: 'artifact_stale',
-      message: '首帧生成后分镜又被修改过，当前首帧不代表这版分镜',
+      message: '首帧是按修改前的提示词生成的，当前首帧不代表这版分镜',
     });
     return { ...base, state: 'stale', issues };
   }

@@ -86,6 +86,22 @@ const ProjectStoryboardTab = () => {
   // 片段（场 → 片段 → 镜）与一致性体检：把「哪里不连贯」在分镜阶段就摆出来
   const [segments, setSegments] = useState<Segment[]>([]);
   const [diagnosis, setDiagnosis] = useState<ProjectDiagnosis | null>(null);
+  const [rebuildingSegments, setRebuildingSegments] = useState(false);
+
+  const handleRebuildSegments = async () => {
+    if (!id || rebuildingSegments) return;
+    setRebuildingSegments(true);
+    try {
+      const r = await storyboard.rebuildSegments(id);
+      toast.success(`已按规则归段：${r.segments} 段 / ${r.shots} 镜`, { duration: 2400 });
+      await refreshDiagnosis();
+    } catch (err) {
+      logger.error('Rebuild segments failed:', String(err));
+      toast.error('重建片段失败');
+    } finally {
+      setRebuildingSegments(false);
+    }
+  };
 
   const refreshDiagnosis = async () => {
     if (!id) return;
@@ -535,6 +551,17 @@ const ProjectStoryboardTab = () => {
                   <RefreshCw className="h-3 w-3" />
                   重新体检
                 </button>
+                {segments.length === 0 && shots.length > 0 && (
+                  <button
+                    onClick={() => void handleRebuildSegments()}
+                    disabled={rebuildingSegments}
+                    className="inline-flex items-center gap-1 rounded-md border border-primary/40 px-2 py-1 text-primary hover:bg-primary/5 disabled:opacity-60"
+                    title="按「≤15 秒 / 2-4 镜」把现有镜头归段，并回填 3 秒节拍（不改镜头内容）"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${rebuildingSegments ? 'animate-spin' : ''}`} />
+                    {rebuildingSegments ? '归段中…' : '按规则重建片段'}
+                  </button>
+                )}
               </div>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">{diagnosis.summary}</p>

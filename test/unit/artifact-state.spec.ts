@@ -28,8 +28,8 @@ const baseShot = {
   videoUrl: '/videos/s1.mp4',
   voiceUrl: '/voice/s1.wav',
   screenDirection: 'left_to_right' as const,
-  updatedAt: '2026-11-11T10:00:00.000Z',
-  frameProducedAt: '2026-11-11T10:05:00.000Z',
+  visualPrompt: '林晚在旧书店抬头望向他',
+  framePrompt: '林晚在旧书店抬头望向他',
 };
 
 describe('artifact-state · 单镜四态', () => {
@@ -66,13 +66,21 @@ describe('artifact-state · 单镜四态', () => {
     expect(diagnoseShot(shot, { ...ctx, requireVideo: true }).state).toBe('missing');
   });
 
-  test('首帧产出后分镜又被改过 = 过期', () => {
+  test('首帧是按旧提示词生成的 = 过期', () => {
     const d = diagnoseShot(
-      { ...baseShot, updatedAt: '2026-11-11T11:00:00.000Z', frameProducedAt: '2026-11-11T10:05:00.000Z' },
+      { ...baseShot, visualPrompt: '林晚把怀表放进抽屉', framePrompt: '林晚在旧书店抬头望向他' },
       { assets: [readyChar] },
     );
     expect(d.state).toBe('stale');
     expect(d.issues.some((i) => i.code === 'artifact_stale')).toBe(true);
+  });
+
+  test('拿不到生成时提示词就不判过期（不误报）', () => {
+    const d = diagnoseShot(
+      { ...baseShot, visualPrompt: '改过的描述', framePrompt: null },
+      { assets: [readyChar] },
+    );
+    expect(d.state).toBe('current');
   });
 
   test('齐全且未过期 = 当前可用', () => {

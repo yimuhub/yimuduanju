@@ -91,6 +91,15 @@ export const getConsistency = (projectId: string, requireVideo = false) =>
     )
     .then((res) => res.data);
 
+/** 存量项目补三级结构：按「≤15 秒 / 2-4 镜」把现有镜头归段并回填 3 秒节拍 */
+export const rebuildSegments = (projectId: string) =>
+  axiosForBackend
+    .post<{ segments: number; shots: number }>(
+      `/api/projects/${projectId}/storyboard/segments/rebuild`,
+      {},
+    )
+    .then((res) => res.data);
+
 export const getShot = (projectId: string, shotId: string) =>
   axiosForBackend
     .get<Shot>(`/api/projects/${projectId}/storyboard/shots/${shotId}`)

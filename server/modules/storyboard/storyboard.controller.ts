@@ -65,6 +65,14 @@ export class StoryboardController {
     return this.storyboardService.listSegments(projectId);
   }
 
+  /** 存量项目补三级结构：按「≤15 秒 / 2-4 镜」把现有镜头归段并回填节拍（不改镜头内容） */
+  @Post('segments/rebuild')
+  async rebuildSegments(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<{ segments: number; shots: number }> {
+    return this.storyboardService.rebuildSegments(projectId);
+  }
+
   // ========== Scenes ==========
   @Get('scenes')
   async listScenes(

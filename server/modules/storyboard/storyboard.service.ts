@@ -18,6 +18,7 @@ import type {
   SplitShotResult,
 } from '@shared/api.interface';
 import { diagnoseProject, type ProjectDiagnosis } from '@shared/artifact-state';
+import { deriveBeats, planPieces } from '@shared/shot-craft';
 import {
   CAMERA_ANGLE_LABELS,
   SHOT_SIZE_LABELS,
@@ -1525,11 +1526,11 @@ export class StoryboardService {
         })
         .from(locations)
         .where(eq(locations.projectId, projectId)),
-      // 首帧产出时间：用来判 stale（出图之后分镜又被改过）
+      // 首帧产出信息：取最近一次成功出图任务用的提示词，用来判「这张帧还代表这版分镜吗」
       this.db
         .select({
           targetId: generationJobs.targetId,
-          producedAt: sql<string>`max(${generationJobs.updatedAt})`,
+          prompt: sql<string>`(array_agg(${generationJobs.inputData}->>'prompt' ORDER BY ${generationJobs.updatedAt} DESC))[1]`,
         })
         .from(generationJobs)
         .where(
@@ -1543,10 +1544,10 @@ export class StoryboardService {
         .groupBy(generationJobs.targetId),
     ]);
 
-    const frameAt = new Map(
+    const framePromptAt = new Map(
       frameJobRows
         .filter((r) => r.targetId)
-        .map((r) => [r.targetId as string, new Date(r.producedAt).toISOString()]),
+        .map((r) => [r.targetId as string, r.prompt ?? null]),
     );
     const sceneNumberById = new Map(sceneRows.map((s) => [s.id, s.sceneNumber]));
     const segmentNumberById = new Map(segRows.map((s) => [s.id, s.segmentNumber]));
@@ -1595,16 +1596,105 @@ export class StoryboardService {
         duration: Number(s.duration),
         shotSize: s.shotSize,
         dialogue: s.dialogue,
+        visualPrompt: s.visualPrompt,
         characterIds: s.characterIds ?? [],
         referenceImageUrls: s.referenceImageUrls ?? [],
         startFrameUrl: s.startFrameUrl,
         videoUrl: s.videoUrl,
         voiceUrl: s.voiceUrl,
         screenDirection: (s.screenDirection as Shot['screenDirection']) ?? null,
-        updatedAt: s.updatedAt.toISOString(),
-        frameProducedAt: frameAt.get(s.id) ?? null,
+        framePrompt: framePromptAt.get(s.id) ?? null,
       })),
     });
+  }
+
+  /**
+   * 按规则重建片段（存量项目补三级结构）。
+   *
+   * P1 之前物化的项目只有「场 → 镜」，没有 segments，于是段内镜像链、
+   * 轴线校验、视频续接全部失效。这里按「≤15 秒 / 2-4 镜」把现有镜头归段，
+   * 并顺带回填缺失的 3 秒节拍 —— 不改动镜头内容，只补编组。
+   */
+  async rebuildSegments(projectId: string): Promise<{ segments: number; shots: number }> {
+    const [sceneRows, shotRows] = await Promise.all([
+      this.db
+        .select()
+        .from(scenes)
+        .where(eq(scenes.projectId, projectId))
+        .orderBy(asc(scenes.sceneNumber)),
+      this.db
+        .select()
+        .from(shots)
+        .where(eq(shots.projectId, projectId))
+        .orderBy(asc(shots.sceneId), asc(shots.shotNumber)),
+    ]);
+    if (shotRows.length === 0) return { segments: 0, shots: 0 };
+
+    await this.db.delete(segments).where(eq(segments.projectId, projectId));
+
+    let segmentTotal = 0;
+    for (const scene of sceneRows) {
+      const list = shotRows.filter((s) => s.sceneId === scene.id);
+      if (list.length === 0) continue;
+      const pieces = planPieces(
+        list.map((s) => ({
+          shotNumber: s.shotNumber,
+          duration: Number(s.duration ?? 0),
+          segment: null,
+          id: s.id,
+          dialogue: s.dialogue,
+          shotSize: s.shotSize,
+        })),
+      );
+      for (const piece of pieces) {
+        const headShot = list.find((s) => s.id === piece.shots[0].id);
+        const castIds = [
+          ...new Set(piece.shots.flatMap((p) => list.find((s) => s.id === p.id)?.characterIds ?? [])),
+        ];
+        segmentTotal += 1;
+        const [seg] = await this.db
+          .insert(segments)
+          .values({
+            projectId,
+            sceneId: scene.id,
+            segmentNumber: piece.segmentNumber,
+            title:
+              (headShot?.visualPrompt ?? '').trim().slice(0, 12) || `第 ${piece.segmentNumber} 组`,
+            summary: headShot?.visualPrompt?.slice(0, 300),
+            intent: piece.segmentNumber === 1 ? 'establish' : 'develop',
+            characterIds: castIds.length > 0 ? castIds : (scene.characterIds ?? []),
+            locationId: scene.locationId ?? null,
+            props: piece.segmentNumber === 1 ? (scene.props ?? []) : [],
+            durationSeconds: piece.durationSeconds.toFixed(1),
+            sortOrder: piece.segmentNumber,
+          })
+          .returning({ id: segments.id });
+
+        for (const p of piece.shots) {
+          const row = list.find((s) => s.id === p.id);
+          if (!row) continue;
+          await this.db
+            .update(shots)
+            .set({
+              segmentId: seg.id,
+              // 只补空，不覆盖用户/模型已经写好的节拍
+              beats:
+                (row.beats as unknown[] | null)?.length
+                  ? (row.beats as unknown[])
+                  : deriveBeats({
+                      duration: Number(row.duration ?? 0),
+                      dialogue: row.dialogue,
+                      visualPrompt: row.visualPrompt,
+                      shotSize: row.shotSize,
+                    }),
+              updatedAt: new Date(),
+            })
+            .where(eq(shots.id, row.id));
+        }
+      }
+    }
+    this.logger.log(`已重建片段 ${projectId}：${segmentTotal} 段 / ${shotRows.length} 镜`);
+    return { segments: segmentTotal, shots: shotRows.length };
   }
 
   /** 项目的片段列表（按场次、段号排序）：分镜 UI 按三级展示时用 */
