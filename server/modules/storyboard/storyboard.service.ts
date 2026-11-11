@@ -1,9 +1,11 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { scenes, shots, characters, generationJobs, projects, assets } from '@server/database/schema';
+import { scenes, segments, shots, characters, generationJobs, locations, projects, assets } from '@server/database/schema';
 import { eq, desc, asc, and, count, inArray, lt, sql } from 'drizzle-orm';
 import type {
+  CharacterIdentityKit,
   Scene,
+  Segment,
   Shot,
   WhitemodelMeta,
   Dialogue,
@@ -15,6 +17,8 @@ import type {
   BlockedVideoSummary,
   SplitShotResult,
 } from '@shared/api.interface';
+import { diagnoseProject, type ProjectDiagnosis } from '@shared/artifact-state';
+import { deriveBeats, planPieces } from '@shared/shot-craft';
 import {
   CAMERA_ANGLE_LABELS,
   SHOT_SIZE_LABELS,
@@ -1440,6 +1444,13 @@ export class StoryboardService {
 
   // ========== Parse Script ==========
   // P1 DTO 对齐：签名收敛为实际消费的字段（旧 ParseScriptRequest.projectId 从未被读取，来源以 URL 参数为准）
+  /**
+   * 手动触发剧本 → 分镜物化。
+   * 注意：这里**不直接**建 parse_script，而是先建 asset_prep。
+   * 人物/场景定妆图是一切跨镜一致性的前提，任何进入物化的入口都必须经过资产门，
+   * 否则「解析剧本」按钮就成了绕过资产阶段的后门（旧实现正是如此）。
+   * asset_prep 会在资产就绪后自动链式接上 parse_script。
+   */
   async parseScript(
     projectId: string,
     dto: { scriptText: string },
@@ -1449,7 +1460,7 @@ export class StoryboardService {
       .insert(generationJobs)
       .values({
         projectId,
-        jobType: 'parse_script',
+        jobType: 'asset_prep',
         targetType: 'project',
         targetId: projectId,
         status: 'pending',
@@ -1488,12 +1499,240 @@ export class StoryboardService {
     };
   }
 
+  /**
+   * 项目级一致性体检：产物四态（current/stale/missing/blocked）+ 结构性告警。
+   * 目的是把「这版分镜到底能不能拍」这件事变成一个可查询的结果，
+   * 而不是等成片出来才发现跳轴、缺场景、人物没定妆。
+   */
+  async diagnose(projectId: string, opts?: { requireVideo?: boolean }): Promise<ProjectDiagnosis> {
+    const [sceneRows, segRows, shotRows, charRows, locRows, frameJobRows] = await Promise.all([
+      this.db.select().from(scenes).where(eq(scenes.projectId, projectId)),
+      this.db.select().from(segments).where(eq(segments.projectId, projectId)),
+      this.db.select().from(shots).where(eq(shots.projectId, projectId)),
+      this.db
+        .select({
+          id: characters.id,
+          name: characters.name,
+          identityKit: characters.identityKit,
+          referenceImageUrls: characters.referenceImageUrls,
+        })
+        .from(characters)
+        .where(eq(characters.projectId, projectId)),
+      this.db
+        .select({
+          id: locations.id,
+          name: locations.name,
+          referenceImageUrls: locations.referenceImageUrls,
+        })
+        .from(locations)
+        .where(eq(locations.projectId, projectId)),
+      // 首帧产出信息：取最近一次成功出图任务用的提示词，用来判「这张帧还代表这版分镜吗」
+      this.db
+        .select({
+          targetId: generationJobs.targetId,
+          prompt: sql<string>`(array_agg(${generationJobs.inputData}->>'prompt' ORDER BY ${generationJobs.updatedAt} DESC))[1]`,
+        })
+        .from(generationJobs)
+        .where(
+          and(
+            eq(generationJobs.projectId, projectId),
+            eq(generationJobs.jobType, 'image'),
+            eq(generationJobs.targetType, 'shot'),
+            eq(generationJobs.status, 'succeeded'),
+          ),
+        )
+        .groupBy(generationJobs.targetId),
+    ]);
+
+    const framePromptAt = new Map(
+      frameJobRows
+        .filter((r) => r.targetId)
+        .map((r) => [r.targetId as string, r.prompt ?? null]),
+    );
+    const sceneNumberById = new Map(sceneRows.map((s) => [s.id, s.sceneNumber]));
+    const segmentNumberById = new Map(segRows.map((s) => [s.id, s.segmentNumber]));
+
+    return diagnoseProject({
+      requireVideo: opts?.requireVideo,
+      assets: [
+        ...charRows.map((c) => {
+          const kit = (c.identityKit as CharacterIdentityKit | null) ?? null;
+          return {
+            id: c.id,
+            name: c.name,
+            kind: 'character' as const,
+            ready: Boolean(kit?.portraitUrl || (c.referenceImageUrls ?? [])[0] || kit?.sheetUrl),
+          };
+        }),
+        ...locRows.map((l) => ({
+          id: l.id,
+          name: l.name,
+          kind: 'location' as const,
+          ready: Boolean((l.referenceImageUrls ?? [])[0]),
+        })),
+      ],
+      scenes: sceneRows.map((s) => ({
+        id: s.id,
+        sceneNumber: s.sceneNumber,
+        locationId: s.locationId,
+        characterIds: s.characterIds ?? [],
+      })),
+      segments: segRows.map((s) => ({
+        id: s.id,
+        sceneId: s.sceneId,
+        segmentNumber: s.segmentNumber,
+        durationSeconds: Number(s.durationSeconds ?? 0),
+        characterIds: s.characterIds ?? [],
+        axisDirection: (s.axisDirection as Segment['axisDirection']) ?? null,
+        spaceAnchor: s.spaceAnchor,
+      })),
+      shots: shotRows.map((s) => ({
+        id: s.id,
+        sceneId: s.sceneId,
+        sceneNumber: sceneNumberById.get(s.sceneId),
+        segmentId: s.segmentId,
+        segmentNumber: s.segmentId ? segmentNumberById.get(s.segmentId) : undefined,
+        shotNumber: s.shotNumber,
+        duration: Number(s.duration),
+        shotSize: s.shotSize,
+        dialogue: s.dialogue,
+        visualPrompt: s.visualPrompt,
+        characterIds: s.characterIds ?? [],
+        referenceImageUrls: s.referenceImageUrls ?? [],
+        startFrameUrl: s.startFrameUrl,
+        videoUrl: s.videoUrl,
+        voiceUrl: s.voiceUrl,
+        screenDirection: (s.screenDirection as Shot['screenDirection']) ?? null,
+        framePrompt: framePromptAt.get(s.id) ?? null,
+      })),
+    });
+  }
+
+  /**
+   * 按规则重建片段（存量项目补三级结构）。
+   *
+   * P1 之前物化的项目只有「场 → 镜」，没有 segments，于是段内镜像链、
+   * 轴线校验、视频续接全部失效。这里按「≤15 秒 / 2-4 镜」把现有镜头归段，
+   * 并顺带回填缺失的 3 秒节拍 —— 不改动镜头内容，只补编组。
+   */
+  async rebuildSegments(projectId: string): Promise<{ segments: number; shots: number }> {
+    const [sceneRows, shotRows] = await Promise.all([
+      this.db
+        .select()
+        .from(scenes)
+        .where(eq(scenes.projectId, projectId))
+        .orderBy(asc(scenes.sceneNumber)),
+      this.db
+        .select()
+        .from(shots)
+        .where(eq(shots.projectId, projectId))
+        .orderBy(asc(shots.sceneId), asc(shots.shotNumber)),
+    ]);
+    if (shotRows.length === 0) return { segments: 0, shots: 0 };
+
+    await this.db.delete(segments).where(eq(segments.projectId, projectId));
+
+    let segmentTotal = 0;
+    for (const scene of sceneRows) {
+      const list = shotRows.filter((s) => s.sceneId === scene.id);
+      if (list.length === 0) continue;
+      const pieces = planPieces(
+        list.map((s) => ({
+          shotNumber: s.shotNumber,
+          duration: Number(s.duration ?? 0),
+          segment: null,
+          id: s.id,
+          dialogue: s.dialogue,
+          shotSize: s.shotSize,
+        })),
+      );
+      for (const piece of pieces) {
+        const headShot = list.find((s) => s.id === piece.shots[0].id);
+        const castIds = [
+          ...new Set(piece.shots.flatMap((p) => list.find((s) => s.id === p.id)?.characterIds ?? [])),
+        ];
+        segmentTotal += 1;
+        const [seg] = await this.db
+          .insert(segments)
+          .values({
+            projectId,
+            sceneId: scene.id,
+            segmentNumber: piece.segmentNumber,
+            title:
+              (headShot?.visualPrompt ?? '').trim().slice(0, 12) || `第 ${piece.segmentNumber} 组`,
+            summary: headShot?.visualPrompt?.slice(0, 300),
+            intent: piece.segmentNumber === 1 ? 'establish' : 'develop',
+            characterIds: castIds.length > 0 ? castIds : (scene.characterIds ?? []),
+            locationId: scene.locationId ?? null,
+            props: piece.segmentNumber === 1 ? (scene.props ?? []) : [],
+            durationSeconds: piece.durationSeconds.toFixed(1),
+            sortOrder: piece.segmentNumber,
+          })
+          .returning({ id: segments.id });
+
+        for (const p of piece.shots) {
+          const row = list.find((s) => s.id === p.id);
+          if (!row) continue;
+          await this.db
+            .update(shots)
+            .set({
+              segmentId: seg.id,
+              // 只补空，不覆盖用户/模型已经写好的节拍
+              beats:
+                (row.beats as unknown[] | null)?.length
+                  ? (row.beats as unknown[])
+                  : deriveBeats({
+                      duration: Number(row.duration ?? 0),
+                      dialogue: row.dialogue,
+                      visualPrompt: row.visualPrompt,
+                      shotSize: row.shotSize,
+                    }),
+              updatedAt: new Date(),
+            })
+            .where(eq(shots.id, row.id));
+        }
+      }
+    }
+    this.logger.log(`已重建片段 ${projectId}：${segmentTotal} 段 / ${shotRows.length} 镜`);
+    return { segments: segmentTotal, shots: shotRows.length };
+  }
+
+  /** 项目的片段列表（按场次、段号排序）：分镜 UI 按三级展示时用 */
+  async listSegments(projectId: string): Promise<Segment[]> {
+    const rows = await this.db
+      .select()
+      .from(segments)
+      .where(eq(segments.projectId, projectId))
+      .orderBy(asc(segments.sceneId), asc(segments.segmentNumber));
+    return rows.map((row) => ({
+      id: row.id,
+      projectId: row.projectId,
+      sceneId: row.sceneId,
+      segmentNumber: row.segmentNumber,
+      title: row.title ?? undefined,
+      summary: row.summary ?? undefined,
+      intent: row.intent ?? undefined,
+      spaceAnchor: (row.spaceAnchor as Segment['spaceAnchor']) ?? undefined,
+      axisDirection: (row.axisDirection as Segment['axisDirection']) ?? undefined,
+      characterIds: row.characterIds ?? [],
+      locationId: row.locationId ?? undefined,
+      props: row.props ?? [],
+      durationSeconds: Number(row.durationSeconds ?? 0),
+      sortOrder: row.sortOrder ?? 0,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
   private mapShot(row: typeof shots.$inferSelect): Shot {
     return {
       id: row.id,
       projectId: row.projectId,
       sceneId: row.sceneId,
+      segmentId: row.segmentId ?? undefined,
       shotNumber: row.shotNumber,
+      screenDirection: (row.screenDirection as Shot['screenDirection']) ?? undefined,
+      beats: (row.beats as Shot['beats']) ?? undefined,
       duration: Number(row.duration),
       inPoint: row.inPoint != null ? Number(row.inPoint) : undefined,
       outPoint: row.outPoint != null ? Number(row.outPoint) : undefined,

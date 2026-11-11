@@ -1,6 +1,7 @@
 import { axiosForBackend } from '@client/src/api/http';
 import type {
   Scene,
+  Segment,
   Shot,
   ParseScriptRequest,
   ParseScriptResponse,
@@ -11,6 +12,7 @@ import type {
   StoryGenreInfo,
   BlockedVideoSummary,
 } from '@shared/api.interface';
+import type { ProjectDiagnosis } from '@shared/artifact-state';
 
 export const parseScript = (data: ParseScriptRequest) =>
   // P1 断链修复：旧地址 /api/storyboard/parse-script 服务端不存在（404）；
@@ -67,6 +69,35 @@ export const listShots = (projectId: string, sceneId: string) =>
 export const listAllShots = (projectId: string) =>
   axiosForBackend
     .get<Shot[]>(`/api/projects/${projectId}/storyboard/shots`)
+    .then((res) => res.data);
+
+/**
+ * 片段列表（场 → 片段 → 镜 的中间层）。
+ * 一段 = 同一空间内一段连续动作，≤15 秒含 2-4 镜；轴线与资产引用挂在段上。
+ */
+export const listSegments = (projectId: string) =>
+  axiosForBackend
+    .get<Segment[]>(`/api/projects/${projectId}/storyboard/segments`)
+    .then((res) => res.data);
+
+/**
+ * 一致性体检：产物四态（可用/缺失/过期/阻塞）+ 跳轴、景别、段超长等结构问题。
+ * 这是「为什么成片不连贯」在分镜阶段的可见化入口。
+ */
+export const getConsistency = (projectId: string, requireVideo = false) =>
+  axiosForBackend
+    .get<ProjectDiagnosis>(
+      `/api/projects/${projectId}/storyboard/consistency${requireVideo ? '?requireVideo=true' : ''}`,
+    )
+    .then((res) => res.data);
+
+/** 存量项目补三级结构：按「≤15 秒 / 2-4 镜」把现有镜头归段并回填 3 秒节拍 */
+export const rebuildSegments = (projectId: string) =>
+  axiosForBackend
+    .post<{ segments: number; shots: number }>(
+      `/api/projects/${projectId}/storyboard/segments/rebuild`,
+      {},
+    )
     .then((res) => res.data);
 
 export const getShot = (projectId: string, shotId: string) =>

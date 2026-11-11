@@ -387,8 +387,10 @@ export class ProjectsService {
 
       const project = inserted[0];
 
-      // 创建首个 generation job：扩写开 = script 技能任务（LLM 成剧本后链式物化）；
-      // 扩写关 = parse_script 启发式直接拆分
+      // 创建首个 generation job：扩写开 = script 技能任务（LLM 成剧本后链式资产前置）；
+      // 扩写关 = asset_prep（先补齐人物/场景清单并排定妆图，再拆分镜）。
+      // 注意：扩写关这一支旧实现直接 parse_script，绕过了整个资产阶段 —— 这就是
+      // 「人物/场景都没有图，分镜凭空生成」的入口级 bug。
       const firstJob = expandScript
         ? {
             jobType: 'script' as const,
@@ -401,7 +403,7 @@ export class ProjectsService {
             },
           }
         : {
-            jobType: 'parse_script' as const,
+            jobType: 'asset_prep' as const,
             inputData: { prompt: dto.prompt },
           };
       const jobInserted = await tx
@@ -499,7 +501,8 @@ export class ProjectsService {
     );
 
     if (stage === 'script') {
-      // 剧本确认 → 物化分镜：仅当尚未物化（无镜头）且没有在途物化任务时补链
+      // 剧本确认 → 资产前置：先补齐人物/场景清单并排定妆图，再由 asset_prep
+      // 链式接分镜物化。旧实现直接建 parse_script，跳过资产阶段 —— 流程错位起点。
       const [shotCountRows, parseJobs] = await Promise.all([
         this.db.select({ c: count() }).from(shots).where(eq(shots.projectId, id)),
         this.db
@@ -508,7 +511,7 @@ export class ProjectsService {
           .where(
             and(
               eq(generationJobs.projectId, id),
-              inArray(generationJobs.jobType, ['parse_script', 'boards']),
+              inArray(generationJobs.jobType, ['parse_script', 'boards', 'asset_prep']),
               inArray(generationJobs.status, ['pending', 'queued', 'running', 'retrying', 'succeeded']),
             ),
           )
@@ -516,18 +519,18 @@ export class ProjectsService {
       ]);
       if (Number(shotCountRows[0]?.c ?? 0) === 0 && parseJobs.length === 0) {
         if (!current.scriptText?.trim()) {
-          throw new BadRequestException('项目还没有剧本内容，无法物化分镜');
+          throw new BadRequestException('项目还没有剧本内容，无法进入资产制作');
         }
         await this.db.insert(generationJobs).values({
           projectId: id,
-          jobType: 'parse_script',
+          jobType: 'asset_prep',
           targetType: 'project',
           targetId: id,
           status: 'pending',
           priority: 80,
           inputData: { prompt: current.scriptText },
         });
-        this.logger.log(`剧本确认门通过 ${id}：已创建物化任务`);
+        this.logger.log(`剧本确认门通过 ${id}：已创建资产前置任务（后续自动接分镜物化）`);
       }
     }
 
@@ -641,6 +644,10 @@ export class ProjectsService {
           const relatedJobs = jobRows.filter((j) => {
             const jt = j.jobType;
             if (step === 'parsing') return jt === 'parse_script' || jt === 'script' || jt === 'boards';
+            // 资产阶段（asset-first）：清单补齐 + 人物/场景定妆图排产，真正的 job 是 asset_prep
+            if (step === 'planning' || step === 'bible_ready') {
+              return jt === 'asset_prep' || jt === 'image';
+            }
             // storyboard 阶段实际任务是物化链（parse_script/script/boards），不存在 jobType=storyboard
             if (step === 'storyboard_ready') return jt === 'parse_script' || jt === 'script' || jt === 'boards';
             if (step === 'assets_generating') return jt === 'image';

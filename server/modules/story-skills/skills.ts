@@ -215,27 +215,78 @@ export function buildCharacterPrompt(
   );
 }
 
+/** 分镜表可用的已确认资产清单（真实存在于项目里的人物/场景/道具） */
+export interface BoardsAssetCatalog {
+  characters?: { name: string; roleType?: string }[];
+  locations?: { name: string; timeOfDay?: string }[];
+  props?: { code?: string; name: string; category?: string }[];
+}
+
+/** 把资产清单渲染成「只能用这些」的约束块；空清单返回空串（不虚构） */
+export function renderAssetCatalog(catalog?: BoardsAssetCatalog | null): string {
+  if (!catalog) return '';
+  const lines: string[] = [];
+  const chars = (catalog.characters ?? []).filter((c) => c.name?.trim());
+  if (chars.length > 0) {
+    lines.push(
+      `角色：${chars
+        .map((c) => (c.roleType === 'lead' || c.roleType === 'protagonist' ? `${c.name}（主角）` : c.name))
+        .join('、')}`,
+    );
+  }
+  const locs = (catalog.locations ?? []).filter((l) => l.name?.trim());
+  if (locs.length > 0) {
+    lines.push(`场景：${locs.map((l) => (l.timeOfDay ? `${l.name}（${l.timeOfDay}）` : l.name)).join('、')}`);
+  }
+  const propList = (catalog.props ?? []).filter((p) => p.name?.trim());
+  if (propList.length > 0) {
+    lines.push(`道具：${propList.map((p) => [p.code?.trim(), p.name].filter(Boolean).join(' ')).join('、')}`);
+  }
+  if (lines.length === 0) return '';
+  return [
+    '【可用资产 · 只能用清单里的名字，不得新造人物/场景/道具】',
+    ...lines,
+    'cast / location / props 必须逐字使用上面的名称或编号；清单里没有的东西不要写进这三个字段，需要出现的背景陈设直接写进 visualPrompt 描述，不要当成道具。',
+  ].join('\n');
+}
+
 /**
  * 分镜表技能（移植 ToonFlow storyboard_table + production_execution 思想）。
- * 输出 JSON 数组，调用方直接物化为 scenes/shots（解析失败回落 parse_script）。
+ * 输出扁平镜头数组，`scene` + `segment` 两级归组 → 调用方建「场 → 片段 → 镜」三级结构。
+ * 解析失败回落 parse_script。
  */
-export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出任何解释文字，格式如下：
-[{"scene":"第一场 雨夜·外","shotSize":"wide","movement":"dolly","durationSeconds":8,"dialogue":"追！","visualPrompt":"黑衣人在雨夜街道狂奔，路灯拉出长影"}]
-shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov；durationSeconds 4-15整数：默认 8-10，动作/对白需要完整起承转合的镜头 10-12，快切/过渡 4-6；同 scene 字段的镜归为一场。`;
+export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出任何解释文字。数组每一项是**一个镜头**，按拍摄顺序排列，格式如下：
+[{"scene":"第一场 雨夜·外","location":"旧书店·内","segment":1,"segmentTitle":"推门而入","intent":"establish","spaceAnchor":"mid_mid","axisDirection":"left_to_right","cast":["林晚"],"props":["PROP001 怀表"],"shotSize":"wide","movement":"dolly","screenDirection":"left_to_right","durationSeconds":6,"dialogue":"","visualPrompt":"林晚推门进来，雨从门缝灌进，暖黄台灯照亮左侧书架","beats":[{"from":0,"to":3,"description":"手推门，门缝透出暖光"},{"from":3,"to":6,"description":"跨进店内，回头看一眼门外"}]}]
+
+字段规则：
+- scene 相同 = 同一场；同一场里 segment 相同 = 同一片段。一段 = 同一空间内一段连续动作，时长 ≤15 秒、含 2-4 镜，超了就开新段。
+- segmentTitle 给这段起个 4-12 字的名字；intent 只能是 establish/develop/turn/payoff/transition。
+- spaceAnchor 是空间基准九宫格：left_front/mid_front/right_front/left_mid/mid_mid/right_mid/left_back/mid_back/right_back。
+- axisDirection 是本段轴线：left_to_right/right_to_left/frontal/depth，同一段内不得翻转。
+- screenDirection 是本镜画面方向：left_to_right/right_to_left/toward_camera/away_from_camera/static。普通反打时左侧人物向右看（left_to_right）、右侧人物向左看（right_to_left）。
+- cast 只能写本镜真正出现在画面里的人物；props 只能写本镜真正看见的道具。清单外的名字一律不许写。
+- shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov。
+- durationSeconds 4-15 整数；台词按约 4 字/秒估算，超 20 字必须拆镜或切听者反应镜。
+- beats 每 3 秒一条，覆盖整镜时长，每条只写这一段的可见动作，台词放该段的 dialogue 里（无台词留空字符串）。`;
 
 export function buildBoardsPrompt(
   scriptText: string,
   style: StoryStylePreset,
   genreRules = '',
   targetSeconds?: number,
+  catalog?: BoardsAssetCatalog | null,
 ): string {
   const genre = genreRules ? `\n${genreRules}\n` : '';
   const durationRule =
     targetSeconds && targetSeconds > 0
       ? `全片目标总时长约${Math.round(targetSeconds)}秒：镜数×单镜时长之和须接近该值（允许±10%）。单镜默认 8-10 秒；动作/对白需要完整起承转合的镜头 10-12 秒；快切/过渡 4-6 秒；按内容选择，不要所有镜头同一时长。`
       : '';
+  const catalogBlock = renderAssetCatalog(catalog);
   return (
-    `你是资深分镜师，把剧本拆成可直接拍摄的分镜表。每场1个 establishing 镜 + 按需对白镜；单镜对白超20字必须拆；相邻镜景别错开。\n${styleBlock(style)}\n${genre}${durationRule}\n` +
+    `你是资深分镜师，把剧本拆成可直接拍摄的分镜表。按「场 → 片段 → 镜」三级组织：每场先立空间基准，再按同一空间内的连续动作切片段（≤15 秒、2-4 镜），片段内按信息推进切镜。\n${styleBlock(style)}\n${genre}${durationRule}\n` +
+    `${catalogBlock ? `${catalogBlock}\n` : ''}` +
+    `【镜头语法】先问本镜给观众什么新信息再选景别与运镜；定场 1-2 镜完成；连续三个同景别而无信息变化必须改；一镜只安排一个主要运镜。\n` +
+    `【空间连续性】每场第一次交代空间后必须给出九宫格基准与轴线；普通反打左者右看、右者左看，不得为露正脸让两人都面朝镜头；相邻镜核对站位、动作完成度、持物手、眼线与服装。\n` +
     `要求：visualPrompt 必须是摄影机能记录的物理现象（位置/动作/表情/光影），抽象情绪外化；dialogue 只写本镜要念的词。\n${BOARDS_JSON_CONTRACT}\n\n【剧本】\n${scriptText.slice(0, 12000)}`
   );
 }

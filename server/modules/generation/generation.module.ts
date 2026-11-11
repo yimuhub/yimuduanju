@@ -14,6 +14,9 @@ import { ProvidersModule } from '../providers/providers.module';
 import { StoryboardModule } from '../storyboard/storyboard.module';
 import { ExportModule } from '../export/export.module';
 import { QcModule } from '../qc/qc.module';
+// 资产前置（asset-first）：job worker 的 `asset_prep` 任务要调 AssetPrepService，
+// 而 BibleModule 又要 GenerationModule 的预算与网关服务 —— 循环依赖走 forwardRef。
+import { BibleModule } from '../bible/bible.module';
 
 @Module({
   imports: [
@@ -22,6 +25,7 @@ import { QcModule } from '../qc/qc.module';
     ExportModule,
     forwardRef(() => StoryboardModule),
     forwardRef(() => QcModule),
+    forwardRef(() => BibleModule),
   ],
   controllers: [GenerationController],
   providers: [

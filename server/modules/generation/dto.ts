@@ -25,6 +25,8 @@ const JOB_TYPES = [
   'qc',
   'edit',
   'script',
+  'boards',
+  'asset_prep',
 ] as const;
 
 const JOB_STATUSES = [

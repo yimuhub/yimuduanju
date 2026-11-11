@@ -340,6 +340,15 @@ export const shots = pgTable("shots", {
   projectId: uuid("project_id").notNull(),
   sceneId: uuid("scene_id").notNull(),
   shotNumber: integer("shot_number").notNull().default(1),
+  /** 所属片段（场 → 片段 ≤15s/2-4 镜 → 镜），历史数据可为空 */
+  segmentId: uuid("segment_id"),
+  /** 画面主体运动/视线方向，用于轴线连续性校验：left_to_right|right_to_left|toward_camera|away_from_camera|static */
+  screenDirection: varchar("screen_direction", { length: 30 }),
+  /**
+   * 3 秒分段节拍，视频提示词按此拼装。
+   * @type { from: number, to: number, description: string, dialogue?: string }[]
+   */
+  beats: jsonb("beats"),
   duration: numeric("duration").default('4.0'),
   // 线性剪辑（0015）：源媒体入/出点（秒）。NULL 语义：in=0，out=in+duration
   inPoint: numeric("in_point"),
@@ -390,6 +399,61 @@ export const shots = pgTable("shots", {
     foreignColumns: [scenes.id],
     name: "shots_scene_id_fkey",
   }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.segmentId],
+    foreignColumns: [segments.id],
+    name: "shots_segment_id_fkey",
+  }).onDelete("set null"),
+]);
+
+/**
+ * 片段（migration 0020）：一场戏按「同一空间 + 连续动作」切段，≤15s 含 2-4 镜。
+ * 资产引用挂片段级，镜只描述本镜画面；轴线方向在这里定，镜必须服从。
+ */
+export const segments = pgTable("segments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull(),
+  sceneId: uuid("scene_id").notNull(),
+  segmentNumber: integer("segment_number").notNull().default(1),
+  title: varchar("title", { length: 200 }),
+  summary: text("summary"),
+  /** 叙事功能：establish / develop / turn / payoff / transition */
+  intent: varchar("intent", { length: 30 }),
+  /** 空间基准九宫格：left|mid|right × front|mid|back，如 mid_mid */
+  spaceAnchor: varchar("space_anchor", { length: 30 }),
+  /** 本段轴线：left_to_right / right_to_left / frontal / depth */
+  axisDirection: varchar("axis_direction", { length: 30 }),
+  characterIds: uuid("character_ids").array().default([]),
+  locationId: uuid("location_id"),
+  props: text("props").array().default([]),
+  durationSeconds: numeric("duration_seconds").default('0'),
+  sortOrder: integer("sort_order").default(0),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "segments_project_id_fkey",
+  }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.sceneId],
+    foreignColumns: [scenes.id],
+    name: "segments_scene_id_fkey",
+  }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.locationId],
+    foreignColumns: [locations.id],
+    name: "segments_location_id_fkey",
+  }).onDelete("set null"),
 ]);
 
 export const scenes = pgTable("scenes", {
@@ -609,6 +673,7 @@ export const projectsTable = projects;
 export const propsTable = props;
 export const qcReportsTable = qcReports;
 export const scenesTable = scenes;
+export const segmentsTable = segments;
 export const shotsTable = shots;
 export const templatesTable = templates;
 
