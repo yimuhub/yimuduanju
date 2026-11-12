@@ -149,14 +149,16 @@
   height: 24px;
   flex: 0 0 24px;
   border-radius: var(--r-md);
-  background: var(--brand);
-  color: #fff;
   display: grid;
   place-items: center;
-  font-family: var(--serif);
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+/* 品牌标识统一用同一张图（client/public/brand/mark.png），不再用色块+汉字占位 */
+.mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 .mark-txt {
   font-family: var(--serif);

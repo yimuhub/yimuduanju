@@ -194,7 +194,7 @@ function cleanup() {
   const finish = () => process.exit(0);
   if (database) {
     database.stop().then(finish).catch(finish);
-    setTimeout(finish, 6000);
+    setTimeout(finish, 12000);
   } else {
     finish();
   }

@@ -107,7 +107,8 @@ jobs:
               process.exit(1);
             }
             const pg = path.join(dir, "node_modules", "@embedded-postgres",
-              process.platform + "-" + process.arch, "native", "bin");
+              (process.platform === "win32" ? "windows" : process.platform) + "-" + process.arch,
+              "native", "bin");
             if (!fs.existsSync(pg)) {
               console.error("缺少本平台 PostgreSQL 二进制：" + pg);
               process.exit(1);

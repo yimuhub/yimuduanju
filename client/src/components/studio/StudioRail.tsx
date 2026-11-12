@@ -79,7 +79,9 @@ export const StudioRail = () => {
   return (
     <aside className="rail" id="rail">
       <div className="rail-head">
-        <div className="mark">幕</div>
+        <div className="mark">
+          <img src="/brand/mark.png" alt="一幕 YIMU" />
+        </div>
         <div className="mark-txt">一幕</div>
         <div className="mark-sub">v{APP_VERSION || '3.4.3'}</div>
         <button

@@ -120,8 +120,10 @@ class Database {
       });
 
     this.failures = 0;
+    this.cooldownUntil = 0;
     this.watchTimer = setInterval(async () => {
       if (this.restarting) return;
+      if (Date.now() < this.cooldownUntil) return;
       if (await probe()) {
         this.failures = 0;
         return;
@@ -129,19 +131,20 @@ class Database {
       this.failures += 1;
       if (this.failures < restartAfter) return;
 
-        this.restarting = true;
+      this.restarting = true;
       log.warn(`数据库无响应（连续 ${this.failures} 次探测失败），自动重新拉起`);
       try {
         // 关键：数据库是「已死」状态，instance.stop() 会一直等一个不存在的进程，
         // 必须加超时，否则整个恢复流程卡死在这里（实测会卡 20 秒以上仍无进展）。
-        await this.stopQuietly(4000);
-        this.instance = this.createInstance();
-        await this.startWithRetry();
+        await this.stopQuietly(3000);
+        await this.startViaPgCtl();
         await this.waitReady(20000);
         this.failures = 0;
         log.info('数据库已自动恢复');
       } catch (err) {
-        log.error(`数据库自动恢复失败：${err.message}（下一次探测继续重试）`);
+        // 连续失败时不要每 3 秒刷一次同样的错误，退避 30 秒再试
+        this.cooldownUntil = Date.now() + 30000;
+        log.error(`数据库自动恢复失败：${err.message}（30 秒后重试）`);
       } finally {
         this.restarting = false;
       }
@@ -162,6 +165,33 @@ class Database {
     }
   }
 
+  /** 包内 PostgreSQL 的 native/bin（pg_ctl 等），恢复流程直接用系统级命令，不依赖库内部状态 */
+  pgToolchain() {
+    // 平台包名与 process.platform 不同：Windows 是 @embedded-postgres/windows-x64
+    const osName = process.platform === 'win32' ? 'windows' : process.platform;
+    const key = `@embedded-postgres/${osName}-${process.arch}`;
+    const roots = [];
+    // 不能 require.resolve(`@embedded-postgres/<plat>-<arch>`)：该平台包没有入口文件，
+    // 解析必然抛「Cannot find module .../index.js」。改为从主包位置反推 node_modules 根。
+    try {
+      let dir = path.dirname(require.resolve('embedded-postgres'));
+      while (dir && path.basename(dir) !== 'node_modules') {
+        const up = path.dirname(dir);
+        if (up === dir) break;
+        dir = up;
+      }
+      if (path.basename(dir) === 'node_modules') roots.push(dir);
+    } catch {
+      /* ignore */
+    }
+    roots.push(path.join(__dirname, '..', 'node_modules'));
+    for (const root of roots) {
+      const bin = path.join(root, key, 'native', 'bin');
+      if (fs.existsSync(bin)) return bin;
+    }
+    return null;
+  }
+
   /**
    * 强杀（kill -9 / Jetsam）之后可能残留 postmaster.pid，
    * pg_ctl 会误判「已在运行」而拒绝启动。这里只在对应 pid 确实不存在时清理。
@@ -174,7 +204,7 @@ class Database {
       if (pid) {
         try {
           process.kill(pid, 0);
-          return; // 进程还活着，交给 pg_ctl 处理
+          return; // 进程还活着，不碰
         } catch {
           /* 进程不存在，继续清理 */
         }
@@ -186,20 +216,53 @@ class Database {
     }
   }
 
-  async startWithRetry(attempts = 2) {
-    let lastErr = null;
-    for (let i = 0; i < attempts; i += 1) {
-      try {
-        await this.instance.start();
-        return;
-      } catch (err) {
-        lastErr = err;
-        log.warn(`启动数据库失败（第 ${i + 1}/${attempts} 次）：${err.message}`);
-        this.clearStalePid();
-        await sleep(800);
-      }
-    }
-    throw lastErr || new Error('数据库启动失败');
+  /** 用 pg_ctl 直接拉起：实例已死时 embedded-postgres 的 start() 会永不 resolve */
+  async startViaPgCtl(timeoutSec = 25) {
+    const bin = this.pgToolchain();
+    if (!bin) throw new Error('找不到包内 PostgreSQL 工具链');
+    const pgCtl = path.join(bin, process.platform === 'win32' ? 'pg_ctl.exe' : 'pg_ctl');
+    if (!fs.existsSync(pgCtl)) throw new Error(`找不到 pg_ctl：${pgCtl}`);
+
+    this.clearStalePid();
+    const logDir = path.join(this.dataDir, 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const logFile = path.join(logDir, 'pg-restart.log');
+
+    await new Promise((resolve, reject) => {
+      const child = spawn(
+        pgCtl,
+        ['-D', this.pgDir, '-l', logFile, '-o', `-p ${this.port}`, '-w', '-t', String(timeoutSec), 'start'],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      let out = '';
+      child.stdout.on('data', (d) => {
+        out += d.toString();
+      });
+      child.stderr.on('data', (d) => {
+        out += d.toString();
+      });
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(`pg_ctl 启动超时（${timeoutSec}s）`));
+      }, (timeoutSec + 5) * 1000);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          log.info('pg_ctl 已拉起数据库');
+          resolve();
+        } else {
+          reject(new Error(`pg_ctl 失败（exit ${code}）：${out.trim().slice(-300)}`));
+        }
+      });
+    });
   }
 
   async waitReady(timeoutMs = 30000) {
@@ -327,13 +390,56 @@ class Database {
       clearInterval(this.watchTimer);
       this.watchTimer = null;
     }
-    if (!this.instance) return;
-    try {
-      await this.instance.stop();
-      log.info('PostgreSQL 已停止');
-    } catch (err) {
-      log.warn(`停止 PostgreSQL 失败：${err.message}`);
+    if (this.instance) {
+      try {
+        await Promise.race([
+          this.instance.stop(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('stop 超时')), 6000)),
+        ]);
+        log.info('PostgreSQL 已停止');
+      } catch (err) {
+        log.warn(`停止 PostgreSQL 失败：${err.message}`);
+      }
     }
+    // 看门狗用 pg_ctl 拉起的实例不受 instance 管理，必须再兜一刀，
+    // 否则退出后 PG 还占着端口+数据目录，下次启动会因目录被占用而起不来。
+    await this.stopViaPgCtl();
+  }
+
+  async stopViaPgCtl(timeoutSec = 10) {
+    const bin = this.pgToolchain();
+    if (!bin) return;
+    const pgCtl = path.join(bin, process.platform === 'win32' ? 'pg_ctl.exe' : 'pg_ctl');
+    if (!fs.existsSync(pgCtl)) return;
+    await new Promise((resolve) => {
+      const child = spawn(pgCtl, ['-D', this.pgDir, '-m', 'fast', '-w', '-t', String(timeoutSec), 'stop'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout.on('data', (d) => {
+        out += d.toString();
+      });
+      child.stderr.on('data', (d) => {
+        out += d.toString();
+      });
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+        resolve();
+      }, (timeoutSec + 3) * 1000);
+      child.on('error', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.on('exit', () => {
+        clearTimeout(timer);
+        if (/server stopped|已停止/i.test(out)) log.info('pg_ctl 已停止数据库');
+        resolve();
+      });
+    });
   }
 }
 

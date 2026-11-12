@@ -19,7 +19,6 @@ import {
   Search,
   Bell,
   ChevronRight,
-  Clapperboard,
   Workflow,
   Menu,
   X,
@@ -165,8 +164,8 @@ const ClassicLayout = () => {
     <>
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-sm">
-          <Clapperboard className="h-5 w-5" />
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl">
+          <img src="/brand/mark.png" alt="一幕 YIMU" className="h-9 w-9 object-contain" />
         </div>
         {!sidebarCollapsed && (
           <div className="flex flex-col leading-tight">

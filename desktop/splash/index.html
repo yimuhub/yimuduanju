@@ -46,15 +46,18 @@
         margin-bottom: 22px;
       }
       .mark {
-        width: 26px;
-        height: 26px;
-        border-radius: 7px;
-        background: var(--brand);
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
         display: grid;
         place-items: center;
-        font-size: 14px;
-        font-weight: 700;
-        color: #fff;
+        overflow: hidden;
+        flex: none;
+      }
+      .mark img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
       }
       .title {
         font-size: 15px;
@@ -140,7 +143,7 @@
   <body>
     <div class="wrap">
       <div class="brand">
-        <div class="mark">一</div>
+        <div class="mark"><img src="./mark.png" alt="一幕 YIMU" /></div>
         <div>
           <div class="title">一幕 · YIMU</div>
           <div class="subtitle">AI 短剧创作平台 · 本地引擎</div>

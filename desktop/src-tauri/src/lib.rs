@@ -107,14 +107,22 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let _ = std::fs::create_dir_all(&data_dir);
 
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            #[allow(unused_mut)]
+            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("一幕 · YIMU AI 短剧创作平台")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 640.0)
-                .center()
-                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true)
-                .build()?;
+                .center();
+
+            // title_bar_style / hidden_title 只有 macOS 有，Linux 与 Windows 调用会编译失败
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
+
+            let window = builder.build()?;
 
             let handle = app.handle().clone();
             let splash = window.clone();

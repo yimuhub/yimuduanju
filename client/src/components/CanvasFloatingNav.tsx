@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clapperboard, X, Sparkles, Wand2 } from 'lucide-react';
+import { X, Sparkles, Wand2 } from 'lucide-react';
 import {
   WORKSPACE_PAGES,
 } from '@client/src/components/workspace/WorkspaceTabsContext';
@@ -37,11 +37,15 @@ const CanvasFloatingNav = ({
     <>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="fixed left-4 top-4 z-[1002] flex h-12 w-12 items-center justify-center rounded-full bg-brand-gradient text-white shadow-lg shadow-black/25 transition-transform hover:scale-105"
+        className="fixed left-4 top-4 z-[1002] flex h-12 w-12 items-center justify-center rounded-full bg-card shadow-lg shadow-black/25 ring-1 ring-border transition-transform hover:scale-105"
         aria-label={open ? '关闭导航菜单' : '打开导航菜单'}
         title="导航菜单"
       >
-        {open ? <X className="h-5 w-5" /> : <Clapperboard className="h-5 w-5" />}
+        {open ? (
+          <X className="h-5 w-5" />
+        ) : (
+          <img src="/brand/mark.png" alt="一幕 YIMU" className="h-8 w-8 object-contain" />
+        )}
       </button>
       {open && (
         <>

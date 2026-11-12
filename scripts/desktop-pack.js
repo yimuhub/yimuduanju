@@ -132,11 +132,21 @@ function installProdDeps(target) {
   });
 }
 
+/**
+ * embedded-postgres 的平台包命名与 process.platform 不一致：
+ * Windows 上是 @embedded-postgres/windows-x64（不是 win32-x64）。
+ * 用错名字会把正确的包当"外来平台"删掉，Windows 安装包起来直接没有数据库。
+ */
+function pgPlatformKey() {
+  const os = process.platform === 'win32' ? 'windows' : process.platform;
+  return `${os}-${process.arch}`;
+}
+
 /** embedded-postgres 会为所有平台装二进制（~90MB），只留当前平台 */
 function pruneForeignPgBinaries(target) {
   const scope = path.join(target, 'node_modules', '@embedded-postgres');
   if (!fs.existsSync(scope)) return;
-  const key = `${process.platform}-${process.arch}`;
+  const key = pgPlatformKey();
   for (const entry of fs.readdirSync(scope, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (entry.name === key) continue;
@@ -154,7 +164,7 @@ function pruneForeignPgBinaries(target) {
 function hydratePgSymlinks(target) {
   // Windows 版 PostgreSQL 用 DLL，不存在软链；hydrator 是 POSIX 脚本，跳过
   if (IS_WIN) return;
-  const pkgDir = path.join(target, 'node_modules', '@embedded-postgres', `${process.platform}-${process.arch}`);
+  const pkgDir = path.join(target, 'node_modules', '@embedded-postgres', pgPlatformKey());
   const hydrator = path.join(pkgDir, 'scripts', 'hydrate-symlinks.js');
   if (!fs.existsSync(hydrator)) {
     if (fs.existsSync(pkgDir)) log('警告：未找到 hydrate-symlinks.js，PostgreSQL 可能因缺少软链无法启动');
