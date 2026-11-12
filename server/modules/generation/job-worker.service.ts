@@ -47,7 +47,7 @@ import { StoryboardService } from '../storyboard/storyboard.service';
 import { ExportService } from '../export/export.service';
 import { QcService } from '../qc/qc.service';
 // 资产前置（asset-first）：人物/场景/道具必须先出定妆图，才允许拆分镜与出首帧
-import { AssetPrepService } from '../bible/asset-prep.service';
+import { AssetPrepService, type StageEnqueueResult } from '../bible/asset-prep.service';
 // 参考图编排：把「图N」从字符串字面量改成真实图号，并补上场景图与上一镜成帧
 import {
   buildShotPrompt,
@@ -103,6 +103,19 @@ interface AssetIndex {
   characters: { id: string; name: string; roleType: string | null }[];
   locations: { id: string; name: string; timeOfDay: string | null }[];
   props: { id: string; code: string | null; name: string; category: string | null }[];
+}
+
+/** 流水线驱动器用的任务行投影（driveProjectPipeline / drivePreAssetStages 共用） */
+interface PipelineJobRow {
+  id: string;
+  jobType: string;
+  status: string;
+  targetId: string | null;
+  targetType: string | null;
+  projectId: string | null;
+  providerName: string | null;
+  inputData: unknown;
+  outputData: unknown;
 }
 
 type FirstFrameDependencyResult =
@@ -1639,10 +1652,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   // ========== 流水线确认门（docs/流程重构方案-v2.md 三道门） ==========
 
-  /** 读项目 metadata.pipeline.approvals（三道门通过时间；无记录 = 未过门） */
+  /** 读项目 metadata.pipeline.approvals（各道门通过时间；无记录 = 未过门） */
   private async pipelineApprovals(projectId: string): Promise<{
     script?: string;
     storyboard?: string;
+    preview?: string;
     final?: string;
   }> {
     const rows = await this.db
@@ -1669,7 +1683,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    */
   private async drivePipeline(): Promise<void> {
     const projRows = await this.db
-      .select({ id: projects.id })
+      .select({ id: projects.id, status: projects.status })
       .from(projects)
       .where(
         // editing/qc 也要进自动链：旧数据里「1/7 视频就推进到 qc」的假完成
@@ -1684,13 +1698,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       );
     for (const proj of projRows) {
       // eslint-disable-next-line no-await-in-loop
-      await this.driveProjectPipeline(proj.id).catch((e: Error) =>
+      await this.driveProjectPipeline(proj.id, proj.status).catch((e: Error) =>
         this.logger.warn(`项目 ${proj.id} 自动链推进失败: ${e.message}`),
       );
     }
   }
 
-  private async driveProjectPipeline(projectId: string): Promise<void> {
+  private async driveProjectPipeline(projectId: string, projectStatus?: string): Promise<void> {
     const approvals = await this.pipelineApprovals(projectId);
     const [shotRows, jobRows] = await Promise.all([
       this.db.select().from(shots).where(eq(shots.projectId, projectId)),
@@ -1719,6 +1733,99 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const hasVideoJobs = jobRows.some((j) => j.jobType === 'video');
     if (!approvals.storyboard && !hasVideoJobs) return;
 
+    /* --------------------------------------------------------------
+     * 0.5) 前置资产严格串行链（人物 → 场景 → 道具 → done）：
+     * 分镜门通过后不再直接批量首帧，先把出场角色的定妆照、出场场景的场景图、
+     * 分镜关键道具的设定图依次真实生成出来。每段完成才进下一段；
+     * 任一段失败停在原地可重试（重试预算耗尽后降级放行并打标）。
+     * 只对「资产生成中且还没进入视频生产」的项目生效——已有视频任务的
+     * 旧项目/回退项目不再回溯补资产，避免中途烧钱重画。
+     * -------------------------------------------------------------- */
+    if (projectStatus === 'assets_generating' && !hasVideoJobs) {
+      // eslint-disable-next-line no-await-in-loop
+      const assetsReady = await this.drivePreAssetStages(projectId, shotRows, jobRows, isActive);
+      if (!assetsReady) return;
+    }
+
+    const activeJobsOf = (t: string) =>
+      jobRows.filter((j) => j.jobType === t && isActive(j.status) && !isVariant(j.inputData));
+    // 失败过的目标不再自动重投：否则每轮 tick 都会重建同一个必败任务（配音尤其明显）。
+    // 但这只管「不重投」，绝不等于「该镜头已完成」——仍由 readiness 计入缺口。
+    const failedTargetsOf = (t: string) =>
+      new Set(
+        jobRows
+          .filter((j) => j.jobType === t && j.status === 'failed' && j.targetId && !isVariant(j.inputData))
+          .map((j) => j.targetId as string),
+      );
+
+    // 0.6) 批量首帧：前置资产三段全部完成后才允许建首帧任务。
+    //      每个镜头执行时由 processImage.composeShotContext 注入「出场角色定妆照 +
+    //      所属场景场景图 + 关键道具 + 上一镜成帧」参考图（ ArcReel「图N」机械编号）。
+    //      缺首帧、无在途/成功/失败 image 任务的镜头才新建（幂等，失败不重投）。
+    const activeShotImageTargets = new Set(
+      jobRows
+        .filter(
+          (j) =>
+            j.jobType === 'image' &&
+            j.targetType === 'shot' &&
+            isActive(j.status) &&
+            !isVariant(j.inputData),
+        )
+        .map((j) => j.targetId as string),
+    );
+    const doneShotImageTargets = new Set(
+      jobRows
+        .filter(
+          (j) =>
+            j.jobType === 'image' &&
+            j.targetType === 'shot' &&
+            j.status === 'succeeded' &&
+            j.targetId &&
+            !isVariant(j.inputData),
+        )
+        .map((j) => j.targetId as string),
+    );
+    const failedShotImageTargets = new Set(
+      jobRows
+        .filter(
+          (j) =>
+            j.jobType === 'image' &&
+            j.targetType === 'shot' &&
+            j.status === 'failed' &&
+            j.targetId &&
+            !isVariant(j.inputData),
+        )
+        .map((j) => j.targetId as string),
+    );
+    const needFrames = shotRows.filter(
+      (s) =>
+        !s.startFrameUrl &&
+        !activeShotImageTargets.has(s.id) &&
+        !doneShotImageTargets.has(s.id) &&
+        !failedShotImageTargets.has(s.id) &&
+        s.status !== 'failed',
+    );
+    if (needFrames.length > 0) {
+      await this.storyboardService
+        .batchGenerate(projectId, { type: 'image', shotIds: needFrames.map((s) => s.id) })
+        .catch((e: Error) =>
+          this.logger.warn(`批量首帧创建失败（项目 ${projectId}）: ${e.message}`),
+        );
+      this.logger.log(
+        `前置资产链完成：项目 ${projectId} 新建 ${needFrames.length} 个首帧任务（注入人物/场景参考图）`,
+      );
+      return; // 首帧跑完再进预览确认
+    }
+
+    // 0.7) 分镜预览确认门（门 2.5）：首帧齐了先停一停，用户在分镜节点/分镜页核对
+    //      「预览与剧本无误」后才进视频。门内校验每个镜头已有主图（approve 侧硬校验）。
+    //      已有视频任务的旧项目保持自动连跑，不回溯加门。
+    const framesComplete =
+      shotRows.length > 0 && shotRows.every((s) => Boolean(s.startFrameUrl));
+    if (!hasVideoJobs && !approvals.preview && framesComplete) {
+      return; // 停在原地等 POST /api/projects/:id/approve(stage=preview)
+    }
+
     // 0) 补写回：succeeded 的非变体 video 任务，镜头还没拿到成片 → 补 writeback
     //    （修复：前端 /poll 抢先结算成功后，writeback 永远不发生的丢产物问题）
     for (const j of jobRows) {
@@ -1736,17 +1843,6 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         shot.videoUrl = url;
       }
     }
-
-    const activeJobsOf = (t: string) =>
-      jobRows.filter((j) => j.jobType === t && isActive(j.status) && !isVariant(j.inputData));
-    // 失败过的目标不再自动重投：否则每轮 tick 都会重建同一个必败任务（配音尤其明显）。
-    // 但这只管「不重投」，绝不等于「该镜头已完成」——仍由 readiness 计入缺口。
-    const failedTargetsOf = (t: string) =>
-      new Set(
-        jobRows
-          .filter((j) => j.jobType === t && j.status === 'failed' && j.targetId && !isVariant(j.inputData))
-          .map((j) => j.targetId as string),
-      );
 
     // 1) 图未跑完不推进
     if (activeJobsOf('image').length > 0) return;
@@ -1893,6 +1989,204 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
     await this.advanceProjectStatus(projectId, 'audio_generating', 'editing');
+  }
+
+  // ========== 前置资产严格串行链（分镜门 → 首帧之间：人物 → 场景 → 道具） ==========
+
+  /** 串行链单段最大排产次数：超过后降级放行（文生图兜底），不无限烧钱重试 */
+  private static readonly ASSET_STAGE_MAX_ATTEMPTS = 3;
+
+  private async readAssetStageState(projectId: string): Promise<{
+    stage: 'characters' | 'scenes' | 'props' | 'done';
+    attempts: Record<string, number>;
+  }> {
+    const rows = await this.db
+      .select({ metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const pipeline = ((rows[0]?.metadata ?? {}) as {
+      pipeline?: { assetStage?: string; assetStageAttempts?: Record<string, number> };
+    }).pipeline;
+    const stage = pipeline?.assetStage;
+    return {
+      stage:
+        stage === 'scenes' || stage === 'props' || stage === 'done' ? stage : 'characters',
+      attempts: pipeline?.assetStageAttempts ?? {},
+    };
+  }
+
+  /** 写当前段与进度明细（getProgress 直读 metadata，避免进度接口再查资产表） */
+  private async writeAssetStageDetail(
+    projectId: string,
+    stage: 'characters' | 'scenes' | 'props' | 'done',
+    detail: { inflight?: number; missing?: number; degraded?: boolean },
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (rows.length === 0) return;
+    const meta = (rows[0].metadata ?? {}) as Record<string, unknown>;
+    const pipeline = { ...((meta.pipeline ?? {}) as Record<string, unknown>) };
+    pipeline.assetStage = stage;
+    pipeline.assetStageDetail = {
+      stage,
+      ...(typeof detail.inflight === 'number' ? { inflight: detail.inflight } : {}),
+      ...(typeof detail.missing === 'number' ? { missing: detail.missing } : {}),
+      ...(detail.degraded ? { degraded: true } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+    await this.db
+      .update(projects)
+      .set({ metadata: { ...meta, pipeline }, updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
+  }
+
+  private async writeAssetStageAttempts(
+    projectId: string,
+    stage: 'characters' | 'scenes' | 'props',
+    value: number,
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (rows.length === 0) return;
+    const meta = (rows[0].metadata ?? {}) as Record<string, unknown>;
+    const pipeline = { ...((meta.pipeline ?? {}) as Record<string, unknown>) };
+    const attempts = { ...((pipeline.assetStageAttempts ?? {}) as Record<string, number>) };
+    attempts[stage] = value;
+    pipeline.assetStageAttempts = attempts;
+    await this.db
+      .update(projects)
+      .set({ metadata: { ...meta, pipeline }, updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
+  }
+
+  /**
+   * 前置资产串行链驱动器（每轮 tick 调用，幂等）。
+   * 返回 true = 三段全部完成（或降级放行），允许进入首帧批量；false = 停在本段等待。
+   *
+   * 严格串行的含义：
+   * 1. 人物定妆全部完成 → 才开始场景图；
+   * 2. 场景图全部完成 → 才开始道具设定图；
+   * 3. 道具完成（含降级）→ 才放行首帧批量。
+   * 段内有在途任务时原地等待；缺图且无在途时排产（幂等：已有图的资产跳过）；
+   * 重试超过预算降级放行并写 metadata.assetGate，UI 明确显示「已降级」。
+   */
+  private async drivePreAssetStages(
+    projectId: string,
+    shotRows: (typeof shots.$inferSelect)[],
+    jobRows: PipelineJobRow[],
+    isActive: (s: string) => boolean,
+  ): Promise<boolean> {
+    if (shotRows.length === 0) return true;
+    const { stage, attempts } = await this.readAssetStageState(projectId);
+    if (stage === 'done') return true;
+    const stageTarget = (
+      { characters: 'character', scenes: 'location', props: 'prop' } as const
+    )[stage];
+    const inflightJobs = jobRows.filter(
+      (j) => j.jobType === 'image' && j.targetType === stageTarget && isActive(j.status),
+    );
+    // 段内仍有在途生成任务 → 停在本段等完成（串行核心：不与下一段并行）
+    if (inflightJobs.length > 0) {
+      await this.writeAssetStageDetail(projectId, stage, { inflight: inflightJobs.length });
+      return false;
+    }
+
+    // 计算本段缺口并排产（幂等：已有参考图的资产跳过、已在途的跳过）
+    let res: StageEnqueueResult;
+    if (stage === 'characters') {
+      const castIds = [...new Set(shotRows.flatMap((s) => s.characterIds ?? []))];
+      res = await this.assetPrep.enqueueCastAssets(projectId, castIds);
+    } else if (stage === 'scenes') {
+      const sceneIds = [
+        ...new Set(shotRows.map((s) => s.sceneId).filter((v): v is string => Boolean(v))),
+      ];
+      // eslint-disable-next-line no-await-in-loop
+      const locationIds = await this.locationIdsForScenes(projectId, sceneIds);
+      res = await this.assetPrep.enqueueSceneAssets(projectId, locationIds);
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      const [texts, tags] = await this.collectPropExtractionInputs(projectId);
+      res = await this.assetPrep.enqueuePropAssets(projectId, texts, tags);
+    }
+
+    const stageLabel = { characters: '人物定妆照', scenes: '场景图', props: '道具设定图' }[stage];
+    if (res.missing === 0) {
+      // 本段完成 → 推进下一段（本轮到此，下一段下一轮 tick 处理）
+      const next = stage === 'characters' ? 'scenes' : stage === 'scenes' ? 'props' : 'done';
+      await this.writeAssetStageDetail(projectId, next, { inflight: 0, missing: 0 });
+      this.logger.log(`前置资产段完成[${stageLabel}]：项目 ${projectId} → ${next}`);
+      return next === 'done';
+    }
+
+    // 仍有缺图：重试预算内继续排产，耗尽后降级放行（明确打标，不假装资产齐全）
+    const used = attempts[stage] ?? 0;
+    if (used >= JobWorkerService.ASSET_STAGE_MAX_ATTEMPTS) {
+      await this.markAssetGateDegraded(projectId, `asset-stage-${stage}`);
+      await this.writeAssetStageDetail(projectId, stage, {
+        missing: res.missing,
+        degraded: true,
+        inflight: 0,
+      });
+      const next = stage === 'characters' ? 'scenes' : stage === 'scenes' ? 'props' : 'done';
+      await this.writeAssetStageDetail(projectId, next, { inflight: 0, missing: res.missing });
+      systemLog.record({
+        level: 'WARN',
+        category: 'job',
+        projectId,
+        message: `前置资产段[${stageLabel}]重试耗尽，降级放行（缺 ${res.missing} 项：${res.missingNames.slice(0, 6).join('、')}）`,
+      });
+      this.logger.warn(
+        `前置资产段[${stageLabel}]降级放行：项目 ${projectId} 缺 ${res.missing} 项，按文生图兜底继续`,
+      );
+      return next === 'done';
+    }
+    await this.writeAssetStageAttempts(projectId, stage, used + 1);
+    await this.writeAssetStageDetail(projectId, stage, {
+      inflight: res.enqueued > 0 ? res.enqueued : res.inflight,
+      missing: res.missing,
+    });
+    this.logger.warn(
+      `前置资产串行链[${stageLabel}]：项目 ${projectId} 缺 ${res.missing} 项` +
+        `（${res.missingNames.slice(0, 6).join('、')}），第 ${used + 1} 次排产 ${res.enqueued} 个任务`,
+    );
+    return false;
+  }
+
+  /** 分镜所属场景 → locations.id（场景资产段的出图范围） */
+  private async locationIdsForScenes(projectId: string, sceneIds: string[]): Promise<string[]> {
+    const ids = sceneIds.filter(Boolean);
+    if (ids.length === 0) return [];
+    const rows = await this.db
+      .select({ locationId: scenes.locationId })
+      .from(scenes)
+      .where(and(eq(scenes.projectId, projectId), inArray(scenes.id, ids)));
+    return [...new Set(rows.map((r) => r.locationId).filter((v): v is string => Boolean(v)))];
+  }
+
+  /** 道具提取输入：分镜文本（画面描述/台词/动作）+ 场次道具标签 */
+  private async collectPropExtractionInputs(
+    projectId: string,
+  ): Promise<[string[], string[]]> {
+    const rows = await this.db
+      .select({ visualPrompt: shots.visualPrompt, dialogue: shots.dialogue, action: shots.action })
+      .from(shots)
+      .where(eq(shots.projectId, projectId));
+    const texts = rows
+      .flatMap((s) => [s.visualPrompt ?? '', s.dialogue ?? '', s.action ?? ''])
+      .filter((t) => t.trim().length > 0);
+    const sceneRows = await this.db
+      .select({ props: scenes.props })
+      .from(scenes)
+      .where(eq(scenes.projectId, projectId));
+    const tags = [...new Set(sceneRows.flatMap((r) => r.props ?? []))];
+    return [texts, tags];
   }
 
   /**

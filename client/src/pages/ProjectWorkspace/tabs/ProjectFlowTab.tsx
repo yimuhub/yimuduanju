@@ -39,8 +39,13 @@ const GATE_META: Record<
   },
   storyboard: {
     label: '门 2 · 分镜确认',
-    desc: '分镜已就绪。确认后系统自动连跑：首帧图 → 视频 → 配音 → 剪辑 → 质检，中途零操作',
+    desc: '分镜已就绪。确认后系统先按严格串行链生成前置资产（人物定妆 → 场景图 → 道具设定图），全部完成才批量首帧',
     button: '确认分镜，开始生成',
+  },
+  preview: {
+    label: '门 2.5 · 分镜预览确认',
+    desc: '每个镜头的首帧主图已生成。请到「分镜」或画布核对分镜预览与剧本无误，确认后才进入视频生成（门内校验每个镜头已有主图）',
+    button: '确认分镜预览无误，进入视频',
   },
   final: {
     label: '门 3 · 成片确认',
@@ -233,6 +238,49 @@ const ProjectFlowTab = () => {
                       />
                     </div>
                   )}
+                  {/* 前置资产串行链细分（人物定妆 → 场景图 → 道具设定图）与阶段说明 */}
+                  {step.message && step.status === 'running' && (
+                    <p className="mt-1.5 text-xs text-primary/80">{step.message}</p>
+                  )}
+                  {step.step === 'assets_generating' &&
+                    step.status === 'running' &&
+                    progress?.assetStage && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        {(
+                          [
+                            { key: 'characters', label: '人物定妆' },
+                            { key: 'scenes', label: '场景图' },
+                            { key: 'props', label: '道具设定图' },
+                          ] as const
+                        ).map((sub) => {
+                          const active = progress.assetStage?.stage === sub.key;
+                          const stageOrder = ['characters', 'scenes', 'props'];
+                          const curIdx = stageOrder.indexOf(progress.assetStage?.stage ?? '');
+                          const subIdx = stageOrder.indexOf(sub.key);
+                          const done = !active && curIdx > subIdx;
+                          return (
+                            <span
+                              key={sub.key}
+                              className={`rounded-full px-2 py-0.5 ${
+                                done
+                                  ? 'bg-emerald-500/10 text-emerald-600'
+                                  : active
+                                    ? 'bg-primary/10 font-medium text-primary'
+                                    : 'bg-muted text-muted-foreground'
+                              }`}
+                            >
+                              {done ? '✓ ' : ''}
+                              {sub.label}
+                            </span>
+                          );
+                        })}
+                        {progress.assetStage?.degraded && (
+                          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-600">
+                            部分资产已降级（按文生图兜底）
+                          </span>
+                        )}
+                      </div>
+                    )}
                 </div>
               </div>
             );

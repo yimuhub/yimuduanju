@@ -3,6 +3,7 @@
  * 类型定义
  */
 import type { Node, Edge } from '@xyflow/react';
+import type { ShotBeat } from '@shared/api.interface';
 
 /** 节点类型：11 类画布节点（媒体 6 类 + 短剧创作 5 类） */
 export type PavoNodeType =
@@ -70,8 +71,33 @@ export interface PavoNodeData {
   directorShot?: string;
   /** 右键菜单「设为参考」：视觉标记该节点为参考素材（角色定妆/场景基准等） */
   isReference?: boolean;
+  /** 分镜节点：关联的后端镜头快照（时间分段块 / 关键帧预览 / 历史 / 剧本核对共用） */
+  shot?: ShotNodeSnapshot;
+  /** 分镜节点：出场角色名（时间分段块 @角色 标记渲染用） */
+  castNames?: string[];
+  /** 分镜节点：所属场景名（参考图行与剧本核对提示用） */
+  sceneName?: string;
   /** xyflow v12 Node 约束 data extends Record<string, unknown>，加索引签名 */
   [key: string]: unknown;
+}
+
+/** 分镜节点的镜头快照（只存渲染所需字段，全量数据以 shotId 实时查询为准） */
+export interface ShotNodeSnapshot {
+  id: string;
+  shotNumber: number;
+  shotSize?: string;
+  /** 单镜时长（秒） */
+  duration?: number;
+  dialogue?: string;
+  visualPrompt?: string;
+  /** 3 秒时间分段：每段 = 景别 + 时长 + 描述 + @角色 */
+  beats?: ShotBeat[];
+  characterIds?: string[];
+  /** 后端物化的参考图（角色定妆/场景图/上一镜成帧），参考图缩略行兜底 */
+  referenceImageUrls?: string[];
+  /** 当前主图（与 mediaUrl 同源；选定历史后同步更新） */
+  startFrameUrl?: string;
+  sceneId?: string;
 }
 
 export type PavoFlowNode = Node<PavoNodeData, 'pavo'>;

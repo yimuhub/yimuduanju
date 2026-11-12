@@ -9,7 +9,7 @@ import {
   Users,
 } from 'lucide-react';
 
-export type GateStage = 'script' | 'storyboard' | 'final';
+export type GateStage = 'script' | 'storyboard' | 'preview' | 'final';
 
 interface GateCardProps {
   stage: GateStage;
@@ -34,11 +34,18 @@ const STAGE_META = {
     primary: '确认剧本 · 物化分镜',
   },
   storyboard: {
-    kicker: '门 2 / 3',
-    title: '分镜已就绪，确认后开始出首帧',
-    desc: '确认后会为每个镜头提交首帧生成任务，完成后再进入视频生成。',
+    kicker: '门 2 / 4',
+    title: '分镜已就绪，确认后开始前置资产',
+    desc: '确认后先按严格串行链生成人物定妆 → 场景图 → 道具设定图，全部完成才批量首帧。',
     icon: Clapperboard,
     primary: '确认分镜 · 生成首帧',
+  },
+  preview: {
+    kicker: '门 2.5 / 4',
+    title: '首帧已生成，核对分镜预览后进入视频',
+    desc: '每个镜头的主图已生成。请到「分镜」页或画布核对预览与剧本无误，确认后进入视频生成。',
+    icon: BadgeCheck,
+    primary: '确认分镜预览 · 进入视频',
   },
   final: {
     kicker: '门 3 / 3',

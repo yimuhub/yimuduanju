@@ -433,16 +433,18 @@ export class ProjectsService {
   }
 
   /**
-   * 阶段确认门（docs/流程重构方案-v2.md 三道门）：
-   * - script：确认剧本 → 物化分镜（链上 parse_script 任务）
-   * - storyboard：确认分镜 → 批量首帧 + 状态推进 assets_generating，此后
-   *   图→视频→配音→剪辑→质检由 job-worker 自动连跑
+   * 阶段确认门（docs/流程重构方案-v2.md 三道门 + 分镜预览门）：
+   * - script：确认剧本 → 物化分镜（链上 asset_prep → boards 任务）
+   * - storyboard：确认分镜 → 进入前置资产串行链（人物 → 场景 → 道具 → 首帧），
+   *   状态推进 assets_generating，由 job-worker drivePreAssetStages 逐段推进
+   * - preview：分镜预览确认 → 校验每个镜头已有主图，通过后 job-worker 自动连跑
+   *   视频→配音→剪辑→质检
    * - final：质检确认 → qc → ready 成片
    * 通过时间记入 metadata.pipeline.approvals（免迁移），job-worker 据此放行自动段。
    */
   async approve(
     id: string,
-    stage: 'script' | 'storyboard' | 'final',
+    stage: 'script' | 'storyboard' | 'preview' | 'final',
     userId: string,
   ): Promise<Project> {
     const current = await this.findById(id);
@@ -458,13 +460,18 @@ export class ProjectsService {
     const approvals = {
       ...((pipeline.approvals as Record<string, string> | undefined) ?? {}),
     };
-    // 三道门顺序校验（方案 v2）：script → storyboard → final 必须依次通过。
+    // 门顺序校验（方案 v2 + 预览门）：script → storyboard → preview → final 必须依次通过。
     // 乱序确认（如未过剧本门直接确认分镜、或回退重开前面的门）一律 400，
-    // 否则门 1/2 的放行逻辑（物化分镜、批量首帧）会被绕过，自动链在半成品上空转。
+    // 否则门 1/2 的放行逻辑（物化分镜、前置资产串行链）会被绕过，自动链在半成品上空转。
     // 同一门重复确认保持幂等（仅刷新通过时间，不报错）。
     if (stage === 'storyboard' && !approvals.script) {
       throw new BadRequestException(
         '确认门顺序错误：请先通过「剧本确认」再确认分镜（script → storyboard → final）',
+      );
+    }
+    if (stage === 'preview' && !approvals.storyboard) {
+      throw new BadRequestException(
+        '确认门顺序错误：请先通过「分镜确认」再确认分镜预览（script → storyboard → preview → final）',
       );
     }
     if (stage === 'final' && !approvals.storyboard) {
@@ -563,19 +570,52 @@ export class ProjectsService {
     }
 
     if (stage === 'storyboard') {
-      // 分镜确认 → 批量首帧（batchGenerate 自带幂等去重）+ 状态推进
+      // 分镜确认 → 前置资产严格串行链（人物 → 场景 → 道具 → 首帧）。
+      // 旧实现在这里直接 batchGenerate 首帧 —— 人物/场景定妆图还没生成就出图，
+      // 跨镜必然漂移；现在只进入资产段，由 job-worker.drivePreAssetStages
+      // 每段完成才推进，全部完成后才批量首帧（带人物/场景参考图）。
       const shotRows = await this.db
         .select({ id: shots.id })
         .from(shots)
         .where(eq(shots.projectId, id))
         .limit(1);
       if (shotRows.length > 0) {
-        await this.storyboardService.batchGenerate(id, { type: 'image' });
-        this.logger.log(`分镜确认门通过 ${id}：已批量创建首帧任务`);
+        const nextPipeline = { ...pipeline, assetStage: 'characters' as const };
+        await this.update(
+          id,
+          { metadata: { ...meta, pipeline: nextPipeline } as unknown as UpdateProjectRequest['metadata'] },
+          userId,
+        );
+        this.logger.log(`分镜确认门通过 ${id}：进入前置资产串行链（人物定妆 → 场景图 → 道具设定图 → 首帧）`);
       }
       if (current.status === 'storyboard_ready') {
         await this.update(id, { status: 'assets_generating' }, userId);
       }
+    }
+
+    if (stage === 'preview') {
+      // 分镜预览确认门：门内硬校验每个镜头已有主图（缺一不放行进视频）。
+      const shotRows = await this.db
+        .select({
+          id: shots.id,
+          startFrameUrl: shots.startFrameUrl,
+          videoUrl: shots.videoUrl,
+          voiceUrl: shots.voiceUrl,
+          dialogue: shots.dialogue,
+          status: shots.status,
+        })
+        .from(shots)
+        .where(eq(shots.projectId, id));
+      if (shotRows.length === 0) {
+        throw new BadRequestException('项目还没有分镜镜头，无法确认分镜预览');
+      }
+      const readiness = computePipelineReadiness(shotRows);
+      if (readiness.missingFrames.length > 0) {
+        throw new BadRequestException(
+          `还有 ${readiness.missingFrames.length}/${readiness.total} 个镜头没有首帧主图，不能进入视频生成；请到「任务队列」重试失败的首帧任务`,
+        );
+      }
+      this.logger.log(`分镜预览确认门通过 ${id}：${readiness.total} 个镜头主图齐备，流水线进入视频段`);
     }
 
     if (stage === 'final') {
@@ -603,12 +643,15 @@ export class ProjectsService {
     const projectStatus = projectRows[0].status as ProjectStatus;
     const approvals = (
       (projectRows[0].metadata ?? {}) as {
-        pipeline?: { approvals?: { script?: string; storyboard?: string; final?: string } };
+        pipeline?: {
+          approvals?: { script?: string; storyboard?: string; preview?: string; final?: string };
+        };
       }
     ).pipeline?.approvals ?? {};
     const gates = {
       script: Boolean(approvals.script),
       storyboard: Boolean(approvals.storyboard),
+      preview: Boolean(approvals.preview),
       final: Boolean(approvals.final),
     };
 
@@ -658,16 +701,60 @@ export class ProjectsService {
     // 旧项目可能停在 storyboard_ready/qc 却没有剧本门记录，若只按当前状态给门，
     // 会显示一个「点了必然 400」的后置门，前面的门反而无处可点。
     const legacyPreFinal = !['draft', 'failed', 'ready', 'exported'].includes(projectStatus);
+    // 前置资产串行链进度（分镜门之后、首帧之前的细分段），供流程总控展示「人物→场景→道具」
+    const pipelineMeta = (
+      (projectRows[0].metadata ?? {}) as {
+        pipeline?: {
+          assetStage?: string;
+          assetStageDetail?: {
+            stage?: string;
+            inflight?: number;
+            missing?: number;
+            degraded?: boolean;
+          };
+        };
+      }
+    ).pipeline;
+    const assetStageRaw = pipelineMeta?.assetStage;
+    const assetStageDetail = pipelineMeta?.assetStageDetail;
+    const assetStage: ProjectProgressResponse['assetStage'] =
+      projectStatus === 'assets_generating' &&
+      assetStageRaw &&
+      assetStageRaw !== 'done' &&
+      gates.storyboard
+        ? {
+            stage: assetStageRaw as 'characters' | 'scenes' | 'props',
+            label: assetStageRaw === 'characters' ? '人物定妆照' : assetStageRaw === 'scenes' ? '场景图' : '道具设定图',
+            ...(assetStageDetail && assetStageDetail.stage === assetStageRaw
+              ? {
+                  inflight: assetStageDetail.inflight ?? 0,
+                  missing: assetStageDetail.missing ?? 0,
+                  ...(assetStageDetail.degraded ? { degraded: true } : {}),
+                }
+              : {}),
+          }
+        : null;
+    // 分镜预览门（门 2.5）：首帧全部就绪、还没进视频生产、预览门未过 → 提示用户核对后确认。
+    // 项目里已有视频任务（旧数据/回退）不回溯加门，保持自动连跑。
+    const previewGateDue =
+      gates.storyboard &&
+      !gates.preview &&
+      projectStatus === 'assets_generating' &&
+      readiness.total > 0 &&
+      readiness.missingFrames.length === 0 &&
+      !jobRows.some((j) => j.jobType === 'video');
     const nextGate: ProjectProgressResponse['nextGate'] =
       !gates.script && scriptReady && legacyPreFinal
         ? 'script'
         : projectStatus === 'storyboard_ready' && !gates.storyboard
           ? 'storyboard'
-          : projectStatus === 'qc' && !gates.storyboard
-            ? 'storyboard'
-            : projectStatus === 'qc' && !gates.final
-              ? 'final'
-              : null;
+          : previewGateDue
+            ? 'preview'
+            : projectStatus === 'qc' && !gates.storyboard
+              ? 'storyboard'
+              : projectStatus === 'qc' && !gates.final
+                ? 'final'
+                : null;
 
     // 构建状态机步骤
     const steps: GenerationProgress[] = STATUS_ORDER
@@ -766,6 +853,23 @@ export class ProjectsService {
     // 当前步骤
     const currentStep = steps.find((s) => s.status === 'running')?.step;
 
+    // 前置资产串行链进行中：把「资产生成中」一段的细分进度写进步 message，
+    // 流程总控（ProjectFlowTab）直接展示，不用再发第二次请求。
+    if (assetStage) {
+      for (const s of steps) {
+        if (s.step !== 'assets_generating' || s.status !== 'running') continue;
+        const bits = [`前置资产 · ${assetStage.label ?? assetStage.stage}`];
+        if (typeof assetStage.inflight === 'number' && assetStage.inflight > 0) {
+          bits.push(`在途 ${assetStage.inflight}`);
+        }
+        if (typeof assetStage.missing === 'number' && assetStage.missing > 0) {
+          bits.push(`待补 ${assetStage.missing}`);
+        }
+        if (assetStage.degraded) bits.push('已降级');
+        s.message = bits.join(' · ');
+      }
+    }
+
     return {
       projectId: id,
       overallStatus: projectStatus,
@@ -776,6 +880,7 @@ export class ProjectsService {
       nextGate,
       scriptJob,
       readiness,
+      assetStage,
     };
   }
 }

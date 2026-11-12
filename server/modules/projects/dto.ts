@@ -225,6 +225,7 @@ export class ProjectListQueryDto extends PageQueryDto {
 
 /** 阶段确认门（POST /api/projects/:id/approve） */
 export class ApproveProjectDto {
-  @IsIn(['script', 'storyboard', 'final'])
-  stage!: 'script' | 'storyboard' | 'final';
+  // preview = 分镜预览确认门（门 2.5）：每个镜头主图生成后、进入视频生产前的用户核对
+  @IsIn(['script', 'storyboard', 'preview', 'final'])
+  stage!: 'script' | 'storyboard' | 'preview' | 'final';
 }
