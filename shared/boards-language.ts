@@ -141,7 +141,17 @@ export interface BoardLike {
   segmentTitle?: string;
   dialogue?: string;
   visualPrompt?: string;
+  /** 逐镜场景环境（结构化中文事实），也要过语言纪律与品牌词清洗 */
+  sceneEnv?: Record<string, unknown> | null;
   beats?: { from: number; to: number; description: string; dialogue?: string }[];
+}
+
+/** 场景环境里的可见文本，同样要参与语言判定 */
+function sceneEnvTexts(env: BoardLike['sceneEnv']): string[] {
+  if (!env || typeof env !== 'object') return [];
+  return Object.values(env).filter(
+    (v): v is string => typeof v === 'string' && v.trim().length >= 12,
+  );
 }
 
 /** 分镜表里有多少「创作者可见文本」跑偏了语言；用于触发重跑/降级，而不是悄悄落库 */
@@ -157,6 +167,7 @@ export function countLanguageViolations(shots: BoardLike[], lang: BoardLanguage)
       s.visualPrompt,
       s.segmentTitle,
       ...(s.beats ?? []).map((b) => b.description),
+      ...sceneEnvTexts(s.sceneEnv),
     ].filter((v): v is string => typeof v === 'string' && v.trim().length >= 12);
     for (const t of texts) {
       checked += 1;
@@ -208,8 +219,20 @@ export function normalizeBoardsLanguage<T extends BoardLike>(
         : undefined;
       return { ...b, description: stripBrandTokens(b.description), dialogue: beatDialogue };
     });
+    // sceneEnv 会原样进入图像/视频提示词，必须同样清掉字体/品牌词
+    // （实测出现过「袍服上 Verdana 字样刺绣」，既侵权又等于下达画面出字指令）。
+    const sceneEnv =
+      shot.sceneEnv && typeof shot.sceneEnv === 'object'
+        ? Object.fromEntries(
+            Object.entries(shot.sceneEnv).map(([k, v]) => [
+              k,
+              typeof v === 'string' ? stripBrandTokens(v) : v,
+            ]),
+          )
+        : shot.sceneEnv;
     return {
       ...shot,
+      ...(sceneEnv !== undefined ? { sceneEnv } : {}),
       ...(shot.visualPrompt !== undefined
         ? { visualPrompt: stripBrandTokens(shot.visualPrompt) }
         : {}),

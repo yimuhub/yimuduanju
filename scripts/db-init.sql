@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS shots (
   dialogue text,
   visual_prompt text,
   negative_prompt text,
+  scene_env jsonb,
   start_frame_url text,
   end_frame_url text,
   reference_image_urls text[] DEFAULT '{}',

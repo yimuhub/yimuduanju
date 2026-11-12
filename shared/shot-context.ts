@@ -21,6 +21,8 @@
  * 绝不能是四视图拼图或场景图。
  */
 
+import { renderImageConstraintBlock, type ImageConstraintInput } from './prompt-formula';
+
 export type ShotRefKind = 'character' | 'location' | 'prop' | 'previous_shot';
 
 /** 默认参考图上限。超过上限时按顺序去尾（与多数后端内截断同序） */
@@ -66,6 +68,11 @@ export interface ComposeShotReferencesInput {
   previousShot?: PreviousShotRefInput | null;
   /** 空间与轴线说明（九宫格站位 / 轴线方向 / 本镜画面方向），会作为独立锁块拼进不可变段 */
   spatialNote?: string | null;
+  /**
+   * 全通道画面策略（画幅 / 无文字 / 场景环境 / 风格 / 道具文字例外）。
+   * 传了才生成【画面约束】块；不传时保持旧行为，便于历史调用方与单测。
+   */
+  constraint?: ImageConstraintInput | null;
   max?: number;
 }
 
@@ -85,6 +92,8 @@ export interface ComposeShotReferencesResult {
   declaration: string;
   /** 逐资产一致性锁块（每块已带真实图号），供拼进【一致性上下文 · 不可变】段 */
   blocks: string[];
+  /** 【画面约束 · 不可变】段：画幅、禁字、场景环境、风格；未传策略时为空串 */
+  constraintBlock: string;
   /** 被上限裁掉的数量（>0 时调用方应记 warning） */
   dropped: number;
 }
@@ -248,7 +257,17 @@ export function composeShotReferences(
   const spatial = clean(input.spatialNote);
   if (spatial) blocks.push(`空间与轴线 —— ${spatial}`);
 
-  return { refs, declaration: renderReferenceDeclaration(refs), blocks, dropped };
+  // 画幅/禁字/场景环境是跨镜不可变的硬约束，与「图N指认」一样由编排层机械渲染，
+  // 绝不能让某个调用方自己拼一句「竖屏」就算数。
+  const constraintBlock = input.constraint ? renderImageConstraintBlock(input.constraint) : '';
+
+  return {
+    refs,
+    declaration: renderReferenceDeclaration(refs),
+    blocks,
+    constraintBlock,
+    dropped,
+  };
 }
 
 /**
@@ -282,8 +301,10 @@ export function renderShotMentions(text: string, refs: ComposedRef[]): string {
 export function buildShotPrompt(variablePart: string, result: ComposeShotReferencesResult): string {
   // 没有参考图但有空间/轴线约束时同样要拼 —— 否则「一个资产都没绑」的镜头
   // 会连九宫格站位一起丢掉，正好是最需要约束的那一类镜头。
-  if (result.refs.length === 0 && result.blocks.length === 0) return variablePart;
+  const constraint = result.constraintBlock ?? '';
+  if (result.refs.length === 0 && result.blocks.length === 0 && !constraint) return variablePart;
   const head: string[] = ['【一致性上下文 · 不可变】'];
+  if (constraint) head.push(constraint);
   if (result.declaration) head.push(result.declaration);
   head.push(...result.blocks);
   return [head.join('\n'), '', '【本镜画面 · 可变】', renderShotMentions(variablePart, result.refs)].join('\n');

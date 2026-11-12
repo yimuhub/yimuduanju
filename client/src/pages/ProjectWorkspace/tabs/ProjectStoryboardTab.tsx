@@ -46,6 +46,16 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 const getStatusInfo = (status: string) =>
   statusConfig[status] || { label: status, className: 'pill-neutral' };
 
+/** '16:9' → CSS 可用的 '16 / 9'；缩略图框必须与项目画幅一致，否则会把非方图裁成方图 */
+const cssAspect = (ratio: string): string => ratio.replace(':', ' / ');
+
+/** 列表视图固定 48px 高，宽度按项目画幅算（9:16 → 27px，16:9 → 85px） */
+const listThumbWidth = (ratio: string): number => {
+  const [w, h] = ratio.split(':').map(Number);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 32;
+  return Math.max(24, Math.min(120, Math.round(48 * (w / h))));
+};
+
 const shotSizeLabels: Record<string, string> = {
   close_up: '特写',
   close_up_shot: '特写',
@@ -86,6 +96,8 @@ const ProjectStoryboardTab = () => {
   // 只影响保存之后提交的视频任务，已生成/已排队的任务不回溯。
   const [videoSubtitles, setVideoSubtitles] = useState(false);
   const [subtitlePrefSaving, setSubtitlePrefSaving] = useState(false);
+  // 项目画幅：分镜缩略图按它显示，不再硬编码 9/16 把横屏首帧裁成竖图
+  const [aspectRatio, setAspectRatio] = useState<string>('9:16');
   // 片段（场 → 片段 → 镜）与一致性体检：把「哪里不连贯」在分镜阶段就摆出来
   const [segments, setSegments] = useState<Segment[]>([]);
   const [diagnosis, setDiagnosis] = useState<ProjectDiagnosis | null>(null);
@@ -372,6 +384,7 @@ const ProjectStoryboardTab = () => {
           professional?: { videoSubtitles?: boolean };
         };
         setVideoSubtitles(meta.videoSubtitles === true || meta.professional?.videoSubtitles === true);
+        if (p.aspectRatio) setAspectRatio(p.aspectRatio);
       })
       .catch((err) => logger.error('Load project subtitle pref failed:', String(err)));
     storyboard.listScenes(id)
@@ -732,7 +745,8 @@ const ProjectStoryboardTab = () => {
               >
                 {/* Thumbnail */}
                 <div
-                  className="relative aspect-[9/16] w-full cursor-pointer"
+                  className="relative w-full cursor-pointer"
+                  style={{ aspectRatio: cssAspect(aspectRatio) }}
                   onClick={() => setExpandedId(isExpanded ? null : shot.id)}
                 >
                   <MediaOrMissing
@@ -1007,7 +1021,10 @@ const ProjectStoryboardTab = () => {
                       #{shot.shotNumber}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="h-12 w-8 overflow-hidden rounded bg-muted">
+                      <div
+                        className="overflow-hidden rounded bg-muted"
+                        style={{ height: 48, width: listThumbWidth(aspectRatio) }}
+                      >
                         <MediaOrMissing
                           src={shot.startFrameUrl}
                           className="h-full w-full"

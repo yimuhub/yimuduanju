@@ -13,6 +13,7 @@ import {
 } from './skills';
 import { CAMERA_RIGS } from '@shared/camera-rigs';
 import { SPACE_ANCHORS } from '@shared/shot-craft';
+import { aspectCompositionLine, imageTextPolicy } from '@shared/prompt-formula';
 import {
   cjkRatio,
   countLanguageViolations,
@@ -95,6 +96,8 @@ export interface BoardsShot {
   durationSeconds: number;
   dialogue?: string;
   visualPrompt?: string;
+  /** 逐镜场景环境（结构化中文事实），物化时经 normalizeSceneEnv 收敛后落库 */
+  sceneEnv?: Record<string, string>;
   /** 3 秒分段节拍 */
   beats?: { from: number; to: number; description: string; dialogue?: string }[];
 }
@@ -190,9 +193,16 @@ export class StorySkillsService {
       const style = STYLE_PRESETS[styleId as keyof typeof STYLE_PRESETS];
       try {
         const { prompt, negativePrompt } = this.buildStyleShowcasePrompt(style);
+        // 画风展示卡是 UI 缩略图，1:1 方形是刻意的唯一例外；但画幅声明与
+        // 「画面内不得有字体/文字/字幕/水印」仍是所有图片通道的硬约束。
         // eslint-disable-next-line no-await-in-loop
         const images = await this.modelGateway.generateImage(
-          { prompt, negativePrompt, size: '1024x1024' },
+          {
+            prompt: [aspectCompositionLine('1:1'), imageTextPolicy(), prompt].join('\n'),
+            negativePrompt,
+            size: '1024x1024',
+            aspectRatio: '1:1',
+          },
           providerName,
         );
         const url = images[0]?.url;
@@ -342,6 +352,8 @@ export class StorySkillsService {
     temperature?: number;
     providerName?: string;
     targetSeconds?: number;
+    /** 项目画幅：分镜必须按该比例设计站位与构图 */
+    aspectRatio?: string | null;
     /** 已确认的资产清单：分镜只能引用清单里的人/景/道具 */
     catalog?: BoardsAssetCatalog | null;
   }): Promise<{ skillId: StorySkillId; shots: BoardsShot[] }> {
@@ -354,7 +366,7 @@ export class StorySkillsService {
       buildBoardsPrompt(scriptText, style, genre, input.targetSeconds, input.catalog, {
         language,
         strictLanguage: strict,
-      });
+      }, input.aspectRatio);
 
     /**
      * 语言纪律不能靠模型自觉：实测中文剧本拿到了整份英文分镜，

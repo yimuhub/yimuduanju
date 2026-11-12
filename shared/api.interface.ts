@@ -567,6 +567,40 @@ export interface Segment {
   updatedAt: string;
 }
 
+/**
+ * 逐镜场景环境（结构化，不是形容词）。
+ * 对标 taylorzhou16/video-gen「场景/光影/比例五要素」、bolecodex 分镜规范
+ * （lighting / focus / color_tone / framing 逐项必填）、火宝的 atmosphere 字段、
+ * MN0709「整体场景与氛围」清单（时间天气、主光源方向光质、环境色彩、空气介质、
+ * 画幅、情绪）。所有字段都必须是摄影机能记录的物理事实，缺依据就留空，不许编造。
+ */
+export interface SceneEnvironment {
+  /** 具体时间/时段，如「雨夜 23:40」「夏日午后」 */
+  timeOfDay?: string;
+  /** 天气，如「小雨」「雪后初晴」 */
+  weather?: string;
+  /** 内景/外景 */
+  locationType?: string;
+  /** 具体地点与空间结构（墙/门/窗/家具方位） */
+  place?: string;
+  /** 主光源来源，如「门口暖黄台灯」「窗外天光」 */
+  lightSource?: string;
+  /** 光从哪个方向来，如「画面左侧斜射」「人物侧后方」 */
+  lightDirection?: string;
+  /** 光质与明暗关系，如「柔和逆光，硬边阴影」 */
+  lightQuality?: string;
+  /** 色调/色温，如「暖琥珀色，低饱和」 */
+  colorPalette?: string;
+  /** 空气介质与氛围，如「雨雾、浮尘在光束里可见」 */
+  atmosphere?: string;
+  /** 人物/道具与环境的前中后景、左右位次关系 */
+  spatialRelation?: string;
+  /** 构图方式，如「三分法，前景书架遮挡」 */
+  composition?: string;
+  /** 环境音（具体声源），只进视频声场描述，不进画面 */
+  ambientSound?: string;
+}
+
 export interface Shot {
   id: string;
   projectId: string;
@@ -589,6 +623,8 @@ export interface Shot {
   dialogue?: string;
   visualPrompt?: string;
   negativePrompt?: string;
+  /** 逐镜场景环境（结构化事实），首帧与视频提示词共用同一份 */
+  sceneEnv?: SceneEnvironment | null;
   startFrameUrl?: string;
   endFrameUrl?: string;
   /** 白模产线：镜头绑定的白模参考视频（空间关系/运镜路径/时间节奏以此为准） */

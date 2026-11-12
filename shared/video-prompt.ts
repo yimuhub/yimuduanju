@@ -15,6 +15,12 @@
 
 import type { ScreenDirection, ShotBeat } from './api.interface';
 import { normalizeBeats, VIDEO_BEAT_SECONDS } from './shot-craft';
+import { normalizeAspect } from './aspect';
+import {
+  renderSceneEnv,
+  renderVideoConstraintLine,
+  type ImageConstraintInput,
+} from './prompt-formula';
 
 const SCREEN_DIRECTION_TEXT: Record<ScreenDirection, string> = {
   left_to_right: '画面内从左向右',
@@ -44,8 +50,13 @@ export interface SegmentedVideoPromptInput {
   previousEndState?: string | null;
   /** 空间与轴线（九宫格站位 / 轴线方向 / 本镜画面方向） */
   spatialNote?: string | null;
-  /** 是否追加「不要字幕/水印」等负向约束 */
+  /** 是否追加「不要字幕/水印」等负向约束（项目开启画面字幕时传 false） */
   negativeText?: boolean;
+  /**
+   * 全通道画面策略：画幅、场景环境、风格、道具文字例外。
+   * 画幅保护与禁字统一由 prompt-formula 渲染，避免视频侧另写一套口径。
+   */
+  constraint?: ImageConstraintInput | null;
 }
 
 export interface SegmentedVideoPromptResult {
@@ -110,7 +121,15 @@ export function buildSegmentedVideoPrompt(
   else camera.push('固定机位');
   if (input.screenDirection) camera.push(`画面方向 ${SCREEN_DIRECTION_TEXT[input.screenDirection]}`);
   if (input.sceneName) camera.push(`场景 ${input.sceneName}`);
+  if (input.constraint?.aspectRatio) camera.push(`画幅 ${normalizeAspect(input.constraint.aspectRatio)}`);
   if (camera.length > 0) lines.push(`【镜头】${camera.join('；')}`);
+
+  // 场景环境与风格：旧实现只把 location 数据拼进首帧锁块，视频侧完全没有场景描述，
+  // 结果「镜头对、场地飘」。这里与首帧共用同一份 sceneEnv 事实。
+  const scene = renderSceneEnv(input.constraint?.sceneEnv);
+  if (scene) lines.push(scene);
+  const style = (input.constraint?.styleBlock ?? '').trim();
+  if (style) lines.push(`【视觉风格】${style}`);
 
   const spatial = (input.spatialNote ?? '').trim();
   if (spatial) lines.push(`【空间与轴线】${spatial}`);
@@ -120,11 +139,15 @@ export function buildSegmentedVideoPrompt(
     lines.push(`【在场人物】${cast.join('、')}（长相、发型、服装逐字一致，不得替换成他人或增减人数）`);
   }
 
-  if (input.negativeText !== false) {
-    lines.push(
-      `【禁止】不要出现字幕、屏幕文字、水印、logo、分屏或多机位切换；镜头内只允许一个主要运镜；动作在本镜结束时完成到一个明确的停顿点`,
-    );
-  }
+  // 压尾：模型对末尾更敏感。文字政策 + 画幅保护 + 一镜一运镜一次说清，
+  // 且【禁止】必须是最后一行（历史测试与生产约束都依赖这一点）。
+  const constraint: ImageConstraintInput = {
+    ...(input.constraint ?? {}),
+    allowOnScreenText: input.negativeText === false,
+  };
+  const guardBits = renderVideoConstraintLine(constraint).split('；');
+  if (input.negativeText === false) guardBits.shift(); // 用户显式开启画面字幕
+  lines.push(`【禁止】${guardBits.join('；')}`);
 
   return { prompt: lines.join('\n'), beats, degraded };
 }

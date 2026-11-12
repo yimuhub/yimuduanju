@@ -363,6 +363,8 @@ export const shots = pgTable("shots", {
   dialogue: text("dialogue"),
   visualPrompt: text("visual_prompt"),
   negativePrompt: text("negative_prompt"),
+  /** 逐镜场景环境（migration 0021）：结构化中文事实，首帧与视频提示词共用 */
+  sceneEnv: jsonb("scene_env"),
   startFrameUrl: text("start_frame_url"),
   endFrameUrl: text("end_frame_url"),
   // 白模产线（0008）：镜头绑定的白模参考视频 URL + 元数据

@@ -29,6 +29,15 @@ import {
   toProviderImageBase64,
   toProviderVideoFrame,
 } from './media-input';
+// 画幅是项目级唯一真源：图片 size 与 Agnes 视频 aspect_ratio 都从这里推导，
+// 不允许任何通道再写死 '1024x1024' 或 '9:16'。
+import {
+  agnesAspectRatio,
+  DEFAULT_ASPECT_RATIO,
+  imageSizeForAspect,
+  normalizeAspect,
+  videoSizeForAspect,
+} from '@shared/aspect';
 
 interface TextGenerateParams {
   prompt: string;
@@ -41,7 +50,10 @@ interface TextGenerateParams {
 interface ImageGenerateParams {
   prompt: string;
   model?: string;
+  /** 显式像素尺寸（优先）；不传时按项目画幅自动推导，杜绝默认 1:1 方图 */
   size?: string;
+  /** 项目画幅，如 '9:16' / '16:9'；来自 projects.aspect_ratio */
+  aspectRatio?: string | null;
   n?: number;
   negativePrompt?: string;
   /** 角色/场景参考图（用于保持跨镜头角色与空间一致性） */
@@ -56,6 +68,8 @@ interface VideoGenerateParams {
   model?: string;
   duration?: number;
   size?: string;
+  /** 项目画幅：Agnes 的 aspect_ratio 与像素尺寸白名单都跟随它 */
+  aspectRatio?: string | null;
   imageUrl?: string;
   /**
    * 参考视频 URL（白模直喂）：仅当供应商 capabilities.videoReference 为 true
@@ -434,15 +448,24 @@ export class ModelGatewayService {
     providerName?: string,
   ): Promise<{ url: string; width?: number; height?: number }[]> {
     const provider = await this.getProvider(providerName, 'image');
-    // P2-3 mock 通道（免 Key）：按 prompt 生成确定性占位 PNG（data URL）
+    // P2-3 mock 通道（免 Key）：占位 PNG 也必须按项目画幅出，否则演练时
+    // 「16:9 项目全是方图」会一路带到时间线与导出，真出问题才发现不了。
+    const imageAspect = normalizeAspect(params.aspectRatio ?? DEFAULT_ASPECT_RATIO);
+    const imageSize = params.size ?? imageSizeForAspect(imageAspect, provider.modelParams?.imageSizes);
     if (this.isMockProvider(provider)) {
+      const [sw, sh] = imageSize.split('x').map(Number);
+      const w0 = Number.isFinite(sw) && sw > 0 ? sw : 384;
+      const h0 = Number.isFinite(sh) && sh > 0 ? sh : 384;
+      const scale = Math.min(1, 768 / Math.max(w0, h0));
+      const w = Math.max(2, Math.round((w0 * scale) / 2) * 2);
+      const h = Math.max(2, Math.round((h0 * scale) / 2) * 2);
       const n = Math.max(1, Math.min(4, params.n ?? 1));
       const images = Array.from({ length: n }, (_, i) => ({
-        url: this.mockPngDataUrl(`${params.prompt}#${i}`, 384, 384),
-        width: 384,
-        height: 384,
+        url: this.mockPngDataUrl(`${params.prompt}#${i}`, w, h),
+        width: w,
+        height: h,
       }));
-      this.logger.log(`mock 图片生成 ${images.length} 张（占位 PNG，不消费 Key）`);
+      this.logger.log(`mock 图片生成 ${images.length} 张（${w}x${h} / ${imageAspect}，不消费 Key）`);
       return images;
     }
     const apiKey = provider.apiKey;
@@ -509,14 +532,27 @@ export class ModelGatewayService {
      * ------------------------------------------------------------------ */
     const returnsUrl =
       ((provider.modelParams ?? {}) as { imageReturnUrl?: boolean }).imageReturnUrl === true;
+    /* ------------------------------------------------------------------
+     * 画幅：项目 aspect_ratio 是唯一真源。
+     * 旧实现 `size: params.size ?? '1024x1024'` 让所有没显式传尺寸的图片
+     * 物理上就是 1:1 方图 —— 分镜首帧、场景/人物/道具参考图全方，
+     * 后续视频模型按这张方图理解构图，必然把 16:9 / 9:16 全带偏。
+     * 现在不传 size 时按项目画幅映射（供应商白名单存在时自动取最接近的一项）。
+     * ------------------------------------------------------------------ */
+    const acceptsNegative = provider.formatType !== 'agnes';
+    if (params.negativePrompt && !acceptsNegative) {
+      // Agnes 图片接口不收 negative_prompt（传了直接 400）。禁字约束已经写进
+      // 正面提示词，这里只丢弃字段，不让「加了负面词」变成新的失败原因。
+      this.logger.debug?.(`图片负面词由正面提示词承载，${provider.name} 通道不发送 negative_prompt`);
+    }
     const body = {
       model,
       prompt: prefix ? `${prefix}, ${params.prompt}` : params.prompt,
-      size: params.size ?? '1024x1024',
+      size: imageSize,
       n: params.n ?? 1,
       // CDN 不可达时兜底：能回 b64 就不依赖 .cn 拉文件
       response_format: returnsUrl ? 'url' : 'b64_json',
-      ...(params.negativePrompt
+      ...(params.negativePrompt && acceptsNegative
         ? { negative_prompt: params.negativePrompt }
         : {}),
       ...(refImg ? { image: refImg } : {}),
@@ -548,6 +584,8 @@ export class ModelGatewayService {
           detail: {
             url,
             model,
+            size: imageSize,
+            aspectRatio: imageAspect,
             upstreamStatus: response.status,
             upstreamBody: errText,
             promptChars: params.prompt.length,
@@ -695,17 +733,23 @@ export class ModelGatewayService {
         );
       }
     }
-    const wantSize = params.size;
+    const videoAspect = normalizeAspect(params.aspectRatio ?? DEFAULT_ASPECT_RATIO);
+    const explicitSize = params.size;
+    const sizeWhitelist = Array.isArray(vparams.videoSizes) ? vparams.videoSizes : [];
     if (
-      wantSize &&
-      Array.isArray(vparams.videoSizes) &&
-      vparams.videoSizes.length > 0 &&
-      !vparams.videoSizes.includes(wantSize)
+      explicitSize &&
+      sizeWhitelist.length > 0 &&
+      !sizeWhitelist.includes(explicitSize)
     ) {
       throw new BadRequestException(
-        `该供应商视频尺寸仅支持 ${vparams.videoSizes.join('/')}，当前 ${wantSize}`,
+        `该供应商视频尺寸仅支持 ${sizeWhitelist.join('/')}，当前 ${explicitSize}`,
       );
     }
+    // 供应商声明了像素尺寸白名单时按项目画幅推导；否则沿用原有分辨率档位，
+    // 画幅由首帧图与提示词里的比例声明共同约束（避免把 '720x1280' 塞给只认 '720p' 的通道）。
+    const wantSize =
+      explicitSize ??
+      (sizeWhitelist.length > 0 ? videoSizeForAspect(videoAspect, sizeWhitelist) : undefined);
 
     const baseUrl = this.normalizeBaseUrl(provider.baseUrl);
 
@@ -781,7 +825,7 @@ export class ModelGatewayService {
         model,
         prompt: withPrefix(params.prompt),
         duration: effectiveDuration,
-        size: params.size ?? '720p',
+        size: wantSize ?? '720p',
         ...(firstFrame.url ? { image_url: firstFrame.url } : {}),
         ...(sendRef ? { reference_video_url: refUrl } : {}),
       };
@@ -792,7 +836,7 @@ export class ModelGatewayService {
         model,
         prompt: withPrefix(params.prompt),
         duration: effectiveDuration,
-        size: params.size ?? '1024x576',
+        size: wantSize ?? '1024x576',
         ...(firstFrame.url ? { image_url: firstFrame.url } : {}),
         ...(sendRef ? { reference_video: refUrl } : {}),
       };
@@ -876,13 +920,16 @@ export class ModelGatewayService {
     const modeText = dialect.text ?? 'text';
     const modeKeyframe = dialect.keyframe ?? 'keyframe';
     const modeReference = dialect.reference ?? 'reference';
+    // 旧实现写死 '9:16'，16:9 项目也出竖屏视频，与已经按项目画幅生成的首帧
+    // 直接错位。现在跟随 projects.aspect_ratio，并收敛到 Agnes 支持的三档。
+    const videoAspect = agnesAspectRatio(params.aspectRatio ?? DEFAULT_ASPECT_RATIO);
     const body: Record<string, unknown> = {
       model,
       prompt: withPrefix(params.prompt),
       seconds,
-      // 短剧竖屏默认；通用分支的尺寸体系不动
+      // 尺寸档位与宽高比是两件事：档位固定，比例跟随项目
       size: '720P',
-      aspect_ratio: '9:16',
+      aspect_ratio: videoAspect,
     };
     if (isPublic(params.referenceVideoUrl)) {
       body.mode = modeReference;

@@ -1,4 +1,6 @@
 import type { StorySkillId, StoryStylePreset } from '@shared/api.interface';
+import { ONSCREEN_TEXT_RULES, SCENE_ENV_CONTRACT } from '@shared/prompt-formula';
+import { isVerticalAspect, normalizeAspect } from '@shared/aspect';
 
 /**
  * 剧本技能注册表（W4 商业化 / 用户技能要求，版本化可追踪）。
@@ -256,7 +258,7 @@ export function renderAssetCatalog(catalog?: BoardsAssetCatalog | null): string 
  * 解析失败回落 parse_script。
  */
 export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出任何解释文字。数组每一项是**一个镜头**，按拍摄顺序排列，格式如下：
-[{"scene":"第一场 雨夜·外","location":"旧书店·内","segment":1,"segmentTitle":"推门而入","intent":"establish","spaceAnchor":"mid_mid","axisDirection":"left_to_right","cast":["林晚"],"props":["PROP001 怀表"],"shotSize":"wide","movement":"dolly","screenDirection":"left_to_right","durationSeconds":6,"dialogue":"","visualPrompt":"林晚推门进来，雨从门缝灌进，暖黄台灯照亮左侧书架","beats":[{"from":0,"to":3,"description":"手推门，门缝透出暖光"},{"from":3,"to":6,"description":"跨进店内，回头看一眼门外"}]}]
+[{"scene":"第一场 雨夜·外","location":"旧书店·内","segment":1,"segmentTitle":"推门而入","intent":"establish","spaceAnchor":"mid_mid","axisDirection":"left_to_right","cast":["林晚"],"props":["PROP001 怀表"],"shotSize":"wide","movement":"dolly","screenDirection":"left_to_right","durationSeconds":6,"dialogue":"","sceneEnv":{"timeOfDay":"雨夜 21:30","weather":"小雨","locationType":"内景","place":"旧书店，木书架沿左右墙排列，中央一张旧木桌，门在画面右后侧","lightSource":"门口暖黄台灯与窗外冷蓝天光","lightDirection":"暖光从画面左侧斜射，冷光从右后方窗透入","lightQuality":"柔和侧逆光，桌面有长条投影","colorPalette":"暖琥珀与冷蓝对比，低饱和","atmosphere":"雨雾与浮尘在光束里可见，玻璃上有水痕","spatialRelation":"林晚位于中景偏左，木桌在前景右下，门在右后方","composition":"三分法，左侧书架作前景遮挡","ambientSound":"雨打玻璃、木地板轻响、远处闷雷"},"visualPrompt":"林晚推门进来，雨从门缝灌进，暖黄台灯照亮左侧书架","beats":[{"from":0,"to":3,"description":"手推门，门缝透出暖光"},{"from":3,"to":6,"description":"跨进店内，回头看一眼门外"}]}]
 
 字段规则：
 - scene 相同 = 同一场；同一场里 segment 相同 = 同一片段。一段 = 同一空间内一段连续动作，时长 ≤15 秒、含 2-4 镜，超了就开新段。
@@ -268,7 +270,8 @@ export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出�
 - shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov。
 - durationSeconds 4-15 整数；台词按约 4 字/秒估算，超 20 字必须拆镜或切听者反应镜。
 - beats 每 3 秒一条，覆盖整镜时长，每条只写这一段的可见动作，台词放该段的 dialogue 里（无台词留空字符串）。
-- 【台词保真】dialogue 与 beats[].dialogue 必须逐字照抄剧本里的原句，不得翻译、改写、扩写或自行编造；剧本没写的台词一律留空字符串。`;
+- 【台词保真】dialogue 与 beats[].dialogue 必须逐字照抄剧本里的原句，不得翻译、改写、扩写或自行编造；剧本没写的台词一律留空字符串。
+- sceneEnv 是**每一镜必填**的结构化场景环境对象（字段见下方【场景描述】），字段值全部为简体中文字符串；没有剧本依据的字段写空字符串，不要省略对象、不要写 null、不要塞英文标签。`;
 
 /**
  * 分镜师专用的画风块：只给中文设定，不注入 style.visual / tone / camera 的英文标签。
@@ -287,8 +290,16 @@ export function buildBoardsPrompt(
   targetSeconds?: number,
   catalog?: BoardsAssetCatalog | null,
   opts?: { language?: 'zh' | 'en'; strictLanguage?: boolean },
+  aspectRatio?: string | null,
 ): string {
   const genre = genreRules ? `\n${genreRules}\n` : '';
+  const ar = normalizeAspect(aspectRatio);
+  const frameRule =
+    `【画幅 · 全片统一】本片画幅为 ${ar}（${isVerticalAspect(ar) ? '竖屏' : '横屏'}）。` +
+    `所有分镜的站位、景别、构图与运镜必须按 ${ar} 来设计，禁止按 1:1 方形构图思考；` +
+    (isVerticalAspect(ar)
+      ? '竖屏里横向可容纳的人数少，双人对话用正反打而非并排全景，主体纵向位置要写清。'
+      : '横屏里左右空间宽，定场镜要交代左右环境关系，避免把主体居中摆成方图。');
   const durationRule =
     targetSeconds && targetSeconds > 0
       ? `全片目标总时长约${Math.round(targetSeconds)}秒：镜数×单镜时长之和须贴齐该值（允许±10%），这是硬预算，不要按每镜 8-10 秒随手堆到总时长翻倍。单镜 4-12 秒；台词按约 4 字/秒留出念完的时间；按内容选择，不要所有镜头同一时长。`
@@ -303,6 +314,9 @@ export function buildBoardsPrompt(
     `你是资深分镜师，把剧本拆成可直接拍摄的分镜表。按「场 → 片段 → 镜」三级组织：每场先立空间基准，再按同一空间内的连续动作切片段（≤15 秒、2-4 镜），片段内按信息推进切镜。\n${boardsStyleBlock(style)}\n${genre}${durationRule}\n` +
     `${languageRule}\n` +
     `${catalogBlock ? `${catalogBlock}\n` : ''}` +
+    `${frameRule}\n` +
+    `${SCENE_ENV_CONTRACT}\n` +
+    `${ONSCREEN_TEXT_RULES}\n` +
     `【镜头语法】先问本镜给观众什么新信息再选景别与运镜；定场 1-2 镜完成；连续三个同景别而无信息变化必须改；一镜只安排一个主要运镜。\n` +
     `【空间连续性】每场第一次交代空间后必须给出九宫格基准与轴线；普通反打左者右看、右者左看，不得为露正脸让两人都面朝镜头；相邻镜核对站位、动作完成度、持物手、眼线与服装。\n` +
     `要求：visualPrompt 必须是摄影机能记录的物理现象（位置/动作/表情/光影），抽象情绪外化；人物一律使用资产清单里的中文名字，不要用 the old man / the prince 这类英文泛指。\n${BOARDS_JSON_CONTRACT}\n\n【剧本】\n${scriptText.slice(0, 12000)}`
@@ -312,7 +326,9 @@ export function buildBoardsPrompt(
 /**
  * V1 四视图定妆照提示词（移植 ToonFlow art_character.md:127-166 约束）：
  * 单图拼图一次生成——特写+正面+侧面+背面并排，同肤色体型发型服装。
- * 16:9 横版为原配方；竖屏项目用 9:16 由调用方指定尺寸。
+ * 四格并排必须用 16:9 横版设定板（唯一不跟随项目画幅的图片通道）：
+ * worker 识别 inputData.sheet=true 后按 16:9 出图，并在提示词里写明该画幅。
+ * 它是「设定板」而非成片首帧，不会被视频模型当构图依据。
  */
 export function buildSheetPrompt(
   character: { name: string; canonicalDescription?: string; costume?: string },

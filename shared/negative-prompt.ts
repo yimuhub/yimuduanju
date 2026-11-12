@@ -10,14 +10,21 @@
  *
  * 我们的旧做法正好相反：每条 prompt 都挂同一串长负面词。负面词一多，
  * 模型会把注意力从"要画什么"挪到"别画什么"，结果是画面变糊、动作变形。
- * 这里改成：固定的技术底线（3 条）+ 按本镜风险最多追加 2 条，总数封顶 8。
+ * 这里改成：固定的技术底线（字幕/文字/字体/水印/logo，来自 prompt-formula 的
+ * 单一真源）+ 按本镜风险最多追加 2 条，总数封顶 8。
  *
  * 注意通道差异：Agnes 图片队列不接受 negative_prompt（传了直接 400），
  * 由网关按 formatType 过滤；本模块只负责"该说什么"，不管"能不能说"。
  */
 
-/** 技术底线：任何一镜都不要的东西（不含风格词，避免和画风打架） */
-const BASE_NEGATIVES = ['字幕', '文字水印', 'logo标识'] as const;
+/**
+ * 技术底线：任何一镜都不要的东西（不含风格词，避免和画风打架）。
+ * 与图片/视频正文里的「画面文字硬约束」共用同一份清单，避免一处写「无文字」、
+ * 另一处的负面词里连「字体」都没有。
+ */
+import { IMAGE_NEGATIVE_BASE } from './prompt-formula';
+
+const BASE_NEGATIVES: readonly string[] = IMAGE_NEGATIVE_BASE;
 
 /** 总数上限：超过这个数，负面词开始反向伤害画面质量 */
 export const NEGATIVE_PROMPT_MAX_TERMS = 8;

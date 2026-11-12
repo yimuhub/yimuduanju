@@ -18,7 +18,12 @@ import { decryptApiKey } from '../../common/crypto.util';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { BillingService } from '../billing/billing.service';
 import { ModelGatewayService } from '../generation/model-gateway.service';
-import { withVideoTextPolicy } from '@shared/prompt-formula';
+import {
+  aspectCompositionLine,
+  aspectGuardLine,
+  imageTextPolicy,
+  withVideoTextPolicy,
+} from '@shared/prompt-formula';
 
 export interface P3RefInput {
   id?: string;
@@ -334,7 +339,13 @@ export class Pavo3Service {
     signal?: AbortSignal,
   ): Promise<P3GenerateResult> {
     const model = req.model || provider.imageModel || 'seedream-5.0-pro';
-    const prompt = this.buildPrompt(req);
+    const ratio = req.size ?? '9:16';
+    // 自由画布的图片同样要按选定画幅出图、同样不许把字烧进画面
+    const prompt = [
+      aspectCompositionLine(ratio),
+      imageTextPolicy({ allowOnScreenText: req.onScreenText === true }),
+      this.buildPrompt(req),
+    ].join('\n');
     const body: Record<string, unknown> = {
       model,
       prompt,
@@ -376,11 +387,15 @@ export class Pavo3Service {
         ? { taskId: req.taskId }
         : await this.modelGateway.generateVideo(
             {
-              // 默认不把字幕/文字烧进画面，字幕由时间线后期统一添加
-              prompt: withVideoTextPolicy(this.buildPrompt(req), req.onScreenText === true),
+              // 默认不把字幕/文字烧进画面，字幕由时间线后期统一添加；
+              // 画幅保护句与首帧比例同源（Agnes 过去写死 9:16，size 传了也被忽略）。
+              prompt: [
+                aspectGuardLine(req.size ?? '9:16'),
+                withVideoTextPolicy(this.buildPrompt(req), req.onScreenText === true),
+              ].join('\n'),
               model,
               duration: req.duration ?? 5,
-              size: RATIO_SIZES[req.size ?? '9:16'] ?? '720P',
+              aspectRatio: req.size ?? '9:16',
               imageUrl: refImages[0],
               lastFrameUrl: refImages[1],
             },
@@ -416,8 +431,12 @@ export class Pavo3Service {
 
     let taskId = req.taskId;
     if (!taskId) {
-      // 默认不把字幕/文字烧进画面，字幕由时间线后期统一添加
-      const prompt = withVideoTextPolicy(this.buildPrompt(req), req.onScreenText === true);
+      // 默认不把字幕/文字烧进画面，字幕由时间线后期统一添加；
+      // 同时声明画幅，避免运镜把按该比例生成的首帧带偏
+      const prompt = [
+        aspectGuardLine(req.size ?? '9:16'),
+        withVideoTextPolicy(this.buildPrompt(req), req.onScreenText === true),
+      ].join('\n');
       const body: Record<string, unknown> = {
         model,
         prompt,

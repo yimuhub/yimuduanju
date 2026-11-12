@@ -32,10 +32,23 @@ import type {
   GenerationJob,
   ProfessionalPrefs,
   PropStateVariant,
+  SceneEnvironment,
   ScreenDirection,
   ShotBeat,
   SpaceAnchor,
 } from '@shared/api.interface';
+// 画幅：项目 aspect_ratio 是唯一真源，图片尺寸与 Agnes 视频比例都跟随它
+import { DEFAULT_ASPECT_RATIO, normalizeAspect } from '@shared/aspect';
+// 全通道画面策略：禁字 / 画幅构图 / 场景环境 / 视觉风格，只在 prompt-formula 定义一次
+import {
+  composeImageNegativePrompt,
+  normalizeSceneEnv,
+  renderImageConstraintBlock,
+  styleBibleToStyle,
+  type ImageConstraintInput,
+  type StyleBibleLike,
+} from '@shared/prompt-formula';
+import { composeNegativePrompt } from '@shared/negative-prompt';
 import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
 import { StageBindingsService } from '../providers/stage-bindings.service';
 import { GenerationService } from './generation.service';
@@ -900,6 +913,83 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     return typeof prompt === 'string' ? prompt : '';
   }
 
+  /** 项目级画面策略：画幅、画面字幕开关、中文风格圣经。所有生成通道共用一次取数。 */
+  private async loadVisualPolicy(projectId?: string): Promise<{
+    aspectRatio: string;
+    allowOnScreenText: boolean;
+    styleBlock: string;
+  }> {
+    const fallback = {
+      aspectRatio: DEFAULT_ASPECT_RATIO,
+      allowOnScreenText: false,
+      styleBlock: '',
+    };
+    if (!projectId) return fallback;
+    const rows = await this.db
+      .select({
+        aspectRatio: projects.aspectRatio,
+        metadata: projects.metadata,
+        styleBible: projects.styleBible,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return fallback;
+    const meta = (row.metadata ?? {}) as {
+      videoSubtitles?: boolean;
+      professional?: { videoSubtitles?: boolean };
+    };
+    return {
+      aspectRatio: normalizeAspect(row.aspectRatio ?? DEFAULT_ASPECT_RATIO),
+      allowOnScreenText:
+        meta.videoSubtitles === true || meta.professional?.videoSubtitles === true,
+      // 只注入中文风格圣经，不注入 style.visual 的英文标签（会把画面描述带成英文）
+      styleBlock: styleBibleToStyle(row.styleBible as StyleBibleLike | null),
+    };
+  }
+
+  /**
+   * 逐镜场景环境：分镜 LLM 落库的 sceneEnv 优先，缺失字段用 locations 的
+   * 结构化环境数据兜底（历史项目没有 sceneEnv 时也能拿到精准场景描述）。
+   */
+  private async loadSceneEnv(
+    sceneId: string | null | undefined,
+    stored: unknown,
+  ): Promise<SceneEnvironment> {
+    const fromShot = normalizeSceneEnv(stored);
+    let fromLocation: SceneEnvironment = {};
+    if (sceneId) {
+      const sceneRows = await this.db
+        .select({ locationId: scenes.locationId })
+        .from(scenes)
+        .where(eq(scenes.id, sceneId))
+        .limit(1);
+      const locationId = sceneRows[0]?.locationId;
+      if (locationId) {
+        const locRows = await this.db
+          .select()
+          .from(locations)
+          .where(eq(locations.id, locationId))
+          .limit(1);
+        const loc = locRows[0];
+        if (loc) {
+          fromLocation = normalizeSceneEnv({
+            timeOfDay: loc.timeOfDay,
+            weather: loc.weather,
+            locationType: loc.locationType === 'exterior' ? '外景' : '内景',
+            place: [loc.name, loc.architecture, loc.furniture]
+              .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+              .join('，'),
+            lightSource: loc.lighting,
+            colorPalette: loc.colorPalette,
+          });
+        }
+      }
+    }
+    return { ...fromLocation, ...fromShot };
+  }
+
   // ========== 各类型执行 ==========
 
   /**
@@ -985,6 +1075,40 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.generationService.settleJobFailure(job.id, '图片任务缺少 prompt');
       return;
     }
+    /* ------------------------------------------------------------------
+     * 所有图片通道的硬约束（用户要求 + 对标三家共识）：
+     * ① 画幅必须按项目 aspect_ratio，既写进提示词构图声明、又传给生图 API 的 size；
+     * ② 画面内不得出现字体/文字/字幕/水印，字幕一律后期叠加；
+     * ③ 场景环境用结构化中文事实描述。
+     * 四视图拼图是唯一例外：并排四格需要 16:9 横版设定板，且它不作为成片首帧。
+     * ------------------------------------------------------------------ */
+    const policy = await this.loadVisualPolicy(job.projectId);
+    const isSheet = input.sheet === true;
+    const effectiveAspect = isSheet ? '16:9' : policy.aspectRatio;
+    const baseConstraint: ImageConstraintInput = {
+      aspectRatio: effectiveAspect,
+      // 图片一律禁字：「画面字幕」开关只作用于视频，图片永不受它影响
+      allowOnScreenText: false,
+      styleBlock: policy.styleBlock,
+    };
+    // 道具设定图是唯一可能合法出字的图片：exact_readable 道具表面必须精确出现指定文字。
+    // 不把它登记为显式例外，全局禁字就会和 buildPropPrompt 的「表面准确文字」互相打架。
+    if (typeof input.propCode === 'string' && input.propCode.trim()) {
+      const propRows = await this.db
+        .select({ textPolicy: props.textPolicy, readableText: props.readableText })
+        .from(props)
+        .where(
+          and(
+            eq(props.projectId, job.projectId ?? ''),
+            eq(props.code, input.propCode.trim()),
+          ),
+        )
+        .limit(1);
+      const p = propRows[0];
+      if (p?.textPolicy === 'exact_readable' && typeof p.readableText === 'string' && p.readableText.trim()) {
+        baseConstraint.readablePropTexts = [p.readableText.trim()];
+      }
+    }
     // 出片前语言自愈：中文剧本 + 英文分镜会让按中文名建的人物绑定整镜落空。
     // 不指望用户自己发现去点「中文回填」，进任务时就地改写这一镜。
     if (job.targetType === 'shot' && job.targetId && job.projectId) {
@@ -1005,7 +1129,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       ? (input.references as unknown[]).filter((r): r is string => typeof r === 'string' && r.length > 0)
       : [];
     const refList: string[] = [];
-    let enrichedPrompt = prompt;
+    let enrichedPrompt: string | null = null;
     if (job.targetType === 'shot' && job.targetId && job.projectId) {
       // 单镜资产门：本镜引用的人物/场景还没定妆图时不硬闯，挂起等 reconcileAssetGate 解封。
       // 硬闯的代价是「凭空生成一张脸」，一旦回写进 startFrameUrl，用户只能重做整镜。
@@ -1021,10 +1145,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      const composed = await this.composeShotContext(job.projectId, job.targetId);
+      const composed = await this.composeShotContext(job.projectId, job.targetId, baseConstraint);
       for (const r of composed.refs) refList.push(r.url);
+      // 即使一个参考图都没绑上，也要把画幅/禁字/场景约束拼进去 ——
+      // 「资产缺失」的镜头恰恰最容易出方图、最容易冒出字幕。
+      enrichedPrompt = buildShotPrompt(prompt, composed);
       if (composed.refs.length > 0) {
-        enrichedPrompt = buildShotPrompt(prompt, composed);
         // 可观测性：把真实编号声明打进日志，出问题能一眼看出「图N」到底指谁
         this.logger.log(`镜 ${job.targetId} 参考图 ${refList.length} 张 —— ${composed.declaration}`);
         // 落盘给 UI 看（只在用户没手动指定时写，避免覆盖人工选择的参考图）
@@ -1047,16 +1173,34 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
-    // 非镜头任务（人物/场景/道具定妆图）的参考图仍由任务自带，避免把整条资产链搅进编排
+    // 非镜头任务（人物/场景/道具定妆图）同样必须带画幅/禁字/场景约束：
+    // 用户看到的「参考图全是方图」主要就是这些通道造成的。
+    if (enrichedPrompt === null) {
+      enrichedPrompt = [renderImageConstraintBlock(baseConstraint), prompt]
+        .filter(Boolean)
+        .join('\n');
+    }
+    // 非镜头任务的参考图仍由任务自带，避免把整条资产链搅进编排
     if (refList.length === 0) {
       for (const r of explicitRefs) if (r && !refList.includes(r)) refList.push(r);
     }
     const seed = typeof input.seed === 'number' && Number.isFinite(input.seed) ? input.seed : undefined;
+    // 负面词：底线（字幕/文字/字体/水印/logo）永远在，再按本镜风险追加至多几条；
+    // Agnes 通道不接受 negative_prompt，由网关按 formatType 过滤，禁字仍由正面提示词兜住。
+    const riskTerms = composeNegativePrompt({ prompt }).split('，');
+    const negativePrompt = composeImageNegativePrompt({
+      negativePrompt: typeof input.negativePrompt === 'string' ? input.negativePrompt : '',
+      riskTerms,
+    });
+    this.logger.log(
+      `图片任务 ${job.id} 画幅 ${effectiveAspect}（size 由网关按项目画幅推导）；` +
+        `禁字/场景/构图约束已注入${isSheet ? '（四视图设定板固定 16:9 横版）' : ''}`,
+    );
     const images = await this.modelGateway.generateImage(
       {
         prompt: enrichedPrompt,
-        negativePrompt:
-          typeof input.negativePrompt === 'string' ? input.negativePrompt : undefined,
+        negativePrompt,
+        aspectRatio: effectiveAspect,
         model: opts?.model,
         referenceImages: refList.length > 0 ? refList : undefined,
         seed,
@@ -1087,6 +1231,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   private async composeShotContext(
     projectId: string,
     shotId: string,
+    constraint: ImageConstraintInput,
   ): Promise<ReturnType<typeof composeShotReferences>> {
     const shotRows = await this.db
       .select({
@@ -1098,6 +1243,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         screenDirection: shots.screenDirection,
         shotSize: shots.shotSize,
         visualPrompt: shots.visualPrompt,
+        sceneEnv: shots.sceneEnv,
         dialogue: shots.dialogue,
         action: shots.action,
       })
@@ -1105,7 +1251,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .where(eq(shots.id, shotId))
       .limit(1);
     const shot = shotRows[0];
-    if (!shot) return composeShotReferences({});
+    // 连镜头都查不到时也不能裸发：画幅/禁字是「所有图片」的硬约束。
+    if (!shot) return composeShotReferences({ constraint });
+    // 逐镜场景事实：分镜 LLM 落库的优先，历史镜头用 locations 结构化字段兜底
+    const sceneEnv = await this.loadSceneEnv(shot.sceneId, shot.sceneEnv);
 
     let sceneInput: SceneRefInput | null = null;
     let sceneCharIds: string[] = [];
@@ -1232,6 +1381,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
     // 道具：场次 props 标签（名字 / PROP 编号 / @编号 / 后缀匹配）
     const propInputs: PropRefInput[] = [];
+    // 全局禁字的唯一显式例外：exact_readable 道具表面必须精确出现的文字。
+    // 旧实现既不读 textPolicy、也不仲裁，导致「全局禁字」和「道具必须出字」互相打架。
+    const readablePropTexts: string[] = [];
     if (propTags.length > 0) {
       const propRows = await this.db
         .select({
@@ -1242,6 +1394,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           scaleReference: props.scaleReference,
           continuityLock: props.continuityLock,
           stateVariants: props.stateVariants,
+          textPolicy: props.textPolicy,
+          readableText: props.readableText,
           referenceImageUrls: props.referenceImageUrls,
         })
         .from(props)
@@ -1254,6 +1408,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           (t) => t === p.name || t === p.code || t === `@${p.code}` || t.endsWith(p.name),
         );
         if (!hit) continue;
+        if (p.textPolicy === 'exact_readable' && typeof p.readableText === 'string' && p.readableText.trim()) {
+          readablePropTexts.push(p.readableText.trim());
+        }
         /*
          * 道具是持续身份，状态是变体（开合/破损/消耗/转手）。
          * 旧实现只注入形制锁，于是「已经打开的怀表」每镜都被画成合着的。
@@ -1321,6 +1478,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       props: propInputs,
       previousShot,
       spatialNote,
+      constraint: { ...constraint, sceneEnv, readablePropTexts },
     });
   }
 
@@ -1337,7 +1495,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
      * 火宝的做法是 0-3s / 3-6s 各写一段可见动作与该段台词 —— 段内密度可控，
      * 段间衔接才有依据。这里再把同段的上一镜结束状态接上（ArcReel 的镜像链）。
      */
-    const composed = await this.buildVideoPrompt(job, rawPrompt, input);
+    // 画幅/禁字/风格：视频侧必须与首帧同口径，且「画面字幕」开关在这里才真正生效
+    const policy = await this.loadVisualPolicy(job.projectId);
+    const composed = await this.buildVideoPrompt(job, rawPrompt, input, policy);
     const prompt = composed.prompt;
     const refs = Array.isArray(input.references)
       ? (input.references as unknown[]).filter(
@@ -1387,6 +1547,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         referenceVideoUrl: refs[1],
         lastFrameUrl,
         model: opts?.model,
+        // Agnes 的 aspect_ratio 与像素尺寸白名单都跟随项目画幅，
+        // 不再写死 9:16 让 16:9 项目出竖屏视频。
+        aspectRatio: policy.aspectRatio,
       },
       providerName,
     );
@@ -1422,10 +1585,20 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     job: GenerationJob,
     rawPrompt: string,
     input: Record<string, unknown>,
+    policy: { aspectRatio: string; allowOnScreenText: boolean; styleBlock: string },
   ): Promise<{ prompt: string; degraded: boolean; beatCount: number; duration: number }> {
+    // 画幅保护、场景环境、风格、禁字由 prompt-formula 统一渲染。
+    // 旧实现第一套五段式 prompt 在这里被整段丢弃，风格/场景/负面词全没了；
+    // 现在即使没有镜头记录，也把这份约束带进分段提示词。
+    const constraint: ImageConstraintInput = {
+      aspectRatio: policy.aspectRatio,
+      allowOnScreenText: policy.allowOnScreenText,
+      styleBlock: policy.styleBlock,
+    };
+    const negativeText = !policy.allowOnScreenText;
     if (job.targetType !== 'shot' || !job.targetId) {
       const dur = typeof input.duration === 'number' ? input.duration : 5;
-      const r = buildSegmentedVideoPrompt({ duration: dur, description: rawPrompt });
+      const r = buildSegmentedVideoPrompt({ duration: dur, description: rawPrompt, constraint, negativeText });
       return { prompt: r.prompt, degraded: r.degraded, beatCount: r.beats.length, duration: dur };
     }
     const rows = await this.db
@@ -1439,6 +1612,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         screenDirection: shots.screenDirection,
         dialogue: shots.dialogue,
         visualPrompt: shots.visualPrompt,
+        sceneEnv: shots.sceneEnv,
         action: shots.action,
         beats: shots.beats,
         characterIds: shots.characterIds,
@@ -1449,10 +1623,19 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const shot = rows[0];
     if (!shot) {
       const dur = typeof input.duration === 'number' ? input.duration : 5;
-      const r = buildSegmentedVideoPrompt({ duration: dur, description: rawPrompt });
+      const r = buildSegmentedVideoPrompt({ duration: dur, description: rawPrompt, constraint, negativeText });
       return { prompt: r.prompt, degraded: r.degraded, beatCount: r.beats.length, duration: dur };
     }
     const duration = Number(shot.duration) || (typeof input.duration === 'number' ? input.duration : 5);
+    // 场景名 + 逐镜场景环境：视频侧过去除了九宫格轴线没有任何场景描述
+    const sceneRows = shot.sceneId
+      ? await this.db
+          .select({ title: scenes.title })
+          .from(scenes)
+          .where(eq(scenes.id, shot.sceneId))
+          .limit(1)
+      : [];
+    const sceneEnv = await this.loadSceneEnv(shot.sceneId, shot.sceneEnv);
 
     // 片段级空间基准与轴线
     let spatialNote: string | null = null;
@@ -1547,11 +1730,32 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       shotSize: shot.shotSize,
       movement: shot.movement,
       screenDirection: (shot.screenDirection as ScreenDirection | null) ?? null,
+      sceneName: sceneRows[0]?.title ?? null,
       characters: castNames,
       previousEndState,
       spatialNote,
+      negativeText,
+      constraint: { ...constraint, sceneEnv },
     });
-    return { prompt: r.prompt, degraded: r.degraded, beatCount: r.beats.length, duration };
+    /* ------------------------------------------------------------------
+     * 修复历史覆盖问题：storyboard 层辛苦拼出的五段式 prompt 过去在这里被
+     * `description: shot.visualPrompt` 整段丢弃，风格圣经、运镜事实、白模
+     * 继承说明与具体负面词全都没进最终视频提示词。现在把它们从建单 prompt
+     * 里抽出来补回分段结构，且保持【禁止】压尾（模型对末尾最敏感）。
+     * 五段式的主体描述不重复：分段动作已经用 shot.visualPrompt 写过了。
+     * ------------------------------------------------------------------ */
+    const sourceLines = rawPrompt.split('\n').map((l) => l.trim()).filter(Boolean);
+    const extraLines = [
+      sourceLines.find((l) => l.startsWith('【运镜事实】')),
+      sourceLines.find((l) => l.startsWith('避免：')),
+    ].filter((l): l is string => Boolean(l));
+    let promptText = r.prompt;
+    if (extraLines.length > 0) {
+      const lines = r.prompt.split('\n');
+      const tail = lines.pop() ?? '';
+      promptText = [...lines, ...extraLines, tail].join('\n');
+    }
+    return { prompt: promptText, degraded: r.degraded, beatCount: r.beats.length, duration };
   }
 
   /**
@@ -2186,11 +2390,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 目标总时长在 try 外读一次：技能调用与落库前的预算收口共用同一个值，
     // 不能只把数字写进提示词指望模型自觉遵守（实测 30s 项目物化出 66s）。
     const projDurRows = await this.db
-      .select({ durationSeconds: projects.durationSeconds })
+      .select({
+        durationSeconds: projects.durationSeconds,
+        aspectRatio: projects.aspectRatio,
+      })
       .from(projects)
       .where(eq(projects.id, job.projectId))
       .limit(1);
     const targetSeconds = Number(projDurRows[0]?.durationSeconds) || undefined;
+    // 分镜阶段就要按项目画幅设计构图，不能等出图时才发现「按方图写的分镜」
+    const boardsAspect = normalizeAspect(projDurRows[0]?.aspectRatio ?? DEFAULT_ASPECT_RATIO);
     try {
       const result = await this.storySkills.runBoards({
         scriptText,
@@ -2200,6 +2409,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         temperature: opts?.temperature,
         providerName: providerName ?? job.providerName,
         targetSeconds,
+        aspectRatio: boardsAspect,
         catalog: {
           characters: assetIndex.characters.map((c) => ({ name: c.name, roleType: c.roleType ?? undefined })),
           locations: assetIndex.locations.map((l) => ({ name: l.name, timeOfDay: l.timeOfDay ?? undefined })),
@@ -2429,6 +2639,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             dialogue: b.dialogue,
             subtitleText: b.dialogue,
             visualPrompt: b.visualPrompt,
+            // 逐镜场景环境（结构化事实）随分镜一起落库，首帧与视频提示词共用
+            sceneEnv: normalizeSceneEnv(b.sceneEnv),
             subject: b.visualPrompt?.slice(0, 200),
             characterIds: shotCast.length > 0 ? shotCast : sceneCast.slice(0, 2),
             status: 'draft',
@@ -3093,6 +3305,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
               dialogue: s.dialogue,
               subtitleText: prefs.subtitleEnabled ? s.dialogue : undefined,
               visualPrompt: s.visualPrompt,
+              // 确定性拆分没有 LLM 场景字段：留空，由运行时用 locations 环境数据兜底
+              sceneEnv: {},
               subject: s.visualPrompt?.slice(0, 200),
               characterIds: shotCast,
               status: 'draft',

@@ -6,11 +6,13 @@
  * 生成前统一从项目取，不允许各通道各写一套默认值。
  *
  * 供应商对尺寸白名单不一致时：
- * - 优先用 provider.modelParams.imageSizes / videoSizes 声明的白名单；
- * - 未声明时按本表映射，失败由网关做一次 1024x1024 回退（不阻断出片）。
+ * - 优先用 provider.modelParams.imageSizes / videoSizes 声明的白名单取最接近的一档；
+ * - 未声明时按本表映射。只有用户显式选择 1:1 才允许出方图，
+ *   不再有「生成失败就回落 1024x1024」这种把项目画幅悄悄改掉的行为。
  */
 
-export const DEFAULT_ASPECT_RATIO = '16:9';
+/** 与 DB / 新建作品 UI 的默认画幅保持一致（projects.aspect_ratio 默认 9:16）。 */
+export const DEFAULT_ASPECT_RATIO = '9:16';
 
 const IMAGE_SIZES: Record<string, string> = {
   '16:9': '1280x720',
@@ -65,6 +67,23 @@ export function videoSizeForAspect(
 export function isVerticalAspect(aspect?: string | null): boolean {
   const [w, h] = normalizeAspect(aspect).split(':').map(Number);
   return Number.isFinite(w) && Number.isFinite(h) && h > w;
+}
+
+/** 画幅是否横屏。 */
+export function isHorizontalAspect(aspect?: string | null): boolean {
+  const [w, h] = normalizeAspect(aspect).split(':').map(Number);
+  return Number.isFinite(w) && Number.isFinite(h) && w > h;
+}
+
+/**
+ * Agnes 视频接口的 aspect_ratio 只认 16:9 / 9:16 / 1:1 三档。
+ * 项目画幅（21:9 / 4:3 / 3:4 等）按宽高比就近收敛到它真能出的一档，
+ * 而不是像旧实现那样写死 '9:16' —— 16:9 项目出竖屏视频是整条链路最刺眼的错位。
+ */
+export function agnesAspectRatio(aspect?: string | null): '16:9' | '9:16' | '1:1' {
+  const [w, h] = normalizeAspect(aspect).split(':').map(Number);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w === h) return '1:1';
+  return w > h ? '16:9' : '9:16';
 }
 
 /**
