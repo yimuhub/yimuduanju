@@ -169,11 +169,18 @@ pub fn run() {
                 }
 
                 let mut last_error = String::new();
+                // 就绪后不能直接 return：那会 drop 掉读端、关闭子进程的 stdout 管道，
+                // 运行时后续每写一行日志都会拿到 EPIPE（实测会把看门狗刷成死循环）。
+                // 这里改成继续把管道读干净，只记一个已导航标记。
+                let mut navigated = false;
                 for line in BufReader::new(stream).lines().map_while(Result::ok) {
                     if let Some(url) = line.strip_prefix("YIMU_READY ") {
                         splash_step(&splash, 4);
-                        navigate(&splash, url.trim());
-                        return;
+                        if !navigated {
+                            navigate(&splash, url.trim());
+                            navigated = true;
+                        }
+                        continue;
                     }
                     if let Some(err) = line.strip_prefix("YIMU_ERROR ") {
                         last_error = err.to_string();
@@ -187,6 +194,10 @@ pub fn run() {
                     } else if line.contains("桌面端就绪") {
                         splash_step(&splash, 4);
                     }
+                }
+
+                if navigated {
+                    return;
                 }
 
                 // 输出流结束仍未就绪 = 运行时中途崩溃
