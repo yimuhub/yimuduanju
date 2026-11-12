@@ -759,8 +759,15 @@ export class ModelGatewayService {
     const vprefix = (provider.promptPrefix ?? '').trim();
     const withPrefix = (p: string) => (vprefix ? `${vprefix}\n${p}` : p);
 
-    // Agnes 专用通道（测试版）：官方双接口，mode 按参考素材自动映射
-    if (formatType === 'agnes') {
+    // Agnes 专用通道：官方双接口，mode 按参考素材自动映射。
+    // W 智能路由：Agnes hub 被配成 openai 兼容格式时，文本/图片走标准端点
+    // 没问题，但视频端点字段是 Agnes 方言（mode/seconds/first_frame，拒绝
+    // duration/image_url）。按基址域名或视频模型名自动识别走专用通道。
+    const agnesLike =
+      formatType === 'agnes' ||
+      /agnes-ai\.com/i.test(baseUrl) ||
+      /^agnes[-_.]/i.test(provider.videoModel ?? '');
+    if (agnesLike) {
       return this.createAgnesVideo(
         provider,
         {

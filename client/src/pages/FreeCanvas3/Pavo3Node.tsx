@@ -20,10 +20,12 @@ import {
   StickyNote,
   Pencil,
   Package,
+  Trash2,
 } from 'lucide-react';
 import type { PavoFlowNode } from './pavo3Types';
 import { useP3Store } from './pavo3Store';
 import { AUDIO_TRY, NODE_COLORS, NODE_TYPES, P3, TEXT_TRY } from './pavo3Constants';
+import Pavo3StoryboardBody from './Pavo3StoryboardBody';
 
 const TYPE_ICON: Record<string, React.ReactNode> = {
   text: <FileText size={16} strokeWidth={1.8} />,
@@ -158,7 +160,7 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
 
   return (
     <div
-      className={`p3-node-card ${selected ? 'is-active' : ''} ${statusClass}`}
+      className={`p3-node-card ${selected ? 'is-active' : ''} ${statusClass} ${kind === 'storyboard' ? 'p3-node-card-storyboard' : ''}`}
       onDoubleClick={onDouble}
     >
       {/* 左右端口（各一）—— 点击弹节点类型菜单（不再弹大模型对话框） */}
@@ -191,7 +193,35 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
               borderRadius: 999, padding: '1px 7px',
             }}
           >
-            {NODE_TYPES.find((t) => t.type === kind)?.label}
+            {/* 分镜卡徽章带镜号（Pavo 分镜节点：分镜1 / 分镜2 …） */}
+            {kind === 'storyboard' && typeof data.shot?.shotNumber === 'number'
+              ? `分镜${data.shot.shotNumber}`
+              : NODE_TYPES.find((t) => t.type === kind)?.label}
+          </span>
+        )}
+        {/* 分镜节点：标题行内联编辑 / 删除（Pavo 分镜卡同款） */}
+        {kind === 'storyboard' && (
+          <span style={{ display: 'inline-flex', gap: 2, marginLeft: 2 }}>
+            <button
+              title="编辑分镜属性"
+              className="p3-node-icon-btn nodrag"
+              onClick={(e) => {
+                e.stopPropagation();
+                openDialog(id, 'storyboard');
+              }}
+            >
+              <Pencil size={11} />
+            </button>
+            <button
+              title="删除节点（不动后端分镜数据，可重新上画布）"
+              className="p3-node-icon-btn nodrag"
+              onClick={(e) => {
+                e.stopPropagation();
+                useP3Store.getState().removeNode(id);
+              }}
+            >
+              <Trash2 size={11} />
+            </button>
           </span>
         )}
         {data.isReference && (
@@ -288,8 +318,12 @@ const Pavo3NodeInner = ({ id, data, selected }: NodeProps<PavoFlowNode>) => {
         </div>
       )}
 
+      {/* 分镜节点：Pavo 分镜卡正文（参考图行 / 时间分段块 / 关键帧预览 / 历史 / 剧本核对），
+          生成中也渲染（预览区显示「生成中」），不走通用 markdown/媒体分支 */}
+      {kind === 'storyboard' && <Pavo3StoryboardBody id={id} data={data} />}
+
       {/* 内容态 */}
-      {data.status !== 'running' && kind !== 'director' && (
+      {data.status !== 'running' && kind !== 'director' && kind !== 'storyboard' && (
         <>
           {data.markdown && (
             <div className="p3-markdown" onDoubleClick={onDouble}>

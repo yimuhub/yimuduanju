@@ -46,10 +46,10 @@ export const getProgress = (id: string) =>
     .get<ProjectProgressResponse>(`/api/projects/${id}/progress`)
     .then((res) => res.data);
 
-/** 阶段确认门：script=确认剧本→物化分镜；storyboard=确认分镜→全自动段；final=确认成片 */
+/** 阶段确认门：script=确认剧本→物化分镜；storyboard=确认分镜→前置资产串行链；preview=分镜预览确认→视频段；final=确认成片 */
 export const approveProject = (
   id: string,
-  stage: 'script' | 'storyboard' | 'final',
+  stage: 'script' | 'storyboard' | 'preview' | 'final',
 ) =>
   axiosForBackend
     .post<Project>(`/api/projects/${id}/approve`, { stage })

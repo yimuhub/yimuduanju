@@ -691,7 +691,7 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
     if (!projectId) return;
     try {
       const { projects, storyboard, bible } = await import('@client/src/api');
-      const [proj, , shotsList, charsList, propsList] = await Promise.all([
+      const [proj, scenesList, shotsList, charsList, propsList] = await Promise.all([
         projects.getProject(projectId).catch(() => null),
         storyboard.listScenes(projectId).catch(() => []),
         storyboard.listAllShots(projectId).catch(() => []),
@@ -776,7 +776,11 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
         existingIds.add(pid);
       });
 
-      // 3. 分镜镜头节点（首帧图片节点 → 镜头视频节点）
+      // 3. 分镜镜头节点（Pavo 分镜卡：时间分段块 + 参考图行 + 关键帧预览）→ 镜头视频节点
+      const charNameById = new Map(charsList.map((c) => [c.id, c.name] as const));
+      const sceneTitleById = new Map(
+        scenesList.map((sc) => [sc.id, sc.title || sc.summary?.slice(0, 16) || `场景 ${sc.sceneNumber}`] as const),
+      );
       shotsList.slice(0, 24).forEach((sh, idx) => {
         const imgNodeId = `shot-img-${sh.id.slice(0, 8)}`;
         const vidNodeId = `shot-vid-${sh.id.slice(0, 8)}`;
@@ -788,13 +792,30 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
             type: 'pavo',
             position: { x: 460, y: rowY },
             data: {
-              nodeType: 'image',
-              title: `镜 #${sh.shotNumber} 首帧`,
+              nodeType: 'storyboard',
+              title: `分镜 ${sh.shotNumber}`,
               status: sh.startFrameUrl ? 'done' : 'idle',
               progress: sh.startFrameUrl ? 100 : 0,
               mediaUrl: sh.startFrameUrl,
               mediaKind: sh.startFrameUrl ? 'image' : undefined,
               backendShotId: sh.id,
+              castNames: (sh.characterIds ?? [])
+                .map((cid) => charNameById.get(cid))
+                .filter((v): v is string => Boolean(v)),
+              sceneName: sh.sceneId ? sceneTitleById.get(sh.sceneId) : undefined,
+              shot: {
+                id: sh.id,
+                shotNumber: sh.shotNumber,
+                shotSize: sh.shotSize,
+                duration: Number(sh.duration) || undefined,
+                dialogue: sh.dialogue,
+                visualPrompt: sh.visualPrompt,
+                beats: sh.beats,
+                characterIds: sh.characterIds,
+                referenceImageUrls: sh.referenceImageUrls,
+                startFrameUrl: sh.startFrameUrl,
+                sceneId: sh.sceneId,
+              },
               gen: {
                 prompt: promptText,
                 refs: [],
@@ -868,10 +889,12 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
   pullStoryboard: async (projectId: string) => {
     if (!projectId) return 0;
     try {
-      const { projects, storyboard } = await import('@client/src/api');
-      const [proj, shotsList] = await Promise.all([
+      const { projects, storyboard, bible } = await import('@client/src/api');
+      const [proj, shotsList, charsList, scenesList] = await Promise.all([
         projects.getProject(projectId).catch(() => null),
         storyboard.listAllShots(projectId).catch(() => []),
+        bible.listCharacters(projectId).catch(() => []),
+        storyboard.listScenes(projectId).catch(() => []),
       ]);
       if (!shotsList.length) return 0;
       const s = get();
@@ -884,6 +907,10 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
       const baseY = nodes.reduce((m, n) => Math.min(m, n.position.y), Infinity);
       const topY = Number.isFinite(baseY) ? Math.max(60, baseY) : 80;
       let added = 0;
+      const charNameById = new Map(charsList.map((c) => [c.id, c.name] as const));
+      const sceneTitleById = new Map(
+        scenesList.map((sc) => [sc.id, sc.title || sc.summary?.slice(0, 16) || `场景 ${sc.sceneNumber}`] as const),
+      );
 
       shotsList.slice(0, 60).forEach((sh, idx) => {
         const imgNodeId = `shot-img-${sh.id.slice(0, 8)}`;
@@ -901,6 +928,24 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
               mediaKind: sh.startFrameUrl ? 'image' : undefined,
               status: sh.startFrameUrl ? 'done' : imgNode.data.status === 'running' ? 'running' : 'idle',
               progress: sh.startFrameUrl ? 100 : 0,
+              // 镜头快照同步刷新（物化/重跑后节拍、参考图、台词可能变化）
+              shot: {
+                id: sh.id,
+                shotNumber: sh.shotNumber,
+                shotSize: sh.shotSize,
+                duration: Number(sh.duration) || undefined,
+                dialogue: sh.dialogue,
+                visualPrompt: sh.visualPrompt,
+                beats: sh.beats,
+                characterIds: sh.characterIds,
+                referenceImageUrls: sh.referenceImageUrls,
+                startFrameUrl: sh.startFrameUrl,
+                sceneId: sh.sceneId,
+              },
+              castNames: (sh.characterIds ?? [])
+                .map((cid) => charNameById.get(cid))
+                .filter((v): v is string => Boolean(v)),
+              sceneName: sh.sceneId ? sceneTitleById.get(sh.sceneId) : undefined,
             },
           });
           nodes.splice(nodes.indexOf(imgNode), 1, byId.get(imgNodeId)!);
@@ -910,13 +955,30 @@ export const useP3Store = create<FreeCanvas3State>((set, get) => ({
             type: 'pavo',
             position: { x: baseX, y: rowY },
             data: {
-              nodeType: 'image',
-              title: `镜 #${sh.shotNumber} 首帧`,
+              nodeType: 'storyboard',
+              title: `分镜 ${sh.shotNumber}`,
               status: sh.startFrameUrl ? 'done' : 'idle',
               progress: sh.startFrameUrl ? 100 : 0,
               mediaUrl: sh.startFrameUrl,
               mediaKind: sh.startFrameUrl ? 'image' : undefined,
               backendShotId: sh.id,
+              castNames: (sh.characterIds ?? [])
+                .map((cid) => charNameById.get(cid))
+                .filter((v): v is string => Boolean(v)),
+              sceneName: sh.sceneId ? sceneTitleById.get(sh.sceneId) : undefined,
+              shot: {
+                id: sh.id,
+                shotNumber: sh.shotNumber,
+                shotSize: sh.shotSize,
+                duration: Number(sh.duration) || undefined,
+                dialogue: sh.dialogue,
+                visualPrompt: sh.visualPrompt,
+                beats: sh.beats,
+                characterIds: sh.characterIds,
+                referenceImageUrls: sh.referenceImageUrls,
+                startFrameUrl: sh.startFrameUrl,
+                sceneId: sh.sceneId,
+              },
               gen: { prompt: promptText, refs: [], refMode: false, ratio, res: '1K', preset: '通用', count: 1 },
             },
           });

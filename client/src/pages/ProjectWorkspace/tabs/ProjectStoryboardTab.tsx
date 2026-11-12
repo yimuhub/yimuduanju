@@ -20,6 +20,9 @@ import {
   ShieldCheck,
   Timer,
   Languages,
+  ScrollText,
+  Check,
+  ChevronDown as ChevronDownSmall,
 } from 'lucide-react';
 import { storyboard, assets, projects } from '@client/src/api';
 import type { Shot, Scene, Segment, Asset, BlockedVideoSummary } from '@shared/api.interface';
@@ -29,6 +32,15 @@ import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { toast } from 'sonner';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
+import Lightbox from '@client/src/components/Lightbox';
+import ShotScriptCompare from '@client/src/components/ShotScriptCompare';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@client/src/components/ui/dialog';
 
 // 状态胶囊：统一 .pill 5 色板（见 tailwind-theme.css）
 const statusConfig: Record<string, { label: string; className: string }> = {
@@ -90,6 +102,13 @@ const ProjectStoryboardTab = () => {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [diagnosis, setDiagnosis] = useState<ProjectDiagnosis | null>(null);
   const [rebuildingSegments, setRebuildingSegments] = useState(false);
+  // 剧本核对：项目剧本原文（scriptText）+ 本镜所属场景 → 并排对照弹窗
+  const [scriptText, setScriptText] = useState<string>('');
+  const [scriptCheckShot, setScriptCheckShot] = useState<Shot | null>(null);
+  // 关键帧大图（Lightbox）
+  const [lightbox, setLightbox] = useState<{ url: string; title: string } | null>(null);
+  // 生成方式明示的完整提示词展开态（按镜头 id）
+  const [promptExpanded, setPromptExpanded] = useState<Set<string>>(new Set());
 
   const handleRebuildSegments = async () => {
     if (!id || rebuildingSegments) return;
@@ -372,6 +391,8 @@ const ProjectStoryboardTab = () => {
           professional?: { videoSubtitles?: boolean };
         };
         setVideoSubtitles(meta.videoSubtitles === true || meta.professional?.videoSubtitles === true);
+        // 剧本核对用：缓存项目剧本原文
+        setScriptText(p.scriptText ?? '');
       })
       .catch((err) => logger.error('Load project subtitle pref failed:', String(err)));
     storyboard.listScenes(id)
@@ -730,10 +751,17 @@ const ProjectStoryboardTab = () => {
                   searchParams.get('shot') === shot.id ? 'ring-2 ring-primary/50' : ''
                 }`}
               >
-                {/* Thumbnail */}
+                {/* Thumbnail：点击放大（Lightbox）；无图时点击展开详情 */}
                 <div
                   className="relative aspect-[9/16] w-full cursor-pointer"
-                  onClick={() => setExpandedId(isExpanded ? null : shot.id)}
+                  onClick={() => {
+                    if (shot.startFrameUrl) {
+                      setLightbox({ url: shot.startFrameUrl, title: `分镜 #${shot.shotNumber} 主图` });
+                    } else {
+                      setExpandedId(isExpanded ? null : shot.id);
+                    }
+                  }}
+                  title={shot.startFrameUrl ? '点击放大查看' : '点击展开详情'}
                 >
                   <MediaOrMissing
                     src={shot.startFrameUrl}
@@ -743,6 +771,11 @@ const ProjectStoryboardTab = () => {
                   {isRegenerating && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-xs font-medium text-white backdrop-blur-sm">
                       生成中...
+                    </div>
+                  )}
+                  {shot.startFrameUrl && (
+                    <div className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm">
+                      <ChevronDownSmall className="h-3 w-3" />
                     </div>
                   )}
                   {shot.locked && (
@@ -764,8 +797,8 @@ const ProjectStoryboardTab = () => {
                   )}
                 </div>
 
-                {/* Info */}
-                <div className="p-3">
+                {/* Info：点击展开/收起详情 */}
+                <div className="p-3" onClick={() => setExpandedId(isExpanded ? null : shot.id)}>
                   <div className="flex items-center justify-between gap-1">
                     <div className="flex items-center gap-1">
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -797,8 +830,8 @@ const ProjectStoryboardTab = () => {
                     {shot.visualPrompt || shot.action || '暂无描述'}
                   </p>
 
-                  {/* Actions */}
-                  <div className="mt-3 flex items-center gap-1">
+                  {/* Actions（阻止冒泡：不触发卡片展开/收起） */}
+                  <div className="mt-3 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => handleRerun(shot, 'image')}
                       disabled={isRegenerating}
@@ -814,6 +847,13 @@ const ProjectStoryboardTab = () => {
                     >
                       <Play className="h-3 w-3" />
                       生成视频
+                    </button>
+                    <button
+                      onClick={() => setScriptCheckShot(shot)}
+                      title="剧本原文 ↔ 分镜主图并排核对"
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:border-primary hover:text-primary"
+                    >
+                      <ScrollText className="h-3 w-3" />
                     </button>
                     <button
                       onClick={() => handleMove(idx, 'up')}
@@ -889,6 +929,50 @@ const ProjectStoryboardTab = () => {
                           <span className="text-muted-foreground">{shot.action}</span>
                         </div>
                       )}
+                      {/* 生成方式明示：参考图数量 → 参考图生 / 文生图；完整提示词可展开 */}
+                      <div>
+                        <span className="font-medium text-foreground">生成方式：</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            {(shot.referenceImageUrls?.length ?? 0) > 0
+                              ? `参考图生（${shot.referenceImageUrls.length} 张：角色定妆 + 场景图）`
+                              : '文生图'}
+                          </span>
+                        </span>
+                        {(shot.visualPrompt || shot.negativePrompt) && (
+                          <div className="mt-1">
+                            <button
+                              onClick={() =>
+                                setPromptExpanded((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(shot.id)) next.delete(shot.id);
+                                  else next.add(shot.id);
+                                  return next;
+                                })
+                              }
+                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                            >
+                              <ChevronDownSmall
+                                className={`h-3 w-3 transition-transform ${promptExpanded.has(shot.id) ? 'rotate-180' : ''}`}
+                              />
+                              {promptExpanded.has(shot.id) ? '收起完整提示词' : '展开完整提示词'}
+                            </button>
+                            {promptExpanded.has(shot.id) && (
+                              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-[11px] leading-relaxed text-muted-foreground">
+{[
+  `画面提示词：${shot.visualPrompt || '（空）'}`,
+  shot.negativePrompt ? `负向提示词：${shot.negativePrompt}` : '',
+  (shot.referenceImageUrls?.length ?? 0) > 0
+    ? `注入参考图 ${shot.referenceImageUrls.length} 张（按 图1、图2… 机械编号，角色定妆照优先）`
+    : '',
+]
+  .filter(Boolean)
+  .join('\n')}
+                              </pre>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <div>
                         <span className="font-medium text-foreground">时长：</span>
                         <span className="text-muted-foreground">{shot.duration}s</span>
@@ -927,7 +1011,7 @@ const ProjectStoryboardTab = () => {
                           <span className="text-muted-foreground">暂无（先填写对白）</span>
                         )}
                       </div>
-                      {/* 镜头历史版本：多次生成保留产物链，可回退到旧版（解决主成片被覆盖不可回退） */}
+                      {/* 镜头历史版本：缩略图条，点缩略图 ✅ 选定为主图（写回 startFrameUrl/videoUrl） */}
                       <div>
                         <span className="font-medium text-foreground">历史版本：</span>
                         {!historyMap[shot.id] ? (
@@ -943,37 +1027,92 @@ const ProjectStoryboardTab = () => {
                           <span className="text-muted-foreground">暂无历史版本（每次重生成后自动保留旧版）</span>
                         ) : (
                           <div className="mt-1.5 space-y-1">
-                            {historyMap[shot.id].map((asset) => (
-                              <div
-                                key={asset.id}
-                                className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2 py-1"
-                              >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                                    {asset.assetType === 'image' ? '首帧' : '成片'} v{asset.version ?? 1}
-                                  </span>
-                                  <span className="truncate text-[11px] text-muted-foreground">
-                                    {asset.createdAt
-                                      ? new Date(asset.createdAt).toLocaleString('zh-CN', {
-                                          month: '2-digit',
-                                          day: '2-digit',
-                                          hour: '2-digit',
-                                          minute: '2-digit',
-                                        })
-                                      : ''}
-                                  </span>
+                            {/* 首帧历史：缩略图条（✅ = 当前主图），点击选定为主图 */}
+                            {(() => {
+                              const imageVersions = historyMap[shot.id].filter((a) => a.assetType === 'image');
+                              if (imageVersions.length === 0) return null;
+                              return (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {imageVersions.map((asset) => {
+                                    const isMain = Boolean(asset.fileUrl && asset.fileUrl === shot.startFrameUrl);
+                                    return (
+                                      <button
+                                        key={asset.id}
+                                        onClick={() => revertTo(shot, asset)}
+                                        disabled={revertingIds.has(asset.id)}
+                                        title={
+                                          isMain
+                                            ? `当前主图 v${asset.version ?? 1}（点击放大）`
+                                            : `v${asset.version ?? 1} · 点击选定为主图`
+                                        }
+                                        className={`group relative h-16 w-11 overflow-hidden rounded-md border-2 bg-card transition-colors disabled:opacity-60 ${
+                                          isMain ? 'border-primary' : 'border-transparent'
+                                        }`}
+                                      >
+                                        {asset.fileUrl ? (
+                                          <img
+                                            src={asset.fileUrl}
+                                            alt={`v${asset.version ?? 1}`}
+                                            className="h-full w-full object-cover"
+                                            onClick={(e) => {
+                                              if (isMain && asset.fileUrl) {
+                                                e.stopPropagation();
+                                                setLightbox({ url: asset.fileUrl, title: `分镜 #${shot.shotNumber} 首帧 v${asset.version ?? 1}` });
+                                              }
+                                            }}
+                                          />
+                                        ) : (
+                                          <span className="flex h-full items-center justify-center text-[10px] text-muted-foreground">无图</span>
+                                        )}
+                                        <span className="absolute bottom-0 left-0 right-0 bg-black/50 text-center text-[9px] leading-4 text-white">
+                                          v{asset.version ?? 1}
+                                        </span>
+                                        {isMain && (
+                                          <span className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white">
+                                            <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
                                 </div>
-                                <button
-                                  onClick={() => revertTo(shot, asset)}
-                                  disabled={revertingIds.has(asset.id)}
-                                  title="回退到该版本"
-                                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                              );
+                            })()}
+                            {/* 成片历史：保留行式列表（视频无法缩略） */}
+                            {historyMap[shot.id]
+                              .filter((a) => a.assetType !== 'image')
+                              .map((asset) => (
+                                <div
+                                  key={asset.id}
+                                  className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2 py-1"
                                 >
-                                  <RotateCcw className="h-3 w-3" />
-                                  {revertingIds.has(asset.id) ? '回退中' : '回退'}
-                                </button>
-                              </div>
-                            ))}
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                      成片 v{asset.version ?? 1}
+                                    </span>
+                                    <span className="truncate text-[11px] text-muted-foreground">
+                                      {asset.createdAt
+                                        ? new Date(asset.createdAt).toLocaleString('zh-CN', {
+                                            month: '2-digit',
+                                            day: '2-digit',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                          })
+                                        : ''}
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => revertTo(shot, asset)}
+                                    disabled={revertingIds.has(asset.id)}
+                                    title="回退到该版本"
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+                                  >
+                                    <RotateCcw className="h-3 w-3" />
+                                    {revertingIds.has(asset.id) ? '回退中' : '回退'}
+                                  </button>
+                                </div>
+                              ))}
+                            <p className="text-[10px] text-muted-foreground">点缩略图 ✅ 选定为主图（写回该镜头 startFrameUrl）</p>
                           </div>
                         )}
                       </div>
@@ -1007,7 +1146,14 @@ const ProjectStoryboardTab = () => {
                       #{shot.shotNumber}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="h-12 w-8 overflow-hidden rounded bg-muted">
+                      <div
+                        className="h-12 w-8 cursor-zoom-in overflow-hidden rounded bg-muted"
+                        onClick={() => {
+                          if (shot.startFrameUrl) {
+                            setLightbox({ url: shot.startFrameUrl, title: `分镜 #${shot.shotNumber} 主图` });
+                          }
+                        }}
+                      >
                         <MediaOrMissing
                           src={shot.startFrameUrl}
                           className="h-full w-full"
@@ -1034,6 +1180,13 @@ const ProjectStoryboardTab = () => {
                           重生成
                         </button>
                         <button
+                          onClick={() => setScriptCheckShot(shot)}
+                          title="剧本原文 ↔ 分镜主图并排核对"
+                          className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+                        >
+                          剧本核对
+                        </button>
+                        <button
                           onClick={() => handleDelete(shot.id)}
                           className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground hover:border-red-300 hover:text-red-300"
                         >
@@ -1047,6 +1200,34 @@ const ProjectStoryboardTab = () => {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* 剧本核对弹窗：剧本原文（本场）↔ 分镜主图并排对照 */}
+      <Dialog open={Boolean(scriptCheckShot)} onOpenChange={(open) => !open && setScriptCheckShot(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>剧本核对 · 分镜 #{scriptCheckShot?.shotNumber ?? ''}</DialogTitle>
+            <DialogDescription>
+              左侧为该镜头对应场次的剧本原文，右侧为当前分镜主图；核对人物/场景/道具是否与剧本一致。
+            </DialogDescription>
+          </DialogHeader>
+          {scriptCheckShot && (
+            <ShotScriptCompare
+              scriptText={scriptText}
+              scene={scenes.find((sc) => sc.id === scriptCheckShot.sceneId) ?? null}
+              shotNumber={scriptCheckShot.shotNumber}
+              shotDialogue={scriptCheckShot.dialogue}
+              shotVisualPrompt={scriptCheckShot.visualPrompt}
+              imageUrl={scriptCheckShot.startFrameUrl}
+              shotSizeLabel={shotSizeLabels[scriptCheckShot.shotSize] || scriptCheckShot.shotSize}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* 关键帧大图（Lightbox） */}
+      {lightbox && (
+        <Lightbox url={lightbox.url} kind="image" title={lightbox.title} onClose={() => setLightbox(null)} />
       )}
     </div>
   );

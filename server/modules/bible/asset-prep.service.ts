@@ -63,6 +63,18 @@ export interface PrepareAssetsResult {
   skippedInflight: number;
 }
 
+/** 串行链单段排产结果（drivePipeline 据此决定等待/推进/降级） */
+export interface StageEnqueueResult {
+  /** 本次新排任务数；0 且仍有缺图且无在途 = 上一轮任务失败，需要重试判定 */
+  enqueued: number;
+  /** 该段在途任务数 */
+  inflight: number;
+  /** 该段仍缺参考图的资产数 */
+  missing: number;
+  /** 缺图资产名（日志与 UI 提示用） */
+  missingNames: string[];
+}
+
 @Injectable()
 export class AssetPrepService {
   private readonly logger = new Logger(AssetPrepService.name);
@@ -197,6 +209,134 @@ export class AssetPrepService {
   /** 只读就绪度（不排任何任务） */
   async readinessOf(projectId: string): Promise<AssetReadinessSummary> {
     return this.readinessOfFacts(await this.loadFacts(projectId));
+  }
+
+  // ========== 前置资产严格串行链（人物 → 场景 → 道具，每段完成才进下一段） ==========
+
+  /**
+   * 段 1 · 人物资产：为「分镜出场角色」补定妆照（只排人物，幂等）。
+   * castIds 缺省时取全项目人物；已有图（主图/参考图任一）的跳过，避免重复生成。
+   */
+  async enqueueCastAssets(
+    projectId: string,
+    castIds?: string[],
+  ): Promise<StageEnqueueResult> {
+    const facts = await this.loadFacts(projectId);
+    const wanted =
+      castIds && castIds.length > 0
+        ? facts.characters.filter((c) => castIds.includes(c.id))
+        : facts.characters;
+    const inflight = await this.inflightTargets(projectId);
+    let enqueued = 0;
+    const missing: string[] = [];
+    for (const c of wanted.slice(0, MAX_CHARACTERS)) {
+      const item = evaluateCharacterAsset(c);
+      if (item.ready) continue;
+      missing.push(c.name);
+      if (inflight.has(`character:${c.id}`)) continue;
+      const isLead =
+        (c.roleType ?? '').toLowerCase() === 'lead' || c.roleType === '主角' || c.roleType === '主演';
+      try {
+        // 主演走「主图 + 四视角」形象包，配角走单人形象图（与 prepareProjectAssets 同口径）
+        if (isLead) await this.bibleService.generateIdentityKit(projectId, c.id);
+        else await this.bibleService.generateCharacterImage(projectId, c.id);
+        inflight.add(`character:${c.id}`);
+        enqueued += 1;
+      } catch (e) {
+        this.logger.warn(`[串行链·人物] 定妆任务创建失败 ${c.name}：${(e as Error).message}`);
+      }
+    }
+    const stillInflight = [...inflight].filter((k) => k.startsWith('character:')).length;
+    if (enqueued > 0) {
+      this.logger.log(`[串行链·人物] project=${projectId} 新排 ${enqueued}，缺图 ${missing.length}（${missing.slice(0, 6).join('、')}）`);
+    }
+    return { enqueued, inflight: stillInflight, missing: missing.length, missingNames: missing };
+  }
+
+  /**
+   * 段 2 · 场景资产：为「分镜出场场景」补场景图（只排场景，幂等）。
+   * locationIds 缺省时取全项目场景。
+   */
+  async enqueueSceneAssets(
+    projectId: string,
+    locationIds?: string[],
+  ): Promise<StageEnqueueResult> {
+    const facts = await this.loadFacts(projectId);
+    const wanted =
+      locationIds && locationIds.length > 0
+        ? facts.locations.filter((l) => locationIds.includes(l.id))
+        : facts.locations;
+    const inflight = await this.inflightTargets(projectId);
+    let enqueued = 0;
+    const missing: string[] = [];
+    for (const l of wanted.slice(0, MAX_LOCATIONS)) {
+      const item = evaluateLocationAsset(l);
+      if (item.ready) continue;
+      missing.push(l.name);
+      if (inflight.has(`location:${l.id}`)) continue;
+      try {
+        await this.bibleService.generateLocationImage(projectId, l.id);
+        inflight.add(`location:${l.id}`);
+        enqueued += 1;
+      } catch (e) {
+        this.logger.warn(`[串行链·场景] 场景图任务创建失败 ${l.name}：${(e as Error).message}`);
+      }
+    }
+    const stillInflight = [...inflight].filter((k) => k.startsWith('location:')).length;
+    if (enqueued > 0) {
+      this.logger.log(`[串行链·场景] project=${projectId} 新排 ${enqueued}，缺图 ${missing.length}（${missing.slice(0, 6).join('、')}）`);
+    }
+    return { enqueued, inflight: stillInflight, missing: missing.length, missingNames: missing };
+  }
+
+  /**
+   * 段 3 · 道具资产：为分镜关键道具补设定图。
+   * 轻量提取逻辑：分镜画面描述/台词/场次道具标签里出现过的道具名或 PROP 编号才算关键道具，
+   * 纯陈设（set_dressing）与没入镜的道具不出图，避免浪费生成额度。
+   */
+  async enqueuePropAssets(
+    projectId: string,
+    shotTexts: string[],
+    scenePropTags: string[],
+  ): Promise<StageEnqueueResult> {
+    const facts = await this.loadFacts(projectId);
+    const inflight = await this.inflightTargets(projectId);
+    // 分镜文本归一化后做包含匹配（与 job-worker 的 matchCastIds 同一套宽松口径）
+    const norm = (v: string): string =>
+      v.replace(/[\s·・、,，.。:：!！?？"“”'‘’（）()【】[\]<>《》\-—_/\\|]/g, '').toLowerCase();
+    const hay = norm(shotTexts.join('\n'));
+    const tagSet = new Set(scenePropTags);
+    let enqueued = 0;
+    const missing: string[] = [];
+    for (const p of facts.props.slice(0, MAX_PROPS)) {
+      const item = evaluatePropAsset(p);
+      if (item.ready) continue;
+      // 关键性判定：场次道具标签命中，或道具名/编号出现在分镜文本里
+      const code = norm(p.code ?? '');
+      const name = norm(p.name);
+      const inText =
+        (name.length >= 2 && hay.includes(name)) ||
+        (code.length >= 2 && hay.includes(code)) ||
+        [...tagSet].some((t) => {
+          const nt = norm(t.replace(/^@/, ''));
+          return nt === code || nt === name || (name.length >= 2 && nt.endsWith(name));
+        });
+      if (!inText) continue;
+      missing.push(p.name);
+      if (inflight.has(`prop:${p.id}`)) continue;
+      try {
+        await this.bibleService.generatePropImage(projectId, p.id);
+        inflight.add(`prop:${p.id}`);
+        enqueued += 1;
+      } catch (e) {
+        this.logger.warn(`[串行链·道具] 设定图任务创建失败 ${p.name}：${(e as Error).message}`);
+      }
+    }
+    const stillInflight = [...inflight].filter((k) => k.startsWith('prop:')).length;
+    if (enqueued > 0) {
+      this.logger.log(`[串行链·道具] project=${projectId} 新排 ${enqueued}，缺图 ${missing.length}（${missing.slice(0, 6).join('、')}）`);
+    }
+    return { enqueued, inflight: stillInflight, missing: missing.length, missingNames: missing };
   }
 
   /**
