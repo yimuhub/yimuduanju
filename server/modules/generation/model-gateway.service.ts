@@ -500,13 +500,22 @@ export class ModelGatewayService {
         });
       }
     }
+    /* ------------------------------------------------------------------
+     * 图片返回形态：默认 b64_json（不依赖 CDN 可达），但**下游视频要公网首帧**时
+     * 必须让上游回 URL —— b64 的图没有任何公网地址可给视频模型，Agnes 这类
+     * 只收公网首帧的通道就只能退化成纯文生视频。
+     * 供应商 modelParams.imageReturnUrl=true 时改要 URL，worker 仍会下载落盘，
+     * 只是额外把原始 URL 记进产物（video 侧用它做 first_frame）。
+     * ------------------------------------------------------------------ */
+    const returnsUrl =
+      ((provider.modelParams ?? {}) as { imageReturnUrl?: boolean }).imageReturnUrl === true;
     const body = {
       model,
       prompt: prefix ? `${prefix}, ${params.prompt}` : params.prompt,
       size: params.size ?? '1024x1024',
       n: params.n ?? 1,
       // CDN 不可达时兜底：能回 b64 就不依赖 .cn 拉文件
-      response_format: 'b64_json',
+      response_format: returnsUrl ? 'url' : 'b64_json',
       ...(params.negativePrompt
         ? { negative_prompt: params.negativePrompt }
         : {}),
