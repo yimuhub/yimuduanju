@@ -42,7 +42,14 @@ export const localizeLanguage = (projectId: string) =>
       updatedShots: number;
       updatedScenes: number;
       updatedSegments: number;
+      renumbered: number;
     }>(`/api/projects/${projectId}/storyboard/localize-language`)
+    .then((res) => res.data);
+
+/** 镜号/段号全局重排（幂等）：修旧数据跨场重复的镜号 */
+export const renumberShots = (projectId: string) =>
+  axiosForBackend
+    .post<{ changed: number }>(`/api/projects/${projectId}/storyboard/renumber`)
     .then((res) => res.data);
 
 export const getScene = (projectId: string, id: string) =>

@@ -272,10 +272,11 @@ const ProjectStoryboardTab = () => {
     setLocalizing(true);
     try {
       const res = await storyboard.localizeLanguage(id);
-      if (res.updatedShots || res.updatedSegments) {
+      if (res.updatedShots || res.updatedSegments || res.renumbered) {
         toast.success(
-          `中文回填完成：镜头 ${res.updatedShots} / 片段 ${res.updatedSegments}（翻译 ${res.translated}/${res.scanned} 条）`,
-          { duration: 3200 },
+          `中文回填完成：镜头 ${res.updatedShots} / 片段 ${res.updatedSegments}（翻译 ${res.translated}/${res.scanned} 条）` +
+            (res.renumbered ? `，重排镜号 ${res.renumbered} 行` : ''),
+          { duration: 3600 },
         );
         const allShots = await storyboard.listAllShots(id);
         setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));

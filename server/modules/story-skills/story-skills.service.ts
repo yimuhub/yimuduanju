@@ -19,6 +19,7 @@ import {
   detectBoardLanguage,
   isBoardTextInLanguage,
   normalizeBoardsLanguage,
+  stripBrandTokens,
 } from '@shared/boards-language';
 import { GENRE_PRESETS, genreBlock, getGenrePreset } from './genres';
 import { getStylePreset, getStylePresetById, STYLE_PRESETS } from './styles';
@@ -442,7 +443,7 @@ export class StorySkillsService {
         for (const row of arr) {
           const r = (row ?? {}) as Record<string, unknown>;
           if (typeof r.id !== 'string' || typeof r.text !== 'string') continue;
-          const text = r.text.trim();
+          const text = stripBrandTokens(r.text.trim());
           // 只接受确实是中文的结果，避免把「翻译失败」写成另一种英文
           if (text.length > 0 && cjkRatio(text) >= 0.15 && batch.some((i) => i.id === r.id)) {
             out[r.id] = text.slice(0, 1000);

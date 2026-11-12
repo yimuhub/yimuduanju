@@ -18,7 +18,7 @@ import type {
   SplitShotResult,
 } from '@shared/api.interface';
 import { diagnoseProject, type ProjectDiagnosis } from '@shared/artifact-state';
-import { isBoardTextInLanguage } from '@shared/boards-language';
+import { isBoardTextInLanguage, stripBrandTokens } from '@shared/boards-language';
 import { deriveBeats, planPieces } from '@shared/shot-craft';
 import {
   CAMERA_ANGLE_LABELS,
@@ -775,6 +775,7 @@ export class StoryboardService {
     updatedShots: number;
     updatedScenes: number;
     updatedSegments: number;
+    renumbered: number;
   }> {
     const [proj] = await this.db
       .select({ scriptText: projects.scriptText })
@@ -788,20 +789,32 @@ export class StoryboardService {
       this.db.select().from(segments).where(eq(segments.projectId, projectId)),
     ]);
     if (shotRows.length === 0) {
-      return { language: 'zh', scanned: 0, translated: 0, updatedShots: 0, updatedScenes: 0, updatedSegments: 0 };
+      return {
+        language: 'zh',
+        scanned: 0,
+        translated: 0,
+        updatedShots: 0,
+        updatedScenes: 0,
+        updatedSegments: 0,
+        renumbered: 0,
+      };
     }
 
     type BeatRow = { from: number; to: number; description: string; dialogue?: string };
     const items: { id: string; text: string }[] = [];
     for (const s of shotRows) {
-      if (s.visualPrompt?.trim()) items.push({ id: `visual:${s.id}`, text: s.visualPrompt });
+      // 送去改写前先清品牌/字体名（「袍服上 Verdana 字样刺绣」这类既侵权又要求画面出字）
+      const visual = stripBrandTokens(s.visualPrompt ?? '');
+      if (visual.trim()) items.push({ id: `visual:${s.id}`, text: visual });
       const beats = (Array.isArray(s.beats) ? s.beats : []) as BeatRow[];
       beats.forEach((b, i) => {
-        if (b?.description?.trim()) items.push({ id: `beat:${s.id}:${i}`, text: b.description });
+        const desc = stripBrandTokens(b?.description ?? '');
+        if (desc.trim()) items.push({ id: `beat:${s.id}:${i}`, text: desc });
       });
     }
     for (const seg of segmentRows) {
-      if (seg.title?.trim()) items.push({ id: `segment:${seg.id}`, text: seg.title });
+      const title = stripBrandTokens(seg.title ?? '');
+      if (title.trim()) items.push({ id: `segment:${seg.id}`, text: title });
     }
     const translated = await this.storySkills.localizeTexts(items, proj.scriptText ?? '');
 
@@ -809,14 +822,16 @@ export class StoryboardService {
     let updatedScenes = 0;
     let updatedSegments = 0;
     for (const s of shotRows) {
-      const visual = translated[`visual:${s.id}`] ?? s.visualPrompt ?? undefined;
+      // 即使没有译文，也要落一遍清洗结果（存量英文→中文之后再跑一次就只剩清洗）
+      const currentVisual = s.visualPrompt ?? undefined;
+      const visual = translated[`visual:${s.id}`] ?? (stripBrandTokens(currentVisual ?? '') || undefined);
       const beats = (Array.isArray(s.beats) ? s.beats : []) as BeatRow[];
       const nextBeats = beats.map((b, i) => ({
         ...b,
-        description: translated[`beat:${s.id}:${i}`] ?? b.description,
+        description: translated[`beat:${s.id}:${i}`] ?? stripBrandTokens(b.description ?? ''),
       }));
       const beatsChanged = nextBeats.some((b, i) => b.description !== beats[i]?.description);
-      if (visual === s.visualPrompt && !beatsChanged) continue;
+      if (visual === currentVisual && !beatsChanged) continue;
       // eslint-disable-next-line no-await-in-loop
       await this.db
         .update(shots)
@@ -834,7 +849,8 @@ export class StoryboardService {
     for (const sc of sceneRows) {
       const first = shotRows.find((s) => s.sceneId === sc.id);
       if (!first) continue;
-      const visual = translated[`visual:${first.id}`] ?? first.visualPrompt ?? '';
+      const visual =
+        translated[`visual:${first.id}`] ?? stripBrandTokens(first.visualPrompt ?? '');
       if (!visual || !isBoardTextInLanguage(visual, 'zh')) continue;
       const next = visual.slice(0, 200);
       if (next === sc.summary) continue;
@@ -846,7 +862,7 @@ export class StoryboardService {
       updatedScenes += 1;
     }
     for (const seg of segmentRows) {
-      const next = translated[`segment:${seg.id}`];
+      const next = translated[`segment:${seg.id}`] ?? stripBrandTokens(seg.title ?? '');
       if (!next || next === seg.title) continue;
       // eslint-disable-next-line no-await-in-loop
       await this.db
@@ -855,9 +871,12 @@ export class StoryboardService {
         .where(eq(segments.id, seg.id));
       updatedSegments += 1;
     }
+    // 顺手把镜号/段号修成全局递增：旧数据里镜号是「场内序号」，
+    // 跨场重复会让时间线、画布、导出按 [1,1,1,2,2,2] 交错排列（场1→场3→场2）。
+    const renumbered = await this.renumberShots(projectId);
     this.logger.log(
       `分镜中文回填 ${projectId}：扫描 ${items.length} 条，翻译 ${Object.keys(translated).length} 条，` +
-        `更新镜头 ${updatedShots} / 场景 ${updatedScenes} / 片段 ${updatedSegments}`,
+        `更新镜头 ${updatedShots} / 场景 ${updatedScenes} / 片段 ${updatedSegments}，重排镜号 ${renumbered}`,
     );
     return {
       language: 'zh',
@@ -866,7 +885,70 @@ export class StoryboardService {
       updatedShots,
       updatedScenes,
       updatedSegments,
+      renumbered,
     };
+  }
+
+  /**
+   * 镜号/段号全局重排：按「场号 → 原 sortOrder → 原镜号」生成 1..N。
+   * 旧数据里镜号是场内序号（每场从 1 开始），跨场重复会让时间线/画布/导出
+   * 按 [1,1,1,2,2,2] 交错排列，剧情顺序整个打乱（场1 → 场3 → 场2）。
+   * 幂等：已符合全局递增时不写库，返回 0。
+   */
+  async renumberShots(projectId: string): Promise<number> {
+    const [sceneRows, shotRows, segmentRows] = await Promise.all([
+      this.db
+        .select({ id: scenes.id, sceneNumber: scenes.sceneNumber })
+        .from(scenes)
+        .where(eq(scenes.projectId, projectId)),
+      this.db.select().from(shots).where(eq(shots.projectId, projectId)),
+      this.db.select().from(segments).where(eq(segments.projectId, projectId)),
+    ]);
+    if (shotRows.length === 0) return 0;
+    const sceneOrder = new Map(sceneRows.map((s) => [s.id, s.sceneNumber ?? 0]));
+    const orderOf = (sceneId: string | null) => sceneOrder.get(sceneId ?? '') ?? 0;
+
+    const sortedShots = [...shotRows].sort(
+      (a, b) =>
+        orderOf(a.sceneId) - orderOf(b.sceneId) ||
+        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+        (a.shotNumber ?? 0) - (b.shotNumber ?? 0),
+    );
+    let changed = 0;
+    for (let i = 0; i < sortedShots.length; i += 1) {
+      const shot = sortedShots[i];
+      const next = i + 1;
+      if (shot.shotNumber === next && shot.sortOrder === next) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(shots)
+        .set({ shotNumber: next, sortOrder: next, updatedAt: new Date() })
+        .where(eq(shots.id, shot.id));
+      shot.shotNumber = next;
+      shot.sortOrder = next;
+      changed += 1;
+    }
+
+    const sortedSegments = [...segmentRows].sort(
+      (a, b) =>
+        orderOf(a.sceneId) - orderOf(b.sceneId) ||
+        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+        (a.segmentNumber ?? 0) - (b.segmentNumber ?? 0),
+    );
+    for (let i = 0; i < sortedSegments.length; i += 1) {
+      const seg = sortedSegments[i];
+      if (seg.sortOrder === i + 1) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(segments)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(segments.id, seg.id));
+      changed += 1;
+    }
+    if (changed > 0) {
+      this.logger.log(`镜号全局重排 ${projectId}：${changed} 行（镜 ${shotRows.length} / 段 ${segmentRows.length}）`);
+    }
+    return changed;
   }
 
   async generateShotVideo(

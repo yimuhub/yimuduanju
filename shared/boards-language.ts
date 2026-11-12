@@ -88,6 +88,53 @@ export function matchScriptDialogue(
   return best && best.score >= 0.45 ? best.value : undefined;
 }
 
+/**
+ * 商业标识 / 字体名清洗。
+ * 实测分镜描述里出现过「袍服上 Verdana 字样刺绣细节清晰」——模型把字体当纹样写进画面，
+ * 既是侵权风险，也是「画面上有字」的隐性指令（与全局禁字纪律冲突）。
+ * 只列低歧义的字体与品牌（不包含 impact/georgia 这类常用词），命中即删除。
+ */
+const BRAND_TOKENS = [
+  'Times New Roman',
+  'Comic Sans',
+  'Helvetica',
+  'Verdana',
+  'Calibri',
+  'Tahoma',
+  'Arial',
+  'Coca-Cola',
+  'Coca Cola',
+  'McDonald',
+  'Starbucks',
+  'Adidas',
+  'Nike',
+  'iPhone',
+  'iPad',
+  'MacBook',
+  'Microsoft',
+  'Windows',
+  'Google',
+  'Disney',
+  'Pixar',
+  'Marvel',
+  'Netflix',
+];
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** 去掉品牌/字体名，并清理由此产生的空白与标点残留 */
+export function stripBrandTokens(text: string): string {
+  let out = text ?? '';
+  for (const token of BRAND_TOKENS) {
+    out = out.replace(new RegExp(`\\b${escapeRegExp(token)}\\b`, 'gi'), '');
+  }
+  return out
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([，。、；：！？])/g, '$1')
+    .replace(/([，。、；：])\s*[，。、；：]/g, '$1')
+    .trim();
+}
+
 export interface BoardLike {
   segmentTitle?: string;
   dialogue?: string;
@@ -157,8 +204,18 @@ export function normalizeBoardsLanguage<T extends BoardLike>(
       const beatDialogue = b.dialogue?.trim()
         ? matchScriptDialogue(b.dialogue, scriptDialogues)
         : undefined;
-      return { ...b, dialogue: beatDialogue };
+      return { ...b, description: stripBrandTokens(b.description), dialogue: beatDialogue };
     });
-    return { ...shot, ...(dialogue !== undefined ? { dialogue } : { dialogue: undefined }), ...(beats ? { beats } : {}) };
+    return {
+      ...shot,
+      ...(shot.visualPrompt !== undefined
+        ? { visualPrompt: stripBrandTokens(shot.visualPrompt) }
+        : {}),
+      ...(shot.segmentTitle !== undefined
+        ? { segmentTitle: stripBrandTokens(shot.segmentTitle) }
+        : {}),
+      ...(dialogue !== undefined ? { dialogue } : { dialogue: undefined }),
+      ...(beats ? { beats } : {}),
+    };
   });
 }

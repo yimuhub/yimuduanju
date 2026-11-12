@@ -71,8 +71,20 @@ export class StoryboardController {
     updatedShots: number;
     updatedScenes: number;
     updatedSegments: number;
+    renumbered: number;
   }> {
     return this.storyboardService.localizeProjectText(projectId);
+  }
+
+  /**
+   * 镜号/段号全局重排（幂等）：修旧数据里「每场从 1 开始」的镜号，
+   * 避免时间线/画布/导出按 [1,1,1,2,2,2] 交错排列。
+   */
+  @Post('renumber')
+  async renumber(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<{ changed: number }> {
+    return { changed: await this.storyboardService.renumberShots(projectId) };
   }
 
   /** 片段列表（场 → 片段 → 镜 的中间层） */
