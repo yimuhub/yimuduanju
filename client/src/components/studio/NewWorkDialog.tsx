@@ -391,155 +391,160 @@ export const NewWorkDialog = ({ open, onClose, onCreated, options }: NewWorkDial
           <aside className="nw-setup">
             <div className="nw-setup-h">作品设置</div>
 
-            <div className="nw-label-row">
-              <label className="nw-label" htmlFor="nw-title">
-                作品名称
-              </label>
-              <button
-                type="button"
-                className="nw-gen"
-                disabled={titleLoading || (!hasUserMessage && !input.trim())}
-                onClick={() =>
-                  void generateTitle(titleSource(msgs, input), sessionId, true)
-                }
-              >
-                {titleLoading ? <Loader2 className="spin" /> : <Sparkles />}
-                {titleLoading ? '取名中' : 'AI 取名'}
-              </button>
-            </div>
-            <input
-              id="nw-title"
-              className="nw-input"
-              value={title}
-              maxLength={60}
-              placeholder="按对话内容自动取名，也可直接改写"
-              onChange={(e) => {
-                titleTouched.current = true;
-                setTitle(e.target.value);
-              }}
-            />
-
-            <label className="nw-label">单集时长</label>
-            <div className="nw-chips tight">
-              {DURATIONS.map((d) => (
+            {/* 设置项可滚动，底部「确认创建」常驻：矮窗口下也不会把主按钮挤出可视区 */}
+            <div className="nw-setup-body">
+              <div className="nw-label-row">
+                <label className="nw-label" htmlFor="nw-title">
+                  作品名称
+                </label>
                 <button
-                  key={d}
                   type="button"
-                  className={`nw-chip${!customDuration && duration === d ? ' on' : ''}`}
-                  onClick={() => pickDuration(d)}
+                  className="nw-gen"
+                  disabled={titleLoading || (!hasUserMessage && !input.trim())}
+                  onClick={() =>
+                    void generateTitle(titleSource(msgs, input), sessionId, true)
+                  }
                 >
-                  {d}s
+                  {titleLoading ? <Loader2 className="spin" /> : <Sparkles />}
+                  {titleLoading ? '取名中' : 'AI 取名'}
                 </button>
-              ))}
-              <button
-                type="button"
-                className={`nw-chip${customDuration ? ' on' : ''}`}
-                onClick={openCustomDuration}
-              >
-                自定义
-              </button>
-            </div>
-            {customDuration ? (
-              <div className="nw-custom">
-                <input
-                  ref={durationRef}
-                  type="number"
-                  inputMode="numeric"
-                  min={5}
-                  max={7200}
-                  className="nw-input"
-                  value={durationText}
-                  onChange={(e) => changeCustomDuration(e.target.value)}
-                  onBlur={normalizeCustomDuration}
-                  aria-label="自定义单集时长（秒）"
-                />
-                <span>秒</span>
               </div>
-            ) : null}
+              <input
+                id="nw-title"
+                className="nw-input"
+                value={title}
+                maxLength={60}
+                placeholder="按对话内容自动取名，也可直接改写"
+                onChange={(e) => {
+                  titleTouched.current = true;
+                  setTitle(e.target.value);
+                }}
+              />
 
-            <label className="nw-label">画风 · 定长相</label>
-            <div className="nw-style-current">
-              <img src={styleCover(artStyle)} alt="" />
-              <span className="nw-style-current-main">
-                <b>{currentStyle.label}</b>
-                <span>{currentStyle.desc}</span>
-              </span>
-              <span className="nw-style-current-tag">{styleFamily(artStyle)}</span>
-            </div>
-
-            <label className="nw-label">画幅</label>
-            <div className="nw-ratios">
-              {RATIOS.map((r) => {
-                const [w, h] = r.value.split(':').map(Number);
-                const gw = w >= h ? 22 : Math.round((22 * w) / h);
-                const gh = w >= h ? Math.round((22 * h) / w) : 22;
-                return (
+              <label className="nw-label">单集时长</label>
+              <div className="nw-chips tight">
+                {DURATIONS.map((d) => (
                   <button
-                    key={r.value}
+                    key={d}
                     type="button"
-                    className={`nw-ratio${aspectRatio === r.value ? ' on' : ''}`}
-                    onClick={() => setAspectRatio(r.value)}
-                    title={`${r.label} ${r.hint}`}
+                    className={`nw-chip${!customDuration && duration === d ? ' on' : ''}`}
+                    onClick={() => pickDuration(d)}
                   >
-                    <i className="nw-ratio-glyph" style={{ width: gw, height: gh }} />
-                    <span className="nw-ratio-t">{r.label}</span>
-                    <span className="nw-ratio-h">{r.hint}</span>
+                    {d}s
                   </button>
-                );
-              })}
-            </div>
-
-            <label className="nw-label">预算</label>
-            <div className="nw-budgets">
-              {budgetOptions.map((b) => (
+                ))}
                 <button
-                  key={b.value}
                   type="button"
-                  className={`nw-budget${budgetMode === b.value ? ' on' : ''}`}
-                  onClick={() => setBudgetMode(b.value)}
+                  className={`nw-chip${customDuration ? ' on' : ''}`}
+                  onClick={openCustomDuration}
                 >
-                  <b>{b.label}</b>
-                  <span>{b.desc}</span>
+                  自定义
                 </button>
-              ))}
+              </div>
+              {customDuration ? (
+                <div className="nw-custom">
+                  <input
+                    ref={durationRef}
+                    type="number"
+                    inputMode="numeric"
+                    min={5}
+                    max={7200}
+                    className="nw-input"
+                    value={durationText}
+                    onChange={(e) => changeCustomDuration(e.target.value)}
+                    onBlur={normalizeCustomDuration}
+                    aria-label="自定义单集时长（秒）"
+                  />
+                  <span>秒</span>
+                </div>
+              ) : null}
+
+              <label className="nw-label">画风 · 定长相</label>
+              <div className="nw-style-current">
+                <img src={styleCover(artStyle)} alt="" />
+                <span className="nw-style-current-main">
+                  <b>{currentStyle.label}</b>
+                  <span>{currentStyle.desc}</span>
+                </span>
+                <span className="nw-style-current-tag">{styleFamily(artStyle)}</span>
+              </div>
+
+              <label className="nw-label">画幅</label>
+              <div className="nw-ratios">
+                {RATIOS.map((r) => {
+                  const [w, h] = r.value.split(':').map(Number);
+                  const gw = w >= h ? 22 : Math.round((22 * w) / h);
+                  const gh = w >= h ? Math.round((22 * h) / w) : 22;
+                  return (
+                    <button
+                      key={r.value}
+                      type="button"
+                      className={`nw-ratio${aspectRatio === r.value ? ' on' : ''}`}
+                      onClick={() => setAspectRatio(r.value)}
+                      title={`${r.label} ${r.hint}`}
+                    >
+                      <i className="nw-ratio-glyph" style={{ width: gw, height: gh }} />
+                      <span className="nw-ratio-t">{r.label}</span>
+                      <span className="nw-ratio-h">{r.hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <label className="nw-label">预算</label>
+              <div className="nw-budgets">
+                {budgetOptions.map((b) => (
+                  <button
+                    key={b.value}
+                    type="button"
+                    className={`nw-budget${budgetMode === b.value ? ' on' : ''}`}
+                    onClick={() => setBudgetMode(b.value)}
+                  >
+                    <b>{b.label}</b>
+                    <span>{b.desc}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="nw-summary">
+                <span>{duration}s</span>
+                <i />
+                <span>
+                  {currentRatio.label} {currentRatio.hint}
+                </span>
+                <i />
+                <span>{currentStyle.label}</span>
+                <i />
+                <span>{currentBudget.label}</span>
+              </div>
+
+              <div className="nw-setup-note">
+                确认后立即创建作品并生成剧本；剧本、分镜、成片各有一次确认门，
+                不会未经你确认就批量花钱。
+              </div>
             </div>
 
-            <div className="nw-summary">
-              <span>{duration}s</span>
-              <i />
-              <span>
-                {currentRatio.label} {currentRatio.hint}
-              </span>
-              <i />
-              <span>{currentStyle.label}</span>
-              <i />
-              <span>{currentBudget.label}</span>
+            <div className="nw-setup-foot">
+              <button
+                type="button"
+                className="btn pri nw-confirm"
+                disabled={!hasUserMessage || creating}
+                onClick={() => void confirmCreate()}
+              >
+                {creating ? (
+                  <>
+                    <Loader2 className="spin" /> 创建中…
+                  </>
+                ) : (
+                  <>
+                    确认创建 <ArrowRight className="ico" />
+                  </>
+                )}
+              </button>
+              {!hasUserMessage ? (
+                <div className="nw-hint">先在左侧聊两句，确认按钮才会亮起</div>
+              ) : null}
             </div>
-
-            <div className="nw-setup-note">
-              确认后立即创建作品并生成剧本；剧本、分镜、成片各有一次确认门，
-              不会未经你确认就批量花钱。
-            </div>
-
-            <button
-              type="button"
-              className="btn pri nw-confirm"
-              disabled={!hasUserMessage || creating}
-              onClick={() => void confirmCreate()}
-            >
-              {creating ? (
-                <>
-                  <Loader2 className="spin" /> 创建中…
-                </>
-              ) : (
-                <>
-                  确认创建 <ArrowRight className="ico" />
-                </>
-              )}
-            </button>
-            {!hasUserMessage ? (
-              <div className="nw-hint">先在左侧聊两句，确认按钮才会亮起</div>
-            ) : null}
           </aside>
         </div>
 

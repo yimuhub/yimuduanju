@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@shared/api.interface';
 import { ChatText } from './ChatText';
+import { ChatMessageBoundary } from './ChatMessageBoundary';
 
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -41,35 +42,38 @@ export const ChatTurns = ({ msgs, busy, header, empty }: ChatTurnsProps) => {
         {msgs.map((m, i) => {
           const isLastAgent = streaming && i === msgs.length - 1;
           const thinking = isLastAgent && !m.content;
+          const files = Array.isArray(m.attachments) ? m.attachments : [];
           return (
-            <div key={m.id} className={`turn ${m.role === 'user' ? 'user' : 'agent'}`}>
-              <div className="turn-h">
-                <span className={`turn-w${m.role === 'agent' ? ' a' : ''}`}>
-                  {m.role === 'agent' ? '一幕 Agent' : '你'}
-                </span>
-                <span className="turn-when">{when(m.createdAt)}</span>
-              </div>
-              {m.attachments.length > 0 ? (
-                <div className="chat-files">
-                  {m.attachments.map((a, idx) => (
-                    <span key={`${a.name}-${idx}`} className="chat-file">
-                      {a.name}
-                      {a.chars ? <em>{Math.round(a.chars / 100) / 10}k 字</em> : null}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <div className="turn-b">
-                {thinking ? (
-                  <span className="chat-thinking">
-                    <Loader2 className="spin" /> 正在思考…
+            <ChatMessageBoundary key={m.id || i}>
+              <div className={`turn ${m.role === 'user' ? 'user' : 'agent'}`}>
+                <div className="turn-h">
+                  <span className={`turn-w${m.role === 'agent' ? ' a' : ''}`}>
+                    {m.role === 'agent' ? '一幕 Agent' : '你'}
                   </span>
-                ) : (
-                  <ChatText text={m.content} />
-                )}
-                {isLastAgent && m.content ? <span className="chat-cursor" /> : null}
+                  <span className="turn-when">{when(m.createdAt)}</span>
+                </div>
+                {files.length > 0 ? (
+                  <div className="chat-files">
+                    {files.map((a, idx) => (
+                      <span key={`${a?.name ?? 'file'}-${idx}`} className="chat-file">
+                        {a?.name ?? '附件'}
+                        {a?.chars ? <em>{Math.round(a.chars / 100) / 10}k 字</em> : null}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="turn-b">
+                  {thinking ? (
+                    <span className="chat-thinking">
+                      <Loader2 className="spin" /> 正在思考…
+                    </span>
+                  ) : (
+                    <ChatText text={typeof m.content === 'string' ? m.content : ''} />
+                  )}
+                  {isLastAgent && m.content ? <span className="chat-cursor" /> : null}
+                </div>
               </div>
-            </div>
+            </ChatMessageBoundary>
           );
         })}
       </div>

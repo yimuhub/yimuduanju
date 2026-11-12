@@ -23,7 +23,7 @@ function inline(text: string): ReactNode[] {
 }
 
 export const ChatText = ({ text }: { text: string }) => {
-  const lines = text.split('\n');
+  const lines = String(text ?? '').split('\n');
   const blocks: ReactNode[] = [];
   let list: string[] = [];
   let code: string[] | null = null;

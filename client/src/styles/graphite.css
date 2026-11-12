@@ -4595,7 +4595,9 @@
 }
 .nw-panel {
   width: min(1040px, 100%);
+  /* dvh 优先：WebView 里地址栏/安全区变化时 vh 会算错，导致面板比可视区高 */
   height: min(760px, calc(100vh - 56px));
+  height: min(760px, calc(100dvh - 56px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4663,12 +4665,23 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 292px;
+  /* 关键：不写死行高时，隐式行按内容撑开——消息一多整行就超过面板高度，
+     对话区与右侧设置溢出到「画风」风格条上面，出现卡片压住输入框和确认按钮。
+     minmax(0, 1fr) 把行高锁在可用空间内，超出的内容由内部滚动消化。 */
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
 }
 .nw-chat {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+.nw-chat .thread {
+  /* flex 子项默认 min-height:auto，内容多到撑不开就顶出去，必须显式归零 */
+  min-height: 0;
 }
 .nw-chat .thread-in {
   padding: 22px 22px 6px;
@@ -4716,8 +4729,24 @@
 .nw-setup {
   display: flex;
   flex-direction: column;
-  padding: 18px 16px;
+  min-height: 0;
+  padding: 18px 16px 0;
+  overflow: hidden;
+  background: var(--bg-rail);
+}
+/* 设置项滚动区：内容再多也不会把底部的确认按钮挤出去 */
+.nw-setup-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding-bottom: 4px;
+  margin-right: -6px;
+  padding-right: 6px;
+}
+.nw-setup-foot {
+  flex: 0 0 auto;
+  padding: 10px 0 14px;
+  border-top: 1px solid var(--line);
   background: var(--bg-rail);
 }
 .nw-setup-h {
@@ -4837,6 +4866,18 @@
   padding: 10px 16px 12px;
   border-top: 1px solid var(--line);
   background: var(--bg-rail);
+}
+/* 窗口偏矮时压一压风格条，把高度让给对话和设置，避免一进来就挤成一团 */
+@media (max-height: 780px) {
+  .nw-styles {
+    padding: 8px 14px 9px;
+  }
+  .nw-styles-h {
+    margin-bottom: 6px;
+  }
+  .nw-style-card {
+    width: 70px;
+  }
 }
 .nw-styles-h {
   display: flex;
@@ -5096,7 +5137,8 @@ select.nw-input {
   color: var(--fg-3);
 }
 .nw-confirm {
-  margin-top: auto;
+  margin-top: 0;
+  width: 100%;
   height: 36px;
   justify-content: center;
   font-size: 13px;
