@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { generationJobs, projects, shots, modelProviders } from '@server/database/schema';
-import { eq, desc, and, count, sql, inArray } from 'drizzle-orm';
+import { eq, asc, desc, and, count, sql, inArray } from 'drizzle-orm';
 import { isFreeAgnesModel } from '@shared/agnes';
 import { stageOfJobType } from '@shared/stage-bindings';
 // 产物形态硬校验：变体采纳同样不允许把图片当视频设成成片
@@ -31,6 +31,11 @@ import { systemLog } from '../../common/system-log.store';
  * 用「带状态条件的 UPDATE」做 CAS，避免并发写把终态改回去。
  */
 const OPEN_JOB_STATUSES: JobStatus[] = ['pending', 'queued', 'running', 'retrying'];
+/**
+ * 可取消集合比可结算集合多一个 paused：暂停是人为可逆状态，用户仍应能终止它。
+ * 但 paused 不在 OPEN_JOB_STATUSES 里 —— 暂停期间上游回调不能把任务悄悄结算成成功。
+ */
+const CANCELLABLE_JOB_STATUSES: JobStatus[] = [...OPEN_JOB_STATUSES, 'paused'];
 
 /**
  * 分类型并发水位的环境变量兜底：非法值（"abc"→NaN）、空串（Number("")→0）、
@@ -462,7 +467,11 @@ export class GenerationService {
   async claimNextPendingJob(excludeIds: string[] = []): Promise<GenerationJob | null> {
     // 有 blockedReason 的视频仍在等待首帧，必须在 SQL 层排除，避免 limit(1) 队头阻塞。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
-    // 候选按优先级/时间排序取一小批，再按"分类型并发水位"挑第一个未满道的
+    // 全站唯一排序键 queue_seq（migration 0022）：与 BullMQ 队列模式的
+    // claimForQueue 完全同源，Redis 掉线降级时不再出现「顺序语义突变」。
+    // 旧实现按 priority DESC + createdAt，而同事务批量插入的 createdAt 完全相同、
+    // 且 priority 在队列模式被忽略 —— 这是多项目并行时顺序不可确定的根因。
+    // priority 现在只作为展示字段保留；分组调度意图由插入顺序天然保证。
     const candidates = await this.db
       .select({ id: generationJobs.id, jobType: generationJobs.jobType })
       .from(generationJobs)
@@ -473,7 +482,7 @@ export class GenerationService {
           excludeIds.length ? sql`${generationJobs.id}::text <> all(${excludeIds})` : undefined,
         ),
       )
-      .orderBy(desc(generationJobs.priority), generationJobs.createdAt)
+      .orderBy(asc(generationJobs.queueSeq))
       .limit(24);
     if (candidates.length === 0) return null;
 
@@ -582,7 +591,8 @@ export class GenerationService {
   async cancelJob(id: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
     // P1 修复：终态任务取消改为幂等直接返回，避免已完成任务被误标 cancelled
-    if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
+    // V8：paused 也可终止（排队页「终止」按钮），与结算集合区分开
+    if (!CANCELLABLE_JOB_STATUSES.includes(job.status)) return job;
     const rows = await this.db
       .update(generationJobs)
       .set({
@@ -591,7 +601,7 @@ export class GenerationService {
         completedAt: new Date(),
       })
       // CAS：取消与成功结算并发时，谁先写到状态谁生效；后到者不会覆盖终态
-      .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
+      .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, CANCELLABLE_JOB_STATUSES)))
       .returning();
     // 0 行 = 期间已被结算成终态（成功/失败），按当前状态返回，不再抛「任务不存在」
     if (rows.length === 0) return this.getJob(id);
@@ -714,6 +724,7 @@ export class GenerationService {
       status: row.status as JobStatus,
       progress: row.progress ?? 0,
       priority: row.priority ?? 50,
+      queueSeq: Number(row.queueSeq ?? 0),
       providerName: row.providerName ?? undefined,
       modelName: row.modelName ?? undefined,
       errorMessage: row.errorMessage ?? undefined,

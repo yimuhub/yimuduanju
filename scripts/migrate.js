@@ -50,7 +50,11 @@ async function main() {
     // 平台数据层以受限角色（authenticated_yimu 等）执行查询，新表必须授权，
     // 否则运行时 42501 permission denied（实机验证发现）
     try {
+      // 序列权限也要刷新：start.sh 的授权发生在跑迁移之前，若新迁移里
+      // CREATE SEQUENCE（如 0022 的 queue_seq），受限角色会拿不到 USAGE，
+      // 插入时 nextval() 直接 42501。两条语句分开，便于单独兼容旧库。
       await sql`GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated_yimu, anon_yimu, service_role_yimu`;
+      await sql`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated_yimu, anon_yimu, service_role_yimu`;
       console.log('[migrate] grants refreshed');
     } catch (e) {
       console.log(`[migrate] grant skipped: ${e.message}`);

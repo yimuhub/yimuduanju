@@ -92,10 +92,14 @@ const STATUS_LABEL: Record<JobStatus, string> = {
   succeeded: '完成',
   failed: '失败',
   cancelled: '已取消',
+  paused: '已暂停',
 };
 
 const isActiveStatus = (s: JobStatus) =>
   s === 'pending' || s === 'queued' || s === 'running' || s === 'retrying';
+
+/** 未结束状态（含人工暂停）：暂停任务不能被流程卡隐藏，否则用户会以为任务丢了 */
+const isOpenStatus = (s: JobStatus) => isActiveStatus(s) || s === 'paused';
 
 /** 同一目标只认最新一次任务：失败后重试成功的旧失败不再算「待处理」 */
 export const latestByTarget = (list: GenerationJob[]) => {
@@ -310,6 +314,7 @@ export const PipelineCard = ({
             total: stepJobs.length,
             done: stepJobs.filter((j) => j.status === 'succeeded').length,
             active: stepJobs.filter((j) => isActiveStatus(j.status)).length,
+            paused: stepJobs.filter((j) => j.status === 'paused').length,
             failed: openFailures.length,
           };
           const firstFailed = openFailures[0];
@@ -337,7 +342,7 @@ export const PipelineCard = ({
           const open = expanded.includes(s.step);
           const view = STEP_VIEW[s.step];
           const activeJobs = stepJobs
-            .filter((j) => j.status === 'failed' || isActiveStatus(j.status))
+            .filter((j) => j.status === 'failed' || isOpenStatus(j.status))
             .sort(
               (a, b) =>
                 (a.status === 'failed' ? 0 : 1) - (b.status === 'failed' ? 0 : 1) ||
@@ -458,6 +463,7 @@ export const PipelineCard = ({
                         <span>任务 {counts.total}</span>
                         {counts.done ? <span className="ok">完成 {counts.done}</span> : null}
                         {counts.active ? <span className="run">进行中 {counts.active}</span> : null}
+                        {counts.paused ? <span className="warn">暂停 {counts.paused}</span> : null}
                         {counts.failed ? <span className="fail">失败 {counts.failed}</span> : null}
                       </div>
                       {activeJobs.map((j) => (

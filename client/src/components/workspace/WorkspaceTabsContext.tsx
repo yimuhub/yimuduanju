@@ -16,6 +16,7 @@ import {
   Bot,
   UserCircle,
   Settings,
+  ListOrdered,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -35,7 +36,8 @@ export type WorkspacePageKey =
   | 'assets'
   | 'ai-assistant'
   | 'account'
-  | 'settings';
+  | 'settings'
+  | 'queue';
 
 export interface WorkspacePageMeta {
   key: WorkspacePageKey;
@@ -54,6 +56,7 @@ export const WORKSPACE_PAGES: WorkspacePageMeta[] = [
   { key: 'ai-assistant', title: 'AI助手', icon: Bot, description: '独立 AI 助手对话' },
   { key: 'account', title: '用户中心', icon: UserCircle, description: '账号与会员信息' },
   { key: 'settings', title: '设置', icon: Settings, description: '供应商 / 计费 / 偏好' },
+  { key: 'queue', title: '全站排队', icon: ListOrdered, description: '跨项目按提交顺序排队，可暂停 / 终止 / 调序' },
 ];
 
 export const WORKSPACE_PAGE_MAP: Record<WorkspacePageKey, WorkspacePageMeta> =

@@ -31,6 +31,7 @@ import {
   PenTool,
   ArrowLeft,
   ScrollText,
+  ListOrdered,
 } from 'lucide-react';
 
 /**
@@ -55,6 +56,7 @@ const navItems: { key: string; to: string; label: string; icon: typeof Sparkles;
   { key: 'ai-assistant', to: '/ai-assistant', label: 'AI助手', icon: Bot },
   { key: 'account', to: '/account', label: '用户中心', icon: UserCircle },
   { key: 'settings', to: '/settings', label: '设置', icon: Settings },
+  { key: 'queue', to: '/queue', label: '全站排队', icon: ListOrdered },
   { key: 'system-logs', to: '/system-logs', label: '系统日志', icon: ScrollText },
 ];
 
@@ -70,7 +72,7 @@ const navGroups: { label: string; items: typeof navItems }[] = [
   },
   {
     label: '助手与账户',
-    items: navItems.filter((n) => ['ai-assistant', 'account', 'settings', 'system-logs'].includes(n.key)),
+    items: navItems.filter((n) => ['ai-assistant', 'account', 'settings', 'queue', 'system-logs'].includes(n.key)),
   },
 ];
 
@@ -85,6 +87,7 @@ const breadcrumbMap: Record<string, string> = {
   account: '用户中心',
   styles: '风格中心',
   settings: '设置',
+  queue: '全站排队',
   'system-logs': '系统日志',
   project: '项目工作台',
   canvases: '画布模式',

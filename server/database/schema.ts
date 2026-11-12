@@ -247,6 +247,14 @@ export const generationJobs = pgTable("generation_jobs", {
   status: varchar("status", { length: 30 }).notNull().default('pending'),
   progress: integer("progress").default(0),
   priority: integer("priority").default(50),
+  /**
+   * 全站排队唯一排序键（migration 0022）：数据库序列自增，按提交顺序单调递增。
+   * 认领统一 ORDER BY queue_seq ASC；暂停/终止后靠跳过自动补位；
+   * 人工调序（上移/下移/置顶/置底/按项目轮转）直接改写这一列。
+   * 不再依赖事务级相同且无 tiebreaker 的 _created_at，也不让 priority
+   * 在 Redis 降级时悄悄改变语义。priority 从此只作为展示字段保留。
+   */
+  queueSeq: bigint("queue_seq", { mode: "number" }).notNull().default(sql`nextval('generation_jobs_queue_seq_seq')`),
   providerName: varchar("provider_name", { length: 100 }),
   modelName: varchar("model_name", { length: 255 }),
   /**

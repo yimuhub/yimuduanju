@@ -9,11 +9,16 @@
  *
  * 纪律：
  * - 纯内存环形缓冲（默认 4000 条）+ 追加写 logs/events.jsonl；
+ * - events.jsonl 按 8MB 轮转为 .1/.2/.3，最多保留 3 份历史，避免无限增长；
  * - 写盘失败绝不抛给业务（日志不能拖垮出片）；
  * - 单例通过模块级 export 共享，不需要在任何 Module 里注册 provider。
  */
-import { appendFile, mkdir } from 'fs/promises';
+import { appendFile, mkdir, rename, stat, unlink } from 'fs/promises';
 import { join } from 'path';
+
+/** 单个结构化事件文件上限：超过就轮转，避免长期批量失败重试把磁盘写满 */
+const MAX_EVENTS_FILE_BYTES = 8 * 1024 * 1024;
+const KEEP_EVENTS_FILES = 3;
 
 export type SystemLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
@@ -74,13 +79,34 @@ class SystemLogStore {
     this.persist(event);
   }
 
+  /** 体积轮转：events.jsonl → .1 → .2 → .3，最旧一份丢弃。串行链内调用，无并发问题。 */
+  private async rotateIfNeeded(filePath: string): Promise<void> {
+    try {
+      const info = await stat(filePath);
+      if (info.size < MAX_EVENTS_FILE_BYTES) return;
+      for (let i = KEEP_EVENTS_FILES - 1; i >= 1; i -= 1) {
+        const from = `${filePath}.${i}`;
+        const to = `${filePath}.${i + 1}`;
+        // eslint-disable-next-line no-await-in-loop
+        await unlink(to).catch(() => {});
+        // eslint-disable-next-line no-await-in-loop
+        await rename(from, to).catch(() => {});
+      }
+      await rename(filePath, `${filePath}.1`);
+    } catch {
+      // 文件不存在 / 无权限：继续追加即可，日志绝不能拖垮业务
+    }
+  }
+
   private persist(event: SystemLogEvent): void {
     // 串行追加，避免并发写造成行交错；失败只静默降级为「内存可见」
     this.writeChain = this.writeChain
       .then(async () => {
         const dir = systemLogDir();
         await mkdir(dir, { recursive: true });
-        await appendFile(join(dir, SYSTEM_EVENTS_FILE), `${JSON.stringify(event)}\n`, 'utf8');
+        const filePath = join(dir, SYSTEM_EVENTS_FILE);
+        await this.rotateIfNeeded(filePath);
+        await appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf8');
       })
       .catch(() => {
         if (!this.warned) {

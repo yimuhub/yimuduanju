@@ -21,10 +21,10 @@ import {
 // 修复：新增 isNull / lt / notInArray / or，供「陈旧 queued 回收」与
 // 「按 provider 维度限流冷却」的条件构造使用；desc 用于任务列表按时间倒序；
 // sql 用于首帧质量门的 JSONB 列运算与按 updatedAt 轮转
-import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { mkdir, stat, writeFile } from 'fs/promises';
+import { mkdir, open, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type {
   AxisDirection,
@@ -84,6 +84,8 @@ import { fitTotalBudget, minimumReadableSeconds } from '@shared/shot-duration';
 import { computePipelineReadiness } from '@shared/pipeline-readiness';
 // 产物形态硬校验：视频字段拿到图片地址必须拒绝落库
 import { checkArtifact } from '@shared/artifact-kind';
+// 产物真实像素尺寸核对：请求侧已按项目画幅出图，这里验证供应商有没有照做
+import { compareImageAspect, parseImageSize } from '@shared/image-dimensions';
 // 语言纪律：分镜文本必须与剧本同语言，否则语言自愈
 import { detectBoardLanguage, isBoardTextInLanguage } from '@shared/boards-language';
 import { systemLog } from '../../common/system-log.store';
@@ -110,6 +112,17 @@ import {
  * 而 running 回收原本只在 onModuleInit 跑一次，queued 态没有任何回收路径。
  */
 const STALE_QUEUED_MS = 5 * 60 * 1000;
+
+/**
+ * 暂时性释放（上游限流 / 未配置 Provider）的最大轮数。
+ * 这两条路径不消耗 maxRetries（限流不是任务的错），旧实现也没有终止条件，
+ * 于是任务可以「认领 → 释放 → 再认领」无限循环且永远占着队列页第一行。
+ * 超过上限就明确终结，用户可在任务页手动重试。
+ */
+const MAX_TRANSIENT_RELEASES = 30;
+
+/** 首帧失败/取消后，下游视频任务最多挂起多久就明确终结（避免永久 blocked 死锁） */
+const FIRST_FRAME_BLOCK_TIMEOUT_MS = 15 * 60 * 1000;
 
 /** 项目资产索引：分镜表给出的 cast/location/props 直接按名字或编号解析成 id */
 interface AssetIndex {
@@ -167,6 +180,19 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   private workerConcurrency = 1;
   /** V7：消费器是否已启动（区别于 tick 重入锁 running） */
   private started = false;
+  /** V8 全站消费暂停（排队页开关；进程级，不写库，重启自动恢复） */
+  private queuePaused = false;
+
+  /** 排队页读取全站暂停状态 */
+  isQueuePaused(): boolean {
+    return this.queuePaused;
+  }
+
+  /** 排队页切换全站暂停：只冻结消费，不改任何任务的 queue_seq / status */
+  setQueuePaused(paused: boolean): void {
+    this.queuePaused = paused;
+    this.logger.log(paused ? '全站排队消费已暂停（队列顺序保持不变）' : '全站排队消费已恢复');
+  }
 
   /** V7 并发可见性：当前消费并发 + 队列深度（任务页展示，改并发需重启） */
   async workerStats(): Promise<{
@@ -329,19 +355,57 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   private async recoverStaleQueued(): Promise<void> {
     try {
       const staleBefore = new Date(Date.now() - STALE_QUEUED_MS);
-      const stale = await this.db
-        .update(generationJobs)
-        .set({ status: 'pending', updatedAt: new Date() })
+      const candidates = await this.db
+        .select({ id: generationJobs.id })
+        .from(generationJobs)
         .where(
           and(
             eq(generationJobs.status, 'queued'),
             lt(generationJobs.updatedAt, staleBefore),
           ),
         )
+        .limit(500);
+      if (candidates.length === 0) return;
+
+      /**
+       * 修复（多项目积压时重复执行 + 重复扣费）：
+       * 旧实现无条件把「queued 超过 5 分钟」的任务捞回 pending。但多项目批量提交时
+       * BullMQ waiting 超过 5 分钟是正常状态，DB 仍是 queued —— 捞回后下一轮 tick
+       * 会再次 claimForQueue + queue.add（jobId 带时间戳，去重形同虚设），
+       * 同一个任务被 Worker 执行两次、上游被调用两次。
+       * 这里先查 BullMQ 里真正还在等待/执行的 jobId，只捞回确实不在队列里的。
+       */
+      let recoverable = candidates.map((r) => r.id);
+      if (this.queue && !this.inlineMode) {
+        try {
+          const live = await this.queue.getJobs(['waiting', 'active', 'delayed']);
+          const liveIds = new Set(
+            live
+              .map((j) => (j.data as { jobId?: string } | undefined)?.jobId)
+              .filter((v): v is string => typeof v === 'string' && v.length > 0),
+          );
+          recoverable = recoverable.filter((id) => !liveIds.has(id));
+        } catch (e) {
+          // 查不动 BullMQ 时宁可保守：本轮不回收，下一轮再试，绝不重复入队
+          this.logger.warn(`BullMQ 在途查询失败，跳过本轮 queued 回收：${(e as Error).message}`);
+          return;
+        }
+      }
+      if (recoverable.length === 0) return;
+
+      const stale = await this.db
+        .update(generationJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(
+          and(
+            inArray(generationJobs.id, recoverable),
+            eq(generationJobs.status, 'queued'),
+          ),
+        )
         .returning({ id: generationJobs.id });
       if (stale.length > 0) {
         this.logger.warn(
-          `队列回收：${stale.length} 个滞留超过 ${STALE_QUEUED_MS / 1000}s 的 queued 任务回到 pending` +
+          `队列回收：${stale.length} 个已脱离 BullMQ 的滞留 queued 任务回到 pending` +
             `（${stale.slice(0, 5).map((r) => r.id).join(', ')}${stale.length > 5 ? ' …' : ''}）`,
         );
       }
@@ -520,7 +584,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           sql`${generationJobs.inputData} ->> 'blockedReason' IS NOT NULL`,
         ),
       )
-      .orderBy(generationJobs.createdAt)
+      .orderBy(asc(generationJobs.queueSeq))
       .limit(50);
     for (const row of rows) {
       // eslint-disable-next-line no-await-in-loop
@@ -531,6 +595,25 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       if (dependency.ready === true) {
         // eslint-disable-next-line no-await-in-loop
         await this.clearFirstFrameBlock(job.id);
+        continue;
+      }
+      /**
+       * 修复（永久挂起死锁）：首帧已失败/被用户终止时，旧实现每轮只是把
+       * blockedReason 重写一遍，既不置失败也不解封 —— 视频任务永远 pending、
+       * 永不被认领、永不终结、永远不进计费，还占着对账的 50 个名额，
+       * 让第 51 条之后本可解封的任务永远得不到处理。
+       * 超过阈值仍无可用首帧就明确终结，用户能在任务页看到原因并手动重试。
+       */
+      const waitedMs = Date.now() - new Date(job.createdAt).getTime();
+      if (
+        dependency.reason === 'first_frame_failed' &&
+        waitedMs > FIRST_FRAME_BLOCK_TIMEOUT_MS
+      ) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.generationService.settleJobFailure(
+          job.id,
+          '首帧任务失败或已被终止，视频任务无法生成；请重跑首帧后手动重试本任务',
+        );
         continue;
       }
       const input = (job.inputData ?? {}) as Record<string, unknown>;
@@ -545,6 +628,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     if (this.running) return;
     this.running = true;
     try {
+      // V8 全站消费暂停：排队页一键冻结消费。只停这一轮，不改任何任务状态，
+      // 也不动 queue_seq —— 恢复后仍从原来的队首接着跑，在途任务不受影响。
+      if (this.queuePaused) return;
       // 超预算时暂停认领新任务（在途任务继续推进，避免半截浪费）
       const cap = this.budgetCap.getCap();
       if (cap !== null) {
@@ -677,11 +763,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             ),
           )
         : and(eq(generationJobs.status, 'pending'), dependencyReady);
+    // V8 确定性 FIFO：queue_seq 是数据库序列自增的提交顺序，也是排队页
+    // 展示与人工调序的唯一字段。旧实现按 _created_at（同事务批量插入时间戳
+    // 完全相同、无 tiebreaker），顺序不确定；降级模式还按 priority 另算一套。
+    // paused 不在 status='pending' 里，所以暂停/终止后后面的任务自动补位。
     const rows = await this.db
       .select()
       .from(generationJobs)
       .where(where)
-      .orderBy(generationJobs.createdAt)
+      .orderBy(asc(generationJobs.queueSeq))
       .limit(1);
     if (rows.length === 0) return null;
     const claimed = await this.db
@@ -705,6 +795,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
       // 修复（缓慢泄漏）：awaitingProvider 原本只在「非限流错误」分支里删除，
       // 任务后来成功或被用户删除，它的 id 会永远留在 Set 里。终态即清理。
+      this.awaitingProvider.delete(jobId);
+      return;
+    }
+    // V8 全站排队：任务可能在 queue.add 之后才被用户暂停，BullMQ 里仍留着这条 job。
+    // 消费时直接丢弃，排它后面的 job 自然跟上（这就是「后面的排队自动补位」）。
+    // 恢复时状态回 pending，下一轮 tick 重新认领并用新 jobId 入队，不会丢任务。
+    if (job.status === 'paused') {
       this.awaitingProvider.delete(jobId);
       return;
     }
@@ -821,7 +918,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       job.jobType === 'asset_prep';
     // 修复（按 provider 冷却）：冷却期内不触碰该通道，直接放回 pending 等下一轮，
     // 避免继续打爆对端池；其他 provider 的任务不受影响。
-    const holdKey = providerName ?? DEFAULT_PROVIDER_KEY;
+    // 修复（冷却键维度不一致）：限流写入用的是 `provider|jobType` 复合键，
+    // 旧代码这里读的是「仅 provider」单键，永远取不到冷却值 —— 这层兜底形同虚设；
+    // 成功清零也用同一个错键，导致退避计数永远不归零。三处统一为复合键。
+    const holdKey = `${providerName ?? DEFAULT_PROVIDER_KEY}|${job.jobType}`;
     const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
     if (!localJob && holdUntil > Date.now()) {
       await this.releaseToPending(job.id);
@@ -896,7 +996,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           // 兜底上限：即使某条清理路径漏了，也不会无界增长
           if (this.awaitingProvider.size > 5000) this.awaitingProvider.clear();
         }
-        await this.releaseToPending(job.id);
+        await this.releaseTransient(job, `等待 Provider 配置：${message.slice(0, 160)}`);
         return;
       }
       this.awaitingProvider.delete(job.id);
@@ -921,7 +1021,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `任务 ${job.id} 上游限流（provider=${key}），冷却 ${cooldown / 1000}s 后重试（连续第 ${nextCount} 次）：${message.slice(0, 160)}`,
         );
-        await this.releaseToPending(job.id);
+        await this.releaseTransient(job, `上游持续限流（${key}）`);
         return;
       }
       this.logger.warn(`任务 ${job.id} 执行失败：${message}`);
@@ -944,11 +1044,50 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       | undefined;
   }
 
-  private async releaseToPending(id: string): Promise<void> {
+  /**
+   * 把任务放回 pending。默认重新领一个队尾 queue_seq：
+   * 旧实现只改 status、不改排序键，被限流/冷却反复释放的任务会一直占着队首，
+   * 每轮 tick 都要「认领它 → 跳过它 → 再认领」8 次，把后面的任务饿死。
+   * 重新编号后它自然排到队尾，后面的任务立刻自动跟上。
+   */
+  private async releaseToPending(id: string, requeue = true): Promise<void> {
     await this.db
       .update(generationJobs)
-      .set({ status: 'pending', updatedAt: new Date() })
+      .set({
+        status: 'pending',
+        ...(requeue ? { queueSeq: sql`nextval('generation_jobs_queue_seq_seq')` } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(generationJobs.id, id));
+  }
+
+  /**
+   * 暂时性释放（限流 / 缺 Provider）：不消耗 maxRetries，但要计数、要能终结。
+   * 旧实现直接 return，retryCount 永不增长，任务可以无限重排队，
+   * 且永远占着队列页第一行 —— 用户既看不到进展也没法判断该不该换供应商。
+   */
+  private async releaseTransient(job: GenerationJob, reason: string): Promise<void> {
+    const input = (job.inputData ?? {}) as Record<string, unknown>;
+    const releases = Number(input.transientReleases ?? 0) + 1;
+    if (releases > MAX_TRANSIENT_RELEASES) {
+      this.logger.error(
+        `任务 ${job.id} 已连续 ${releases} 轮因「${reason}」无法执行，终结并等待人工处理`,
+      );
+      await this.generationService.settleJobFailure(
+        job.id,
+        `${reason}：连续 ${releases} 轮未能执行，已停止自动排队（请检查供应商配置/额度后手动重试）`,
+      );
+      return;
+    }
+    await this.db
+      .update(generationJobs)
+      .set({
+        status: 'pending',
+        queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
+        inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{transientReleases}', to_jsonb(${releases}::int), true)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(generationJobs.id, job.id));
   }
 
   private inputPrompt(job: GenerationJob): string {
@@ -1264,7 +1403,62 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       ...(idx === 0 && upstreamUrl ? { remoteUrl: upstreamUrl } : {}),
       url: idx === 0 && stableUrl ? stableUrl : img.url.startsWith('data:') ? (stableUrl ?? '/uploads/inline.png') : img.url,
     }));
-    await this.generationService.settleJobSuccess(job.id, { images: sanitizedImages });
+    // 产物侧校验：确认供应商真的按项目画幅出图，而不是无视参数丢回一张 1:1 方图
+    const aspectCheck = await this.verifyImageAspect(job, stableUrl, policy.aspectRatio);
+    await this.generationService.settleJobSuccess(job.id, {
+      images: sanitizedImages,
+      ...(aspectCheck ? { aspectCheck } : {}),
+    });
+  }
+
+  /**
+   * 产物真实画幅核对：只读前 64KB 文件头解析 PNG/JPEG/WebP/GIF 尺寸，
+   * 不解码整图、不引入图像库。结果写进任务的 outputData.aspectCheck；
+   * 不符时额外记一条结构化 WARN，系统日志页按 category=artifact 即可查到。
+   * 校验失败一律静默跳过（远程图没落盘、格式不识别），绝不阻断出片。
+   */
+  private async verifyImageAspect(
+    job: GenerationJob,
+    localUrl: string | undefined,
+    expectedAspect: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!localUrl || !localUrl.startsWith('/uploads/')) return undefined;
+    try {
+      const filePath = join(uploadDir(), localUrl.slice('/uploads/'.length));
+      const handle = await open(filePath, 'r');
+      let header: Buffer;
+      try {
+        const buf = Buffer.alloc(65536);
+        const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+        header = buf.subarray(0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+      const size = parseImageSize(header);
+      if (!size) return undefined;
+      const check = compareImageAspect(expectedAspect, size.width, size.height);
+      if (!check.ok) {
+        this.logger.warn(`任务 ${job.id} ${check.reason ?? '产物画幅不符'}`);
+        systemLog.record({
+          level: 'WARN',
+          category: 'artifact',
+          jobId: job.id,
+          projectId: job.projectId ?? undefined,
+          provider: job.providerName ?? undefined,
+          message: check.reason ?? '产物画幅与项目设定不符',
+          detail: {
+            expected: check.expected,
+            actual: check.actual,
+            deviationPct: check.deviationPct,
+            squareMismatch: check.squareMismatch === true,
+            url: localUrl.slice(0, 300),
+          },
+        });
+      }
+      return { ...check };
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -1930,7 +2124,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           'editing',
           'qc',
         ]),
-      );
+      )
+      // V8：多项目自动链新建任务的先后必须确定。旧实现没有 ORDER BY，
+      // 遍历顺序由堆表物理顺序决定，于是「先开的项目先建任务」这件事本身也是随机的，
+      // 直接影响全站 queue_seq（提交顺序）的可预期性。
+      .orderBy(asc(projects.createdAt));
     for (const proj of projRows) {
       // eslint-disable-next-line no-await-in-loop
       await this.driveProjectPipeline(proj.id, proj.status).catch((e: Error) =>
@@ -2251,32 +2449,51 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * 原子 patch projects.metadata 的指定子路径。
+   * 旧实现是「SELECT 整份 → JS 合并 → UPDATE 整份」，BullMQ Worker 并发 2、
+   * 同一项目几十个任务同时结算时，后写者会把先写者的 pipeline / assetGate /
+   * approvals 整个覆盖掉（对比 totalCost 用的是 COALESCE + delta 原子自增）。
+   * 这里改用 jsonb_set / #- 只动目标键，其它字段由 Postgres 自己保留。
+   * path 段全部来自内部常量，用参数化 text[] 传入，不做 SQL 字符串拼接。
+   */
+  private async patchProjectMetadata(
+    projectId: string,
+    patches: { path: string[]; value?: unknown; remove?: boolean }[],
+  ): Promise<void> {
+    if (patches.length === 0) return;
+    let expr = sql`coalesce(${projects.metadata}, '{}'::jsonb)`;
+    for (const patch of patches) {
+      const pathText = `{${patch.path.join(',')}}`;
+      expr = patch.remove
+        ? sql`(${expr}) #- ${pathText}::text[]`
+        : sql`jsonb_set(${expr}, ${pathText}::text[], ${JSON.stringify(patch.value)}::jsonb, true)`;
+    }
+    await this.db
+      .update(projects)
+      .set({ metadata: expr, updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
+  }
+
   /** 写当前段与进度明细（getProgress 直读 metadata，避免进度接口再查资产表） */
   private async writeAssetStageDetail(
     projectId: string,
     stage: 'characters' | 'scenes' | 'props' | 'done',
     detail: { inflight?: number; missing?: number; degraded?: boolean },
   ): Promise<void> {
-    const rows = await this.db
-      .select({ metadata: projects.metadata })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    if (rows.length === 0) return;
-    const meta = (rows[0].metadata ?? {}) as Record<string, unknown>;
-    const pipeline = { ...((meta.pipeline ?? {}) as Record<string, unknown>) };
-    pipeline.assetStage = stage;
-    pipeline.assetStageDetail = {
-      stage,
-      ...(typeof detail.inflight === 'number' ? { inflight: detail.inflight } : {}),
-      ...(typeof detail.missing === 'number' ? { missing: detail.missing } : {}),
-      ...(detail.degraded ? { degraded: true } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-    await this.db
-      .update(projects)
-      .set({ metadata: { ...meta, pipeline }, updatedAt: new Date() })
-      .where(eq(projects.id, projectId));
+    await this.patchProjectMetadata(projectId, [
+      { path: ['pipeline', 'assetStage'], value: stage },
+      {
+        path: ['pipeline', 'assetStageDetail'],
+        value: {
+          stage,
+          ...(typeof detail.inflight === 'number' ? { inflight: detail.inflight } : {}),
+          ...(typeof detail.missing === 'number' ? { missing: detail.missing } : {}),
+          ...(detail.degraded ? { degraded: true } : {}),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    ]);
   }
 
   private async writeAssetStageAttempts(
@@ -2284,21 +2501,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     stage: 'characters' | 'scenes' | 'props',
     value: number,
   ): Promise<void> {
-    const rows = await this.db
-      .select({ metadata: projects.metadata })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    if (rows.length === 0) return;
-    const meta = (rows[0].metadata ?? {}) as Record<string, unknown>;
-    const pipeline = { ...((meta.pipeline ?? {}) as Record<string, unknown>) };
-    const attempts = { ...((pipeline.assetStageAttempts ?? {}) as Record<string, number>) };
-    attempts[stage] = value;
-    pipeline.assetStageAttempts = attempts;
-    await this.db
-      .update(projects)
-      .set({ metadata: { ...meta, pipeline }, updatedAt: new Date() })
-      .where(eq(projects.id, projectId));
+    // jsonb_set 只改这一段的计数，其它段与 pipeline 下其它字段不受影响
+    await this.patchProjectMetadata(projectId, [
+      { path: ['pipeline', 'assetStageAttempts', stage], value },
+    ]);
   }
 
   /**
@@ -2464,13 +2670,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const meta = (row.metadata ?? {}) as Record<string, unknown>;
     const pipeline = (meta.pipeline ?? {}) as Record<string, unknown>;
     if (JSON.stringify(pipeline[key] ?? null) === JSON.stringify(payload)) return;
-    const nextPipeline = { ...pipeline };
-    if (payload) nextPipeline[key] = payload;
-    else delete nextPipeline[key];
-    await this.db
-      .update(projects)
-      .set({ metadata: { ...meta, pipeline: nextPipeline }, updatedAt: new Date() })
-      .where(eq(projects.id, projectId));
+    // 读只为幂等比较；写入走原子 patch，不覆盖并发写入的其它字段
+    await this.patchProjectMetadata(projectId, [
+      payload
+        ? { path: ['pipeline', key], value: payload }
+        : { path: ['pipeline', key], remove: true },
+    ]);
   }
 
   /** 旧数据里已经「假完成」的项目回退到生成中，避免状态机停在 qc 假象里 */
@@ -3326,7 +3531,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           sql`${generationJobs.inputData} ->> 'blockedReason' = 'waiting_assets'`,
         ),
       )
-      .orderBy(generationJobs.createdAt)
+      // 与全站排队同一口径：按 queue_seq 解封，先提交的任务先拿到资产放行
+      .orderBy(asc(generationJobs.queueSeq))
       .limit(40);
 
     for (const row of rows) {
@@ -3453,26 +3659,17 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   /** 降级标记写进 project.metadata.assetGate，UI 据此显示「资产未就绪 · 已降级」 */
   private async markAssetGateDegraded(projectId: string, jobId: string): Promise<void> {
-    const rows = await this.db
-      .select({ metadata: projects.metadata })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    if (rows.length === 0) return;
-    const meta = (rows[0].metadata ?? {}) as Record<string, unknown>;
-    const next = {
-      ...meta,
-      assetGate: {
-        degraded: true,
-        reason: '定妆图未能生成，已按文生图降级出片（跨镜一致性无法保证）',
-        jobId,
-        at: new Date().toISOString(),
+    await this.patchProjectMetadata(projectId, [
+      {
+        path: ['assetGate'],
+        value: {
+          degraded: true,
+          reason: '定妆图未能生成，已按文生图降级出片（跨镜一致性无法保证）',
+          jobId,
+          at: new Date().toISOString(),
+        },
       },
-    };
-    await this.db
-      .update(projects)
-      .set({ metadata: next, updatedAt: new Date() })
-      .where(eq(projects.id, projectId));
+    ]);
   }
 
   private async processParseScript(job: GenerationJob): Promise<void> {
@@ -3928,7 +4125,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             targetId: job.targetId,
           },
         });
-        return;
+        // 修复（静默半写）：旧实现只记日志然后 return，调用方无条件继续
+        // settleJobSuccess —— 任务显示「已完成 / 已计费」，shots 里却没有产物，
+        // 而 retryJob 对 succeeded 直接拒绝，用户无法补救，数量门永远不满足。
+        // 形态不符是确定性错误，抛出去让 process 走正常的失败/重试链。
+        throw new Error(`产物形态不符（${c.field}）：${check.reason ?? '未知原因'}`);
       }
     }
     const projectGuard = job.projectId

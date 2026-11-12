@@ -28,6 +28,7 @@ const PAGE_COMPONENTS: Record<
   'ai-assistant': lazy(() => import('@client/src/pages/AiAssistant/AiAssistantPage')),
   account: lazy(() => import('@client/src/pages/Account/AccountPage')),
   settings: lazy(() => import('@client/src/pages/Settings/SettingsPage')),
+  queue: lazy(() => import('@client/src/pages/Queue/QueuePage')),
 };
 
 const TabLoading = () => (

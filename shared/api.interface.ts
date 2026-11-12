@@ -722,7 +722,11 @@ export interface AssetListResponse {
   pageSize: number;
 }
 
-export type JobStatus = 'pending' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'retrying';
+/**
+ * `paused` = 人为暂停（全站排队页操作）。它不参与认领、不结算、不计费，
+ * 恢复后回到 pending 重新排队；与终态 `cancelled` 的区别是可逆。
+ */
+export type JobStatus = 'pending' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'retrying' | 'paused';
 /**
  * 任务类型：
  * - `asset_prep`：资产前置（清单补齐 + 定妆图排产）。剧本确认后第一个跑，
@@ -751,6 +755,8 @@ export interface GenerationJob {
   status: JobStatus;
   progress: number;
   priority: number;
+  /** 全站排队唯一排序键（migration 0022）：越小越先执行，人工可调 */
+  queueSeq: number;
   providerName?: string;
   modelName?: string;
   errorMessage?: string;
@@ -779,6 +785,77 @@ export interface JobListResponse {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// ==================== 全站排队（/api/queue/*） ====================
+
+/** 认领会跳过的、但用户可在排队页操作的任务状态 */
+export type QueueOpenStatus = 'pending' | 'queued' | 'running' | 'retrying' | 'paused';
+
+/** 排队页单行：与执行顺序一一对应，position 从 1 开始 */
+export interface QueueItem {
+  id: string;
+  queueSeq: number;
+  position: number;
+  projectId?: string;
+  projectTitle?: string;
+  jobType: JobType;
+  targetType?: string;
+  targetId?: string;
+  status: JobStatus;
+  progress: number;
+  providerName?: string;
+  modelName?: string;
+  retryCount: number;
+  maxRetries: number;
+  errorMessage?: string;
+  /** 依赖门控原因：waiting_first_frame / first_frame_failed / waiting_assets 等 */
+  blockedReason?: string;
+  dependsOnJobId?: string;
+  /** 因前置任务被暂停/终止而级联暂停 */
+  pausedByDependency?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  /** 从提交到现在等待的毫秒数（执行中的任务换成从开始执行计时） */
+  waitedMs: number;
+}
+
+export interface QueueProjectSummary {
+  projectId: string;
+  projectTitle: string;
+  waiting: number;
+  running: number;
+  paused: number;
+}
+
+export interface QueueOverviewResponse {
+  items: QueueItem[];
+  total: number;
+  stats: {
+    pending: number;
+    queued: number;
+    running: number;
+    retrying: number;
+    paused: number;
+    blocked: number;
+  };
+  projects: QueueProjectSummary[];
+  worker: { mode: string; concurrency: number; waiting: number; active: number };
+  /** 全站消费暂停（进程级开关，不写库；重启自动恢复） */
+  globallyPaused: boolean;
+  generatedAt: string;
+}
+
+export type QueueMoveDirection = 'up' | 'down' | 'top' | 'bottom';
+
+export interface QueueActionResult {
+  id: string;
+  status: JobStatus;
+  queueSeq: number;
+  /** 级联影响到的下游任务数 */
+  cascaded?: number;
+  message?: string;
 }
 
 export type ProviderType = 'volcengine_ark' | 'openai_proxy' | 'custom' | 'official';

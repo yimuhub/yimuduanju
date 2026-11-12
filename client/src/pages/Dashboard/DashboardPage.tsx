@@ -19,6 +19,9 @@ const JOB_LABELS: Record<string, string> = { text: '文本', image: '图片', vi
 // 状态胶囊：统一 .pill 规范（5 色板：蓝=运行 绿=成功 琥珀=等待 红=失败 灰=中性）
 const JOB_STATUS: Record<string, { label: string; cls: string }> = {
   pending: { label: '排队', cls: 'pill-wait' },
+  queued: { label: '已入队', cls: 'pill-wait' },
+  retrying: { label: '重试中', cls: 'pill-wait' },
+  paused: { label: '已暂停', cls: 'pill-wait' },
   running: { label: '生成中', cls: 'pill-run' },
   succeeded: { label: '完成', cls: 'pill-ok' },
   failed: { label: '失败', cls: 'pill-fail' },
@@ -78,7 +81,11 @@ const DashboardPage = () => {
     { label: '累计费用', value: `¥${(stats?.totalCost ?? 0).toFixed(2)}`, icon: Coins, cls: 'bg-amber-500/15 text-amber-400' },
   ];
 
-  const runningJobs = jobs.filter((j) => j.status === 'running' || j.status === 'pending');
+  // 排队中 / 重试中 / 已暂停也都是「活跃」任务；旧实现只认 running+pending，
+  // 于是这几类任务既不进列表，状态胶囊还会被 fallback 显示成「已取消」。
+  const runningJobs = jobs.filter((j) =>
+    ['running', 'pending', 'queued', 'retrying', 'paused'].includes(j.status),
+  );
   const activeJobs = runningJobs.length > 0 ? runningJobs : jobs.slice(0, 6);
 
   return (
@@ -123,8 +130,9 @@ const DashboardPage = () => {
                 <Loader2 className={`h-4 w-4 text-primary ${runningJobs.length ? 'animate-spin' : 'hidden'}`} />
                 生成任务
               </h2>
-              <button onClick={() => navigate('/')} className="text-xs text-muted-foreground hover:text-primary">
-                全部任务 →
+              {/* 以前指向首页（那里根本没有全站任务页），现在直达全站排队页 */}
+              <button onClick={() => navigate('/queue')} className="text-xs text-muted-foreground hover:text-primary">
+                全站排队 →
               </button>
             </header>
             {loading ? (
@@ -138,7 +146,9 @@ const DashboardPage = () => {
                   return (
                     <li key={j.id} className="flex items-center gap-3 px-4 py-2.5">
                       <span className="w-14 shrink-0 text-xs font-medium text-foreground">{JOB_LABELS[j.jobType] ?? j.jobType}</span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{j.id.slice(0, 8)} · {j.modelName ?? j.providerName ?? '—'}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                        {j.projectId ? `项目 ${j.projectId.slice(0, 8)} · ` : ''}{j.id.slice(0, 8)} · {j.modelName ?? j.providerName ?? '—'}
+                      </span>
                       {j.status === 'running' && (
                         <span className="hidden w-24 sm:block">
                           <span className="block h-1 overflow-hidden rounded-full bg-muted">

@@ -24,6 +24,7 @@ import {
   Sparkles,
   ScrollText,
   ClipboardCheck,
+  ListOrdered,
 } from 'lucide-react';
 import { getAvatarInitial, getNickname } from '@client/src/lib/identity';
 import { useStudio } from './StudioShell';
@@ -184,6 +185,14 @@ export const StudioRail = () => {
             <Settings className="ico" />,
             '设置',
             () => navigate('/settings'),
+          )}
+          {navItem(
+            'queue',
+            <ListOrdered className="ico" />,
+            '全站排队',
+            () => navigate('/queue'),
+            runningJobs.length ? { text: String(runningJobs.length), hot: true } : undefined,
+            location.pathname === '/queue',
           )}
           {navItem(
             'system-logs',

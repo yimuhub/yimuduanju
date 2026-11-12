@@ -37,6 +37,7 @@ const JOB_STATUSES = [
   'failed',
   'cancelled',
   'retrying',
+  'paused',
 ] as const;
 
 export class CreateJobDto {

@@ -40,6 +40,7 @@ const statusFilters: { value: JobStatus | 'all'; label: string }[] = [
   { value: 'failed', label: '失败' },
   { value: 'cancelled', label: '已取消' },
   { value: 'pending', label: '等待中' },
+  { value: 'paused', label: '已暂停' },
 ];
 
 const typeFilters: { value: JobType | 'all'; label: string }[] = [
@@ -63,6 +64,7 @@ const statusInfoMap: Record<JobStatus, { label: string; className: string; barCl
   failed: { label: '失败', className: 'pill-fail', barClass: 'bg-red-400' },
   cancelled: { label: '已取消', className: 'pill-neutral', barClass: 'bg-muted-foreground/50' },
   retrying: { label: '重试中', className: 'pill-wait', barClass: 'bg-amber-400' },
+  paused: { label: '已暂停', className: 'pill-wait', barClass: 'bg-amber-400' },
 };
 
 const typeLabelMap: Record<JobType, string> = {
@@ -79,7 +81,9 @@ const typeLabelMap: Record<JobType, string> = {
   asset_prep: '资产定妆',
 };
 
-const ACTIVE_STATUSES = ['pending', 'queued', 'running', 'retrying'];
+// 未结束状态：含人工暂停。暂停任务仍占队列位、可在「全站排队」页恢复，
+// 因此 SSE 断线降级轮询也必须继续，否则恢复后本页不会刷新。
+const ACTIVE_STATUSES = ['pending', 'queued', 'running', 'retrying', 'paused'];
 
 const ProjectTasksTab = () => {
   const { id } = useParams<{ id: string }>();

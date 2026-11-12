@@ -1,5 +1,7 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { GenerationController } from './generation.controller';
+import { QueueAdminController } from '../queue/queue-admin.controller';
+import { QueueAdminService } from '../queue/queue-admin.service';
 import { GenerationService } from './generation.service';
 import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
@@ -27,7 +29,7 @@ import { BibleModule } from '../bible/bible.module';
     forwardRef(() => QcModule),
     forwardRef(() => BibleModule),
   ],
-  controllers: [GenerationController],
+  controllers: [GenerationController, QueueAdminController],
   providers: [
     GenerationService,
     ModelGatewayService,
@@ -35,7 +37,8 @@ import { BibleModule } from '../bible/bible.module';
     JobWorkerService,
     RoutingService,
     StorySkillsService,
+    QueueAdminService,
   ],
-  exports: [ModelGatewayService, BudgetCapService, RoutingService, StorySkillsService],
+  exports: [ModelGatewayService, BudgetCapService, RoutingService, StorySkillsService, QueueAdminService],
 })
 export class GenerationModule {}

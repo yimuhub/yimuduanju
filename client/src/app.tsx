@@ -52,8 +52,10 @@ const ClassicPages = {
   account: lazy(() => import('./pages/Account/AccountPage')),
   settings: lazy(() => import('./pages/Settings/SettingsPage')),
   'system-logs': lazy(() => import('./pages/SystemLogs/SystemLogsPage')),
+  queue: lazy(() => import('./pages/Queue/QueuePage')),
 } as const;
 const SystemLogsPage = ClassicPages['system-logs'];
+const QueuePage = ClassicPages.queue;
 
 /** JSX 不支持 `Foo['bar']` 成员表达式，这里取出带连字符的键 */
 const AiAssistantPage = ClassicPages['ai-assistant'];
@@ -197,6 +199,19 @@ const RoutesComponent = () => {
                 }
               />
             </Route>
+            {/* 全站排队：跨项目按真实执行顺序展示，可暂停/终止/调序 */}
+            <Route path="queue" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="全站排队加载中..." />}>
+                      <QueuePage />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
             <Route
               path="create"
               element={
@@ -277,13 +292,23 @@ const RoutesComponent = () => {
               <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
               <Route path="account" element={<LegacyRedirect pageKey="account" />} />
               <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
-              {/* 极客模式：系统日志没有对应右栏标签，直接整页打开 */}
+              {/* 极客模式：系统日志 / 全站排队没有对应右栏标签，直接整页打开 */}
               <Route
                 path="system-logs"
                 element={
                   <RouteErrorGuard>
                     <Suspense fallback={<CanvasLoading tip="系统日志加载中..." />}>
                       <SystemLogsPage />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+              <Route
+                path="queue"
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="全站排队加载中..." />}>
+                      <QueuePage />
                     </Suspense>
                   </RouteErrorGuard>
                 }

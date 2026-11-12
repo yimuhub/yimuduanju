@@ -193,6 +193,9 @@ CREATE TABLE IF NOT EXISTS assets (
 -- ============================================================
 -- generation_jobs
 -- ============================================================
+-- 全站排队唯一排序键：提交顺序由序列分配，人工可调序（migration 0022）
+CREATE SEQUENCE IF NOT EXISTS generation_jobs_queue_seq_seq AS BIGINT;
+
 CREATE TABLE IF NOT EXISTS generation_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id uuid REFERENCES projects(id) ON DELETE CASCADE,
@@ -202,6 +205,7 @@ CREATE TABLE IF NOT EXISTS generation_jobs (
   status varchar(30) NOT NULL DEFAULT 'pending',
   progress integer DEFAULT 0,
   priority integer DEFAULT 50,
+  queue_seq bigint NOT NULL DEFAULT nextval('generation_jobs_queue_seq_seq'),
   provider_name varchar(100),
   model_name varchar(255),
   input_data jsonb,
@@ -218,6 +222,14 @@ CREATE TABLE IF NOT EXISTS generation_jobs (
   _updated_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   _updated_by user_profile DEFAULT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_claim_seq
+  ON generation_jobs (status, queue_seq)
+  WHERE status IN ('pending', 'queued', 'running', 'retrying', 'paused');
+
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_project_queue
+  ON generation_jobs (project_id, queue_seq)
+  WHERE status IN ('pending', 'queued', 'running', 'retrying', 'paused');
 
 -- ============================================================
 -- qc_reports

@@ -8,11 +8,13 @@
  *   预算       —— /api/dashboard/cost-summary 的月度花费与上限
  */
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStudio } from './StudioShell';
 import { APP_VERSION } from '@client/src/lib/version';
 
 export const StudioStatusBar = () => {
   const { data } = useStudio();
+  const navigate = useNavigate();
 
   const running = useMemo(
     () => data.jobs.filter((j) => j.status === 'running').length,
@@ -40,9 +42,15 @@ export const StudioStatusBar = () => {
         <span className="dot run" />
         <b className="sb-ok">已连接</b>
       </span>
-      <span className="sb hoverable">
+      {/* 排队数字可点：多项目并行时一键直达全站排队页看真实执行顺序 */}
+      <button
+        type="button"
+        className="sb hoverable"
+        title="点击打开全站排队：查看跨项目执行顺序，可暂停 / 终止 / 调整顺序"
+        onClick={() => navigate('/queue')}
+      >
         任务 <b className="num">{running}</b> 运行中 / <b className="num">{queued}</b> 排队
-      </span>
+      </button>
       <span className="sb hoverable">
         通道 <b>{channel}</b>
       </span>

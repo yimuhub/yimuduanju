@@ -1425,6 +1425,9 @@
 .pipe-job-sum .fail {
   color: var(--brand-hi);
 }
+.pipe-job-sum .warn {
+  color: var(--warn);
+}
 .pipe-job {
   display: flex;
   align-items: center;
@@ -1450,6 +1453,9 @@
 .pipe-job .dot.succeeded {
   background: #7cc98a;
 }
+.pipe-job .dot.paused {
+  background: var(--warn);
+}
 .pipe-job .jt {
   color: var(--fg-2);
 }
@@ -1462,6 +1468,9 @@
 }
 .pipe-job .st.succeeded {
   color: #7cc98a;
+}
+.pipe-job .st.paused {
+  color: var(--warn);
 }
 .pipe-job .num {
   font-family: var(--mono);
