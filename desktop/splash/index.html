@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>一幕 · 正在启动</title>
+    <style>
+      /* 与 client/src/styles/graphite.css 同源的 token：发丝线 + 底色差，无渐变无毛玻璃 */
+      :root {
+        --bg: #0e0f11;
+        --panel: #16181b;
+        --fg: #e8eaed;
+        --fg-dim: #8b9098;
+        --line: rgba(255, 255, 255, 0.08);
+        --brand: #ff403a;
+        --brand-soft: rgba(255, 64, 58, 0.12);
+        --ok: #3ecf8e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+          sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .wrap {
+        width: 420px;
+        padding: 28px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 22px;
+      }
+      .mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: var(--brand);
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .title {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+      .subtitle {
+        font-size: 12px;
+        color: var(--fg-dim);
+        margin-top: 2px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+        padding: 18px 18px 14px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12.5px;
+        padding: 7px 0;
+        color: var(--fg-dim);
+      }
+      .row .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.18);
+        flex: none;
+      }
+      .row.active {
+        color: var(--fg);
+      }
+      .row.active .dot {
+        background: var(--brand);
+        animation: pulse 1.1s ease-in-out infinite;
+      }
+      .row.done .dot {
+        background: var(--ok);
+      }
+      .row.done {
+        color: var(--fg-dim);
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.25;
+        }
+      }
+      .hint {
+        margin-top: 14px;
+        font-size: 11.5px;
+        color: var(--fg-dim);
+        line-height: 1.7;
+      }
+      .error {
+        display: none;
+        margin-top: 14px;
+        border: 1px solid rgba(255, 64, 58, 0.35);
+        background: var(--brand-soft);
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 12px;
+        line-height: 1.7;
+        color: #ffb4b1;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 220px;
+        overflow: auto;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .error.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <div class="mark">一</div>
+        <div>
+          <div class="title">一幕 · YIMU</div>
+          <div class="subtitle">AI 短剧创作平台 · 本地引擎</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row active" id="s1"><span class="dot"></span>启动内嵌数据库</div>
+        <div class="row" id="s2"><span class="dot"></span>校验数据结构</div>
+        <div class="row" id="s3"><span class="dot"></span>拉起创作服务</div>
+        <div class="row" id="s4"><span class="dot"></span>加载工作台</div>
+      </div>
+      <div class="hint" id="hint">首次启动需要初始化数据库，通常 10-30 秒；之后为秒级。</div>
+      <div class="error" id="error"></div>
+    </div>
+    <script>
+      // 壳层通过 eval 注入状态：window.__yimuStep(n) / window.__yimuError(msg) / window.__yimuReady()
+      window.__yimuStep = function (n) {
+        for (let i = 1; i <= 4; i += 1) {
+          const el = document.getElementById('s' + i);
+          if (!el) continue;
+          el.className = 'row' + (i < n ? ' done' : i === n ? ' active' : '');
+        }
+      };
+      window.__yimuError = function (msg) {
+        const box = document.getElementById('error');
+        box.textContent = '本地引擎启动失败\n\n' + msg + '\n\n可点右上角关闭后重新打开；若仍失败，请把以上信息反馈给我们。';
+        box.classList.add('show');
+        document.getElementById('hint').style.display = 'none';
+        for (let i = 1; i <= 4; i += 1) {
+          const el = document.getElementById('s' + i);
+          if (el) el.className = 'row';
+        }
+      };
+    </script>
+  </body>
+</html>

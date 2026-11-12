@@ -1,0 +1,69 @@
+# =============================================================================
+# 一幕·YIMU —— 全量单容器版（开箱即用）
+# -----------------------------------------------------------------------------
+# 与桌面客户端共用同一套运行时（desktop/runtime/launch.cjs）：
+#   Node + PostgreSQL 全部在镜像里，容器启动即建库建表，不需要外部数据库。
+#
+# 构建：docker build -f deploy/Dockerfile.allinone -t yimuhub/yimuduanju:latest .
+# 运行：docker run -d --name yimu -p 5173:5173 -v yimu-data:/data yimuhub/yimuduanju:latest
+# 访问：http://localhost:5173/app/yimu/
+# =============================================================================
+
+# ---------------------------- 构建阶段 ----------------------------
+FROM node:22-bookworm-slim AS build
+WORKDIR /build
+
+# 国内网络下 registry.npmjs.org 很慢，默认走镜像；CI 可 --build-arg 覆盖
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ENV npm_config_registry=${NPM_REGISTRY}
+
+# 依赖清单先行，利用层缓存
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+COPY . .
+
+# 前端（Vite）+ 后端（Nest）
+RUN npm run build:prod
+
+# 生成自包含运行时：内嵌 Node 二进制、本平台 PostgreSQL、生产依赖
+# 容器里 ffmpeg 由运行阶段 apt 安装，这里不再复制一份
+ENV YIMU_SKIP_BUNDLED_FFMPEG=1
+RUN node scripts/desktop-pack.js --skip-build
+
+# ---------------------------- 运行阶段 ----------------------------
+FROM node:22-bookworm-slim
+
+# 运行时不依赖镜像里的 node（自带 /app/node），但保留 base 便于排障
+ENV NODE_ENV=production \
+    YIMU_DATA_DIR=/data \
+    YIMU_LISTEN_HOST=0.0.0.0 \
+    YIMU_SERVER_PORT=3000 \
+    YIMU_GATEWAY_PORT=5173 \
+    YIMU_PG_PORT=5433 \
+    JOB_WORKER_CONCURRENCY=2 \
+    # 网关 fail-closed：非回环监听必须显式声明，否则拒绝启动
+    YIMU_ALLOW_LAN=true
+
+WORKDIR /app
+COPY --from=build /build/build/desktop-app /app
+
+# 成片拼接/首帧压缩依赖 ffmpeg：桌面端随包携带，容器内由镜像提供
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
+# 数据目录：数据库、上传文件、密钥、日志都在这里，挂卷即可迁移/备份
+RUN mkdir -p /data && chown -R node:node /app /data
+USER node
+
+VOLUME ["/data"]
+EXPOSE 5173
+# 3000 为容器内后端端口，仅排障用，不必对外发布
+EXPOSE 3000
+
+# 首启动会 initdb（约 10-20 秒），健康检查给足时间
+HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=6 \
+  CMD node -e "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok||r.status===302?0:1)).catch(()=>process.exit(1))"
+
+CMD ["/app/node", "/app/launch.cjs"]

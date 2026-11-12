@@ -23,7 +23,7 @@
     "build:server": "NODE_ENV=production nest build",
     "build:client": "NODE_ENV=production vite build --config vite.config.ts",
     "desktop:dev": "cd desktop && npx @tauri-apps/cli dev",
-    "desktop:build": "cd desktop && npx @tauri-apps/cli build",
+    "desktop:build": "node scripts/desktop-pack.js && cd desktop && npx @tauri-apps/cli build",
     "start": "NODE_ENV=production node main.js",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
@@ -38,7 +38,10 @@
     "precommit": "node scripts/hooks/run-precommit.js",
     "prepare": "chmod +x .githooks/pre-commit 2>/dev/null; git config core.hooksPath .githooks 2>/dev/null || true",
     "postinstall": "fullstack-cli action-plugin init",
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "desktop:pack": "node scripts/desktop-pack.js",
+    "desktop:run": "YIMU_APP_DIR=\"$PWD/build/desktop-app\" YIMU_DATA_DIR=\"$HOME/.yimu-desktop\" ./build/desktop-app/node build/desktop-app/launch.cjs",
+    "docker:allinone": "docker build -f deploy/Dockerfile.allinone -t yimuhub/yimuduanju:latest ."
   },
   "dependencies": {
     "@ffmpeg/core": "0.12.6",
@@ -67,7 +70,8 @@
     "ioredis": "^6.0.0",
     "postgres": "^3.4.5",
     "reflect-metadata": "^0.1.14",
-    "tslib": "^2.8.1"
+    "tslib": "^2.8.1",
+    "embedded-postgres": "16.14.0-beta.17"
   },
   "devDependencies": {
     "@dnd-kit/modifiers": "^9.0.0",

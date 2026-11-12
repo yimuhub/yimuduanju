@@ -1,0 +1,85 @@
+name: Desktop Build
+
+# 三平台桌面客户端构建：Mac(arm64/x64) / Windows(x64) / Linux(x64)
+# 产物为「全量自包含」安装包：内置 Node 运行时 + PostgreSQL + ffmpeg，
+# 由 scripts/desktop-pack.js 生成运行时目录，再交给 Tauri 打进安装包。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  # 国内 runner 或需要加速时可改；GitHub 官方 runner 直接用 npmjs
+  YIMU_NPM_REGISTRY: https://registry.npmjs.org
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Linux 系统依赖（WebKitGTK / 打包工具）
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf rpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: 安装依赖
+        run: npm ci --ignore-scripts
+
+      - name: 构建前端与后端
+        run: npm run build:prod
+
+      - name: 生成自包含运行时（Node + PostgreSQL + ffmpeg）
+        run: node scripts/desktop-pack.js --skip-build
+
+      - name: 打包桌面客户端
+        run: npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }}
+        working-directory: desktop
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: yimu-${{ matrix.label }}
+          # dmg / app / exe / msi / AppImage / deb 一次收齐
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**
+          if-no-files-found: error
+          retention-days: 14

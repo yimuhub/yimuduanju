@@ -1,29 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "YIMU",
-  "version": "3.7.2",
+  "version": "3.7.3",
   "identifier": "com.yimu.desktop",
   "build": {
-    "devUrl": "http://127.0.0.1:5173",
-    "frontendDist": "../../dist/client",
+    "frontendDist": "../../desktop/splash",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "一幕·YIMU AI 短剧创作平台",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 960,
-        "minHeight": 640,
-        "center": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "trafficLightPosition": { "x": 14, "y": 18 }
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
@@ -32,8 +18,10 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "一幕·YIMU AI 短剧创作平台桌面端",
-    "longDescription": "从一句话创意到成片的 AI 短剧 / AI 漫剧全流程创作平台。v0 壳加载本机网关 http://127.0.0.1:5173，需先运行 ./scripts/start.sh。",
+    "copyright": "© 2026 一幕 YIMU",
+    "publisher": "一幕 YIMU",
+    "shortDescription": "一幕·YIMU AI 短剧创作平台",
+    "longDescription": "从一句话创意到成片的 AI 短剧 / AI 漫剧全流程创作平台。安装包内置 Node 运行时、PostgreSQL 与 ffmpeg，开包即用，无需另装环境；数据保存在本机应用数据目录。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,12 +29,24 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../../build/desktop-app": "app"
+    },
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "11.0"
     },
     "windows": {
       "wix": {
         "language": "zh-CN"
+      },
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": true
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
       }
     }
   }

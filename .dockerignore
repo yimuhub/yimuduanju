@@ -1,8 +1,21 @@
+# 构建上下文瘦身：能重建的产物、本地数据、密钥都不进镜像
 node_modules
+build
 dist
 data
+data-test
 logs
 backups
+uploads
+vibe_images
+dump.rdb
 .env
+.env.*
 .git
+.github
+desktop/src-tauri/target
+desktop/src-tauri/gen
+test
+docs/manual-screenshots
 *.tsbuildinfo
+*.log

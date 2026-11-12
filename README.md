@@ -26,14 +26,20 @@
 
 ## 📦 安装
 
-- **Docker**：`docker compose up -d --build`
-- **macOS**：`bash scripts/install-macos.sh`
-- **Linux**：`bash scripts/install-linux.sh`
-- **Windows**：双击 `scripts\install-windows.bat` → 运行 `npm run build` → 双击 `scripts\start-windows.bat`
+四种形态，任选其一：
 
-详细步骤见 [docs/安装指南.md](docs/安装指南.md)。
+| 形态 | 命令 / 产物 | 需要预装什么 |
+|---|---|---|
+| **桌面客户端**（推荐给创作者） | `YIMU_3.7.3_*.dmg` / `*-setup.exe` / `*.AppImage` | **什么都不用装**（包内自带 Node + PostgreSQL + ffmpeg） |
+| **Docker 单容器**（自带数据库） | `docker run -d -p 127.0.0.1:5173:5173 -v yimu-data:/data yimuhub/yimuduanju:3.7.3` | 只需要 Docker |
+| **Docker 三容器**（app + PG + Redis） | `docker compose up -d --build` | Docker + Compose |
+| **源码安装** | `bash scripts/install-macos.sh` / `install-linux.sh` / `install-windows.bat` | Node 22 + PostgreSQL 16 |
 
-## 🚀 快速开始（macOS）
+桌面端与单容器镜像的差异、数据目录、构建方式与排障见
+[docs/桌面客户端与Docker分发.md](docs/桌面客户端与Docker分发.md)。
+源码安装的详细步骤见 [docs/安装指南.md](docs/安装指南.md)。
+
+## 🚀 快速开始（源码 / macOS）
 
 ```bash
 # 1. 前置依赖
