@@ -134,9 +134,11 @@ class Database {
       this.restarting = true;
       log.warn(`数据库无响应（连续 ${this.failures} 次探测失败），自动重新拉起`);
       try {
-        // 关键：数据库是「已死」状态，instance.stop() 会一直等一个不存在的进程，
-        // 必须加超时，否则整个恢复流程卡死在这里（实测会卡 20 秒以上仍无进展）。
-        await this.stopQuietly(3000);
+        // 不要调 instance.stop()：数据库已死时它会永远不 resolve，
+        // 而 embedded-postgres 内部还会抛未处理拒绝，直接把整个运行时进程带走
+        //（实测表现为「日志停在自动重新拉起那一行，进程随后消失」）。
+        // 直接用包里的 pg_ctl 收尾 + 拉起，全程有超时。
+        await this.stopViaPgCtl();
         await this.startViaPgCtl();
         await this.waitReady(20000);
         this.failures = 0;

@@ -330,6 +330,17 @@ process.on('SIGHUP', cleanup);
 // 壳层崩溃时不留孤儿进程（某些平台父进程消失不会触发信号，用看门狗兜底）
 process.on('disconnect', cleanup);
 
+// 兜底：第三方依赖（embedded-postgres 等）在异常路径上会抛未处理的异步错误。
+// Node 22 默认会因此直接结束进程 —— 桌面端表现为「日志戛然而止、界面全卡」。
+// 这里改成记录日志继续跑，由看门狗负责把数据库拉回来。
+process.on('unhandledRejection', (reason) => {
+  const msg = reason && reason.stack ? reason.stack.split('\n')[0] : String(reason);
+  log.warn(`未捕获的异步错误（已记录，不退出）：${msg}`);
+});
+process.on('uncaughtException', (err) => {
+  log.error(`未捕获的异常（已记录，不退出）：${err && err.stack ? err.stack.split('\n')[0] : err}`);
+});
+
 const PARENT_PID = Number(process.env.YIMU_PARENT_PID || 0);
 if (PARENT_PID > 0) {
   const watchdog = setInterval(() => {
