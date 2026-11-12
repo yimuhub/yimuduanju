@@ -13,6 +13,13 @@ import {
 } from './skills';
 import { CAMERA_RIGS } from '@shared/camera-rigs';
 import { SPACE_ANCHORS } from '@shared/shot-craft';
+import {
+  cjkRatio,
+  countLanguageViolations,
+  detectBoardLanguage,
+  isBoardTextInLanguage,
+  normalizeBoardsLanguage,
+} from '@shared/boards-language';
 import { GENRE_PRESETS, genreBlock, getGenrePreset } from './genres';
 import { getStylePreset, getStylePresetById, STYLE_PRESETS } from './styles';
 import { mkdir, writeFile } from 'fs/promises';
@@ -340,25 +347,113 @@ export class StorySkillsService {
     const scriptText = (input.scriptText ?? '').trim();
     if (!scriptText) throw new BadRequestException('剧本为空');
     const style = this.resolveStyle(input.styleId);
-    const prompt = buildBoardsPrompt(
-      scriptText,
-      style,
-      genreBlock(getGenrePreset(input.genreId)),
-      input.targetSeconds,
-      input.catalog,
-    );
-    let raw: string;
-    try {
-      raw = await this.modelGateway.generateText(
-        { prompt, model: input.model, temperature: input.temperature },
-        input.providerName,
+    const genre = genreBlock(getGenrePreset(input.genreId));
+    const language = detectBoardLanguage(scriptText);
+    const buildPrompt = (strict: boolean) =>
+      buildBoardsPrompt(scriptText, style, genre, input.targetSeconds, input.catalog, {
+        language,
+        strictLanguage: strict,
+      });
+
+    /**
+     * 语言纪律不能靠模型自觉：实测中文剧本拿到了整份英文分镜，
+     * 连带让按中文资产名做的人物绑定全部落空。这里做一次带强约束的重试，
+     * 仍跑偏就抛错交给调用方降级到中文确定性拆分，绝不让英文内容悄悄落库。
+     */
+    const runOnce = async (strict: boolean): Promise<BoardsShot[]> => {
+      let raw: string;
+      try {
+        raw = await this.modelGateway.generateText(
+          { prompt: buildPrompt(strict), model: input.model, temperature: input.temperature },
+          input.providerName,
+        );
+      } catch (e) {
+        throw new BadRequestException(`分镜表技能调用失败：${(e as Error)?.message ?? '未知错误'}`);
+      }
+      const parsed = this.parseBoardsJson(raw);
+      return normalizeBoardsLanguage(parsed, scriptText, language);
+    };
+
+    let shots = await runOnce(false);
+    let violations = countLanguageViolations(shots, language);
+    if (shots.length > 0 && violations.checked > 0 && violations.ratio > 0.35) {
+      this.logger.warn(
+        `分镜表输出语言不合格（${violations.violating}/${violations.checked} 条非${language === 'zh' ? '中文' : '英文'}），带语言硬约束重试一次`,
       );
-    } catch (e) {
-      throw new BadRequestException(`分镜表技能调用失败：${(e as Error)?.message ?? '未知错误'}`);
+      shots = await runOnce(true);
+      violations = countLanguageViolations(shots, language);
+      if (shots.length > 0 && violations.checked > 0 && violations.ratio > 0.35) {
+        throw new BadRequestException(
+          `分镜表输出语言与剧本不符（${violations.violating}/${violations.checked} 条文本非${language === 'zh' ? '中文' : '英文'}），已拒绝落库`,
+        );
+      }
     }
-    const shots = this.parseBoardsJson(raw);
-    this.logger.log(`分镜表技能完成：${shots.length} 镜`);
+    this.logger.log(
+      `分镜表技能完成：${shots.length} 镜，语言=${language}，违规 ${violations.violating}/${violations.checked}`,
+    );
     return { skillId: 'script_to_boards', shots };
+  }
+
+  /**
+   * 存量分镜的中文回填：只把英文画面描述改写成简体中文，不重建镜头、不碰产物与任务。
+   * 分镜表技能加了语言锁之后新建的项目不会再产出英文，但已经落库的旧分镜仍需可逆修复。
+   * 返回 id → 中文文本；不合格（解析失败 / 仍非中文）的条目不返回，调用方保持原值。
+   */
+  async localizeTexts(
+    items: { id: string; text: string }[],
+    scriptText: string,
+    providerName?: string,
+  ): Promise<Record<string, string>> {
+    const language = detectBoardLanguage(scriptText);
+    if (language !== 'zh') return {};
+    const pending = items.filter(
+      (i) => i.text?.trim() && !isBoardTextInLanguage(i.text, 'zh'),
+    );
+    if (pending.length === 0) return {};
+
+    const out: Record<string, string> = {};
+    const BATCH = 10;
+    for (let start = 0; start < pending.length; start += BATCH) {
+      const batch = pending.slice(start, start + BATCH);
+      const prompt =
+        `你是短剧分镜的中文改写校对。下面每一条是英文的画面描述，请改写成**简体中文**的分镜描述：\n` +
+        `- 保留全部可见细节：人物相对位置、动作、景别、光影、道具编号（PROPxxx）、服装材质；\n` +
+        `- 不得新增剧本里没有的情节，不得删减原有细节，不要写成文学抒情；\n` +
+        `- 人物一律用下方剧本里的中文名字（如「老者」「皇子」），不要用 the old man / the prince；\n` +
+        `- 不要翻译或改写台词；台词不在本任务范围内。\n` +
+        `只输出 JSON 数组，格式 [{"id":"原始 id","text":"中文描述"}]，不要输出解释文字。\n\n` +
+        `【剧本（用于对齐人名与专有名词）】\n${(scriptText ?? '').slice(0, 4000)}\n\n` +
+        `【待改写】\n${JSON.stringify(batch.map((i) => ({ id: i.id, text: i.text })))}`;
+      let raw: string;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        raw = await this.modelGateway.generateText({ prompt, temperature: 0.2 }, providerName);
+      } catch (e) {
+        this.logger.warn(`中文回填批次 ${start} 调用失败：${(e as Error).message}`);
+        continue;
+      }
+      const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      const from = cleaned.indexOf('[');
+      const to = cleaned.lastIndexOf(']');
+      if (from < 0 || to <= from) continue;
+      try {
+        const arr = JSON.parse(cleaned.slice(from, to + 1)) as unknown;
+        if (!Array.isArray(arr)) continue;
+        for (const row of arr) {
+          const r = (row ?? {}) as Record<string, unknown>;
+          if (typeof r.id !== 'string' || typeof r.text !== 'string') continue;
+          const text = r.text.trim();
+          // 只接受确实是中文的结果，避免把「翻译失败」写成另一种英文
+          if (text.length > 0 && cjkRatio(text) >= 0.15 && batch.some((i) => i.id === r.id)) {
+            out[r.id] = text.slice(0, 1000);
+          }
+        }
+      } catch {
+        this.logger.warn(`中文回填批次 ${start} 返回非法 JSON，跳过`);
+      }
+    }
+    this.logger.log(`中文回填：${Object.keys(out).length}/${pending.length} 条`);
+    return out;
   }
 
   private parseBoardsJson(raw: string): BoardsShot[] {

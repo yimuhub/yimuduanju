@@ -18,6 +18,7 @@ import type {
   SplitShotResult,
 } from '@shared/api.interface';
 import { diagnoseProject, type ProjectDiagnosis } from '@shared/artifact-state';
+import { isBoardTextInLanguage } from '@shared/boards-language';
 import { deriveBeats, planPieces } from '@shared/shot-craft';
 import {
   CAMERA_ANGLE_LABELS,
@@ -719,11 +720,20 @@ export class StoryboardService {
       .from(scenes)
       .where(and(eq(scenes.projectId, projectId), eq(scenes.id, shot.sceneId)))
       .limit(1);
+    // 去重：物化时 subject / scene.summary 都是 visualPrompt 的切片，
+    // 三处一起塞进五段式会让同一句画面描述重复 3 次（实测），既浪费 token
+    // 又把整段英文反复强化给模型。这里以 visualPrompt 为唯一完整描述。
+    const visual = (shot.visualPrompt ?? '').trim();
+    const subject = (shot.subject ?? '').trim();
+    const sceneTitle = (sceneRows[0]?.title ?? '').trim();
+    const sceneSummary = (sceneRows[0]?.summary ?? '').trim();
+    const redundant = (part: string) =>
+      !part || (visual.length > 0 && (visual.includes(part) || part.includes(visual)));
     const fivePart = buildFivePart({
       cinematography: `${rig?.promptFragment ?? movementLabel(shot.movement)}，${SHOT_SIZE_LABELS[shot.shotSize] ?? shot.shotSize ?? ''}，${shot.lens ?? ''}，${CAMERA_ANGLE_LABELS[shot.cameraAngle] ?? shot.cameraAngle ?? ''}`,
-      subject: shot.subject,
-      action: shot.visualPrompt ?? shot.action,
-      context: [sceneRows[0]?.title, sceneRows[0]?.summary].filter(Boolean).join('：') || undefined,
+      subject: redundant(subject) ? undefined : subject,
+      action: visual || shot.action,
+      context: [sceneTitle, redundant(sceneSummary) ? '' : sceneSummary].filter(Boolean).join('：') || undefined,
       style: styleBibleToStyle(projRows[0]?.styleBible as StyleBibleLike | null),
     });
     const negativeLine = shot.negativePrompt?.trim()
@@ -753,12 +763,140 @@ export class StoryboardService {
     };
   }
 
+  /**
+   * 存量分镜「中文回填」（无损）：只改写画面描述 / 节拍描述 / 片段名，
+   * 不重建镜头、不动台词、不动首帧与视频 URL、不动任务与状态。
+   * 新建项目已由分镜技能的语言锁保证中文；这个接口负责修已经落库的旧数据。
+   */
+  async localizeProjectText(projectId: string): Promise<{
+    language: string;
+    scanned: number;
+    translated: number;
+    updatedShots: number;
+    updatedScenes: number;
+    updatedSegments: number;
+  }> {
+    const [proj] = await this.db
+      .select({ scriptText: projects.scriptText })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!proj) throw new NotFoundException('项目不存在');
+    const [shotRows, sceneRows, segmentRows] = await Promise.all([
+      this.db.select().from(shots).where(eq(shots.projectId, projectId)).orderBy(asc(shots.sortOrder)),
+      this.db.select().from(scenes).where(eq(scenes.projectId, projectId)),
+      this.db.select().from(segments).where(eq(segments.projectId, projectId)),
+    ]);
+    if (shotRows.length === 0) {
+      return { language: 'zh', scanned: 0, translated: 0, updatedShots: 0, updatedScenes: 0, updatedSegments: 0 };
+    }
+
+    type BeatRow = { from: number; to: number; description: string; dialogue?: string };
+    const items: { id: string; text: string }[] = [];
+    for (const s of shotRows) {
+      if (s.visualPrompt?.trim()) items.push({ id: `visual:${s.id}`, text: s.visualPrompt });
+      const beats = (Array.isArray(s.beats) ? s.beats : []) as BeatRow[];
+      beats.forEach((b, i) => {
+        if (b?.description?.trim()) items.push({ id: `beat:${s.id}:${i}`, text: b.description });
+      });
+    }
+    for (const seg of segmentRows) {
+      if (seg.title?.trim()) items.push({ id: `segment:${seg.id}`, text: seg.title });
+    }
+    const translated = await this.storySkills.localizeTexts(items, proj.scriptText ?? '');
+
+    let updatedShots = 0;
+    let updatedScenes = 0;
+    let updatedSegments = 0;
+    for (const s of shotRows) {
+      const visual = translated[`visual:${s.id}`] ?? s.visualPrompt ?? undefined;
+      const beats = (Array.isArray(s.beats) ? s.beats : []) as BeatRow[];
+      const nextBeats = beats.map((b, i) => ({
+        ...b,
+        description: translated[`beat:${s.id}:${i}`] ?? b.description,
+      }));
+      const beatsChanged = nextBeats.some((b, i) => b.description !== beats[i]?.description);
+      if (visual === s.visualPrompt && !beatsChanged) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(shots)
+        .set({
+          visualPrompt: visual ?? null,
+          // subject 是 visualPrompt 的切片，必须同步，否则前端卡片仍显示旧英文
+          subject: visual ? visual.slice(0, 200) : s.subject,
+          beats: beats.length > 0 ? nextBeats : s.beats,
+          updatedAt: new Date(),
+        })
+        .where(eq(shots.id, s.id));
+      updatedShots += 1;
+    }
+    // 场景摘要：取该场第一镜的中文描述，替换物化时写进去的英文片段
+    for (const sc of sceneRows) {
+      const first = shotRows.find((s) => s.sceneId === sc.id);
+      if (!first) continue;
+      const visual = translated[`visual:${first.id}`] ?? first.visualPrompt ?? '';
+      if (!visual || !isBoardTextInLanguage(visual, 'zh')) continue;
+      const next = visual.slice(0, 200);
+      if (next === sc.summary) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(scenes)
+        .set({ summary: next, updatedAt: new Date() })
+        .where(eq(scenes.id, sc.id));
+      updatedScenes += 1;
+    }
+    for (const seg of segmentRows) {
+      const next = translated[`segment:${seg.id}`];
+      if (!next || next === seg.title) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(segments)
+        .set({ title: next.slice(0, 200), updatedAt: new Date() })
+        .where(eq(segments.id, seg.id));
+      updatedSegments += 1;
+    }
+    this.logger.log(
+      `分镜中文回填 ${projectId}：扫描 ${items.length} 条，翻译 ${Object.keys(translated).length} 条，` +
+        `更新镜头 ${updatedShots} / 场景 ${updatedScenes} / 片段 ${updatedSegments}`,
+    );
+    return {
+      language: 'zh',
+      scanned: items.length,
+      translated: Object.keys(translated).length,
+      updatedShots,
+      updatedScenes,
+      updatedSegments,
+    };
+  }
+
   async generateShotVideo(
     projectId: string,
     id: string,
     opts?: { strict?: boolean },
   ): Promise<{ jobId: string; warnings: string[] }> {
     await this.budgetCap.assertAllowed();
+    // 幂等：同一个镜头已有在途或已成功的视频任务时不要再建一个。
+    // 实测同一个镜头被建了两个 prompt 完全相同的任务（一个 succeeded 一个 running），
+    // 既重复计费，又让用户误以为「在生成别的镜头」。
+    const existing = await this.db
+      .select({ id: generationJobs.id, status: generationJobs.status })
+      .from(generationJobs)
+      .where(
+        and(
+          eq(generationJobs.projectId, projectId),
+          eq(generationJobs.targetType, 'shot'),
+          eq(generationJobs.targetId, id),
+          eq(generationJobs.jobType, 'video'),
+          inArray(generationJobs.status, ['pending', 'queued', 'running', 'retrying', 'succeeded']),
+        ),
+      )
+      .limit(1);
+    if (existing[0]) {
+      return {
+        jobId: existing[0].id,
+        warnings: [`该镜头已有视频任务（${existing[0].status}），已跳过重复创建`],
+      };
+    }
     const shot = await this.getShot(projectId, id);
     const built = await this.buildVideoJobInput(projectId, shot);
     // F3 硬门：与 QC 同一份规则；error 在 strict 模式下阻断（?strict=1），默认只警告。

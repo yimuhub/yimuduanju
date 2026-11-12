@@ -1,3 +1,5 @@
+import type { PipelineReadiness } from './pipeline-readiness';
+
 export type ProjectStatus =
   | 'draft'
   | 'parsing'
@@ -1275,6 +1277,11 @@ export interface ProjectProgressResponse {
   nextGate?: 'script' | 'storyboard' | 'final' | null;
   /** 最新一次剧本技能任务状态：用于区分「仍在生成 / 已生成待确认 / 生成失败」 */
   scriptJob?: { status: JobStatus; errorMessage?: string } | null;
+  /**
+   * 镜头级真实完成度（M/N），前后端「视频是否全部生成完成」的唯一真源。
+   * 不能只看状态机：项目状态越过 video_generating 不代表 N 个镜头都有成片。
+   */
+  readiness?: PipelineReadiness;
 }
 
 export interface GenerateImageRequest {

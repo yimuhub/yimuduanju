@@ -125,14 +125,20 @@ const normalizeTag = (raw?: string): string => {
 
 /**
  * 状态派生：后端 shot.status → 设计稿三态。
- * done=已有视频/首帧；render=任务在跑；pending=待生成。
+ * done=**已有成片**；render=任务在跑或只出了首帧；pending=待生成。
+ * 旧实现把「有首帧图」也算 done，状态栏会显示「已渲 1/1」而实际一个视频都没有，
+ * 是「只生成一个视频就报完成」错觉的放大器。
  */
 function deriveState(shot: Shot): ShotState {
   const s = (shot.status ?? '').toLowerCase();
-  if (shot.videoUrl || shot.startFrameUrl) {
+  if (shot.videoUrl) {
     // 仍在生成中的任务优先标记为 render
     if (s === 'generating' || s === 'running' || s === 'processing') return 'render';
     return 'done';
+  }
+  if (shot.startFrameUrl) {
+    // 首帧已出、成片未出：仍是链路中间态
+    return 'render';
   }
   if (s === 'generating' || s === 'running' || s === 'processing' || s === 'queued') {
     return 'render';

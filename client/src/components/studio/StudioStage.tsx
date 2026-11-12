@@ -58,17 +58,23 @@ export const StudioStage = ({ children }: { children?: ReactNode }) => {
 
   const progress = data.progress?.overallProgress ?? 0;
   const running = data.shotStats.render > 0 || (data.jobs ?? []).some((j) => j.status === 'running');
+  // 镜头级真实进度：项目状态机只能说明「走到哪一步」，不能说明「N 个镜头出了几片」。
+  // 只要还缺成片，无论状态是 qc 还是 ready，都优先把缺口摆出来。
+  const readiness = data.progress?.readiness;
+  const videoGap = !!readiness && readiness.total > 0 && !readiness.videoComplete;
 
   // 以项目状态为准：不能只用「已渲镜头数」判断，否则剧本/分镜就绪、正等确认门的项目
   // 会一直显示「待启动」，用户会误以为流程没往前走
   const statusText = project
-    ? running
-      ? '生产链运行中'
-      : project.status === 'ready' || project.status === 'exported'
-        ? '生产链已完成'
-        : project.status === 'failed'
-          ? '生产链失败'
-          : PROJECT_STATUS_TEXT[project.status] ?? '待启动'
+    ? videoGap
+      ? `成片未齐 ${readiness?.withVideo ?? 0}/${readiness?.total ?? 0}`
+      : running
+        ? '生产链运行中'
+        : project.status === 'ready' || project.status === 'exported'
+          ? '生产链已完成'
+          : project.status === 'failed'
+            ? '生产链失败'
+            : PROJECT_STATUS_TEXT[project.status] ?? '待启动'
     : '未进入项目';
 
   const showPage = stageView === 'page' && !!children;

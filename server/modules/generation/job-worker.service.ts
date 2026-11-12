@@ -65,6 +65,10 @@ import {
   SEGMENT_MAX_SECONDS,
   SPACE_ANCHOR_LABELS,
 } from '@shared/shot-craft';
+// 时长收口：分镜总时长必须贴齐项目预算，只砍余量不砍台词
+import { fitTotalBudget, minimumReadableSeconds } from '@shared/shot-duration';
+// 完成态唯一口径：N 个镜头必须 N 个成片，不允许 some() 假完成
+import { computePipelineReadiness } from '@shared/pipeline-readiness';
 // 3 秒分段视频提示词 + 段内续接：一句话描述整镜必然被模型各做各的
 import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-prompt';
 // 修复（分层）：uploadDir 直接从工具模块导入。
@@ -1573,10 +1577,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .select({ id: projects.id })
       .from(projects)
       .where(
+        // editing/qc 也要进自动链：旧数据里「1/7 视频就推进到 qc」的假完成
+        // 必须在下一轮 tick 被数量门发现并回退，否则永远停在完成假象里。
         inArray(projects.status, [
           'assets_generating',
           'video_generating',
           'audio_generating',
+          'editing',
+          'qc',
         ]),
       );
     for (const proj of projRows) {
@@ -1636,6 +1644,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
     const activeJobsOf = (t: string) =>
       jobRows.filter((j) => j.jobType === t && isActive(j.status) && !isVariant(j.inputData));
+    // 失败过的目标不再自动重投：否则每轮 tick 都会重建同一个必败任务（配音尤其明显）。
+    // 但这只管「不重投」，绝不等于「该镜头已完成」——仍由 readiness 计入缺口。
+    const failedTargetsOf = (t: string) =>
+      new Set(
+        jobRows
+          .filter((j) => j.jobType === t && j.status === 'failed' && j.targetId && !isVariant(j.inputData))
+          .map((j) => j.targetId as string),
+      );
 
     // 1) 图未跑完不推进
     if (activeJobsOf('image').length > 0) return;
@@ -1654,14 +1670,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         )
         .map((j) => j.targetId as string),
     );
+    const failedVideoTargets = failedTargetsOf('video');
 
-    // 2) 自动建 video：有首帧、无成片、无在途也无成功记录的镜头（失败镜不自动重投）
+    // 2) 自动建 video：有首帧、无成片、无在途/无成功/无失败记录的镜头
     const needVideo = shotRows.filter(
       (s) =>
         s.startFrameUrl &&
         !s.videoUrl &&
         !doneVideoTargets.has(s.id) &&
         !activeVideoTargets.has(s.id) &&
+        !failedVideoTargets.has(s.id) &&
         s.status !== 'failed',
     );
     if (needVideo.length > 0) {
@@ -1684,19 +1702,50 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // 4) 自动建 tts：有对白、无配音、无在途 tts 的镜头
+    // 4) 【数量门 · 修复假完成】N 个镜头必须 N 个成片。
+    // 旧逻辑用 `needVideo.length === 0` 推导「全段完成」，但失败/缺帧镜头被
+    // 过滤条件当成「不需要」，再用 some(videoUrl) 放行 edit —— 7 镜出 1 片
+    // 就合成 8 秒成片并推进 editing → qc。这里改成唯一真源 M/N。
+    const readiness = computePipelineReadiness(
+      shotRows.map((s) => ({
+        id: s.id,
+        startFrameUrl: s.startFrameUrl,
+        videoUrl: s.videoUrl,
+        voiceUrl: s.voiceUrl,
+        dialogue: s.dialogue,
+        status: s.status,
+      })),
+    );
+    if (!readiness.videoComplete) {
+      await this.writePipelineField(projectId, 'readiness', {
+        blocked: true,
+        reason: 'missing_videos',
+        total: readiness.total,
+        withVideo: readiness.withVideo,
+        missing: readiness.missingVideos.length,
+        missingFrames: readiness.missingFrames.length,
+        failedShots: readiness.failedShots,
+      });
+      await this.rewindToVideoGenerating(projectId);
+      return;
+    }
+    await this.writePipelineField(projectId, 'readiness', null);
+
+    // 5) 自动建 tts：有对白、无配音、无在途/无成功/无失败 tts 的镜头
     const activeTtsTargets = new Set(activeJobsOf('tts').map((j) => j.targetId as string));
     const doneTtsTargets = new Set(
       jobRows
         .filter((j) => j.jobType === 'tts' && j.status === 'succeeded' && j.targetId)
         .map((j) => j.targetId as string),
     );
+    const failedTtsTargets = failedTargetsOf('tts');
     const needTts = shotRows.filter(
       (s) =>
         (s.dialogue ?? '').trim().length > 0 &&
         !s.voiceUrl &&
         !doneTtsTargets.has(s.id) &&
         !activeTtsTargets.has(s.id) &&
+        !failedTtsTargets.has(s.id) &&
         s.status !== 'failed',
     );
     if (needTts.length > 0) {
@@ -1712,30 +1761,27 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         })),
       );
       this.logger.log(`自动链：项目 ${projectId} 新建 ${needTts.length} 个配音任务`);
-      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
       await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
       return;
     }
 
-    // 5) 配音未跑完不推进
+    // 6) 配音未跑完不推进
     if (activeJobsOf('tts').length > 0) {
-      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
       await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
       return;
     }
 
-    // 6) 全段完成 → editing + 建 edit 任务（服务端合成，幂等去重）
-    // 边界守卫：没有任何镜头成片（空分镜 / 视频全部失败）时不建 edit 任务、不推进
-    // editing —— assembleFinalVideo 对空片必然抛「暂无镜头成片」，旧逻辑会白建一个
-    // 必败任务并把项目推进 editing 死区；停在 audio_generating 让用户重试失败镜头。
-    const hasAnyVideo = shotRows.some((s) => s.videoUrl);
+    // 7) 配音缺口显式记账但不阻断成片：部分通道（如 Agnes 测试）没有 TTS 接口，
+    // 卡死整条链只会让用户永远看不到成片。QC 仍会把「有对白但缺少配音」列为问题。
+    if (!readiness.voiceComplete) {
+      this.logger.warn(
+        `项目 ${projectId} 配音未完成 ${readiness.withVoice}/${readiness.needVoice}（供应商不支持或任务失败），成片将缺少人声`,
+      );
+    }
+
+    // 8) 全段完成 → editing + 建 edit 任务（服务端合成，幂等去重）
     const activeEdit = jobRows.some((j) => j.jobType === 'edit' && isActive(j.status));
     const doneEdit = jobRows.some((j) => j.jobType === 'edit' && j.status === 'succeeded');
-    if (!hasAnyVideo && !doneEdit && !activeEdit) {
-      await this.advanceProjectStatus(projectId, 'assets_generating', 'video_generating');
-      await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
-      return;
-    }
     if (!doneEdit && !activeEdit) {
       await this.db.insert(generationJobs).values({
         projectId,
@@ -1746,10 +1792,53 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         priority: 40,
         inputData: { prompt: 'pipeline-assemble' },
       });
-      this.logger.log(`自动链：项目 ${projectId} 全部镜头就绪，已创建剪辑合成任务`);
+      this.logger.log(
+        `自动链：项目 ${projectId} ${readiness.withVideo}/${readiness.total} 个镜头成片齐备，已创建剪辑合成任务`,
+      );
     }
     await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
     await this.advanceProjectStatus(projectId, 'audio_generating', 'editing');
+  }
+
+  /** 把流水线状态写进 metadata.pipeline[key]（readiness / qc），幂等，不覆盖 approvals */
+  private async writePipelineField(
+    projectId: string,
+    key: string,
+    payload: Record<string, unknown> | null,
+  ): Promise<void> {
+    const [row] = await this.db
+      .select({ metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row) return;
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    const pipeline = (meta.pipeline ?? {}) as Record<string, unknown>;
+    if (JSON.stringify(pipeline[key] ?? null) === JSON.stringify(payload)) return;
+    const nextPipeline = { ...pipeline };
+    if (payload) nextPipeline[key] = payload;
+    else delete nextPipeline[key];
+    await this.db
+      .update(projects)
+      .set({ metadata: { ...meta, pipeline: nextPipeline }, updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
+  }
+
+  /** 旧数据里已经「假完成」的项目回退到生成中，避免状态机停在 qc 假象里 */
+  private async rewindToVideoGenerating(projectId: string): Promise<void> {
+    const [row] = await this.db
+      .select({ status: projects.status })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row || !['audio_generating', 'editing', 'qc'].includes(row.status)) return;
+    await this.db
+      .update(projects)
+      .set({ status: 'video_generating', updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
+    this.logger.warn(
+      `项目 ${projectId} 状态回退 ${row.status} → video_generating：镜头成片未齐，不允许标记完成`,
+    );
   }
 
   // ========== edit 服务端合成 / qc 质检任务（激活状态机 editing/qc 死区） ==========
@@ -1761,7 +1850,26 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     try {
+      // 合成前再核一次镜头数：自动链已守一道门，但手动触发的 edit 任务、
+      // 以及历史遗留的 in-flight 任务仍可能把 1 个片段当成整片导出。
+      const shotRows = await this.db
+        .select({ id: shots.id, videoUrl: shots.videoUrl })
+        .from(shots)
+        .where(eq(shots.projectId, job.projectId));
+      const readiness = computePipelineReadiness(
+        shotRows.map((s) => ({ id: s.id, videoUrl: s.videoUrl })),
+      );
+      if (!readiness.videoComplete) {
+        throw new Error(
+          `镜头成片未齐（${readiness.withVideo}/${readiness.total}），拒绝合成残缺成片`,
+        );
+      }
       const result = await this.exportService.assembleFinalVideo(job.projectId);
+      if (result.clips < readiness.total) {
+        throw new Error(
+          `合成片段数不足（${result.clips}/${readiness.total}），拒绝把缺镜成片标记为完成`,
+        );
+      }
       await this.generationService.settleJobSuccess(job.id, {
         assetId: result.asset.id,
         clips: result.clips,
@@ -1779,9 +1887,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       });
       this.logger.log(`成片合成完成 ${job.id}：${result.clips} 段，已创建质检任务`);
     } catch (e) {
-      // 可预见的业务性失败（如无成片可拼）直接终结，不烧 3 次重试
-      if ((e as Error).message.includes('暂无镜头成片')) {
-        await this.generationService.settleJobFailure(job.id, (e as Error).message);
+      // 可预见的业务性失败（缺镜 / 空片）直接终结，不烧 3 次重试
+      const message = (e as Error).message;
+      if (message.includes('暂无镜头成片') || message.includes('镜头成片未齐') || message.includes('合成片段数不足')) {
+        await this.generationService.settleJobFailure(job.id, message);
         return;
       }
       throw e;
@@ -1795,13 +1904,30 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const report = await this.qcService.triggerQc(job.projectId, {});
+    // 质检不通过必须留下硬门记录：旧实现只把 pass:false 写进任务产物，
+    // 项目照样停在 qc、成片确认门照样可点，用户看到 29 条问题却被当成「已完成」。
+    await this.writePipelineField(
+      job.projectId,
+      'qc',
+      report.pass
+        ? { pass: true, score: report.overallScore, issueCount: report.issues.length }
+        : {
+            pass: false,
+            score: report.overallScore,
+            issueCount: report.issues.length,
+            reportId: report.id,
+            reason: '质检未通过：请补齐失败镜头后重新质检',
+          },
+    );
     await this.generationService.settleJobSuccess(job.id, {
       reportId: report.id,
       overallScore: report.overallScore,
       pass: report.pass,
       issueCount: report.issues.length,
     });
-    this.logger.log(`质检完成 ${job.id}：得分 ${report.overallScore}，等待成片确认门`);
+    this.logger.log(
+      `质检完成 ${job.id}：得分 ${report.overallScore}，通过=${report.pass}，问题 ${report.issues.length} 条`,
+    );
   }
 
   // ========== script 剧本技能任务 ==========
@@ -1935,14 +2061,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     let boards: BoardsShot[];
     // 已确认资产清单：分镜只能引用真实存在的人/景/道具，避免 LLM 新造角色
     const assetIndex = await this.loadAssetIndex(job.projectId);
+    // 目标总时长在 try 外读一次：技能调用与落库前的预算收口共用同一个值，
+    // 不能只把数字写进提示词指望模型自觉遵守（实测 30s 项目物化出 66s）。
+    const projDurRows = await this.db
+      .select({ durationSeconds: projects.durationSeconds })
+      .from(projects)
+      .where(eq(projects.id, job.projectId))
+      .limit(1);
+    const targetSeconds = Number(projDurRows[0]?.durationSeconds) || undefined;
     try {
-      // 目标总时长：项目 durationSeconds 传入分镜技能，镜头时长之和贴齐（如 90s）
-      const projDurRows = await this.db
-        .select({ durationSeconds: projects.durationSeconds })
-        .from(projects)
-        .where(eq(projects.id, job.projectId))
-        .limit(1);
-      const targetSeconds = Number(projDurRows[0]?.durationSeconds) || undefined;
       const result = await this.storySkills.runBoards({
         scriptText,
         styleId,
@@ -1999,6 +2126,39 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       });
       return;
     }
+    // 时长预算硬收口（fitTotalBudget 此前是死代码，从未接入）：
+    // 每镜有「台词念得完」的最小可读时长，超出目标的部分按各镜余量等比例回收；
+    // 余量砍光仍超就如实报 overflow，绝不静默截断对白。
+    let durationTotal = boards.reduce((sum, b) => sum + (b.durationSeconds || 0), 0);
+    let durationOverflow = 0;
+    if (targetSeconds && targetSeconds > 0 && boards.length > 0) {
+      const wants = boards.map((b) => Math.max(1, Math.min(15, Math.round(b.durationSeconds))));
+      const mins = wants.map((want, i) =>
+        Math.min(want, Math.max(4, minimumReadableSeconds(boards[i].dialogue))),
+      );
+      const fit = fitTotalBudget(wants, mins, targetSeconds);
+      boards = boards.map((b, i) => {
+        const scale = fit.seconds[i] / Math.max(1, wants[i]);
+        const round1 = (n: number) => Math.round(n * 10) / 10;
+        return {
+          ...b,
+          durationSeconds: fit.seconds[i],
+          beats: b.beats?.map((beat) => ({
+            ...beat,
+            from: round1(beat.from * scale),
+            to: round1(beat.to * scale),
+          })),
+        };
+      });
+      durationTotal = fit.total;
+      durationOverflow = fit.overflow;
+      if (fit.overflow > 0) {
+        this.logger.warn(
+          `分镜时长仍超预算 ${job.projectId}：${fit.total}s / 目标 ${targetSeconds}s（台词最小可读时长已保住，需删台词或加时长）`,
+        );
+      }
+    }
+
     if (input.replaceExisting) {
       // 片段先删（shots.segment_id 是 SET NULL，但段随 scenes 级联，清干净更省事）
       await this.db.delete(segments).where(eq(segments.projectId, job.projectId));
@@ -2017,12 +2177,38 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     let segmentTotal = 0;
     // 分镜表同样必须落在资产上：场 → locations，片段/镜 → characters
     const cast = new Map(assetIndex.characters.map((c) => [this.normalizeName(c.name), c.id]));
+    // 剧本里「角色：台词」的说话人索引：场景对话/配音要按角色归档，
+    // 之前 scenes.dialogues 恒为 []，分镜确认后谁说的这句就永久丢了。
+    const speakerByText = new Map<string, string>();
+    for (const line of scriptText.split(/\r?\n/)) {
+      const m = /^([^：:\n]{1,20})[：:]\s*(.+)$/.exec(line.trim());
+      if (m) speakerByText.set(m[2].trim().replace(/^["“「]|["”」]$/g, ''), m[1].trim());
+    }
     for (const [title, list] of groups) {
       sceneNumber += 1;
-      const sceneCast = this.matchCastIds(cast, [
-        title,
-        ...list.map((b) => `${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`),
-      ]);
+      // 人物绑定优先用 LLM 明确声明的 cast，再退回文本匹配。旧实现只按文本匹配，
+      // 模型写英文 "the old man / the prince" 时中文资产名一个都命中不了，
+      // 实测 3/3 场 scenesWithCast=0，首帧拿不到任何角色参考图。
+      const declaredCast = this.uniqueIds(
+        list.flatMap((b) => this.resolveCastByName(assetIndex, b.cast)),
+      );
+      const sceneCast = declaredCast.length > 0
+        ? declaredCast
+        : this.matchCastIds(cast, [
+            title,
+            ...list.map((b) => `${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`),
+          ]);
+      // 场级对白/动作回填（此前恒为空数组，剧本信息在物化时丢了一半）
+      const sceneDialogues = list
+        .filter((b) => (b.dialogue ?? '').trim())
+        .map((b) => {
+          const text = (b.dialogue ?? '').trim();
+          return { character: speakerByText.get(text) ?? '', text, emotion: '' };
+        });
+      const sceneActions = list
+        .filter((b) => (b.visualPrompt ?? '').trim())
+        .slice(0, 8)
+        .map((b) => ({ description: (b.visualPrompt ?? '').trim(), character: '', duration: b.durationSeconds }));
       // 场的地点：优先用分镜表明确写的 location（命中资产清单），再按标题/描述猜
       const explicitLocation = list.map((b) => b.location?.trim()).find((v): v is string => Boolean(v));
       // eslint-disable-next-line no-await-in-loop
@@ -2040,8 +2226,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           sceneNumber,
           title: title.slice(0, 200),
           summary: list[0]?.visualPrompt?.slice(0, 200),
-          dialogues: [],
-          actions: [],
+          dialogues: sceneDialogues,
+          actions: sceneActions,
           characterIds: sceneCast,
           locationId,
           props: await this.scenePropsFor(
@@ -2056,7 +2242,6 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       const pieces = planPieces(
         list.map((b, i) => ({ ...b, shotNumber: i + 1, duration: b.durationSeconds })),
       );
-      let shotNo = 0;
       for (const piece of pieces) {
         const head = piece.shots[0];
         segmentTotal += 1;
@@ -2081,7 +2266,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             locationId: locationId ?? null,
             props: pieceProps,
             durationSeconds: piece.durationSeconds.toFixed(1),
-            sortOrder: piece.segmentNumber,
+            // 片段序号同样要全局递增，否则跨场重复
+            sortOrder: segmentTotal,
           })
           .returning({ id: segments.id });
         if (piece.durationSeconds > SEGMENT_MAX_SECONDS + 0.01) {
@@ -2091,7 +2277,6 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         for (const b of piece.shots) {
-          shotNo += 1;
           shotTotal += 1;
           const shotCast = this.uniqueIds([
             ...this.resolveCastByName(assetIndex, b.cast),
@@ -2103,7 +2288,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             projectId: job.projectId,
             sceneId: scene.id,
             segmentId: segment.id,
-            shotNumber: shotNo,
+            shotNumber: shotTotal,
             duration: duration.toFixed(1),
             shotSize: b.shotSize,
             cameraAngle: 'eye_level',
@@ -2125,7 +2310,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             subject: b.visualPrompt?.slice(0, 200),
             characterIds: shotCast.length > 0 ? shotCast : sceneCast.slice(0, 2),
             status: 'draft',
-            sortOrder: shotNo,
+            // 全局序号，不能写场内镜号：跨场重复会让时间线/画布按 [1,1,1,2,2,2,3]
+            // 交错排列，剧情顺序整个打乱（场1 → 场3 → 场2 …）。
+            sortOrder: shotTotal,
           });
         }
       }
@@ -2143,6 +2330,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       shotsCount: shotTotal,
       scenesWithLocation: bindings.withLocation,
       scenesWithCast: bindings.withCast,
+      durationTotal,
+      durationTarget: targetSeconds ?? null,
+      durationOverflow,
     });
     this.logger.log(
       `分镜表物化完成 ${job.id}：${groups.size} 场 ${segmentTotal} 片段 ${shotTotal} 镜，` +
@@ -2727,7 +2917,6 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           duration: prefs.shotDuration,
         })),
       );
-      let shotNo = 0;
       for (const piece of pieces) {
         const head = piece.shots[0];
         segmentTotal += 1;
@@ -2748,12 +2937,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             // 道具挂在首段：同场道具不变，段级重复挂会让参考图重复占名额
             props: piece.segmentNumber === 1 ? sceneProps : [],
             durationSeconds: piece.durationSeconds.toFixed(1),
-            sortOrder: piece.segmentNumber,
+            // 片段序号同样要全局递增，否则跨场重复
+            sortOrder: segmentTotal,
           })
           .returning({ id: segments.id });
 
         for (const s of piece.shots) {
-          shotNo += 1;
+          shotTotal += 1;
           // 对白镜只锁说话者（避免把无关角色塞进参考图稀释权重），无人对白则带全场 cast
           const speakerId = s.speaker
             ? [...cast.entries()].find(([name]) => this.normalizeName(s.speaker ?? '') === name)?.[1]
@@ -2766,7 +2956,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
               projectId: job.projectId,
               sceneId: scene.id,
               segmentId: segment.id,
-              shotNumber: shotNo,
+              shotNumber: shotTotal,
               duration: prefs.shotDuration.toFixed(1),
               shotSize: s.shotSize,
               cameraAngle: 'eye_level',
@@ -2784,14 +2974,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
               subject: s.visualPrompt?.slice(0, 200),
               characterIds: shotCast,
               status: 'draft',
-              sortOrder: shotNo,
+              // 全局序号：启发式物化这条链同样不能写场内镜号
+              sortOrder: shotTotal,
             })
             .returning({ id: shots.id });
           imageTargets.push({
             shotId: inserted.id,
             prompt: s.visualPrompt || s.dialogue || '全景 establishing shot',
           });
-          shotTotal += 1;
         }
       }
     }

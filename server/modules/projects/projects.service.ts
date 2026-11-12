@@ -1,6 +1,7 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { eq, and, ilike, count, desc, sql, inArray } from 'drizzle-orm';
+import { computePipelineReadiness } from '@shared/pipeline-readiness';
 
 import { projects, generationJobs, shots } from '@server/database/schema';
 import { BudgetCapService } from '../generation/budget-cap.service';
@@ -474,6 +475,33 @@ export class ProjectsService {
     if (stage === 'script' && (approvals.storyboard || approvals.final)) {
       throw new BadRequestException('确认门顺序错误：分镜/成片门已通过，不能回退重新确认剧本门');
     }
+    if (stage === 'final') {
+      // 成片确认门必须过两道硬校验：镜头数 M/N，以及最近一次质检是否通过。
+      // 旧实现只看三道门的时间戳，1/7 镜头 + pass:false/29 条问题的成片也能被确认成「完成」。
+      const shotRows = await this.db
+        .select({
+          id: shots.id,
+          startFrameUrl: shots.startFrameUrl,
+          videoUrl: shots.videoUrl,
+          voiceUrl: shots.voiceUrl,
+          dialogue: shots.dialogue,
+          status: shots.status,
+        })
+        .from(shots)
+        .where(eq(shots.projectId, id));
+      const readiness = computePipelineReadiness(shotRows);
+      if (!readiness.videoComplete) {
+        throw new BadRequestException(
+          `还有 ${readiness.missingVideos.length}/${readiness.total} 个镜头没有成片，不能确认成片；请到「任务」页重试失败任务`,
+        );
+      }
+      const qc = pipeline.qc as { pass?: boolean; score?: number; issueCount?: number } | undefined;
+      if (qc && qc.pass === false) {
+        throw new BadRequestException(
+          `质检未通过（${qc.score ?? 0} 分 / ${qc.issueCount ?? 0} 条问题），请修复后重新质检再确认成片`,
+        );
+      }
+    }
     if (stage === 'script') {
       // 剧本仍在生成时不允许确认：否则会拿创建时的原始 prompt 提前物化出空分镜
       const latestScript = await this.db
@@ -596,6 +624,21 @@ export class ProjectsService {
       .from(generationJobs)
       .where(eq(generationJobs.projectId, id));
 
+    // 镜头级真实进度：状态机只说明「走到哪一步」，不说明「N 个镜头出了几片」。
+    // 前端完成文案、流程卡、导出清单都改用这份 M/N，不再各自猜。
+    const shotRows = await this.db
+      .select({
+        id: shots.id,
+        startFrameUrl: shots.startFrameUrl,
+        videoUrl: shots.videoUrl,
+        voiceUrl: shots.voiceUrl,
+        dialogue: shots.dialogue,
+        status: shots.status,
+      })
+      .from(shots)
+      .where(eq(shots.projectId, id));
+    const readiness = computePipelineReadiness(shotRows);
+
     // 最新一次剧本技能任务：只有「已产出剧本」才开放剧本确认门，
     // 否则创建后立刻显示「等待确认」，而实际剧本还在生成/已失败，用户无从判断。
     const latestScriptJob = jobRows
@@ -690,6 +733,19 @@ export class ProjectsService {
                    stepIndex === currentIndex ? 'failed' : 'pending';
         }
 
+        // 数量门覆盖状态机：只要还有镜头没有成片，视频阶段就绝不显示 100% / 完成。
+        // 旧实现 `if (stepIndex < currentIndex) completed`，项目一进 qc 就把
+        // video_generating 标成完成，哪怕 7 镜只出了 1 片。
+        if (
+          step === 'video_generating' &&
+          readiness.total > 0 &&
+          !readiness.videoComplete &&
+          stepIndex <= currentIndex
+        ) {
+          status = 'running';
+          progress = Math.min(99, readiness.videoPercent);
+        }
+
         return {
           step,
           stepLabel: STEP_LABELS[step] ?? step,
@@ -719,6 +775,7 @@ export class ProjectsService {
       gates,
       nextGate,
       scriptJob,
+      readiness,
     };
   }
 }

@@ -57,6 +57,24 @@ export class StoryboardController {
     });
   }
 
+  /**
+   * 存量分镜中文回填：把已落库的英文画面描述 / 节拍 / 片段名改写成简体中文。
+   * 无损：不重建镜头，不改台词、首帧、视频 URL、任务与状态，可重复调用。
+   */
+  @Post('localize-language')
+  async localizeLanguage(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<{
+    language: string;
+    scanned: number;
+    translated: number;
+    updatedShots: number;
+    updatedScenes: number;
+    updatedSegments: number;
+  }> {
+    return this.storyboardService.localizeProjectText(projectId);
+  }
+
   /** 片段列表（场 → 片段 → 镜 的中间层） */
   @Get('segments')
   async listSegments(

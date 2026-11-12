@@ -174,11 +174,13 @@ const ProjectFlowTab = () => {
         )}
         {!nextGate && progress && (
           <p className="mt-4 rounded-xl bg-primary/5 px-4 py-3 text-xs text-muted-foreground">
-            {progress.overallStatus === 'ready' || progress.overallStatus === 'exported'
-              ? '🎬 全流程已完成，可前往「导出」页播放或下载成片。'
-              : progress.overallStatus === 'failed'
-                ? '流程中有环节失败，请前往「任务队列」定位失败任务并重试。'
-                : '流水线自动段进行中，无需操作——完成每一段会自动进入下一段，可随时到「任务队列」看实时进度。'}
+            {progress.readiness && progress.readiness.total > 0 && !progress.readiness.videoComplete
+              ? `⚠️ 还有 ${progress.readiness.missingVideos.length}/${progress.readiness.total} 个镜头没有成片（已有 ${progress.readiness.withVideo} 个），流程不会标记完成；请到「任务队列」重试失败任务，或到「系统日志」查看具体原因。`
+              : progress.overallStatus === 'ready' || progress.overallStatus === 'exported'
+                ? '🎬 全流程已完成，可前往「导出」页播放或下载成片。'
+                : progress.overallStatus === 'failed'
+                  ? '流程中有环节失败，请前往「任务队列」定位失败任务并重试。'
+                  : '流水线自动段进行中，无需操作——完成每一段会自动进入下一段，可随时到「任务队列」看实时进度。'}
           </p>
         )}
       </div>

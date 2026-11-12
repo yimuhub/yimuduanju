@@ -29,6 +29,22 @@ export const listScenes = (projectId: string) =>
     .get<Scene[]>(`/api/projects/${projectId}/storyboard/scenes`)
     .then((res) => res.data);
 
+/**
+ * 存量分镜中文回填（无损）：只把英文画面描述/节拍/片段名改写成简体中文，
+ * 不重建镜头、不动台词与产物。可重复调用，已中文的条目会被跳过。
+ */
+export const localizeLanguage = (projectId: string) =>
+  axiosForBackend
+    .post<{
+      language: string;
+      scanned: number;
+      translated: number;
+      updatedShots: number;
+      updatedScenes: number;
+      updatedSegments: number;
+    }>(`/api/projects/${projectId}/storyboard/localize-language`)
+    .then((res) => res.data);
+
 export const getScene = (projectId: string, id: string) =>
   axiosForBackend
     .get<Scene>(`/api/projects/${projectId}/storyboard/scenes/${id}`)

@@ -19,10 +19,12 @@ import {
   Captions,
   ShieldCheck,
   Timer,
+  Languages,
 } from 'lucide-react';
 import { storyboard, assets, projects } from '@client/src/api';
 import type { Shot, Scene, Segment, Asset, BlockedVideoSummary } from '@shared/api.interface';
 import type { ProjectDiagnosis } from '@shared/artifact-state';
+import { isBoardTextInLanguage } from '@shared/boards-language';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { toast } from 'sonner';
@@ -258,6 +260,37 @@ const ProjectStoryboardTab = () => {
   };
 
   const [normalizingDurations, setNormalizingDurations] = useState(false);
+  // 存量英文分镜回填：新建项目已由分镜技能语言锁保证中文，旧项目需要一次无损改写
+  const [localizing, setLocalizing] = useState(false);
+  const foreignShotCount = shots.filter((s) => {
+    const v = (s.visualPrompt ?? '').trim();
+    return v.length >= 12 && !isBoardTextInLanguage(v, 'zh');
+  }).length;
+
+  const handleLocalizeLanguage = async () => {
+    if (!id || localizing) return;
+    setLocalizing(true);
+    try {
+      const res = await storyboard.localizeLanguage(id);
+      if (res.updatedShots || res.updatedSegments) {
+        toast.success(
+          `中文回填完成：镜头 ${res.updatedShots} / 片段 ${res.updatedSegments}（翻译 ${res.translated}/${res.scanned} 条）`,
+          { duration: 3200 },
+        );
+        const allShots = await storyboard.listAllShots(id);
+        setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));
+        await refreshDiagnosis();
+      } else {
+        toast.info('没有需要回填的英文描述');
+      }
+    } catch (err) {
+      logger.error('Localize storyboard failed:', String(err));
+      toast.error('中文回填失败，请到「系统日志」查看具体原因');
+    } finally {
+      setLocalizing(false);
+    }
+  };
+
   const handleNormalizeDurations = async () => {
     if (!id || normalizingDurations) return;
     setNormalizingDurations(true);
@@ -541,6 +574,19 @@ const ProjectStoryboardTab = () => {
               {normalizingDurations ? '补齐中...' : '补齐旧镜头时长'}
             </span>
           </button>
+          {foreignShotCount > 0 && (
+            <button
+              onClick={() => void handleLocalizeLanguage()}
+              disabled={localizing}
+              title="把已落库的英文画面描述/节拍改写为简体中文；不动台词、首帧与成片，可重复执行"
+              className="rounded-lg border border-amber-500/50 bg-amber-500/5 px-4 py-2 text-sm font-medium text-amber-600 hover:bg-amber-500/10 disabled:opacity-50"
+            >
+              <span className="flex items-center gap-1.5">
+                <Languages className={`h-4 w-4 ${localizing ? 'animate-pulse' : ''}`} />
+                {localizing ? '回填中...' : `中文回填（${foreignShotCount} 镜英文）`}
+              </span>
+            </button>
+          )}
         </div>
       </div>
 

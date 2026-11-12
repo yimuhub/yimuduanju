@@ -275,6 +275,13 @@ export const PipelineCard = ({
             failed: openFailures.length,
           };
           const firstFailed = openFailures[0];
+          // 兜底：即便后端状态机曾把视频阶段标成 completed，只要镜头成片没齐，
+          // 这一行就绝不能显示「完成」。前后端共用 progress.readiness 的 M/N。
+          const videoGap =
+            s.step === 'video_generating' &&
+            !!progress?.readiness &&
+            progress.readiness.total > 0 &&
+            !progress.readiness.videoComplete;
           const state: RowState =
             s.step === gateStep
               ? 'gate'
@@ -282,11 +289,13 @@ export const PipelineCard = ({
                 ? 'fail'
                 : s.step === 'draft' && s.status === 'running'
                   ? 'wait'
-                  : s.status === 'completed'
-                    ? 'done'
-                    : s.status === 'running'
-                      ? 'run'
-                      : 'wait';
+                  : videoGap
+                    ? 'run'
+                    : s.status === 'completed'
+                      ? 'done'
+                      : s.status === 'running'
+                        ? 'run'
+                        : 'wait';
           const open = expanded.includes(s.step);
           const view = STEP_VIEW[s.step];
           const activeJobs = stepJobs
@@ -312,7 +321,14 @@ export const PipelineCard = ({
           if (s.step === 'storyboard_ready') {
             facts.push({ label: '场次', value: `${sceneCount} 个` });
             facts.push({ label: '镜头', value: `${shotStats.total} 个` });
-            if (shotStats.done) facts.push({ label: '已有首帧', value: `${shotStats.done} 个` });
+            if (shotStats.done) facts.push({ label: '已成片', value: `${shotStats.done} 个` });
+          }
+          if (s.step === 'video_generating' && progress?.readiness) {
+            const r = progress.readiness;
+            facts.push({ label: '成片', value: `${r.withVideo}/${r.total} 镜` });
+            if (!r.videoComplete) {
+              facts.push({ label: '待补齐', value: `${r.missingVideos.length} 镜` });
+            }
           }
           if (s.step === 'assets_generating' || s.step === 'video_generating') {
             if (counts.total) {

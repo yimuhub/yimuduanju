@@ -267,7 +267,18 @@ export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出�
 - cast 只能写本镜真正出现在画面里的人物；props 只能写本镜真正看见的道具。清单外的名字一律不许写。
 - shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov。
 - durationSeconds 4-15 整数；台词按约 4 字/秒估算，超 20 字必须拆镜或切听者反应镜。
-- beats 每 3 秒一条，覆盖整镜时长，每条只写这一段的可见动作，台词放该段的 dialogue 里（无台词留空字符串）。`;
+- beats 每 3 秒一条，覆盖整镜时长，每条只写这一段的可见动作，台词放该段的 dialogue 里（无台词留空字符串）。
+- 【台词保真】dialogue 与 beats[].dialogue 必须逐字照抄剧本里的原句，不得翻译、改写、扩写或自行编造；剧本没写的台词一律留空字符串。`;
+
+/**
+ * 分镜师专用的画风块：只给中文设定，不注入 style.visual / tone / camera 的英文标签。
+ * 那些英文词是给图像模型的检索标签，塞进「写分镜表」的提示词会把整份输出带成英文
+ * （实测：中文剧本 + 英文风格块 → visualPrompt / beats / 场景摘要全英文，
+ *  连带按中文资产名做的人物绑定全部落空）。视觉细节由下游图像通道单独注入。
+ */
+function boardsStyleBlock(style: StoryStylePreset): string {
+  return `画风设定【${style.label}】：${style.description}。（更细的材质、光影与镜头倾向由下游图像通道注入，本任务只需写清画面里看得见的位置、动作与光影）`;
+}
 
 export function buildBoardsPrompt(
   scriptText: string,
@@ -275,19 +286,26 @@ export function buildBoardsPrompt(
   genreRules = '',
   targetSeconds?: number,
   catalog?: BoardsAssetCatalog | null,
+  opts?: { language?: 'zh' | 'en'; strictLanguage?: boolean },
 ): string {
   const genre = genreRules ? `\n${genreRules}\n` : '';
   const durationRule =
     targetSeconds && targetSeconds > 0
-      ? `全片目标总时长约${Math.round(targetSeconds)}秒：镜数×单镜时长之和须接近该值（允许±10%）。单镜默认 8-10 秒；动作/对白需要完整起承转合的镜头 10-12 秒；快切/过渡 4-6 秒；按内容选择，不要所有镜头同一时长。`
+      ? `全片目标总时长约${Math.round(targetSeconds)}秒：镜数×单镜时长之和须贴齐该值（允许±10%），这是硬预算，不要按每镜 8-10 秒随手堆到总时长翻倍。单镜 4-12 秒；台词按约 4 字/秒留出念完的时间；按内容选择，不要所有镜头同一时长。`
       : '';
   const catalogBlock = renderAssetCatalog(catalog);
+  const language = opts?.language ?? 'zh';
+  const languageRule =
+    language === 'zh'
+      ? `【输出语言 · 硬性要求】剧本正文是简体中文，因此 scene / segmentTitle / visualPrompt / beats[].description / dialogue / beats[].dialogue 全部必须用简体中文书写。禁止输出英文画面描述，禁止把中文台词翻译成英文或改写成别的说法；台词只能逐字照抄剧本原句。只有枚举值（shotSize / movement / spaceAnchor 等）和 PROP 编号允许用英文。${opts?.strictLanguage ? '\n【重试提示】上一次输出被判定为英文，本次若再出现任何英文画面描述或英文台词，整份结果会被丢弃。请只写中文。' : ''}`
+      : `【输出语言 · 硬性要求】剧本正文为英文，所有文本字段一律使用英文；dialogue 必须逐字照抄剧本原句，不得改写。`;
   return (
-    `你是资深分镜师，把剧本拆成可直接拍摄的分镜表。按「场 → 片段 → 镜」三级组织：每场先立空间基准，再按同一空间内的连续动作切片段（≤15 秒、2-4 镜），片段内按信息推进切镜。\n${styleBlock(style)}\n${genre}${durationRule}\n` +
+    `你是资深分镜师，把剧本拆成可直接拍摄的分镜表。按「场 → 片段 → 镜」三级组织：每场先立空间基准，再按同一空间内的连续动作切片段（≤15 秒、2-4 镜），片段内按信息推进切镜。\n${boardsStyleBlock(style)}\n${genre}${durationRule}\n` +
+    `${languageRule}\n` +
     `${catalogBlock ? `${catalogBlock}\n` : ''}` +
     `【镜头语法】先问本镜给观众什么新信息再选景别与运镜；定场 1-2 镜完成；连续三个同景别而无信息变化必须改；一镜只安排一个主要运镜。\n` +
     `【空间连续性】每场第一次交代空间后必须给出九宫格基准与轴线；普通反打左者右看、右者左看，不得为露正脸让两人都面朝镜头；相邻镜核对站位、动作完成度、持物手、眼线与服装。\n` +
-    `要求：visualPrompt 必须是摄影机能记录的物理现象（位置/动作/表情/光影），抽象情绪外化；dialogue 只写本镜要念的词。\n${BOARDS_JSON_CONTRACT}\n\n【剧本】\n${scriptText.slice(0, 12000)}`
+    `要求：visualPrompt 必须是摄影机能记录的物理现象（位置/动作/表情/光影），抽象情绪外化；人物一律使用资产清单里的中文名字，不要用 the old man / the prince 这类英文泛指。\n${BOARDS_JSON_CONTRACT}\n\n【剧本】\n${scriptText.slice(0, 12000)}`
   );
 }
 
