@@ -51,7 +51,9 @@ const ClassicPages = {
   'ai-assistant': lazy(() => import('./pages/AiAssistant/AiAssistantPage')),
   account: lazy(() => import('./pages/Account/AccountPage')),
   settings: lazy(() => import('./pages/Settings/SettingsPage')),
+  'system-logs': lazy(() => import('./pages/SystemLogs/SystemLogsPage')),
 } as const;
+const SystemLogsPage = ClassicPages['system-logs'];
 
 /** JSX 不支持 `Foo['bar']` 成员表达式，这里取出带连字符的键 */
 const AiAssistantPage = ClassicPages['ai-assistant'];
@@ -182,6 +184,19 @@ const RoutesComponent = () => {
                 }
               />
             </Route>
+            {/* 系统日志：全量日志读取 + 失败任务诊断，URL 支持 ?jobId= 直达 */}
+            <Route path="system-logs" element={<StudioSectionPage />}>
+              <Route
+                index
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="系统日志加载中..." />}>
+                      <SystemLogsPage />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
+            </Route>
             <Route
               path="create"
               element={
@@ -262,6 +277,17 @@ const RoutesComponent = () => {
               <Route path="ai-assistant" element={<LegacyRedirect pageKey="ai-assistant" />} />
               <Route path="account" element={<LegacyRedirect pageKey="account" />} />
               <Route path="settings" element={<LegacyRedirect pageKey="settings" />} />
+              {/* 极客模式：系统日志没有对应右栏标签，直接整页打开 */}
+              <Route
+                path="system-logs"
+                element={
+                  <RouteErrorGuard>
+                    <Suspense fallback={<CanvasLoading tip="系统日志加载中..." />}>
+                      <SystemLogsPage />
+                    </Suspense>
+                  </RouteErrorGuard>
+                }
+              />
             </>
           )}
           <Route path="project/:id" element={<ProjectWorkspacePage />}>

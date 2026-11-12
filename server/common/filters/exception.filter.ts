@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { BusinessException } from '../interfaces/exception.interface';
 import { HTTP_STATUS_TO_RESPONSE_CODE_MAP, ResponseCode } from '../constants/api_response_code';
 import { ApiErrorResponse } from '../interfaces/api_response.interface';
+import { systemLog } from '../system-log.store';
 
 // 全局异常过滤器，用于捕获所有未处理的异常
 @Catch()
@@ -91,6 +92,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         `未处理异常 ${request?.method ?? '?'} ${request?.originalUrl ?? ''}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
+      systemLog.record({
+        level: 'ERROR',
+        category: 'exception',
+        message: `未处理异常 ${request?.method ?? '?'} ${request?.originalUrl ?? ''}：${(exception as Error)?.message ?? String(exception)}`,
+        detail: {
+          stack: ((exception as Error)?.stack ?? String(exception)).slice(0, 2000),
+          method: request?.method ?? null,
+          path: request?.originalUrl ?? null,
+          httpStatus,
+        },
+      });
       // P0 安全修复：生产环境不再向前端泄漏调用栈，仅开发环境返回便于排查
       const isDev = process.env.NODE_ENV !== 'production';
       errorResponse = {

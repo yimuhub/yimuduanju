@@ -22,6 +22,7 @@ import {
   Plus,
   Settings,
   Sparkles,
+  ScrollText,
   ClipboardCheck,
 } from 'lucide-react';
 import { getAvatarInitial, getNickname } from '@client/src/lib/identity';
@@ -181,6 +182,14 @@ export const StudioRail = () => {
             <Settings className="ico" />,
             '设置',
             () => navigate('/settings'),
+          )}
+          {navItem(
+            'system-logs',
+            <ScrollText className="ico" />,
+            '系统日志',
+            () => navigate('/system-logs'),
+            failedJobs.length ? { text: String(failedJobs.length) } : undefined,
+            location.pathname === '/system-logs',
           )}
         </div>
 

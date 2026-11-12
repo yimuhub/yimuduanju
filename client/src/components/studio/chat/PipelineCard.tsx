@@ -421,6 +421,14 @@ export const PipelineCard = ({
                   {firstFailed?.errorMessage ? (
                     <div className="pipe-error">
                       {JOB_LABEL[firstFailed.jobType]}失败：{firstFailed.errorMessage}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ marginLeft: 10, padding: '2px 8px', fontSize: 11 }}
+                        onClick={() => onNavigate(`/system-logs?jobId=${firstFailed.id}`)}
+                      >
+                        查看完整日志与原因
+                      </button>
                     </div>
                   ) : null}
 

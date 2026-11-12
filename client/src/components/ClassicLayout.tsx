@@ -31,6 +31,7 @@ import {
   LayoutTemplate,
   PenTool,
   ArrowLeft,
+  ScrollText,
 } from 'lucide-react';
 
 /**
@@ -55,6 +56,7 @@ const navItems: { key: string; to: string; label: string; icon: typeof Sparkles;
   { key: 'ai-assistant', to: '/ai-assistant', label: 'AI助手', icon: Bot },
   { key: 'account', to: '/account', label: '用户中心', icon: UserCircle },
   { key: 'settings', to: '/settings', label: '设置', icon: Settings },
+  { key: 'system-logs', to: '/system-logs', label: '系统日志', icon: ScrollText },
 ];
 
 // 侧栏分组（对标即梦/可灵工作台：导航按「创作 / 项目 / 账户」分区，降低长列表噪音）
@@ -69,7 +71,7 @@ const navGroups: { label: string; items: typeof navItems }[] = [
   },
   {
     label: '助手与账户',
-    items: navItems.filter((n) => ['ai-assistant', 'account', 'settings'].includes(n.key)),
+    items: navItems.filter((n) => ['ai-assistant', 'account', 'settings', 'system-logs'].includes(n.key)),
   },
 ];
 
@@ -84,6 +86,7 @@ const breadcrumbMap: Record<string, string> = {
   account: '用户中心',
   styles: '风格中心',
   settings: '设置',
+  'system-logs': '系统日志',
   project: '项目工作台',
   canvases: '画布模式',
   'canvas-free3': '自由画布',

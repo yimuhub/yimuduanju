@@ -25,6 +25,7 @@ import { StorySkillsModule } from './modules/story-skills/story-skills.module';
 import { MemoryModule } from './modules/memory/memory.module';
 import { SkillsModule } from './modules/skills/skills.module';
 import { TimelineModule } from './modules/timeline/timeline.module';
+import { SystemLogsModule } from './modules/system-logs/system-logs.module';
 
 @Module({
   imports: [
@@ -52,6 +53,8 @@ import { TimelineModule } from './modules/timeline/timeline.module';
     SkillsModule,
     // 线性剪辑 EDL：GET/PUT /timeline + POST /timeline/export
     TimelineModule,
+    // 系统日志：文件日志 + 结构化事件 + 失败任务诊断（只读）
+    SystemLogsModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

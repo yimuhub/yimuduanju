@@ -143,3 +143,33 @@ export async function toProviderImageInputs(
   }
   return out;
 }
+
+/**
+ * 部分中转（Agnes 官方 /v1/images/generations）的 `image` 字段只吃**纯 base64**：
+ * 传 /uploads 相对路径、http(s) URL，甚至带 `data:image/png;base64,` 前缀的
+ * data URL，都会被判成 `image is not a valid image base64` 直接 400。
+ *
+ * 这里把任意来源统一收敛成纯 base64 字符串。远程 http(s) 先下载再编码，
+ * 且限制 8MB，避免把外部大图整张塞进请求体。
+ */
+export async function toProviderImageBase64(
+  raw?: string | null,
+): Promise<string | undefined> {
+  const normalized = await toProviderImageInput(raw);
+  if (!normalized) return undefined;
+  if (/^data:[^,]*;base64,/i.test(normalized)) {
+    return normalized.replace(/^data:[^,]*;base64,/i, '');
+  }
+  if (/^https?:\/\//i.test(normalized)) {
+    try {
+      const resp = await fetch(normalized, { signal: AbortSignal.timeout(15000) });
+      if (!resp.ok) return undefined;
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.length === 0 || buf.length > 8 * 1024 * 1024) return undefined;
+      return buf.toString('base64');
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}

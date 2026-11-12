@@ -23,6 +23,11 @@ import type { ProviderType, FormatType, ModelCapabilities } from '@shared/api.in
 // 密钥缺失或 GCM 认证失败（密钥轮换、密文损坏）时应返回 null 让调用方给出
 // 「未配置 API Key」这类可读错误，而不是抛未捕获异常把所有 Provider 接口打成 500。
 import { tryDecryptApiKey } from '../../common/crypto.util';
+import { systemLog } from '../../common/system-log.store';
+import {
+  toProviderImageInput,
+  toProviderImageBase64,
+} from './media-input';
 
 interface TextGenerateParams {
   prompt: string;
@@ -108,7 +113,13 @@ interface ProviderRecord {
   routingPriority: number;
   enabled: boolean;
   promptPrefix: string | null;
-  modelParams: { videoDurations?: number[]; videoSizes?: string[]; imageSizes?: string[] } | null;
+  modelParams: {
+    videoDurations?: number[];
+    videoSizes?: string[];
+    imageSizes?: string[];
+    /** Agnes 图片接口 image 字段格式：默认纯 base64；显式设为 data_url 时传完整 data URL */
+    imageFieldFormat?: 'base64' | 'data_url';
+  } | null;
 }
 
 /**
@@ -446,11 +457,48 @@ export class ModelGatewayService {
     const base = this.normalizeBaseUrl(provider.baseUrl);
     // B2 附加提示词：逗号拼进正文（图片接口无 system 位）
     const prefix = (provider.promptPrefix ?? '').trim();
-    const refImg =
+    const rawRefImg =
       params.referenceImageUrl ||
       (Array.isArray(params.referenceImages) && params.referenceImages.length > 0
         ? params.referenceImages[0]
         : undefined);
+    /* ------------------------------------------------------------------
+     * 参考图必须先规范化再出门（对应 shared 铁律）：
+     * 首帧/定妆图落盘后都是 `/uploads/xxx.png` 相对路径。旧实现把它原样塞进
+     * `image` 字段，Agnes 看到的是一段根本不是 base64 的字符串，直接 400
+     * 「image is not a valid image base64」，且每次重试都发同一份坏参数，
+     * 必然重试 3 次后放弃 —— 这就是「某个项目图片一直失败」的典型形态。
+     *
+     * Agnes 的 image 字段要求**纯 base64**（不带 data: 前缀）；其它 OpenAI 兼容
+     * 中转按文档约定收完整 data URL。两种形态都从同一个规范化函数出发。
+     * ------------------------------------------------------------------ */
+    const shapeOf = (u?: string): string => {
+      if (!u) return 'none';
+      if (/^data:/i.test(u)) return 'data-url';
+      if (/^https?:\/\//i.test(u)) return 'http-url';
+      if (/^\/uploads\//.test(u)) return 'local-path';
+      return 'other';
+    };
+    const wantsBase64 =
+      provider.formatType === 'agnes' &&
+      provider.modelParams?.imageFieldFormat !== 'data_url';
+    let refImg: string | undefined;
+    if (rawRefImg) {
+      refImg = wantsBase64
+        ? await toProviderImageBase64(rawRefImg)
+        : await toProviderImageInput(rawRefImg);
+      if (!refImg) {
+        const reason = `参考图无法转换为${wantsBase64 ? '纯 base64' : '可送达形态'}，本次不发送 image 字段`;
+        this.logger.warn(`${reason}：${rawRefImg.slice(0, 120)}`);
+        systemLog.record({
+          level: 'WARN',
+          category: 'upstream',
+          provider: provider.name,
+          message: reason,
+          detail: { referenceRaw: rawRefImg.slice(0, 300), shape: shapeOf(rawRefImg) },
+        });
+      }
+    }
     const body = {
       model,
       prompt: prefix ? `${prefix}, ${params.prompt}` : params.prompt,
@@ -479,13 +527,55 @@ export class ModelGatewayService {
 
       if (!response.ok) {
         const errText = await response.text();
+        // 结构化事件保留上游完整响应体 + 本次真正发出去的 image 形态，
+        // 「系统日志」页面据此直接给出失败原因，不必再翻几十 MB 文本日志。
+        systemLog.record({
+          level: 'ERROR',
+          category: 'upstream',
+          provider: provider.name,
+          httpStatus: response.status,
+          message: `图片生成被上游拒绝 (${response.status}) ${url}：${errText.slice(0, 300)}`,
+          detail: {
+            url,
+            model,
+            upstreamStatus: response.status,
+            upstreamBody: errText,
+            promptChars: params.prompt.length,
+            referenceRaw: rawRefImg?.slice(0, 300) ?? null,
+            referenceRawShape: shapeOf(rawRefImg),
+            referenceSentShape: refImg
+              ? wantsBase64
+                ? `base64(${refImg.length} chars)`
+                : shapeOf(refImg)
+              : 'none',
+            referenceSentPreview: refImg?.slice(0, 48) ?? null,
+          },
+        });
         throw new BadRequestException(
-          `图片生成失败 (${response.status}, ${url}): ${errText.slice(0, 200)}`,
+          `图片生成失败 (${response.status}, ${url}): ${errText.slice(0, 600)}`,
         );
       }
 
       const data = await response.json();
       const images = data.data ?? [];
+      if (rawRefImg) {
+        systemLog.record({
+          level: 'INFO',
+          category: 'upstream',
+          provider: provider.name,
+          message: `图片生成成功（参考图 ${shapeOf(rawRefImg)} → ${wantsBase64 ? 'base64' : shapeOf(refImg)}）`,
+          detail: {
+            model,
+            url,
+            referenceRawShape: shapeOf(rawRefImg),
+            referenceSentShape: refImg
+              ? wantsBase64
+                ? `base64(${refImg.length} chars)`
+                : shapeOf(refImg)
+              : 'none',
+          },
+        });
+      }
       return images.map(
         (img: { url: string; b64_json: string; width?: number; height?: number }) => ({
           // P1 修复：b64_json 需拼 data: 前缀前端才能直接渲染；已是 data:/http 直接透传
@@ -503,6 +593,18 @@ export class ModelGatewayService {
       );
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      systemLog.record({
+        level: 'ERROR',
+        category: 'upstream',
+        provider: provider.name,
+        message: `图片生成请求异常：${(error as Error).message}`,
+        detail: {
+          url: `${base}/images/generations`,
+          model,
+          stack: (error as Error).stack?.slice(0, 1200) ?? null,
+          referenceRawShape: shapeOf(rawRefImg),
+        },
+      });
       this.logger.error(`图片生成请求失败: ${(error as Error).message}`);
       throw new BadRequestException(
         `图片生成请求失败: ${(error as Error).message}`,

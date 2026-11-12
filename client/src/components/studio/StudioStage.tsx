@@ -29,6 +29,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/ai-assistant': 'AI助手',
   '/account': '账户',
   '/settings': '设置',
+  '/system-logs': '系统日志',
   '/dashboard': '用量与预算',
   '/create': '一键创作',
   '/canvases': '画布模式',

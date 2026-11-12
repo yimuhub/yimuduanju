@@ -22,6 +22,7 @@ import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
 import { BillingService } from '../billing/billing.service';
 import { RoutingService } from './routing.service';
+import { systemLog } from '../../common/system-log.store';
 
 /**
  * 未终结的任务状态。结算/失败/重试都只允许从这些状态出发，
@@ -352,6 +353,25 @@ export class GenerationService {
   async settleJobFailure(id: string, errorMessage: string): Promise<GenerationJob> {
     const job = await this.getJob(id);
     if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
+    // 结构化事件保留**未截断**的完整失败原因（库列只有 500 字符，长上游响应会被切掉）
+    systemLog.record({
+      level: 'ERROR',
+      category: 'job',
+      jobId: id,
+      projectId: job.projectId ?? undefined,
+      provider: job.providerName ?? undefined,
+      message: `任务失败 [${job.jobType}/${job.targetType ?? '-'}]：${errorMessage}`,
+      detail: {
+        errorMessage,
+        status: 'failed',
+        retryCount: job.retryCount ?? 0,
+        maxRetries: job.maxRetries ?? 3,
+        jobType: job.jobType,
+        targetType: job.targetType ?? null,
+        targetId: job.targetId ?? null,
+        inputData: job.inputData ?? null,
+      },
+    });
     const rows = await this.db
       .update(generationJobs)
       .set({
@@ -409,6 +429,14 @@ export class GenerationService {
       .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
       .returning();
     if (rows.length === 0) return this.getJob(id);
+    systemLog.record({
+      level: 'WARN',
+      category: 'job',
+      jobId: id,
+      projectId: job.projectId ?? undefined,
+      message: `任务失败，第 ${nextRetry}/${budget} 次自动重试：${errorMessage.slice(0, 200)}`,
+      detail: { errorMessage, retryCount: nextRetry, jobType: job.jobType },
+    });
     return this.mapJob(rows[0]);
   }
 
