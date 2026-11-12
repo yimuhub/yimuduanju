@@ -68,7 +68,19 @@ class Database {
 
   async start() {
     fs.mkdirSync(this.pgDir, { recursive: true });
-    this.instance = new EmbeddedPostgres({
+    this.instance = this.createInstance();
+
+    if (!this.initialised) {
+      log.info(`首次启动，初始化数据库集群：${this.pgDir}`);
+      await this.instance.initialise();
+    }
+    await this.instance.start();
+    await this.waitReady();
+    log.info(`PostgreSQL 已就绪 127.0.0.1:${this.port}`);
+  }
+
+  createInstance() {
+    return new EmbeddedPostgres({
       databaseDir: this.pgDir,
       port: this.port,
       user: 'yimu',
@@ -80,14 +92,114 @@ class Database {
       onLog: (m) => log.info(`[pg] ${String(m).trim()}`),
       onError: (m) => log.warn(`[pg:err] ${String(m).trim()}`),
     });
+  }
 
-    if (!this.initialised) {
-      log.info(`首次启动，初始化数据库集群：${this.pgDir}`);
-      await this.instance.initialise();
+  /**
+   * 数据库看门狗。
+   *
+   * 为什么要它：PostgreSQL 是内嵌子进程，会被系统在内存压力下强杀（macOS Jetsam），
+   * 或者因磁盘/崩溃退出。它一死，后端的连接池会卡在失效连接上**无限等待**，
+   * 表现为「所有页面转圈、按钮一直保存中」——用户完全无从判断哪里坏了。
+   * 这里每 3 秒探一次端口，连续两次失败就自动重新拉起，接口随之恢复。
+   */
+  startWatchdog({ intervalMs = 3000, restartAfter = 2 } = {}) {
+    if (this.watchTimer) return;
+    const net = require('net');
+
+    const probe = () =>
+      new Promise((resolve) => {
+        const socket = net.connect({ host: '127.0.0.1', port: this.port });
+        const finish = (ok) => {
+          socket.destroy();
+          resolve(ok);
+        };
+        socket.setTimeout(1500);
+        socket.once('connect', () => finish(true));
+        socket.once('timeout', () => finish(false));
+        socket.once('error', () => finish(false));
+      });
+
+    this.failures = 0;
+    this.watchTimer = setInterval(async () => {
+      if (this.restarting) return;
+      if (await probe()) {
+        this.failures = 0;
+        return;
+      }
+      this.failures += 1;
+      if (this.failures < restartAfter) return;
+
+        this.restarting = true;
+      log.warn(`数据库无响应（连续 ${this.failures} 次探测失败），自动重新拉起`);
+      try {
+        // 关键：数据库是「已死」状态，instance.stop() 会一直等一个不存在的进程，
+        // 必须加超时，否则整个恢复流程卡死在这里（实测会卡 20 秒以上仍无进展）。
+        await this.stopQuietly(4000);
+        this.instance = this.createInstance();
+        await this.startWithRetry();
+        await this.waitReady(20000);
+        this.failures = 0;
+        log.info('数据库已自动恢复');
+      } catch (err) {
+        log.error(`数据库自动恢复失败：${err.message}（下一次探测继续重试）`);
+      } finally {
+        this.restarting = false;
+      }
+    }, intervalMs);
+    this.watchTimer.unref?.();
+  }
+
+  /** stop() 在进程已死时会一直挂着，这里加超时兜底 */
+  async stopQuietly(ms = 4000) {
+    if (!this.instance) return;
+    try {
+      await Promise.race([
+        this.instance.stop(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('stop 超时')), ms)),
+      ]);
+    } catch (err) {
+      log.warn(`停止旧数据库实例未成功：${err.message}`);
     }
-    await this.instance.start();
-    await this.waitReady();
-    log.info(`PostgreSQL 已就绪 127.0.0.1:${this.port}`);
+  }
+
+  /**
+   * 强杀（kill -9 / Jetsam）之后可能残留 postmaster.pid，
+   * pg_ctl 会误判「已在运行」而拒绝启动。这里只在对应 pid 确实不存在时清理。
+   */
+  clearStalePid() {
+    const pidFile = path.join(this.pgDir, 'postmaster.pid');
+    try {
+      if (!fs.existsSync(pidFile)) return;
+      const pid = Number(String(fs.readFileSync(pidFile, 'utf8')).split('\n')[0]);
+      if (pid) {
+        try {
+          process.kill(pid, 0);
+          return; // 进程还活着，交给 pg_ctl 处理
+        } catch {
+          /* 进程不存在，继续清理 */
+        }
+      }
+      fs.rmSync(pidFile, { force: true });
+      log.warn('已清理残留的 postmaster.pid');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async startWithRetry(attempts = 2) {
+    let lastErr = null;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await this.instance.start();
+        return;
+      } catch (err) {
+        lastErr = err;
+        log.warn(`启动数据库失败（第 ${i + 1}/${attempts} 次）：${err.message}`);
+        this.clearStalePid();
+        await sleep(800);
+      }
+    }
+    throw lastErr || new Error('数据库启动失败');
   }
 
   async waitReady(timeoutMs = 30000) {
@@ -211,6 +323,10 @@ class Database {
   }
 
   async stop() {
+    if (this.watchTimer) {
+      clearInterval(this.watchTimer);
+      this.watchTimer = null;
+    }
     if (!this.instance) return;
     try {
       await this.instance.stop();

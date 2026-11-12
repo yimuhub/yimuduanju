@@ -27,6 +27,10 @@ export function getCsrfToken(): string | null {
 export const http = axios.create({
   baseURL: '/',
   withCredentials: true,
+  // 没有超时 = 后端/数据库卡住时按钮永远显示「保存中」，用户分不清是慢还是坏了。
+  // 默认 120s：够跑完慢接口（圣经生成、质检、导出），又不会无限转圈；
+  // 需要更长的（如助手对话）在各自 request 里单独覆盖。
+  timeout: 120000,
 });
 
 http.interceptors.request.use((config) => {

@@ -60,7 +60,9 @@ function log(msg) {
 
 function run(cmd, args, opts = {}) {
   log(`$ ${cmd} ${args.join(' ')}`);
-  execFileSync(cmd, args, { cwd: ROOT, stdio: 'inherit', ...opts });
+  // Windows 上 npm 实际是 npm.cmd，execFileSync 不带 shell 会直接 ENOENT
+  const useShell = IS_WIN && /^npm(\.cmd)?$/i.test(cmd);
+  execFileSync(cmd, args, { cwd: ROOT, stdio: 'inherit', shell: useShell, ...opts });
 }
 
 function copyDir(from, to, filter) {
@@ -150,14 +152,20 @@ function pruneForeignPgBinaries(target) {
  * 因 dyld 找不到库直接 SIGABRT。
  */
 function hydratePgSymlinks(target) {
+  // Windows 版 PostgreSQL 用 DLL，不存在软链；hydrator 是 POSIX 脚本，跳过
+  if (IS_WIN) return;
   const pkgDir = path.join(target, 'node_modules', '@embedded-postgres', `${process.platform}-${process.arch}`);
   const hydrator = path.join(pkgDir, 'scripts', 'hydrate-symlinks.js');
   if (!fs.existsSync(hydrator)) {
     if (fs.existsSync(pkgDir)) log('警告：未找到 hydrate-symlinks.js，PostgreSQL 可能因缺少软链无法启动');
     return;
   }
-  run(process.execPath, [hydrator], { cwd: pkgDir });
-  log('已补齐 PostgreSQL 动态库软链');
+  try {
+    run(process.execPath, [hydrator], { cwd: pkgDir });
+    log('已补齐 PostgreSQL 动态库软链');
+  } catch (err) {
+    log(`警告：补齐软链失败（${err.message}），initdb 可能报错`);
+  }
 }
 
 
@@ -219,15 +227,27 @@ function main() {
   copyFile(process.execPath, nodeTarget, 0o755);
 
   log('内嵌 ffmpeg');
+  let ffmpegFrom = null;
+  let ffmpegBundled = false;
   if (process.env.YIMU_SKIP_BUNDLED_FFMPEG === '1') {
     // 容器形态由基础镜像 apt 安装 ffmpeg，避免把 deb 二进制再复制一份
     log('YIMU_SKIP_BUNDLED_FFMPEG=1，跳过 ffmpeg（由运行环境提供）');
   } else {
     const ffmpegCandidates = [
+      process.env.FFMPEG_PATH || '',
       path.join(ROOT, 'node_modules', 'ffmpeg-static', FFMPEG_BIN),
-      ...(IS_WIN ? [] : ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']),
-    ];
-    let ffmpegFrom = null;
+      ...(IS_WIN
+        ? [
+            'C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe',
+            'C:\\ffmpeg\\bin\\ffmpeg.exe',
+          ]
+        : ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']),
+      // 最后兜底：扫一遍 PATH（Windows CI 装完 choco 后通常只进 PATH）
+      ...String(process.env.PATH || process.env.Path || '')
+        .split(path.delimiter)
+        .filter(Boolean)
+        .map((dir) => path.join(dir, FFMPEG_BIN)),
+    ].filter(Boolean);
     for (const candidate of ffmpegCandidates) {
       if (fs.existsSync(candidate)) {
         ffmpegFrom = candidate;
@@ -236,6 +256,7 @@ function main() {
     }
     if (ffmpegFrom) {
       copyFile(ffmpegFrom, path.join(OUT, 'bin', FFMPEG_BIN), 0o755);
+      ffmpegBundled = true;
       log(`ffmpeg 来源：${ffmpegFrom}`);
     } else {
       log('未找到 ffmpeg：导出合成会退化为浏览器端 FFmpeg.wasm，功能可用但较慢');
@@ -249,7 +270,7 @@ function main() {
     arch: process.arch,
     node: process.version,
     builtAt: new Date().toISOString(),
-    ffmpeg: Boolean(ffmpegFrom),
+    ffmpeg: ffmpegBundled,
   };
   fs.writeFileSync(path.join(OUT, 'bundle.json'), JSON.stringify(manifest, null, 2));
 

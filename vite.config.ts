@@ -9,7 +9,7 @@ import react from '@vitejs/plugin-react';
  * 本配置只做纯构建：React + Tailwind(postcss) + 别名 + 环境变量透传。
  * 输出 dist/client（emptyOutDir 清理陈旧分包）。
  */
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: path.resolve(__dirname, 'client'),
   publicDir: path.resolve(__dirname, 'client/public'),
   plugins: [react()],
@@ -25,7 +25,12 @@ export default defineConfig({
     'process.env.CLIENT_BASE_PATH': JSON.stringify(process.env.CLIENT_BASE_PATH || '/app/yimu'),
     'process.env.APP_VERSION': JSON.stringify(process.env.APP_VERSION || '3.7.3'),
     'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString().slice(0,16).replace('T',' ')),
-    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+    // 不再依赖 `NODE_ENV=production vite build` 这种 POSIX 前缀写法
+    // （Windows 构建机上会直接报「'NODE_ENV' 不是内部或外部命令」）：
+    // build 命令一律按 production 注入，dev 保持 development。
+    'process.env.NODE_ENV': JSON.stringify(
+      process.env.NODE_ENV || (command === 'build' ? 'production' : 'development'),
+    ),
   },
   build: {
     outDir: path.resolve(__dirname, 'dist/client'),
@@ -56,4 +61,4 @@ export default defineConfig({
       '/uploads': 'http://localhost:3000',
     },
   },
-});
+}));

@@ -163,9 +163,13 @@ function cleanup() {
   shuttingDown = true;
   log.info('正在关闭桌面运行时…');
 
-  for (const child of children.reverse()) {
+  // 注意：不能用 child.killed 判断存活——kill() 一调用它就变 true，
+  // 导致 2 秒后的 SIGKILL 升级永远不会执行，后端/网关会变成孤儿进程一直占着端口和内存。
+  const alive = (child) => child.exitCode === null && child.signalCode === null;
+
+  for (const child of [...children].reverse()) {
     try {
-      if (!child.killed) child.kill('SIGTERM');
+      if (alive(child)) child.kill('SIGTERM');
     } catch {
       /* ignore */
     }
@@ -174,7 +178,7 @@ function cleanup() {
   setTimeout(() => {
     for (const child of children) {
       try {
-        if (!child.killed) child.kill('SIGKILL');
+        if (alive(child)) child.kill('SIGKILL');
       } catch {
         /* ignore */
       }
@@ -227,9 +231,23 @@ async function main() {
   await database.start();
   await database.bootstrapSchema(APP_DIR);
   await database.migrate(APP_DIR);
+  // 起完就交给看门狗：数据库若被系统杀掉，自动拉起，避免全站接口无限等待
+  database.startWatchdog();
 
   const uploadDir = path.join(DATA_DIR, 'uploads');
   fs.mkdirSync(uploadDir, { recursive: true });
+
+  // 包内自带的 ffmpeg：显式告知后端，避免它去猜 /usr/bin（Windows 上不存在）
+  let ffmpegPath = process.env.FFMPEG_PATH || '';
+  if (!ffmpegPath) {
+    const bundled = path.join(APP_DIR, 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    if (fs.existsSync(bundled)) {
+      ffmpegPath = bundled;
+      log.info(`ffmpeg：包内自带 ${bundled}`);
+    } else {
+      log.info('ffmpeg：包内未自带，使用系统 PATH 中的 ffmpeg');
+    }
+  }
 
   const baseEnv = {
     ...process.env,
@@ -240,6 +258,7 @@ async function main() {
     UPLOAD_DIR: uploadDir,
     YIMU_KEY_SECRET: secrets.YIMU_KEY_SECRET,
     ENTERPRISE_ADMIN_TOKEN: secrets.ENTERPRISE_ADMIN_TOKEN,
+    ...(ffmpegPath ? { FFMPEG_PATH: ffmpegPath } : {}),
     // 桌面端不接外部 authn，平台 SDK 走本地放行
     FORCE_AUTHN_INNERAPI_DOMAIN: 'http://localhost:9999',
     NODE_OPTIONS: '',

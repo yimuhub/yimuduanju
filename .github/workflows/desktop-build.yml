@@ -23,10 +23,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macos-13 / macos-14 已被 GitHub 陆续下线（macos-14 任务会秒 cancelled、
+          # macos-13 永远 queued）。统一用当前在役的 macos-15 系列。
+          - os: macos-15
             target: aarch64-apple-darwin
             label: macos-arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             label: macos-x64
           - os: windows-latest
@@ -67,8 +69,51 @@ jobs:
       - name: 构建前端与后端
         run: npm run build:prod
 
+      - name: 确保 ffmpeg 可用（会被打进安装包）
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "已存在：$(command -v ffmpeg)"
+            ffmpeg -version | head -1
+            exit 0
+          fi
+          case "${{ matrix.os }}" in
+            windows-*) choco install ffmpeg -y --no-progress ;;
+            ubuntu-*)  sudo apt-get install -y ffmpeg ;;
+            *)         brew install ffmpeg ;;
+          esac
+          ffmpeg -version | head -1
+
       - name: 生成自包含运行时（Node + PostgreSQL + ffmpeg）
         run: node scripts/desktop-pack.js --skip-build
+
+      - name: 校验运行时自包含（缺一件就失败，不允许出半成品包）
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const dir = path.join("build", "desktop-app");
+            const win = process.platform === "win32";
+            const must = [
+              win ? "node.exe" : "node",
+              path.join("bin", win ? "ffmpeg.exe" : "ffmpeg"),
+              path.join("dist", "server", "main.js"),
+              "launch.cjs",
+              path.join("node_modules", "embedded-postgres"),
+            ];
+            const missing = must.filter((f) => !fs.existsSync(path.join(dir, f)));
+            if (missing.length) {
+              console.error("运行时缺件：" + missing.join(", "));
+              process.exit(1);
+            }
+            const pg = path.join(dir, "node_modules", "@embedded-postgres",
+              process.platform + "-" + process.arch, "native", "bin");
+            if (!fs.existsSync(pg)) {
+              console.error("缺少本平台 PostgreSQL 二进制：" + pg);
+              process.exit(1);
+            }
+            console.log("自包含校验通过：" + must.join(", "));
+          '
 
       - name: 打包桌面客户端
         run: npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }}
@@ -83,3 +128,38 @@ jobs:
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    # 只有推版本标签（v3.7.3 这种）才发正式 Release，手动触发只留 artifact
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: 归并安装包
+        run: |
+          mkdir -p out
+          find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \
+            -o -name '*.deb' -o -name '*.AppImage' \) -exec cp {} out/ \;
+          ls -lh out
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          body: |
+            一幕 YIMU ${{ github.ref_name }} —— 全量自包含安装包
+
+            每个安装包内部已携带 Node 运行时、PostgreSQL 16 与 ffmpeg，
+            安装后双击即可使用，无需另装任何环境。数据保存在本机用户目录
+            （`~/.yimu-desktop`，Windows 为 `%USERPROFILE%\.yimu-desktop`）。
+
+            也可以只用 Docker：
+            ```
+            docker run -d -p 5173:5173 -v yimu-data:/data yimuhub/yimuduanju:${{ github.ref_name }}
+            ```
+
