@@ -15,6 +15,7 @@ import type {
   JobType,
   ProjectProgressResponse,
 } from '@shared/api.interface';
+import { retryMissingShots } from '@client/src/api/storyboard';
 
 interface PipelineCardProps {
   projectId: string;
@@ -142,6 +143,8 @@ export const PipelineCard = ({
   onNavigate,
 }: PipelineCardProps) => {
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [retryingMissing, setRetryingMissing] = useState(false);
+  const [retryNote, setRetryNote] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem('yimu.pipe.collapsed') === '1';
@@ -160,6 +163,22 @@ export const PipelineCard = ({
       }
       return next;
     });
+  };
+
+  // 一键补齐缺口：缺首帧建图批、有帧缺片建视频批。会真实调模型，属付费操作。
+  const handleRetryMissing = async () => {
+    setRetryingMissing(true);
+    setRetryNote(null);
+    try {
+      const res = await retryMissingShots(projectId);
+      setRetryNote(
+        `已重投：首帧 ${res.images} 个、成片 ${res.videos} 个（当前成片 ${res.withVideo}/${res.total}）`,
+      );
+    } catch (e) {
+      setRetryNote(`补齐失败：${(e as Error).message}`);
+    } finally {
+      setRetryingMissing(false);
+    }
   };
 
   const gateStep =
@@ -262,7 +281,26 @@ export const PipelineCard = ({
             >
               任务队列 <ArrowRight />
             </button>
+            {progress?.readiness &&
+              progress.readiness.total > 0 &&
+              !progress.readiness.videoComplete && (
+                <button
+                  type="button"
+                  className="pipe-link"
+                  onClick={handleRetryMissing}
+                  disabled={retryingMissing}
+                >
+                  {retryingMissing ? (
+                    <>
+                      <Loader2 className="spin" /> 正在补齐…
+                    </>
+                  ) : (
+                    <>补齐缺口（{progress.readiness.missingVideos.length} 镜）</>
+                  )}
+                </button>
+              )}
           </div>
+          {retryNote && <p className="pipe-note">{retryNote}</p>}
 
           <ol className="pipe-list">
         {progress.steps.map((s, idx) => {

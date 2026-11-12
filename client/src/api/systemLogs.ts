@@ -29,7 +29,7 @@ export interface EntriesResponse {
 export interface SystemLogEvent {
   ts: string;
   level: Exclude<LogLevel, 'UNKNOWN'>;
-  category: 'upstream' | 'job' | 'exception' | 'worker' | 'system';
+  category: 'upstream' | 'job' | 'exception' | 'worker' | 'artifact' | 'system';
   message: string;
   projectId?: string;
   jobId?: string;

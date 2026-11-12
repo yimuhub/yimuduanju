@@ -354,7 +354,7 @@ const SystemLogsPage = () => {
         )}
         {tab === 'events' && (
           <select className="syslog-select" value={category} onChange={(e) => setCategory(e.target.value)}>
-            {[['ALL', '全部分类'], ['upstream', '上游调用'], ['job', '任务'], ['exception', '异常'], ['worker', '队列'], ['system', '系统']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {[['ALL', '全部分类'], ['upstream', '上游调用'], ['job', '任务'], ['artifact', '产物校验'], ['exception', '异常'], ['worker', '队列'], ['system', '系统']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         )}
         {(tab === 'raw' || tab === 'events') && (

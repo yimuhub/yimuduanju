@@ -10,6 +10,8 @@ import { generationJobs, projects, shots, modelProviders } from '@server/databas
 import { eq, desc, and, count, sql, inArray } from 'drizzle-orm';
 import { isFreeAgnesModel } from '@shared/agnes';
 import { stageOfJobType } from '@shared/stage-bindings';
+// 产物形态硬校验：变体采纳同样不允许把图片当视频设成成片
+import { checkArtifact } from '@shared/artifact-kind';
 import { StageBindingsService } from '../providers/stage-bindings.service';
 import type {
   GenerationJob,
@@ -559,6 +561,8 @@ export class GenerationService {
     const output = (job.outputData ?? {}) as Record<string, unknown>;
     const url = typeof output.url === 'string' && output.url ? output.url : undefined;
     if (!url) throw new BadRequestException('该任务没有可用视频输出');
+    const check = checkArtifact(url, 'video');
+    if (!check.ok) throw new BadRequestException(check.reason ?? '该任务产物不是视频，不能采纳');
     const conditions = [eq(shots.id, job.targetId)];
     if (job.projectId) conditions.push(eq(shots.projectId, job.projectId));
     await this.db

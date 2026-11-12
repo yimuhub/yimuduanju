@@ -222,11 +222,16 @@ export class StoryboardService {
     // P0 安全修复：确认 scene 归属本项目，防止传入他项目的 sceneId 建镜
     await this.getScene(projectId, dto.sceneId);
 
-    const countResult = await this.db
-      .select({ count: count() })
+    /*
+     * 镜号必须项目内全局递增，不能数「本场有几镜」。
+     * 数场内条数会把第 2 场的第一镜又编成 1，跨场重复后时间线/画布/导出
+     * 按 [1,1,1,2,2,2] 交错排列，剧情顺序整个打乱。
+     */
+    const maxRow = await this.db
+      .select({ max: sql<number>`coalesce(max(${shots.shotNumber}), 0)` })
       .from(shots)
-      .where(and(eq(shots.projectId, projectId), eq(shots.sceneId, dto.sceneId)));
-    const nextNumber = Number(countResult[0].count) + 1;
+      .where(eq(shots.projectId, projectId));
+    const nextNumber = Number(maxRow[0]?.max ?? 0) + 1;
 
     const rows = await this.db
       .insert(shots)
@@ -760,6 +765,83 @@ export class StoryboardService {
       // R2V 接口就绪后直接可用，不抢首帧位置。
       references: [...[firstFrameUrl, shot.whitemodelUrl, shot.endFrameUrl].filter(Boolean) as string[], ...charRefs],
       chainedFrom,
+    };
+  }
+
+  /**
+   * 一键补齐缺口（生产力工具必需）：把「该有却没有」的产物按 M/N 口径一次性重投。
+   * - 缺首帧的镜头 → 建图批
+   * - 有首帧、缺成片的镜头 → 建视频批（用户点这个按钮即视为同意付费）
+   * - 缺配音默认不投：多数通道没有 TTS 接口，重复投只会刷失败记录
+   * 幂等由 batchGenerate 的在途去重保证，重复点击不会翻倍建任务。
+   */
+  async retryMissing(
+    projectId: string,
+    opts?: { includeVoice?: boolean },
+  ): Promise<{
+    total: number;
+    withVideo: number;
+    images: number;
+    videos: number;
+    voices: number;
+    skippedVideos: number;
+  }> {
+    await this.budgetCap.assertAllowed();
+    const shotList = await this.listShots(projectId);
+    const missingFrames = shotList.filter((s) => !s.startFrameUrl);
+    const missingVideos = shotList.filter((s) => s.startFrameUrl && !s.videoUrl);
+    const missingVoices = opts?.includeVoice
+      ? shotList.filter((s) => (s.dialogue ?? '').trim() && !s.voiceUrl)
+      : [];
+
+    let images = 0;
+    let videos = 0;
+    let voices = 0;
+    if (missingFrames.length > 0) {
+      const res = await this.batchGenerate(projectId, {
+        type: 'image',
+        shotIds: missingFrames.map((s) => s.id),
+      });
+      images = res.jobIds.length;
+    }
+    if (missingVideos.length > 0) {
+      const res = await this.batchGenerate(projectId, {
+        type: 'video',
+        shotIds: missingVideos.map((s) => s.id),
+      });
+      videos = res.jobIds.length;
+    }
+    if (missingVoices.length > 0) {
+      const res = await this.batchGenerate(projectId, {
+        type: 'voice',
+        shotIds: missingVoices.map((s) => s.id),
+      });
+      voices = res.jobIds.length;
+    }
+    // 重投后必须回到生成中，否则 M/N 门会按「已完成」的旧状态继续拦
+    if (videos > 0 || images > 0) {
+      await this.db
+        .update(projects)
+        .set({ status: 'video_generating', updatedAt: new Date() })
+        .where(
+          and(
+            eq(projects.id, projectId),
+            inArray(projects.status, ['qc', 'editing', 'audio_generating']),
+          ),
+        )
+        .catch(() => undefined);
+    }
+    const withVideo = shotList.filter((s) => s.videoUrl).length;
+    this.logger.log(
+      `补齐缺口 ${projectId}：图 ${images}、片 ${videos}、配音 ${voices}（总 ${shotList.length} 镜，已有成片 ${withVideo}）`,
+    );
+    return {
+      total: shotList.length,
+      withVideo,
+      images,
+      videos,
+      voices,
+      skippedVideos: shotList.filter((s) => !s.startFrameUrl && !s.videoUrl).length,
     };
   }
 

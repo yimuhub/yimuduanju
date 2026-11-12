@@ -144,6 +144,72 @@ export async function toProviderImageInputs(
   return out;
 }
 
+/** 视频首帧可送达形态：公网 URL / data URL / 送不出去 */
+export type VideoFrameKind = 'public' | 'data-url' | 'none';
+
+export interface VideoFrameResult {
+  url?: string;
+  kind: VideoFrameKind;
+  /** 送不出去时的可读原因（写进日志与结构化事件，不要静默） */
+  reason?: string;
+}
+
+/** 公网媒体基址：自部署用户把自己的域名/对象存储前缀配在这里 */
+function publicMediaBase(): string {
+  const raw =
+    process.env.YIMU_PUBLIC_MEDIA_BASE ||
+    process.env.PUBLIC_MEDIA_BASE ||
+    process.env.YIMU_PUBLIC_BASE_URL ||
+    '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+/**
+ * 视频首帧/尾帧的送达形态（**与生图参考图不是同一件事**）。
+ * ------------------------------------------------------------------
+ * 生图 `image` 字段吃 base64，视频 `first_frame` 字段多数供应商只吃**公网 URL**：
+ * Agnes 的 /videos 只接受 http(s)，我们本地 `/uploads/xxx.png` 会被判定为非公网
+ * 素材直接丢弃，于是每一单都退化成 `mode=text`（纯文生视频）——画面和分镜图
+ * 必然对不上，而且日志里只有一行 warn，肉眼很难发现。
+ *
+ * 收敛顺序（越大越优先）：
+ *   1. 已经是 http(s) → 原样（上游 CDN 回传的图就在这一档，最稳）
+ *   2. 配了 YIMU_PUBLIC_MEDIA_BASE → 拼成公网地址
+ *   3. 供应商允许 data URL → 内联 base64（OpenAI 兼容/方舟可用）
+ *   4. 都不行 → kind='none' + reason，由调用方显式降级并记账
+ */
+export async function toProviderVideoFrame(
+  raw?: string | null,
+  opts?: { allowDataUrl?: boolean },
+): Promise<VideoFrameResult> {
+  const u = typeof raw === 'string' ? raw.trim() : '';
+  if (!u) return { kind: 'none', reason: '没有首帧' };
+  if (/^https?:\/\//i.test(u)) return { url: u, kind: 'public' };
+
+  const allowDataUrl = opts?.allowDataUrl !== false;
+  if (/^data:/i.test(u)) {
+    return allowDataUrl
+      ? { url: u, kind: 'data-url' }
+      : { url: undefined, kind: 'none', reason: '该供应商只接受公网 URL，data URL 无法送达' };
+  }
+
+  if (isLocalUploadPath(u)) {
+    const base = publicMediaBase();
+    if (base) return { url: `${base}${u}`, kind: 'public' };
+    if (allowDataUrl) {
+      const dataUrl = await toProviderImageInput(u);
+      if (dataUrl) return { url: dataUrl, kind: 'data-url' };
+      return { kind: 'none', reason: '本地首帧读盘失败，且未配置公网媒体基址' };
+    }
+    return {
+      kind: 'none',
+      reason: '本地首帧不可公网访问，且该供应商不接受 data URL（配 YIMU_PUBLIC_MEDIA_BASE 可解）',
+    };
+  }
+
+  return { kind: 'none', reason: `无法识别的首帧形态：${u.slice(0, 60)}` };
+}
+
 /**
  * 部分中转（Agnes 官方 /v1/images/generations）的 `image` 字段只吃**纯 base64**：
  * 传 /uploads 相对路径、http(s) URL，甚至带 `data:image/png;base64,` 前缀的

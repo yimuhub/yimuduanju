@@ -52,6 +52,22 @@ export const renumberShots = (projectId: string) =>
     .post<{ changed: number }>(`/api/projects/${projectId}/storyboard/renumber`)
     .then((res) => res.data);
 
+/**
+ * 一键补齐缺口：缺首帧建图批、有帧缺片建视频批（会真实调模型、产生费用）。
+ * 幂等由服务端在途去重保证，重复点击不会翻倍建任务。
+ */
+export const retryMissingShots = (projectId: string, includeVoice = false) =>
+  axiosForBackend
+    .post<{
+      total: number;
+      withVideo: number;
+      images: number;
+      videos: number;
+      voices: number;
+      skippedVideos: number;
+    }>(`/api/projects/${projectId}/storyboard/retry-missing`, { includeVoice })
+    .then((res) => res.data);
+
 export const getScene = (projectId: string, id: string) =>
   axiosForBackend
     .get<Scene>(`/api/projects/${projectId}/storyboard/scenes/${id}`)

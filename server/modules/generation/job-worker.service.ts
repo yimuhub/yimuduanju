@@ -69,6 +69,11 @@ import {
 import { fitTotalBudget, minimumReadableSeconds } from '@shared/shot-duration';
 // 完成态唯一口径：N 个镜头必须 N 个成片，不允许 some() 假完成
 import { computePipelineReadiness } from '@shared/pipeline-readiness';
+// 产物形态硬校验：视频字段拿到图片地址必须拒绝落库
+import { checkArtifact } from '@shared/artifact-kind';
+// 语言纪律：分镜文本必须与剧本同语言，否则语言自愈
+import { detectBoardLanguage, isBoardTextInLanguage } from '@shared/boards-language';
+import { systemLog } from '../../common/system-log.store';
 // 3 秒分段视频提示词 + 段内续接：一句话描述整镜必然被模型各做各的
 import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-prompt';
 // 修复（分层）：uploadDir 直接从工具模块导入。
@@ -897,6 +902,65 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   // ========== 各类型执行 ==========
 
+  /**
+   * 出片前语言自愈（通用，不针对某个项目）。
+   * 中文剧本 + 英文分镜时，人物/场景是按中文资产名绑定的，英文描述一条都命中不了，
+   * 首帧必然拿不到参考图。旧做法是「让用户自己发现再点中文回填」，等于把质量
+   * 责任推给用户；这里在首帧任务入口就地改写，失败也留痕不静默。
+   */
+  private async healShotLanguage(
+    projectId: string,
+    shotId: string,
+    shotText: string,
+    providerName?: string,
+  ): Promise<string> {
+    const text = (shotText ?? '').trim();
+    if (!text) return shotText;
+    try {
+      const projRows = await this.db
+        .select({ scriptText: projects.scriptText })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
+      const scriptText = projRows[0]?.scriptText ?? '';
+      if (detectBoardLanguage(scriptText) !== 'zh') return shotText;
+      if (isBoardTextInLanguage(text, 'zh')) return shotText;
+      const localized = await this.storySkills.localizeTexts(
+        [{ id: shotId, text }],
+        scriptText,
+        providerName,
+      );
+      const next = localized[shotId];
+      if (!next) {
+        this.logger.warn(`镜 ${shotId} 画面描述仍是英文，语言自愈未取回改写结果，按原文出片`);
+        systemLog.record({
+          level: 'WARN',
+          category: 'job',
+          projectId,
+          message: '分镜文本语言自愈失败（仍为英文），本镜按原文出片，人物绑定可能落空',
+          detail: { shotId, text: text.slice(0, 200) },
+        });
+        return shotText;
+      }
+      await this.db
+        .update(shots)
+        .set({ visualPrompt: next, updatedAt: new Date() })
+        .where(eq(shots.id, shotId));
+      this.logger.log(`镜 ${shotId} 画面描述已自愈为中文（${text.length} → ${next.length} 字）`);
+      systemLog.record({
+        level: 'INFO',
+        category: 'job',
+        projectId,
+        message: '分镜文本语言自愈：英文 → 中文',
+        detail: { shotId, before: text.slice(0, 160), after: next.slice(0, 160) },
+      });
+      return next;
+    } catch (e) {
+      this.logger.warn(`镜 ${shotId} 语言自愈异常：${(e as Error).message}`);
+      return shotText;
+    }
+  }
+
   private async processText(job: GenerationJob, providerName?: string, opts?: { model?: string; temperature?: number }): Promise<void> {
     const prompt = this.inputPrompt(job);
     if (!prompt.trim()) {
@@ -916,10 +980,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private async processImage(job: GenerationJob, providerName?: string, opts?: { model?: string }): Promise<void> {
     const input = (job.inputData ?? {}) as Record<string, unknown>;
-    const prompt = this.inputPrompt(job);
+    let prompt = this.inputPrompt(job);
     if (!prompt.trim()) {
       await this.generationService.settleJobFailure(job.id, '图片任务缺少 prompt');
       return;
+    }
+    // 出片前语言自愈：中文剧本 + 英文分镜会让按中文名建的人物绑定整镜落空。
+    // 不指望用户自己发现去点「中文回填」，进任务时就地改写这一镜。
+    if (job.targetType === 'shot' && job.targetId && job.projectId) {
+      prompt = await this.healShotLanguage(job.projectId, job.targetId, prompt, providerName);
     }
     /* ==================================================================
      * 镜头生图的一致性上下文（对标 ArcReel 的「图N」机械编号）
@@ -997,9 +1066,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const firstUrl = images[0]?.url;
     // data: 大 base64 不进 shots.startFrameUrl 也不原样塞入 outputData JSONB（防 TOAST 表膨胀）；统一先落盘成 /uploads/
     const stableUrl = firstUrl ? await this.ensureLocalUrl(job.projectId, firstUrl) : undefined;
+    // 上游 CDN 的原始地址要留着：视频侧 only-public-URL 的供应商（Agnes）拿它当
+    // 首帧才送得出去，本地 /uploads 版本对它们等于不存在。只存 URL 不存像素。
+    const upstreamUrl =
+      firstUrl && /^https?:\/\//i.test(firstUrl) ? firstUrl : undefined;
     if (stableUrl) await this.writebackToTarget(job, { imageUrl: stableUrl });
     const sanitizedImages = images.map((img, idx) => ({
       ...img,
+      ...(idx === 0 && upstreamUrl ? { remoteUrl: upstreamUrl } : {}),
       url: idx === 0 && stableUrl ? stableUrl : img.url.startsWith('data:') ? (stableUrl ?? '/uploads/inline.png') : img.url,
     }));
     await this.generationService.settleJobSuccess(job.id, { images: sanitizedImages });
@@ -1291,7 +1365,18 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     // 白模选填：references[1] 为白模位（generateShotVideo 约定：首帧/白模/尾帧/角色图）。
     // 网关侧再做双门控（供应商 videoReference 开关 + 公网 URL），此处只透传不决策。
-    const { taskId } = await this.modelGateway.generateVideo(
+    // 首帧优先用生图时上游 CDN 回传的原始地址：只吃公网 URL 的供应商（Agnes）
+    // 拿到本地 /uploads 等于没有首帧，会静默退化成纯文生视频。
+    if (
+      imageUrl &&
+      !/^https?:\/\//i.test(imageUrl) &&
+      job.targetType === 'shot' &&
+      job.targetId
+    ) {
+      const upstreamFrame = await this.latestUpstreamFrame(job.targetId);
+      if (upstreamFrame) imageUrl = upstreamFrame;
+    }
+    const created = await this.modelGateway.generateVideo(
       {
         prompt,
         duration:
@@ -1305,6 +1390,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       },
       providerName,
     );
+    const { taskId } = created;
+    // 首帧真的没送出去时，把它记到项目级 pipeline 提示里：
+    // 生产力工具不能让「这一镜其实是文生视频」这种事只躺在日志里。
+    if (created.frameNotSent && job.projectId) {
+      await this.writePipelineField(job.projectId, 'frameNotice', {
+        shotId: job.targetId ?? null,
+        reason: created.frameNotSent,
+        at: new Date().toISOString(),
+      });
+    }
     // 远端任务已创建：记录 externalTaskId，保持 running，由轮询完成
     await this.db
       .update(generationJobs)
@@ -1798,6 +1893,33 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     await this.advanceProjectStatus(projectId, 'video_generating', 'audio_generating');
     await this.advanceProjectStatus(projectId, 'audio_generating', 'editing');
+  }
+
+  /**
+   * 最近一次成功首帧任务里上游 CDN 的原始地址。
+   * 视频侧只有「公网 URL」这一档真正通用（Agnes 连 data URL 都不收），
+   * 而我们把图统一落到 /uploads 后就把 CDN 地址丢了 —— 这里按镜头捞回来。
+   */
+  private async latestUpstreamFrame(shotId: string): Promise<string | undefined> {
+    try {
+      const rows = await this.db
+        .select({ outputData: generationJobs.outputData })
+        .from(generationJobs)
+        .where(
+          and(
+            eq(generationJobs.jobType, 'image'),
+            eq(generationJobs.targetId, shotId),
+            eq(generationJobs.status, 'succeeded'),
+          ),
+        )
+        .orderBy(desc(generationJobs.createdAt))
+        .limit(1);
+      const out = (rows[0]?.outputData ?? {}) as { images?: { remoteUrl?: string }[] };
+      const url = out.images?.[0]?.remoteUrl;
+      return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** 把流水线状态写进 metadata.pipeline[key]（readiness / qc），幂等，不覆盖 approvals */
@@ -3229,11 +3351,52 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     urls: { imageUrl?: string; videoUrl?: string; voiceUrl?: string },
   ): Promise<void> {
     if (!job.targetId) return;
+    /* ------------------------------------------------------------------
+     * 产物形态校验：上游偶尔会把图片地址当视频结果返回（实测 2 条
+     * video_url 指向 .../images/t2i/*.png）。不校验就落库 → 数量门被绕过、
+     * 合成阶段拿一张图当 mp4 拼。宁可在这一层拒绝，让缺口如实显示。
+     * ------------------------------------------------------------------ */
+    // 本次产物是否来自 mock 演练通道：归档时打标，资产库/分镜页据此显示「演示」而非当真片
+    const mock = await this.generationService.isMockJob(job);
+    const checks: { url?: string; expected: 'video' | 'image' | 'audio'; field: string }[] = [
+      { url: urls.videoUrl, expected: 'video', field: 'videoUrl' },
+      { url: urls.imageUrl, expected: 'image', field: 'imageUrl' },
+      { url: urls.voiceUrl, expected: 'audio', field: 'voiceUrl' },
+    ];
+    for (const c of checks) {
+      if (!c.url) continue;
+      const check = checkArtifact(c.url, c.expected);
+      if (check.warning) this.logger.warn(check.warning);
+      // mock 演练允许占位产物（无 ffmpeg 时会拿首帧当占位视频），只警告不拒绝
+      if (!check.ok && mock) {
+        this.logger.warn(`mock 演练产物形态不符（${c.field}）：${check.reason}`);
+        continue;
+      }
+      if (!check.ok) {
+        this.logger.error(`任务 ${job.id} 产物被拒绝（${c.field}）：${check.reason}`);
+        systemLog.record({
+          level: 'ERROR',
+          category: 'artifact',
+          jobId: job.id,
+          projectId: job.projectId ?? undefined,
+          provider: job.providerName ?? undefined,
+          message: check.reason ?? '产物形态不符',
+          detail: {
+            field: c.field,
+            url: String(c.url).slice(0, 400),
+            detected: check.kind,
+            expected: c.expected,
+            jobType: job.jobType,
+            targetType: job.targetType ?? null,
+            targetId: job.targetId,
+          },
+        });
+        return;
+      }
+    }
     const projectGuard = job.projectId
       ? { projectId: job.projectId }
       : undefined;
-    // 本次产物是否来自 mock 演练通道：归档时打标，资产库/分镜页据此显示「演示」而非当真片
-    const mock = await this.generationService.isMockJob(job);
 
     if (job.targetType === 'shot') {
       const patch: Record<string, unknown> = { updatedAt: new Date() };

@@ -130,6 +130,8 @@ export function stripBrandTokens(text: string): string {
   }
   return out
     .replace(/\s{2,}/g, ' ')
+    // 删词后常在两个汉字之间留下一个空格（「袍服上 字样刺绣」），中文里不该有
+    .replace(/(\p{Script=Han})\s+(\p{Script=Han})/gu, '$1$2')
     .replace(/\s+([，。、；：！？])/g, '$1')
     .replace(/([，。、；：])\s*[，。、；：]/g, '$1')
     .trim();

@@ -87,6 +87,27 @@ export class StoryboardController {
     return { changed: await this.storyboardService.renumberShots(projectId) };
   }
 
+  /**
+   * 一键补齐缺口：缺首帧建图批、有帧缺片建视频批（显式付费操作）。
+   * 文案与判定都按 M/N 口径，和「视频已完成」的完成态同源。
+   */
+  @Post('retry-missing')
+  async retryMissing(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: { includeVoice?: boolean },
+  ): Promise<{
+    total: number;
+    withVideo: number;
+    images: number;
+    videos: number;
+    voices: number;
+    skippedVideos: number;
+  }> {
+    return this.storyboardService.retryMissing(projectId, {
+      includeVoice: body?.includeVoice === true,
+    });
+  }
+
   /** 片段列表（场 → 片段 → 镜 的中间层） */
   @Get('segments')
   async listSegments(

@@ -22,6 +22,7 @@ export type SystemLogCategory =
   | 'job'
   | 'exception'
   | 'worker'
+  | 'artifact'
   | 'system';
 
 export interface SystemLogEvent {

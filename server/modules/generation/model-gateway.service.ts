@@ -27,6 +27,7 @@ import { systemLog } from '../../common/system-log.store';
 import {
   toProviderImageInput,
   toProviderImageBase64,
+  toProviderVideoFrame,
 } from './media-input';
 
 interface TextGenerateParams {
@@ -621,10 +622,13 @@ export class ModelGatewayService {
    */
   private readonly mockVideoTasks = new Map<string, { url: string; at: number }>();
 
+  /**
+   * @param frameNotSent 首帧送不出去时的可读原因（调用方据此给项目提示，不要静默）
+   */
   async generateVideo(
     params: VideoGenerateParams,
     providerName?: string,
-  ): Promise<{ taskId: string; status: string }> {
+  ): Promise<{ taskId: string; status: string; frameNotSent?: string }> {
     const provider = await this.getProvider(providerName, 'video');
     const formatType = provider.formatType as FormatType;
     if (formatType === 'mock') {
@@ -696,6 +700,39 @@ export class ModelGatewayService {
 
     const baseUrl = this.normalizeBaseUrl(provider.baseUrl);
 
+    /* ------------------------------------------------------------------
+     * 首帧/尾帧必须在出口处收敛成供应商真能拉到的形态。
+     * 事故：Agnes 的 /videos 只接受 http(s)，本地 `/uploads/xxx.png` 被判成
+     * 非公网素材**静默丢弃**，每一单都退化成 mode=text（纯文生视频）——
+     * 首帧等于从没送到过视频模型，画面和分镜图必然对不上。
+     * 现在：能公网就公网，能 data URL 就内联，都不行就显式报「没送出去」。
+     * ------------------------------------------------------------------ */
+    const frameFormat = ((provider.modelParams ?? {}) as { videoFrameFormat?: string })
+      .videoFrameFormat;
+    const allowDataUrl =
+      frameFormat === 'data_url' ? true : frameFormat === 'url' ? false : formatType !== 'agnes';
+    const firstFrame = await toProviderVideoFrame(params.imageUrl, { allowDataUrl });
+    const lastFrame = await toProviderVideoFrame(params.lastFrameUrl, { allowDataUrl });
+    let frameNotSent: string | undefined;
+    if (params.imageUrl && firstFrame.kind === 'none') {
+      frameNotSent = firstFrame.reason ?? '首帧未送达';
+      this.logger.warn(
+        `视频首帧未送达（${provider.name} / ${formatType}）：${frameNotSent}｜原始 ${String(params.imageUrl).slice(0, 80)}`,
+      );
+      systemLog.record({
+        level: 'WARN',
+        category: 'upstream',
+        provider: provider.name,
+        message: `视频首帧未送达，本次按无首帧生成：${frameNotSent}`,
+        detail: {
+          formatType,
+          raw: String(params.imageUrl).slice(0, 300),
+          frameFormat: frameFormat ?? null,
+          allowDataUrl,
+        },
+      });
+    }
+
     // R2V 直喂门控：默认关闭（capabilities.videoReference 未开启时 body 与旧版完全一致）；
     // 本地相对路径与 data: URL 云端拉不到，直接丢弃并记日志，不伪装发送。
     const refUrl = (params.referenceVideoUrl ?? '').trim();
@@ -715,7 +752,17 @@ export class ModelGatewayService {
 
     // Agnes 专用通道（测试版）：官方双接口，mode 按参考素材自动映射
     if (formatType === 'agnes') {
-      return this.createAgnesVideo(provider, { ...params, duration: effectiveDuration }, withPrefix);
+      return this.createAgnesVideo(
+        provider,
+        {
+          ...params,
+          duration: effectiveDuration,
+          imageUrl: firstFrame.url,
+          lastFrameUrl: lastFrame.url,
+        },
+        withPrefix,
+        frameNotSent,
+      );
     }
 
     if (formatType === 'volcengine_ark') {
@@ -726,7 +773,7 @@ export class ModelGatewayService {
         prompt: withPrefix(params.prompt),
         duration: effectiveDuration,
         size: params.size ?? '720p',
-        ...(params.imageUrl ? { image_url: params.imageUrl } : {}),
+        ...(firstFrame.url ? { image_url: firstFrame.url } : {}),
         ...(sendRef ? { reference_video_url: refUrl } : {}),
       };
     } else {
@@ -737,7 +784,7 @@ export class ModelGatewayService {
         prompt: withPrefix(params.prompt),
         duration: effectiveDuration,
         size: params.size ?? '1024x576',
-        ...(params.imageUrl ? { image_url: params.imageUrl } : {}),
+        ...(firstFrame.url ? { image_url: firstFrame.url } : {}),
         ...(sendRef ? { reference_video: refUrl } : {}),
       };
     }
@@ -780,7 +827,7 @@ export class ModelGatewayService {
       if (!taskId) {
         throw new BadRequestException('视频生成响应中无任务 ID');
       }
-      return { taskId, status: data.status ?? 'running' };
+      return { taskId, status: data.status ?? 'running', frameNotSent };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error(`视频生成请求失败: ${(error as Error).message}`);
@@ -800,7 +847,8 @@ export class ModelGatewayService {
     provider: ProviderRecord,
     params: VideoGenerateParams,
     withPrefix: (p: string) => string,
-  ): Promise<{ taskId: string; status: string }> {
+    frameNotSent?: string,
+  ): Promise<{ taskId: string; status: string; frameNotSent?: string }> {
     const apiKey = provider.apiKey;
     if (!apiKey) {
       throw new BadRequestException('Provider 未配置 API Key');
@@ -857,8 +905,14 @@ export class ModelGatewayService {
     if (!videoId) {
       throw new BadRequestException('Agnes 视频响应中无 video_id');
     }
-    this.logger.log(`Agnes 视频任务已创建 ${videoId}（mode=${body.mode}）`);
-    return { taskId: `agnes:${videoId}:${model}`, status: data.status ?? 'running' };
+    this.logger.log(
+      `Agnes 视频任务已创建 ${videoId}（mode=${body.mode}${frameNotSent ? '，首帧未送达' : ''}）`,
+    );
+    return {
+      taskId: `agnes:${videoId}:${model}`,
+      status: data.status ?? 'running',
+      frameNotSent,
+    };
   }
 
   /** Agnes 轮询：GET {root}/agnesapi?video_id=&model_name=（root = 基址去 /v1） */
