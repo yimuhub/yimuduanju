@@ -459,14 +459,20 @@ export class GenerationService {
     qc: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
   };
 
-  async claimNextPendingJob(): Promise<GenerationJob | null> {
+  async claimNextPendingJob(excludeIds: string[] = []): Promise<GenerationJob | null> {
     // 有 blockedReason 的视频仍在等待首帧，必须在 SQL 层排除，避免 limit(1) 队头阻塞。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
     // 候选按优先级/时间排序取一小批，再按"分类型并发水位"挑第一个未满道的
     const candidates = await this.db
       .select({ id: generationJobs.id, jobType: generationJobs.jobType })
       .from(generationJobs)
-      .where(and(eq(generationJobs.status, 'pending'), dependencyReady))
+      .where(
+        and(
+          eq(generationJobs.status, 'pending'),
+          dependencyReady,
+          excludeIds.length ? sql`${generationJobs.id}::text <> all(${excludeIds})` : undefined,
+        ),
+      )
       .orderBy(desc(generationJobs.priority), generationJobs.createdAt)
       .limit(24);
     if (candidates.length === 0) return null;

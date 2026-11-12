@@ -558,7 +558,19 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         // 队列模式：认领 pending → queued → 入队（Worker 并发执行）
         for (let i = 0; i < 5; i += 1) {
           // eslint-disable-next-line no-await-in-loop
-          const claimed = await this.claimForQueue();
+          let claimed = await this.claimForQueue();
+          // W 队头阻塞修复（队列模式）：被供应商退避挡住的任务跳过，试下一个
+          // 候选——否则 FIFO 队头的慢/限流任务会饿死后面所有其他类型任务。
+          let holdGuard = 0;
+          while (claimed && holdGuard < 8) {
+            const holdKey = `${claimed.providerName ?? DEFAULT_PROVIDER_KEY}|${claimed.jobType}`;
+            const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
+            if (holdUntil <= Date.now()) break;
+            await this.releaseToPending(claimed.id);
+            holdGuard += 1;
+            // eslint-disable-next-line no-await-in-loop
+            claimed = await this.claimForQueue();
+          }
           if (!claimed) break;
           // BullMQ 按 jobId 去重：完成过的同 id 再 add 会被静默忽略 →
           // 重试任务永远卡 queued。带 retryCount+时间戳保证唯一。
@@ -590,8 +602,22 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
       } else {
-        // 降级模式：进程内串行直接执行（旧行为）
-        const job = await this.generationService.claimNextPendingJob();
+        // 降级模式：进程内串行直接执行。
+        // W 队头阻塞修复：被供应商退避挡住的任务（认领→释放）会以 FIFO 永远
+        // 占住队头，饿死后面的其他任务——认领时携带排除清单循环跳过，
+        // 直到找到未被退避挡住的任务或候选耗尽。
+        const exclude: string[] = [];
+        let job = await this.generationService.claimNextPendingJob(exclude);
+        let guard = 0;
+        while (job && guard < 8) {
+          guard += 1;
+          const holdKey = `${job.providerName ?? DEFAULT_PROVIDER_KEY}|${job.jobType}`;
+          const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
+          if (holdUntil <= Date.now()) break; // 未被退避挡住，可以执行
+          await this.releaseToPending(job.id);
+          exclude.push(job.id);
+          job = await this.generationService.claimNextPendingJob(exclude);
+        }
         if (job) await this.process(job);
       }
     } finally {
@@ -605,11 +631,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 既不继续打爆对端池，也不会像旧的全局 holdUntil 那样冻住所有通道。
     // providerName 为 NULL 的任务（路由决策尚未落盘）必须放行，
     // 否则 NOT IN 遇 NULL 结果为 NULL，会把全部未路由任务一起排除掉。
+    // W 冷却维度细化：coolingProviders 现返回「provider|jobType」复合键，
+    // 只冻结出问题的那一类通道，其余类型继续跑。
     const cooling = this.coolingProviders();
     // 本地任务不调用供应商，冷却名单不能挡住它们（否则整条本地链被限流误伤）
     const localJobs = inArray(generationJobs.jobType, ['parse_script', 'edit', 'qc', 'asset_prep']);
     // 有 blockedReason 的视频在等首帧，必须跳过，避免队头阻塞整条队列。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
+    const providerTypeKey = sql`coalesce(${generationJobs.providerName}, ${DEFAULT_PROVIDER_KEY}) || '|' || ${generationJobs.jobType}`;
     const where =
       cooling.length > 0
         ? and(
@@ -618,7 +647,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             or(
               localJobs,
               isNull(generationJobs.providerName),
-              notInArray(generationJobs.providerName, cooling),
+              notInArray(providerTypeKey, cooling),
             ),
           )
         : and(eq(generationJobs.status, 'pending'), dependencyReady);
@@ -851,7 +880,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       // 一个全局值，某个供应商限流会把所有项目、所有任务类型一起冻 20s。
       // 改为按 provider 维度冷却，未受影响的通道继续跑。
       if (isRateLimitMessage(message)) {
-        const key = providerName ?? DEFAULT_PROVIDER_KEY;
+        // W 冷却维度细化：503 队列满只发生在视频端点，按 provider+jobType
+        // 冷却——同供应商的图片/文本通道不受牵连（真实 E2E 实证的需求）。
+        const key = `${providerName ?? DEFAULT_PROVIDER_KEY}|${job.jobType}`;
         // W 指数退避：连续限流时冷却翻倍（20s→40s→…→300s 封顶），上游过载时
         // 不再以固定 20s 高频重试打爆对端队列；任一任务成功后清零恢复基线。
         // （旧式 consecutive ?? 1 + 1 会让首次失败就直接翻倍到 40s，与注释档位不符）
