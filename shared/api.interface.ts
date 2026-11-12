@@ -1301,16 +1301,38 @@ export interface GenerationProgress {
   message?: string;
 }
 
+/**
+ * 前置资产严格串行链的分段状态（分镜确认门之后、首帧批量之前）：
+ * characters（人物定妆）→ scenes（场景图）→ props（道具设定图）→ done。
+ * 每段完成才进下一段；任一段失败停在原地可重试（写入 metadata.pipeline.assetStage）。
+ */
+export interface AssetStageProgress {
+  stage: 'characters' | 'scenes' | 'props' | 'done';
+  /** 人话标签（人物定妆照 / 场景图 / 道具设定图） */
+  label?: string;
+  /** 该段在途生成任务数 */
+  inflight?: number;
+  /** 该段仍缺参考图的资产数 */
+  missing?: number;
+  /** 重试耗尽后的降级标记（按文生图降级出片） */
+  degraded?: boolean;
+}
+
 export interface ProjectProgressResponse {
   projectId: string;
   overallStatus: ProjectStatus;
   overallProgress: number;
   steps: GenerationProgress[];
   currentStep?: string;
-  /** 三道阶段确认门的通过状态（true=已通过） */
-  gates?: { script: boolean; storyboard: boolean; final: boolean };
+  /** 各道阶段确认门的通过状态（true=已通过；preview=分镜预览门） */
+  gates?: { script: boolean; storyboard: boolean; preview: boolean; final: boolean };
   /** 当前等待用户确认的门（null=无门可过，流水线自动段进行中） */
-  nextGate?: 'script' | 'storyboard' | 'final' | null;
+  nextGate?: 'script' | 'storyboard' | 'preview' | 'final' | null;
+  /**
+   * 前置资产串行链当前段（assets_generating 阶段细分）：
+   * 流程总控「资产生成中」一段要能展开看到 人物→场景→道具 三小段各自进度。
+   */
+  assetStage?: AssetStageProgress | null;
   /** 最新一次剧本技能任务状态：用于区分「仍在生成 / 已生成待确认 / 生成失败」 */
   scriptJob?: { status: JobStatus; errorMessage?: string } | null;
   /**

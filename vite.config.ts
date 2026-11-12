@@ -23,7 +23,7 @@ export default defineConfig(({ command }) => ({
   define: {
     // 与 scripts/gateway.js 的 /app/yimu 前缀保持一致（basename 失配会导致首页 404）
     'process.env.CLIENT_BASE_PATH': JSON.stringify(process.env.CLIENT_BASE_PATH || '/app/yimu'),
-    'process.env.APP_VERSION': JSON.stringify(process.env.APP_VERSION || '3.7.3'),
+    'process.env.APP_VERSION': JSON.stringify(process.env.APP_VERSION || '3.8.2'),
     'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString().slice(0,16).replace('T',' ')),
     // 不再依赖 `NODE_ENV=production vite build` 这种 POSIX 前缀写法
     // （Windows 构建机上会直接报「'NODE_ENV' 不是内部或外部命令」）：

@@ -477,6 +477,31 @@
   color: var(--p3-primary);
 }
 
+/* 分镜节点卡：内容更宽（时间分段块 + 预览区需要横向空间） */
+.p3-node-card.p3-node-card-storyboard {
+  width: 320px;
+}
+
+/* 标题行内联小图标按钮（分镜节点的编辑/删除） */
+.p3-node-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--p3-faint);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  padding: 0;
+}
+.p3-node-icon-btn:hover {
+  background: var(--p3-hover);
+  color: var(--p3-text);
+}
+
 /* 进度条 */
 .p3-progress-track {
   height: 4px;
