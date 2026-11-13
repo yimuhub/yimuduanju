@@ -849,6 +849,57 @@ export interface QueueOverviewResponse {
 
 export type QueueMoveDirection = 'up' | 'down' | 'top' | 'bottom';
 
+// ==================== 密钥车道（一把 Key = 一条独立并发车道） ====================
+
+/**
+ * 为什么按 Key 展示：供应商排队是**账号级**的，用户加多把 Key 的收益取决于
+ * 「每把 Key 各自能并发几单、现在有几单在途、是否被限流冷却」。这些状态原来
+ * 只写在数据库里，界面上完全看不见，于是「加了 10 把 Key 到底有没有加速」
+ * 无法判断。这个结构就是给排队页直接渲染用的。
+ */
+export interface KeyLane {
+  keyId: string;
+  /** 用户自己起的名字（如「Mac1」「ai1」），没有则回落到 Key 尾号 */
+  label: string;
+  providerId: string;
+  providerName: string;
+  formatType?: string;
+  /** active 可用 / cooldown 限流冷却中 / invalid 失效（401/403） */
+  status: string;
+  enabled: boolean;
+  /** 自动探测出来的并发上限（1~3） */
+  concurrency: number;
+  /** 当前在途（已建单等回调）的任务数 */
+  inFlight: number;
+  cooldownRemainingMs: number;
+  cooldownUntil?: string;
+  lastError?: string;
+  lastUsedAt?: string;
+  /** 钉了这把 Key 的项目（项目间互不打扰） */
+  pinnedProjects: { projectId: string; projectTitle: string }[];
+}
+
+export interface KeyLaneGroup {
+  providerId: string;
+  providerName: string;
+  formatType?: string;
+  lanes: KeyLane[];
+  totalConcurrency: number;
+  totalInFlight: number;
+}
+
+export interface KeyLanesResponse {
+  groups: KeyLaneGroup[];
+  generatedAt: string;
+}
+
+export interface PinProjectKeyResult {
+  projectId: string;
+  pinnedKeyId: string | null;
+  message: string;
+}
+
+
 export interface QueueActionResult {
   id: string;
   status: JobStatus;
@@ -858,8 +909,7 @@ export interface QueueActionResult {
   message?: string;
 }
 
-export type ProviderType = 'volcengine_ark' | 'openai_proxy' | 'custom' | 'official';
-export type FormatType = 'openai' | 'volcengine_ark' | 'mock' | 'agnes';
+export type ProviderType = 'volcengine_ark' | 'openai_proxy' | 'custom' | 'official';export type FormatType = 'openai' | 'volcengine_ark' | 'mock' | 'agnes';
 
 export interface ModelCapabilities {
   text: boolean;

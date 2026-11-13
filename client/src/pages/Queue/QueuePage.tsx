@@ -23,6 +23,7 @@ import {
   CirclePause,
   CirclePlay,
   Clock3,
+  KeyRound,
   ListOrdered,
   Loader2,
   Pause,
@@ -39,6 +40,8 @@ import * as queueApi from '@client/src/api/queue';
 import type {
   JobStatus,
   JobType,
+  KeyLane,
+  KeyLanesResponse,
   QueueItem,
   QueueMoveDirection,
   QueueOverviewResponse,
@@ -96,6 +99,7 @@ const errText = (e: unknown): string =>
 
 export default function QueuePage() {
   const [data, setData] = useState<QueueOverviewResponse | null>(null);
+  const [lanes, setLanes] = useState<KeyLanesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -107,8 +111,13 @@ export default function QueuePage() {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await queueApi.queueOverview();
-      setData(res);
+      // 队列与密钥车道一起拉：两边状态必须同时刻，否则「在途 0 单却显示执行中」
+      const [overview, laneRes] = await Promise.all([
+        queueApi.queueOverview(),
+        queueApi.keyLanes().catch(() => null),
+      ]);
+      setData(overview);
+      setLanes(laneRes);
       setError(null);
     } catch (e) {
       setError(`加载全站排队失败：${errText(e)}`);
@@ -198,6 +207,22 @@ export default function QueuePage() {
     await run('round-robin', () => queueApi.roundRobinQueue(), '已重排');
   };
 
+  const allLanes = useMemo<KeyLane[]>(
+    () => lanes?.groups.flatMap((g) => g.lanes) ?? [],
+    [lanes],
+  );
+
+  /** 某项目当前钉住的 Key（从车道反查，避免再多一个请求） */
+  const pinnedKeyOf = (projectId: string): string =>
+    allLanes.find((l) => l.pinnedProjects.some((p) => p.projectId === projectId))?.keyId ?? '';
+
+  const onPin = (projectId: string, keyId: string | null) =>
+    void run(
+      `pin:${projectId}`,
+      () => queueApi.pinProjectKey(projectId, keyId),
+      keyId ? '已钉住该 Key' : '已解除 Key 钉定',
+    );
+
   const statCards = data
     ? [
         { label: '等待 / 已入队', value: data.stats.pending + data.stats.queued, icon: ListOrdered },
@@ -279,6 +304,118 @@ export default function QueuePage() {
           默认按提交顺序；仅当你觉得某个项目批量任务挡住其它项目时，才用它做一次公平化重排。
         </span>
       </div>
+
+      {/* 密钥车道：一把 Key = 一条独立并发车道 */}
+      {lanes && lanes.groups.length > 0 && (
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-4 py-2">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+              <KeyRound className="h-3.5 w-3.5" />
+              密钥车道
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              供应商排队是账号级的：同一账号多把 Key 共用一个队列，不同账号才真正并行
+            </span>
+            <span className="ml-auto text-[11px] text-muted-foreground">
+              合计在途{' '}
+              <b className="font-medium text-foreground tabular-nums">
+                {lanes.groups.reduce((s, g) => s + g.totalInFlight, 0)}/
+                {lanes.groups.reduce((s, g) => s + g.totalConcurrency, 0)}
+              </b>
+            </span>
+          </div>
+
+          {lanes.groups.map((g) => (
+            <div key={g.providerId} className="border-b last:border-b-0">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground">{g.providerName}</span>
+                {g.formatType && <span className="font-mono">{g.formatType}</span>}
+                <span>{g.lanes.length} 把 Key</span>
+                <span className="ml-auto tabular-nums">
+                  在途 {g.totalInFlight} / 并发上限 {g.totalConcurrency}
+                </span>
+              </div>
+              {g.lanes.map((lane) => {
+                const cooling = lane.cooldownRemainingMs > 0;
+                const slots = Math.max(lane.concurrency, lane.inFlight, 1);
+                return (
+                  <div
+                    key={lane.keyId}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-4 py-2 text-[11px]"
+                  >
+                    <span
+                      className={`pill ${cooling ? 'pill-wait' : lane.status === 'invalid' ? 'pill-fail' : lane.enabled ? 'pill-ok' : 'pill-neutral'}`}
+                    >
+                      {cooling
+                        ? `冷却 ${Math.ceil(lane.cooldownRemainingMs / 1000)}s`
+                        : lane.status === 'invalid'
+                          ? '鉴权失效'
+                          : lane.enabled
+                            ? '可用'
+                            : '已停用'}
+                    </span>
+                    <span className="text-xs font-medium text-foreground">{lane.label}</span>
+                    <span className="font-mono text-muted-foreground">{lane.keyId.slice(0, 8)}</span>
+                    <span className="flex items-center gap-0.5" title="已占用 / 并发额度">
+                      {Array.from({ length: slots }).map((_, i) => (
+                        <span
+                          key={i}
+                          className={`h-2.5 w-1.5 rounded-sm ${i < lane.inFlight ? 'bg-primary' : 'bg-border'}`}
+                        />
+                      ))}
+                      <span className="ml-1 tabular-nums text-muted-foreground">
+                        {lane.inFlight}/{lane.concurrency}
+                      </span>
+                    </span>
+                    {lane.pinnedProjects.length > 0 && (
+                      <span className="max-w-[18rem] truncate text-muted-foreground">
+                        钉住：
+                        {lane.pinnedProjects.map((p) => p.projectTitle).join('、')}
+                      </span>
+                    )}
+                    {lane.lastError && (
+                      <span
+                        className="max-w-[22rem] truncate text-muted-foreground"
+                        title={lane.lastError}
+                      >
+                        {lane.lastError}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+
+          {/* 项目钉 Key：钉住后该项目只走这一条车道 */}
+          {data && data.projects.length > 0 && (
+            <div className="space-y-1.5 border-t bg-muted/20 px-4 py-3">
+              <div className="text-[11px] text-muted-foreground">
+                项目钉 Key：钉住后该项目只领这一条车道，多个项目同时开工时互不抢并发额度。
+              </div>
+              {data.projects.map((p) => (
+                <div key={p.projectId} className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="max-w-[18rem] truncate text-foreground">{p.projectTitle}</span>
+                  <select
+                    value={pinnedKeyOf(p.projectId)}
+                    disabled={busy === `pin:${p.projectId}`}
+                    onChange={(e) => onPin(p.projectId, e.target.value || null)}
+                    className="h-7 max-w-[20rem] rounded-md border bg-background px-1.5 text-[11px] text-foreground"
+                  >
+                    <option value="">不钉定（自动选最闲的车道）</option>
+                    {allLanes.map((l) => (
+                      <option key={l.keyId} value={l.keyId}>
+                        {l.providerName} · {l.label}（{l.inFlight}/{l.concurrency}）
+                      </option>
+                    ))}
+                  </select>
+                  {busy === `pin:${p.projectId}` && <Loader2 className="h-3 w-3 animate-spin" />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 各项目排队深度 */}
       {data && data.projects.length > 0 && (

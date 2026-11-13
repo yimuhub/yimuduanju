@@ -20,7 +20,8 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { generationJobs, projects } from '@server/database/schema';
+import { generationJobs, modelProviders, projects } from '@server/database/schema';
+import { providerApiKeys } from '@server/database/billing.schema';
 import { GenerationService } from '../generation/generation.service';
 import { JobWorkerService } from '../generation/job-worker.service';
 import {
@@ -31,6 +32,9 @@ import {
 import type {
   JobStatus,
   JobType,
+  KeyLaneGroup,
+  KeyLanesResponse,
+  PinProjectKeyResult,
   QueueActionResult,
   QueueItem,
   QueueMoveDirection,
@@ -162,6 +166,123 @@ export class QueueAdminService {
       worker,
       globallyPaused: this.worker.isQueuePaused(),
       generatedAt: new Date(now).toISOString(),
+    };
+  }
+
+  /**
+   * 密钥车道总览：一把 Key = 一条独立并发车道。
+   * ------------------------------------------------------------------
+   * 供应商排队是**账号级**的：同一个账号加 10 把 Key 仍然共用一个视频队列，
+   * 不同账号的 Key 才能真正并行。用户在界面上必须能看出：
+   *   · 这把 Key 现在几单在途 / 并发上限多少（是不是真的在跑）
+   *   · 是否在限流冷却中、剩余多久（冷却说明上游满了，加 Key 才有意义）
+   *   · 哪些项目钉了它（钉住的项目之间互不抢车道）
+   * 只读接口，不做任何调度决策——调度在 ProviderKeyPoolService。
+   */
+  async keyLanes(): Promise<KeyLanesResponse> {
+    const rows = await this.db
+      .select({
+        key: providerApiKeys,
+        providerName: modelProviders.name,
+        formatType: modelProviders.formatType,
+      })
+      .from(providerApiKeys)
+      .leftJoin(modelProviders, eq(providerApiKeys.providerId, modelProviders.id))
+      .orderBy(asc(modelProviders.name), asc(providerApiKeys.createdAt));
+
+    const pinned = await this.db
+      .select({ id: projects.id, title: projects.title, pinnedKeyId: projects.pinnedKeyId })
+      .from(projects)
+      .where(sql`${projects.pinnedKeyId} is not null`);
+
+    const pinnedByKey = new Map<string, { projectId: string; projectTitle: string }[]>();
+    for (const p of pinned) {
+      if (!p.pinnedKeyId) continue;
+      const list = pinnedByKey.get(p.pinnedKeyId) ?? [];
+      list.push({ projectId: p.id, projectTitle: p.title });
+      pinnedByKey.set(p.pinnedKeyId, list);
+    }
+
+    const now = Date.now();
+    const groupMap = new Map<string, KeyLaneGroup>();
+    for (const row of rows) {
+      const k = row.key;
+      const providerId = k.providerId;
+      const providerName = row.providerName ?? '未知供应商';
+      let group = groupMap.get(providerId);
+      if (!group) {
+        group = {
+          providerId,
+          providerName,
+          formatType: row.formatType ?? undefined,
+          lanes: [],
+          totalConcurrency: 0,
+          totalInFlight: 0,
+        };
+        groupMap.set(providerId, group);
+      }
+      const cooldownUntil = iso(k.cooldownUntil);
+      const cooldownRemainingMs = cooldownUntil
+        ? Math.max(0, new Date(cooldownUntil).getTime() - now)
+        : 0;
+      group.lanes.push({
+        keyId: k.id,
+        label: k.label || `Key ${k.id.slice(0, 6)}`,
+        providerId,
+        providerName,
+        formatType: row.formatType ?? undefined,
+        status: k.status,
+        enabled: k.enabled,
+        concurrency: k.concurrency,
+        inFlight: k.inFlight,
+        cooldownRemainingMs,
+        cooldownUntil: cooldownUntil || undefined,
+        lastError: k.lastError ?? undefined,
+        lastUsedAt: iso(k.lastUsedAt) || undefined,
+        pinnedProjects: pinnedByKey.get(k.id) ?? [],
+      });
+      group.totalConcurrency += k.concurrency;
+      group.totalInFlight += k.inFlight;
+    }
+
+    return {
+      groups: [...groupMap.values()].sort((a, b) => b.lanes.length - a.lanes.length),
+      generatedAt: new Date(now).toISOString(),
+    };
+  }
+
+  /**
+   * 给项目钉一把 Key（或解钉）。钉住后该项目只领这一条车道，
+   * 多个项目同时开工时不会互相抢占并发额度。
+   */
+  async pinProjectKey(projectId: string, keyId: string | null): Promise<PinProjectKeyResult> {
+    const [project] = await this.db
+      .select({ id: projects.id, title: projects.title })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!project) throw new NotFoundException(`项目 ${projectId} 不存在`);
+
+    if (keyId) {
+      const [key] = await this.db
+        .select({ id: providerApiKeys.id, label: providerApiKeys.label, enabled: providerApiKeys.enabled })
+        .from(providerApiKeys)
+        .where(eq(providerApiKeys.id, keyId))
+        .limit(1);
+      if (!key) throw new NotFoundException(`Key ${keyId} 不存在`);
+      if (!key.enabled) throw new BadRequestException(`Key「${key.label}」已停用，不能钉给项目`);
+    }
+
+    await this.db.update(projects).set({ pinnedKeyId: keyId }).where(eq(projects.id, projectId));
+    this.logger.log(
+      keyId
+        ? `项目「${project.title}」钉住 Key ${keyId.slice(0, 8)}`
+        : `项目「${project.title}」解除 Key 钉定`,
+    );
+    return {
+      projectId,
+      pinnedKeyId: keyId,
+      message: keyId ? `已为「${project.title}」钉住该 Key` : `已解除「${project.title}」的 Key 钉定`,
     };
   }
 
