@@ -8,6 +8,7 @@ import { BudgetCapService } from './budget-cap.service';
 import { JobWorkerService } from './job-worker.service';
 import { BillingModule } from '../billing/billing.module';
 import { RoutingService } from './routing.service';
+import { ProviderKeyPoolService } from './provider-key-pool.service';
 import { StorySkillsService } from '../story-skills/story-skills.service';
 import { ProvidersModule } from '../providers/providers.module';
 // 流水线自动链（P0 断链修复）：job-worker 需要分镜服务（建视频任务）、
@@ -36,9 +37,10 @@ import { BibleModule } from '../bible/bible.module';
     BudgetCapService,
     JobWorkerService,
     RoutingService,
+    ProviderKeyPoolService,
     StorySkillsService,
     QueueAdminService,
   ],
-  exports: [ModelGatewayService, BudgetCapService, RoutingService, StorySkillsService, QueueAdminService],
+  exports: [ModelGatewayService, BudgetCapService, RoutingService, ProviderKeyPoolService, StorySkillsService, QueueAdminService],
 })
 export class GenerationModule {}

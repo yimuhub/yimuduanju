@@ -675,8 +675,9 @@ export class ModelGatewayService {
   async generateVideo(
     params: VideoGenerateParams,
     providerName?: string,
+    keyId?: string | null,
   ): Promise<{ taskId: string; status: string; frameNotSent?: string }> {
-    const provider = await this.getProvider(providerName, 'video');
+    const provider = await this.getProvider(providerName, 'video', keyId);
     const formatType = provider.formatType as FormatType;
     if (formatType === 'mock') {
       const taskId = `mock-${randomUUID()}`;
@@ -807,8 +808,14 @@ export class ModelGatewayService {
     // W 智能路由：Agnes hub 被配成 openai 兼容格式时，文本/图片走标准端点
     // 没问题，但视频端点字段是 Agnes 方言（mode/seconds/first_frame，拒绝
     // duration/image_url）。按基址域名或视频模型名自动识别走专用通道。
+    // relay 方言（如「一幕·YIMU 官方API 聚合平台」指向本地中继）虽然 formatType
+    // 是 openai，但视频端点同样是 Agnes 方言（/videos + mode + first_frame），
+    // 且中继能吃 data URL 首帧。显式声明 agnesSchema='relay' 即走专用通道。
+    const declaredRelay =
+      ((provider.modelParams ?? {}) as { agnesSchema?: string }).agnesSchema === 'relay';
     const agnesLike =
       formatType === 'agnes' ||
+      declaredRelay ||
       /agnes-ai\.com/i.test(baseUrl) ||
       /^agnes[-_.]/i.test(provider.videoModel ?? '');
     if (agnesLike) {
@@ -938,14 +945,18 @@ export class ModelGatewayService {
       size: '720P',
       aspect_ratio: videoAspect,
     };
+    // relay 中继能吃 data URL（本地首帧内联），官方 Agnes 只收公网 http(s)。
+    // 不区分这一点，走中继时首帧仍会被 isPublic 判掉、静默退化成纯文生视频。
+    const isUsable = (u?: string) =>
+      !!u && (/^https?:\/\//i.test(u) || (relaySchema && /^data:/i.test(u)));
     if (isPublic(params.referenceVideoUrl)) {
       body.mode = modeReference;
       body.videos = [{ url: params.referenceVideoUrl }];
-    } else if (isPublic(params.imageUrl)) {
+    } else if (isUsable(params.imageUrl)) {
       body.mode = modeKeyframe;
       if (relaySchema) {
         // relay 方言：image 数组（≥2 项），尾帧缺失时首帧重复垫
-        const last = isPublic(params.lastFrameUrl) ? params.lastFrameUrl : params.imageUrl;
+        const last = isUsable(params.lastFrameUrl) ? params.lastFrameUrl : params.imageUrl;
         body.image = [params.imageUrl, last];
       } else {
         body.first_frame = params.imageUrl;
@@ -1031,6 +1042,7 @@ export class ModelGatewayService {
   async pollVideoTask(
     taskId: string,
     providerName?: string,
+    keyId?: string | null,
   ): Promise<VideoPollResult> {
     // Agnes 通道：externalTaskId 编码为 agnes:{video_id}:{model}
     if (taskId.startsWith('agnes:')) {
@@ -1038,7 +1050,7 @@ export class ModelGatewayService {
       if (!videoId || !model) {
         return { status: 'failed', errorMessage: 'Agnes 任务 ID 非法' };
       }
-      const provider = await this.getProvider(providerName, 'video');
+      const provider = await this.getProvider(providerName, 'video', keyId);
       return this.pollAgnesVideo(provider, videoId, model);
     }
     // P2-3 mock 通道：秒级成功，占位 URL 原样返回（调用方决定传白模还是首帧）
@@ -1054,7 +1066,7 @@ export class ModelGatewayService {
         outputData: { url: entry.url, mock: true },
       };
     }
-    const provider = await this.getProvider(providerName, 'video');
+    const provider = await this.getProvider(providerName, 'video', keyId);
     const apiKey = provider.apiKey;
     if (!apiKey) {
       throw new BadRequestException('Provider 未配置 API Key');
@@ -1491,6 +1503,7 @@ export class ModelGatewayService {
   private async getProvider(
     providerName: string | undefined,
     capability: keyof ModelCapabilities,
+    keyId?: string | null,
   ): Promise<ProviderRecord> {
     let rows: typeof modelProviders.$inferSelect[];
 
@@ -1541,7 +1554,24 @@ export class ModelGatewayService {
       );
     }
 
-    // 多 Key：生效 Key 行优先（最新激活的一条），无行时回落主 Key 列
+    // 密钥池（migration 0023）：显式指定 keyId 时用这一把。
+    // 视频多 Key 并行 / 异步轮询必须复用建单那把 Key —— 换 Key 后上游
+    // 按 (account, taskId) 查不到任务，轮询必失败。
+    if (keyId) {
+      const leased = await this.db
+        .select({ apiKey: providerApiKeys.apiKey })
+        .from(providerApiKeys)
+        .where(eq(providerApiKeys.id, keyId))
+        .limit(1);
+      if (leased.length > 0 && leased[0].apiKey) {
+        return {
+          ...(provider as unknown as ProviderRecord),
+          apiKey: tryDecryptApiKey(leased[0].apiKey) ?? null,
+        };
+      }
+      this.logger.warn(`指定的 Key ${keyId} 不存在或无密钥，回落默认 Key 选择`);
+    }
+    // 旧路径（未指定 keyId）：生效 Key 行优先（最新激活的一条），无行时回落主 Key 列
     const keyRows = await this.db
       .select({ apiKey: providerApiKeys.apiKey })
       .from(providerApiKeys)

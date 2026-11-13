@@ -651,6 +651,8 @@ export class GenerationService {
         const result = await this.modelGateway.pollVideoTask(
           job.externalTaskId,
           job.providerName,
+          // 必须用建单那把 Key 轮询：换 Key 后上游按 (account, taskId) 查不到
+          (job as unknown as { boundKeyId?: string | null }).boundKeyId ?? null,
         );
         if (result.status === 'succeeded') {
           return this.settleJobSuccess(id, result.outputData);

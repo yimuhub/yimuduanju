@@ -256,6 +256,12 @@ export const generationJobs = pgTable("generation_jobs", {
    */
   queueSeq: bigint("queue_seq", { mode: "number" }).notNull().default(sql`nextval('generation_jobs_queue_seq_seq')`),
   providerName: varchar("provider_name", { length: 100 }),
+  /**
+   * 任务实际使用的 API Key（migration 0023 密钥池）。
+   * 视频是「异步建单 + 轮询」，轮询与失败重试必须复用创建时那把 Key，
+   * 否则换了 Key 之后上游按 (account, taskId) 查不到任务，直接失败。
+   */
+  boundKeyId: uuid("bound_key_id"),
   modelName: varchar("model_name", { length: 255 }),
   /**
    * @type { prompt: string, negativePrompt: string, size: string, duration: number, references: string[] }
@@ -645,6 +651,11 @@ export const projects = pgTable("projects", {
   artStyle: varchar("art_style", { length: 50 }).default('realistic'),
   genre: varchar("genre", { length: 50 }),
   budgetMode: varchar("budget_mode", { length: 30 }).default('balanced'),
+  /**
+   * 项目独占的 Key（migration 0023）：非空时该项目任务只从这把 Key 领取，
+   * 多项目并行时互不抢额度；为空则从供应商共享密钥池领取。
+   */
+  pinnedKeyId: uuid("pinned_key_id"),
   totalCost: numeric("total_cost").default('0'),
   thumbnailUrl: text("thumbnail_url"),
   scriptText: text("script_text"),
