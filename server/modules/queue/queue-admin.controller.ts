@@ -87,6 +87,16 @@ export class QueueAdminController {
     return this.queue.keyLanes();
   }
 
+  /**
+   * 重算排队任务的通道路由（改完环节绑定后点一下）：
+   * 把当前绑定的供应商/模型写回还没上游建单的任务，否则换了模型的老任务
+   * 会一直在旧供应商那边轮询，表现为「改了没用、一直失败」。
+   */
+  @Post('recalculate-routes')
+  recalculateRoutes(): Promise<{ updated: number; skipped: number; message: string }> {
+    return this.queue.recalculateRoutes();
+  }
+
   /** 给项目钉一把 Key（项目间互不抢并发额度）；keyId=null 解钉 */
   @Post('projects/:id/pin-key')
   pinProjectKey(

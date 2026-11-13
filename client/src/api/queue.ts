@@ -56,3 +56,9 @@ export const pinProjectKey = (projectId: string, keyId: string | null) =>
   axiosForBackend
     .post<PinProjectKeyResult>(`/api/queue/projects/${projectId}/pin-key`, { keyId })
     .then((res) => res.data);
+
+/** 重算排队任务的通道路由：改完「环节绑定」后点一下，老任务才会走新模型 */
+export const recalculateRoutes = () =>
+  axiosForBackend
+    .post<{ updated: number; skipped: number; message: string }>('/api/queue/recalculate-routes')
+    .then((res) => res.data);

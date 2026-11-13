@@ -1864,19 +1864,34 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       try {
         // eslint-disable-next-line no-await-in-loop
         const created = await this.modelGateway.generateVideo(params, providerName, keyId);
+        /*
+         * 把「实际建单用的通道」写回任务行。
+         * ------------------------------------------------------------------
+         * 为什么必须落盘：轮询用的是 `job.providerName`（pollVideoTask），结算与
+         * 日志也用它。环节绑定（stage_model_bindings）会在执行时把通道换掉，但任务
+         * 行里存的还是建单那一刻的值 —— 于是「建单走新通道、轮询去老通道查」，
+         * 上游按 (provider, taskId) 查不到，任务永远等不到回调。
+         * 这正是用户反馈「已经指定了视频模型，却一直走原来的路线、一直失败」的
+         * 数据层原因：执行路径换了，记账和轮询没换。
+         */
+        const effectiveProvider = providerName ?? job.providerName ?? null;
+        // eslint-disable-next-line no-await-in-loop
+        await this.db
+          .update(generationJobs)
+          .set({
+            ...(effectiveProvider ? { providerName: effectiveProvider } : {}),
+            ...(params.model ? { modelName: params.model } : {}),
+            ...(keyId ? { boundKeyId: keyId } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(generationJobs.id, job.id))
+          .catch((e: Error) => this.logger.warn(`任务通道路由落盘失败 ${job.id}：${e.message}`));
         if (keyId) {
-          // 落 bound_key_id：轮询/重试必须复用同一把 Key
-          // eslint-disable-next-line no-await-in-loop
-          await this.db
-            .update(generationJobs)
-            .set({ boundKeyId: keyId })
-            .where(eq(generationJobs.id, job.id))
-            .catch((e: Error) => this.logger.warn(`绑定 Key 落盘失败 ${job.id}：${e.message}`));
           // eslint-disable-next-line no-await-in-loop
           await this.keyPool.release(keyId);
           settled = true;
           this.logger.log(
-            `任务 ${job.id} 使用密钥「${lease && lease.status === 'leased' ? lease.label : keyId}」建单`,
+            `任务 ${job.id} 使用密钥「${lease && lease.status === 'leased' ? lease.label : keyId}」建单（通道 ${effectiveProvider ?? '默认'}）`,
           );
         }
         return created;

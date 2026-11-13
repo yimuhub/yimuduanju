@@ -29,6 +29,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Route,
   Shuffle,
   Square,
 } from 'lucide-react';
@@ -207,6 +208,14 @@ export default function QueuePage() {
     await run('round-robin', () => queueApi.roundRobinQueue(), '已重排');
   };
 
+  const onRecalcRoutes = async () => {
+    const ok = await showConfirm(
+      '会把排队中的任务改成「环节绑定」当前选定的供应商/模型（执行中的任务不动，避免打断上游回调）。确定重算吗？',
+    );
+    if (!ok) return;
+    await run('recalc-routes', () => queueApi.recalculateRoutes(), '路由已重算');
+  };
+
   const allLanes = useMemo<KeyLane[]>(
     () => lanes?.groups.flatMap((g) => g.lanes) ?? [],
     [lanes],
@@ -300,8 +309,16 @@ export default function QueuePage() {
         <Button variant="outline" size="sm" onClick={() => void onRoundRobin()} disabled={busy === 'round-robin'}>
           <Shuffle />按项目轮转重排
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void onRecalcRoutes()}
+          disabled={busy === 'recalc-routes'}
+        >
+          <Route />重算通道路由
+        </Button>
         <span className="text-xs text-muted-foreground">
-          默认按提交顺序；仅当你觉得某个项目批量任务挡住其它项目时，才用它做一次公平化重排。
+          默认按提交顺序；改了「环节绑定」（比如换视频模型）后点「重算通道路由」，已排队的任务才会改走新通道。
         </span>
       </div>
 

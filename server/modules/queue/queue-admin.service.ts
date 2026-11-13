@@ -24,6 +24,8 @@ import { generationJobs, modelProviders, projects } from '@server/database/schem
 import { providerApiKeys } from '@server/database/billing.schema';
 import { GenerationService } from '../generation/generation.service';
 import { JobWorkerService } from '../generation/job-worker.service';
+import { StageBindingsService } from '../providers/stage-bindings.service';
+import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
 import {
   QUEUE_NOT_STARTED_STATUSES,
   QUEUE_OPEN_STATUSES,
@@ -62,6 +64,7 @@ export class QueueAdminService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly generationService: GenerationService,
     private readonly worker: JobWorkerService,
+    private readonly stageBindings: StageBindingsService,
   ) {}
 
   // ==================== 查询 ====================
@@ -283,6 +286,75 @@ export class QueueAdminService {
       projectId,
       pinnedKeyId: keyId,
       message: keyId ? `已为「${project.title}」钉住该 Key` : `已解除「${project.title}」的 Key 钉定`,
+    };
+  }
+
+  /**
+   * 重算排队任务的通道路由：把「环节绑定当前选定的供应商/模型」写回任务行。
+   * ------------------------------------------------------------------
+   * 存在的理由：用户在设置里换了视频模型，新任务会按绑定执行，但**队列里已经
+   * 排着的任务**还带着建单那一刻的 provider_name。执行时虽然会再走一次绑定
+   * 解析，可轮询（pollVideoTask）与结算都读任务行的 provider_name —— 通道一换，
+   * 轮询就去老供应商那里查 taskId，永远查不到。表现出来就是用户说的
+   * 「我已经指定了新模型，可它一直走原来的路线、一直失败」。
+   *
+   * 只动**还没上游建单**的任务（running 一律跳过）：running 的 externalTaskId
+   * 已经落在某个供应商那边，改 provider_name 会让它在错误的地方轮询。
+   */
+  async recalculateRoutes(): Promise<{ updated: number; skipped: number; message: string }> {
+    const rows = await this.db
+      .select({
+        id: generationJobs.id,
+        jobType: generationJobs.jobType,
+        status: generationJobs.status,
+        providerName: generationJobs.providerName,
+        modelName: generationJobs.modelName,
+      })
+      .from(generationJobs)
+      .where(inArray(generationJobs.status, OPEN_STATUSES))
+      .limit(QUEUE_LIMIT);
+
+    const cache = new Map<string, { providerName?: string; model?: string }>();
+    let updated = 0;
+    let skipped = 0;
+
+    for (const row of rows) {
+      if (row.status === 'running') {
+        skipped += 1;
+        continue;
+      }
+      const stage = stageOfJobType(row.jobType);
+      if (!stage) continue;
+      let binding = cache.get(stage);
+      if (!binding) {
+        // eslint-disable-next-line no-await-in-loop
+        const resolved = await this.stageBindings.resolve(stage as StageKey);
+        binding = { providerName: resolved.providerName, model: resolved.model };
+        cache.set(stage, binding);
+      }
+      // 该环节没配绑定：保持任务原样，不做「猜一个默认供应商」的改写
+      if (!binding.providerName && !binding.model) continue;
+      const nextProvider = binding.providerName ?? row.providerName ?? null;
+      const nextModel = binding.model ?? row.modelName ?? null;
+      if (nextProvider === (row.providerName ?? null) && nextModel === (row.modelName ?? null)) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(generationJobs)
+        .set({ providerName: nextProvider, modelName: nextModel, updatedAt: new Date() })
+        .where(eq(generationJobs.id, row.id));
+      updated += 1;
+    }
+
+    this.logger.log(`重算队列路由：更新 ${updated} 条，跳过执行中 ${skipped} 条`);
+    return {
+      updated,
+      skipped,
+      message:
+        updated > 0
+          ? `已把 ${updated} 条排队任务改到当前环节绑定的通道${skipped > 0 ? `（${skipped} 条执行中未动）` : ''}`
+          : '所有排队任务的路由已与环节绑定一致，无需改动',
     };
   }
 
