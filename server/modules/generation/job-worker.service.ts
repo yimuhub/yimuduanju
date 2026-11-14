@@ -1867,21 +1867,39 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   ): Promise<{ taskId: string; status: string; frameNotSent?: string } | null> {
     const MAX_KEY_TRIES = 8;
     let lastErr: Error | null = null;
+    type VideoLease =
+      | { status: 'leased'; keyId: string; label: string; providerName?: string }
+      | { status: 'busy' }
+      | { status: 'no_keys' };
     for (let attempt = 0; attempt < MAX_KEY_TRIES; attempt += 1) {
+      /*
+       * 视频先用「联邦密钥池」：Agnes 任务可以领用任一 Agnes 供应商下的 Key。
+       * 旧逻辑只按 provider_id 领，而环节绑定只指向一个供应商，用户把 4 个账号
+       * 分散在两个供应商时，另一个供应商的 Key 永远租不到 —— 表现为「加了 4 把
+       * Key 却只有 1~2 个在轮值」。联邦池返回 no_keys 说明这不是 Agnes 通道
+       * （火山/mock/relay），回落到原来的单供应商租约，行为完全不变。
+       */
+      let lease: VideoLease | null = null;
       // eslint-disable-next-line no-await-in-loop
-      // 注意：这里**不能**写成 .catch(() => null)。领 Key 失败时静默变 null，
-      // 会退化成「不带 Key 直接调上游」，503 也就永远归不到某把 Key 的账上，
-      // 日志里只剩一句上游报错 —— 曾经就是这样排查了一小时。
-      const lease = providerName
-        ? await this.keyPool.leaseByProviderName(providerName, job.id, job.projectId).catch((e: Error) => {
-            const cause = (e as { cause?: { message?: string; code?: string } }).cause;
-            this.logger.warn(
-              `任务 ${job.id} 领密钥失败（将退回供应商主 Key）：${e.message}` +
-                (cause ? ` ｜ 根因：${cause.code ?? ''} ${cause.message ?? ''}` : ''),
-            );
-            return null;
-          })
-        : null;
+      const federated = await this.keyPool.leaseForVideo(job.id, job.projectId).catch((e: Error) => {
+        this.logger.warn(`任务 ${job.id} 联邦密钥池异常，回落单供应商：${e.message}`);
+        return null;
+      });
+      if (federated && federated.status !== 'no_keys') {
+        lease = federated;
+      } else if (providerName) {
+        // 注意：这里**不能**写成 .catch(() => null) 而不记日志。领 Key 失败时
+        // 静默变 null 会退化成「不带 Key 直接调上游」，503 归不到某把 Key 账上。
+        // eslint-disable-next-line no-await-in-loop
+        lease = await this.keyPool.leaseByProviderName(providerName, job.id, job.projectId).catch((e: Error) => {
+          const cause = (e as { cause?: { message?: string; code?: string } }).cause;
+          this.logger.warn(
+            `任务 ${job.id} 领密钥失败（将退回供应商主 Key）：${e.message}` +
+              (cause ? ` ｜ 根因：${cause.code ?? ''} ${cause.message ?? ''}` : ''),
+          );
+          return null;
+        });
+      }
       if (lease && lease.status === 'busy') {
         // 所有车道都在途/冷却：不空转，放回队列等冷却结束。
         // soft：这是「等上游产能」，不是任务本身的错，不能按失败次数把任务判死。
@@ -1889,6 +1907,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         return null;
       }
       const keyId = lease && lease.status === 'leased' ? lease.keyId : undefined;
+      // 建单必须用「这把 Key 所属供应商」：跨账号查任务会 404 task not found。
+      // 同时把它落盘到任务行，轮询阶段才能用同一个 (provider, key) 复查。
+      const effectiveProvider =
+        lease && lease.status === 'leased' && lease.providerName
+          ? lease.providerName
+          : (providerName ?? job.providerName ?? null);
       // 租约结算标记：只要不是「已明确结算」（成功 release / 限流 cooldown /
       // 鉴权失效 markInvalid），finally 里就兜底归还车道。
       // 旧实现依赖每个 catch 分支自觉归还，任何一条分支提前抛错就会把
@@ -1896,7 +1920,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       let settled = false;
       try {
         // eslint-disable-next-line no-await-in-loop
-        const created = await this.modelGateway.generateVideo(params, providerName, keyId);
+        // 注意用 effectiveProvider（Key 所属供应商），不是环节绑定里写死的
+        // providerName —— 联邦池可能领到另一个 Agnes 供应商的 Key。
+        const created = await this.modelGateway.generateVideo(
+          params,
+          effectiveProvider ?? undefined,
+          keyId,
+        );
         /*
          * 把「实际建单用的通道」写回任务行。
          * ------------------------------------------------------------------
@@ -1904,10 +1934,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
          * 日志也用它。环节绑定（stage_model_bindings）会在执行时把通道换掉，但任务
          * 行里存的还是建单那一刻的值 —— 于是「建单走新通道、轮询去老通道查」，
          * 上游按 (provider, taskId) 查不到，任务永远等不到回调。
-         * 这正是用户反馈「已经指定了视频模型，却一直走原来的路线、一直失败」的
-         * 数据层原因：执行路径换了，记账和轮询没换。
+         * 联邦池下 effectiveProvider 可能来自另一个 Agnes 供应商，更必须落盘，
+         * 否则轮询会拿错账号查任务，直接 404 task not found。
          */
-        const effectiveProvider = providerName ?? job.providerName ?? null;
         // eslint-disable-next-line no-await-in-loop
         await this.db
           .update(generationJobs)

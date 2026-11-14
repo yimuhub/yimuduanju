@@ -12,6 +12,22 @@ export type KeyLeaseResult =
   | { status: 'busy' };
 
 /**
+ * 视频联邦池的租约结果：比单供应商租约多带「这把 Key 属于哪个供应商」。
+ * 建单必须用该供应商的 base_url / format_type，轮询也要按它落盘，
+ * 否则跨账号查询会 404 task not found。
+ */
+export type FederatedLeaseResult =
+  | {
+      status: 'leased';
+      keyId: string;
+      label: string;
+      providerId: string;
+      providerName: string;
+    }
+  | { status: 'no_keys' }
+  | { status: 'busy' };
+
+/**
  * 供应商密钥池（migration 0023）。
  *
  * 旧实现「同一时刻只有一把 Key 生效」无法并行：用户加 10 把 Key，
@@ -215,6 +231,97 @@ export class ProviderKeyPoolService {
     } catch (e) {
       this.logger.warn(`回收 Key 租约失败：${(e as Error).message}`);
     }
+  }
+
+  /**
+   * 视频专用：跨 Agnes 供应商的「联邦密钥池」。
+   * ------------------------------------------------------------------
+   * 为什么必须有：原 lease() / leaseByProviderName() 的 SQL 写死
+   * `WHERE provider_id = 当前供应商`，而视频阶段绑定（stage_model_bindings）
+   * 只会指向**一个**供应商。于是用户把 4 个账号分散在两个 Agnes 供应商下时，
+   * 另一个供应商的 Key 从创建起就一次都租不到 —— 界面显示 4 条车道，
+   * 实际只有 1~2 个账号在轮询上游。这与「一把 Key 一条车道、多号并行」
+   * 的设计目标直接冲突。
+   *
+   * 这里把候选 Key 放宽到**所有启用的、明确属于 Agnes 视频通道的供应商**
+   * （官方端点或 agnes- 开头的视频模型），全局按最空闲优先挑一把，
+   * 并把 Key 所属供应商一并返回，由调用方用它建单和落盘，保证轮询同账号。
+   * 非 Agnes 通道（火山方舟 / mock / relay）不会进入候选集合，
+   * 联邦池返回 no_keys 时调用方自然回落到原单供应商逻辑，行为不变。
+   */
+  async leaseForVideo(
+    jobId?: string | null,
+    projectId?: string | null,
+  ): Promise<FederatedLeaseResult> {
+    // 用 SQL 子查询而不是把 id 数组当参数传，避开 drizzle / postgres-js
+    // 数组绑定的兼容坑；同时天然把异构供应商挡在外面。
+    const agnesProviderIds = sql`(
+      SELECT id FROM model_providers
+      WHERE enabled = true
+        AND (base_url ILIKE '%agnes-ai.com%' OR video_model ILIKE 'agnes-%')
+    )`;
+
+    // 项目钉 Key：只有当钉的 Key 也属于某个 Agnes 供应商时才生效。
+    // 不校验的话，钉到火山方舟之类的 Key 会让候选集合恒为空、通道卡死。
+    let pinnedKeyId: string | null = null;
+    if (projectId) {
+      const pinned = await this.db.execute(sql`
+        SELECT k.id::text AS id
+        FROM projects p
+        JOIN provider_api_keys k ON k.id = p.pinned_key_id
+        WHERE p.id = ${projectId}
+          AND k.enabled = true
+          AND k.provider_id IN ${agnesProviderIds}
+        LIMIT 1
+      `);
+      pinnedKeyId = (pinned as unknown as Array<{ id: string }>)[0]?.id ?? null;
+    }
+
+    const total = await this.db.execute(sql`
+      SELECT count(*)::int AS n FROM provider_api_keys
+      WHERE provider_id IN ${agnesProviderIds}
+    `);
+    if (((total as unknown as Array<{ n: number }>)[0]?.n ?? 0) === 0) {
+      return { status: 'no_keys' };
+    }
+
+    const rows = await this.db.execute(sql`
+      UPDATE provider_api_keys
+      SET in_flight = in_flight + 1, last_used_at = now()
+      WHERE id = (
+        SELECT id FROM provider_api_keys
+        WHERE provider_id IN ${agnesProviderIds}
+          AND enabled = true
+          AND status = 'active'
+          AND (cooldown_until IS NULL OR cooldown_until < now())
+          AND in_flight < GREATEST(concurrency, 1)
+          AND (${pinnedKeyId}::uuid IS NULL OR id = ${pinnedKeyId}::uuid)
+        ORDER BY in_flight ASC, priority DESC, last_used_at ASC NULLS FIRST
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, label, provider_id
+    `);
+    const row = (rows as unknown as Array<{ id: string; label: string; provider_id: string }>)[0];
+    if (!row) return { status: 'busy' };
+
+    const names = await this.db.execute(sql`
+      SELECT name FROM model_providers WHERE id = ${row.provider_id} LIMIT 1
+    `);
+    const providerName = (names as unknown as Array<{ name: string }>)[0]?.name ?? '';
+
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await this.db.execute(sql`
+      INSERT INTO key_leases (key_id, job_id, provider_id, expires_at)
+      VALUES (${row.id}, ${jobId ?? null}, ${row.provider_id}, ${expiresAt.toISOString()}::timestamptz)
+    `);
+    return {
+      status: 'leased',
+      keyId: row.id,
+      label: row.label ?? 'Key',
+      providerId: row.provider_id,
+      providerName,
+    };
   }
 
   /** 按 provider 名称领 Key（worker 里只有名字）；projectId 用于项目独占 Key */

@@ -580,23 +580,20 @@ export class ProvidersService {
     return rows.map((r) => this.mapKeyItem(r));
   }
 
-  /** 新增 Key：轮换流程要求先加后验证再激活；若当前无生效 Key 则自动激活 */
+  /**
+   * 新增 Key：每一把都是一条独立并发车道，必须全部 active。
+   * 旧实现 `isActive: existing.length === 0`（只有第一把生效）是「同一时刻
+   * 只能有一把 Key」时代的遗留，和 migration 0023 的密钥池直接冲突：
+   * 用户加第二把 Key 时它被悄悄设成 inactive，界面/读路径都以为没生效。
+   * lease() 用的是 enabled 字段，但 is_active 仍被 getProvider 的旧路径
+   * 与设置页使用，两个口径必须一致。
+   */
   async addKey(
     providerId: string,
     dto: { label?: string; apiKey: string },
   ): Promise<ProviderApiKeyItem> {
     await this.ensureProvider(providerId);
     if (!dto.apiKey?.trim()) throw new BadRequestException('API Key 不能为空');
-    const existing = await this.db
-      .select({ id: providerApiKeys.id })
-      .from(providerApiKeys)
-      .where(
-        and(
-          eq(providerApiKeys.providerId, providerId),
-          eq(providerApiKeys.isActive, true),
-        ),
-      )
-      .limit(1);
     const rows = await this.db
       .insert(providerApiKeys)
       .values({
@@ -604,14 +601,18 @@ export class ProvidersService {
         label: dto.label?.trim() || 'Key',
         // W1 安全修复：落库前加密
         apiKey: encryptApiKey(dto.apiKey.trim()),
-        isActive: existing.length === 0,
+        isActive: true,
         createdAt: new Date(),
       })
       .returning();
     return this.mapKeyItem(rows[0]);
   }
 
-  /** 激活某 Key（同供应商其他 Key 自动失效） */
+  /**
+   * 激活某 Key：多 Key 并行下**不再**把同供应商其它 Key 置为失效。
+   * 旧实现「激活一把、其余全失效」会把用户配好的 4 条车道砍成 1 条，
+   * 与联邦池 / 多号并行完全相反。停用请走 enabled 字段。
+   */
   async activateKey(providerId: string, keyId: string): Promise<ProviderApiKeyItem[]> {
     await this.ensureProvider(providerId);
     const target = await this.db
@@ -622,16 +623,10 @@ export class ProvidersService {
       )
       .limit(1);
     if (target.length === 0) throw new NotFoundException('Key 不存在');
-    await this.db.transaction(async (tx) => {
-      await tx
-        .update(providerApiKeys)
-        .set({ isActive: false })
-        .where(eq(providerApiKeys.providerId, providerId));
-      await tx
-        .update(providerApiKeys)
-        .set({ isActive: true })
-        .where(eq(providerApiKeys.id, keyId));
-    });
+    await this.db
+      .update(providerApiKeys)
+      .set({ isActive: true })
+      .where(eq(providerApiKeys.id, keyId));
     return this.listKeys(providerId);
   }
 
