@@ -11,6 +11,23 @@ import { ModelGatewayService } from '../generation/model-gateway.service';
 import { BUILTIN_AGENTS } from './agents.registry';
 import { SkillsService } from '../skills/skills.service';
 
+/**
+ * 对话确认卡协议（migration 0025，对标 zenstory pendingEdits）：
+ * Agent 建议修改项目数据时，在回复末尾用 ```yimu-action 围栏输出结构化 JSON，
+ * 由前端解析渲染成确认卡，用户点「应用」才调用真实 API——对话改意，面板落地。
+ */
+const AGENT_ACTION_PROTOCOL = [
+  '# 变更建议输出协议（重要）',
+  '当你建议修改项目数据（如改某镜的提示词/对白/景别/运镜、改写剧本）时：',
+  '回复正文先用简短文字说明为什么这样改，然后在回复**末尾**追加一个 ```yimu-action 代码块，',
+  '内容为 JSON，格式（二选一）：',
+  '① 改分镜：{"actions":[{"action":"update_shot","targetId":"<上面给出的镜头 id>","summary":"一句话说明","patch":{"visualPrompt":"新提示词"}}]}',
+  '② 改剧本：{"actions":[{"action":"update_script","summary":"一句话说明","script":"完整的新剧本文本"}]}',
+  '规则：targetId 必须取自「可用镜头」清单里的真实 id，禁止编造；patch 只允许这些字段：',
+  'subject/action/emotion/dialogue/visualPrompt/negativePrompt/subtitleText/shotSize/cameraAngle/lens/movement/duration；',
+  '用户没有要求修改时不要输出该代码块；一次建议可以包含多个 update_shot（放在 actions 数组里）。',
+].join('\n');
+
 @Injectable()
 export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
@@ -109,7 +126,8 @@ export class AgentsService implements OnModuleInit {
             : '你是「一幕·YIMU AI 短剧创作平台」项目智能体，用简体中文回答，简洁实用。') +
           '回答要结合项目实际数据，不得编造不存在的分镜/角色/资产。\n' +
           (skillText ? `# 生效技能包\n${skillText}\n` : '') +
-          `# 项目上下文\n${context}`,
+          AGENT_ACTION_PROTOCOL +
+          `\n# 项目上下文\n${context}`,
       });
       const assistantRows = await this.db
         .insert(agentMessages)
@@ -129,9 +147,9 @@ export class AgentsService implements OnModuleInit {
     }
   }
 
-  /** 项目上下文摘要（标题/状态/规模/剧本节选），控制在 ~800 字内 */
+  /** 项目上下文摘要（标题/状态/规模/剧本节选 + 可用镜头清单），控制在 ~1500 字内 */
   private async buildProjectContext(projectId: string, agentName?: string): Promise<string> {
-    const [projRows, sceneCount, shotCount, charRows] = await Promise.all([
+    const [projRows, sceneCount, shotCount, charRows, shotRows] = await Promise.all([
       this.db
         .select({
           title: projects.title,
@@ -154,6 +172,19 @@ export class AgentsService implements OnModuleInit {
         .from(characters)
         .where(eq(characters.projectId, projectId))
         .limit(10),
+      // 确认卡协议（migration 0025）：给 Agent 真实镜头 id，update_shot 才有合法 targetId
+      this.db
+        .select({
+          id: shots.id,
+          shotNumber: shots.shotNumber,
+          subject: shots.subject,
+          visualPrompt: shots.visualPrompt,
+          dialogue: shots.dialogue,
+        })
+        .from(shots)
+        .where(eq(shots.projectId, projectId))
+        .orderBy(asc(shots.shotNumber))
+        .limit(30),
     ]);
     const p = projRows[0];
     const lines = [
@@ -162,7 +193,15 @@ export class AgentsService implements OnModuleInit {
       `角色：${charRows.map((c) => c.name).join('、') || '暂无'}`,
       `当前智能体：${agentName ?? '通用'}`,
     ];
-    const script = (p?.scriptText ?? '').trim().slice(0, 500);
+    if (shotRows.length > 0) {
+      const shotLines = shotRows.map(
+        (s) =>
+          `- 镜 ${s.shotNumber}｜id=${s.id}｜${(s.subject ?? s.visualPrompt ?? '').slice(0, 24)}` +
+          (s.dialogue ? `｜台词「${s.dialogue.slice(0, 16)}」` : ''),
+      );
+      lines.push(`可用镜头（update_shot 的 targetId 必须取自这里）：\n${shotLines.join('\n')}`);
+    }
+    const script = (p?.scriptText ?? '').trim().slice(0, 400);
     if (script) lines.push(`剧本节选：${script}`);
     return lines.join('\n');
   }

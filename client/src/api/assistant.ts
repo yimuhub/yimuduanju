@@ -4,9 +4,14 @@ import type { AssistantChatResponse } from '@shared/api.interface';
 /** 后端模型网关超时 60s，这里留 15s 余量；超时给可读提示而不是一直转圈 */
 const CHAT_TIMEOUT_MS = 75_000;
 
-export const chat = (message: string) =>
+export const chat = (message: string, projectId?: string) =>
   axiosForBackend
-    .post<AssistantChatResponse>('/api/assistant/chat', { message }, { timeout: CHAT_TIMEOUT_MS })
+    .post<AssistantChatResponse>(
+      '/api/assistant/chat',
+      // 会话绑定项目时传 projectId：服务端注入项目上下文 + 确认卡协议（migration 0025）
+      projectId ? { message, projectId } : { message },
+      { timeout: CHAT_TIMEOUT_MS },
+    )
     .then((res) => res.data)
     .catch((err: unknown) => {
       const e = err as { code?: string; message?: string; response?: { data?: { message?: string } } };

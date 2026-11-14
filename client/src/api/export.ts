@@ -1,5 +1,5 @@
 import { axiosForBackend } from '@client/src/api/http';
-import type { AssembleFinalVideoRequest, AssembleFinalVideoResult, Asset } from '@shared/api.interface';
+import type { AssembleFinalVideoRequest, AssembleFinalVideoResult, Asset, PerShotExportRequest, PerShotExportResult } from '@shared/api.interface';
 
 /**
  * 服务端成片合成：镜头按镜序 ffmpeg 拼接 → 可选 BGM 混音 → 可选硬字幕烧录
@@ -43,4 +43,13 @@ export const downloadDeliverable = async (url: string): Promise<void> => {
 export const getManifest = (projectId: string) =>
   axiosForBackend
     .get(`/api/projects/${projectId}/export/manifest.json`)
+    .then((res) => res.data);
+
+/**
+ * 逐镜导出（migration 0025）：每个有视频的镜头独立产出一条归一化 MP4 并登记资产，
+ * 可选烧录该镜自己的字幕；单镜失败不阻断整批。
+ */
+export const exportPerShot = (projectId: string, payload?: PerShotExportRequest) =>
+  axiosForBackend
+    .post<PerShotExportResult>(`/api/projects/${projectId}/export/per-shot`, payload ?? {})
     .then((res) => res.data);

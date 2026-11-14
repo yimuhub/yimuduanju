@@ -8,7 +8,7 @@ import {
   characters,
   generationJobs,
 } from '@server/database/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import type { QcReport, QcIssue, QcRecommendation } from '@shared/api.interface';
 import { CTA_KEYWORDS } from '@shared/content-modes';
 import { estimateSpeechSeconds } from '@shared/text-metrics';
@@ -33,10 +33,12 @@ export class QcService {
   ) {}
 
   async getLatest(projectId: string): Promise<QcReport | null> {
+    // migration 0025：看图审计（auditType='visual'）与规则质检分离，
+    // 「最新质检报告」只取 standard，互不干扰
     const rows = await this.db
       .select()
       .from(qcReports)
-      .where(eq(qcReports.projectId, projectId))
+      .where(and(eq(qcReports.projectId, projectId), eq(qcReports.auditType, 'standard')))
       .orderBy(desc(qcReports.createdAt))
       .limit(1);
     if (rows.length === 0) return null;
@@ -47,7 +49,7 @@ export class QcService {
     const rows = await this.db
       .select()
       .from(qcReports)
-      .where(eq(qcReports.projectId, projectId))
+      .where(and(eq(qcReports.projectId, projectId), eq(qcReports.auditType, 'standard')))
       .orderBy(desc(qcReports.createdAt))
       .limit(50);
     return rows.map((r) => this.mapReport(r));
@@ -486,6 +488,7 @@ export class QcService {
       pass: row.pass ?? false,
       thresholdPass: row.thresholdPass ?? 90,
       thresholdReview: row.thresholdReview ?? 80,
+      auditType: row.auditType === 'visual' ? 'visual' : 'standard',
       createdAt: row.createdAt.toISOString(),
     };
   }

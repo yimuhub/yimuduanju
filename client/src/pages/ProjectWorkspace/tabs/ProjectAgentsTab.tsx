@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Bot, Send, Trash2, Sparkles, User as UserIcon } from 'lucide-react';
 import { agents } from '@client/src/api';
@@ -6,6 +6,9 @@ import type { AgentRegistryItem } from '@client/src/api/agents';
 import type { AgentMessage } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
+// 对话确认卡（migration 0025，对标 zenstory pendingEdits）：AI 修改 = 待审批 diff
+import { parseAgentActions } from '@client/src/lib/agent-actions';
+import AgentActionCard from '@client/src/components/AgentActionCard';
 
 // 3.0：Agent 列表来自后端注册表（人设/技能绑定动态下发），前端不再写死
 const fallbackList = [{ name: '项目导演', desc: '把控全局，规划生产计划', icon: '🎬' }];
@@ -45,6 +48,16 @@ const ProjectAgentsTab = () => {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages]);
+
+  // 确认卡解析：assistant 消息里的 ```yimu-action 协议块 → 待审批变更（缓存解析结果）
+  const parsedById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof parseAgentActions>>();
+    for (const m of messages) {
+      if (m.role !== 'assistant') continue;
+      map.set(m.id, parseAgentActions(m.content));
+    }
+    return map;
   }, [messages]);
 
   const handleSend = async (text?: string) => {
@@ -150,16 +163,23 @@ const ProjectAgentsTab = () => {
                     <Bot className="h-3.5 w-3.5" />
                   </div>
                 )}
-                <div className={`max-w-[75%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                  m.role === 'user'
-                    ? 'rounded-tr-sm bg-primary text-primary-foreground'
-                    : 'rounded-tl-sm bg-muted text-foreground'
-                }`}>
-                  <div className="mb-1 text-[10px] opacity-60">{m.agentName || (m.role === 'user' ? '我' : active)}</div>
-                  <div className="whitespace-pre-wrap">{m.content}</div>
-                  <div className="mt-1 text-right text-[9px] opacity-50">
-                    {new Date(m.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                <div className={`max-w-[75%] ${m.role === 'assistant' ? 'w-full' : ''}`}>
+                  <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
+                    m.role === 'user'
+                      ? 'rounded-tr-sm bg-primary text-primary-foreground'
+                      : 'rounded-tl-sm bg-muted text-foreground'
+                  }`}>
+                    <div className="mb-1 text-[10px] opacity-60">{m.agentName || (m.role === 'user' ? '我' : active)}</div>
+                    <div className="whitespace-pre-wrap">{m.role === 'assistant' ? (parsedById.get(m.id)?.text ?? m.content) : m.content}</div>
+                    <div className="mt-1 text-right text-[9px] opacity-50">
+                      {new Date(m.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
                   </div>
+                  {/* 确认卡：AI 建议的数据变更，点「应用」才调真实 API */}
+                  {m.role === 'assistant' && id &&
+                    (parsedById.get(m.id)?.actions ?? []).map((a, i) => (
+                      <AgentActionCard key={`${m.id}-${i}`} projectId={id} action={a} />
+                    ))}
                 </div>
                 {m.role === 'user' && (
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-foreground/70">

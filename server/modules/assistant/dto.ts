@@ -16,6 +16,12 @@ export class AssistantChatDto {
   @MinLength(1)
   @MaxLength(4000)
   message!: string;
+
+  // 作战室会话绑定项目时传入：注入项目上下文 + 确认卡协议（migration 0025）。
+  // 不传 = 旧行为（无上下文全局问答），旧客户端零改动。
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
 }
 
 export class CreateChatSessionDto {

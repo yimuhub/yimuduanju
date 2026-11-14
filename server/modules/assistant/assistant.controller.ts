@@ -29,10 +29,10 @@ import {
 export class AssistantController {
   constructor(private readonly assistantService: AssistantService) {}
 
-  /** 兼容旧客户端：无会话的一次性问答 */
+  /** 兼容旧客户端：无会话的一次性问答；传 projectId 时注入项目上下文与确认卡协议 */
   @Post('chat')
   async chat(@Body() body: AssistantChatDto): Promise<AssistantChatResponse> {
-    return this.assistantService.chat(body.message);
+    return this.assistantService.chat(body.message, body.projectId);
   }
 
   @Post('sessions')

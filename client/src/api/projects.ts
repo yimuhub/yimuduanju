@@ -8,6 +8,7 @@ import type {
   QuickCreateRequest,
   QuickCreateResponse,
   ProjectProgressResponse,
+  PipelineRecoverResult,
 } from '@shared/api.interface';
 
 export const listProjects = (params: ProjectListParams = {}) =>
@@ -53,4 +54,14 @@ export const approveProject = (
 ) =>
   axiosForBackend
     .post<Project>(`/api/projects/${id}/approve`, { stage })
+    .then((res) => res.data);
+
+/**
+ * 失败续跑（对标 huobao POST /tasks/:id/recover）：诊断项目全部非终态/失败任务，
+ * 可续跑（上游已建单）的从上游续拉不重复计费，需重做的重新排队；已写入镜头的
+ * 产物字段一律保留。流程总控页失败段的「诊断并续跑」按钮调用。
+ */
+export const recoverPipeline = (id: string) =>
+  axiosForBackend
+    .post<PipelineRecoverResult>(`/api/projects/${id}/pipeline/recover`)
     .then((res) => res.data);

@@ -1,7 +1,12 @@
 import { BadRequestException, Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ExportService } from './export.service';
-import type { AssembleFinalVideoRequest, AssembleFinalVideoResult } from '@shared/api.interface';
+import type {
+  AssembleFinalVideoRequest,
+  AssembleFinalVideoResult,
+  PerShotExportRequest,
+  PerShotExportResult,
+} from '@shared/api.interface';
 
 @Controller('api/projects/:projectId/export')
 export class ExportController {
@@ -23,6 +28,23 @@ export class ExportController {
       subtitleStyle: options.subtitleStyle === 'box' ? 'box' : 'outline',
       bgmAssetId: typeof options.bgmAssetId === 'string' ? options.bgmAssetId : undefined,
       autoBgm: options.autoBgm === true,
+    });
+  }
+
+  /**
+   * 逐镜导出（migration 0025）：每个有视频的镜头独立产出一条归一化 MP4
+   * （画幅/编码与整片合成同一套，可选烧录该镜自己的字幕），落盘并登记资产。
+   * 单镜失败不阻断整批。POST body 可空（默认烧字幕、导出全部镜头）。
+   */
+  @Post('per-shot')
+  async perShot(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body?: PerShotExportRequest,
+  ): Promise<PerShotExportResult> {
+    const options: PerShotExportRequest = body ?? {};
+    return this.exportService.exportPerShot(projectId, {
+      shotIds: Array.isArray(options.shotIds) ? options.shotIds : undefined,
+      burnSubtitles: options.burnSubtitles !== false,
     });
   }
 

@@ -648,6 +648,11 @@ export interface Shot {
   negativePrompt?: string;
   /** 逐镜场景环境（结构化事实），首帧与视频提示词共用同一份 */
   sceneEnv?: SceneEnvironment | null;
+  /**
+   * 镜头扩展元数据（migration 0025）：{ timeSegments?: ShotTimeSegment[] }。
+   * 时间分段编辑器的数据源；无 timeSegments 键 = 单段兼容模式（旧行为不变）。
+   */
+  metadata?: { timeSegments?: ShotTimeSegment[] } & Record<string, unknown>;
   startFrameUrl?: string;
   endFrameUrl?: string;
   /** 白模产线：镜头绑定的白模参考视频（空间关系/运镜路径/时间节奏以此为准） */
@@ -1093,6 +1098,8 @@ export interface QcIssue {
   category: string;
   description: string;
   shotId?: string;
+  /** 看图审计附加信息（migration 0025）：审计对象类型/名称/结论/受检图 URL */
+  meta?: VisualAuditMeta;
 }
 
 export interface QcRecommendation {
@@ -1116,7 +1123,112 @@ export interface QcReport {
   pass: boolean;
   thresholdPass: number;
   thresholdReview: number;
+  /** 报告类型（migration 0025）：standard=规则质检（默认）；visual=角色一致性看图审计 */
+  auditType?: 'standard' | 'visual';
   createdAt: string;
+}
+
+/* ================= 角色一致性看图审计（migration 0025，对标 ArcReel inspect_images） ================= */
+
+/** 看图审计结论：一致 / 偏差（可接受） / 严重偏差（建议重跑） / 无法核验（缺图或缺锚点） */
+export type VisualAuditVerdict = 'consistent' | 'deviation' | 'severe_deviation' | 'unverifiable';
+
+/** 看图审计结论的逐对象结构化信息（存 qc_reports.issues[].meta） */
+export interface VisualAuditMeta {
+  /** 审计对象：character=角色定妆照/出场镜首帧；scene=场景图 */
+  target: 'character' | 'scene';
+  /** 对象名（角色名 / 场景名） */
+  name: string;
+  /** 本条审计的结论 */
+  verdict: VisualAuditVerdict;
+  /** 受检图 URL（定妆照 / 场景图 / 镜头首帧） */
+  imageUrl?: string;
+  /** 对照的身份锁锚点摘要（审计依据，便于人工复核） */
+  anchorExcerpt?: string;
+  /** 对象 id（角色 / 场景） */
+  refId?: string;
+}
+
+/** 看图审计逐条结论（前端 QC Tab 列表行：角色名 | 一致/偏差/严重偏差 | 差异描述） */
+export interface VisualAuditEntry {
+  name: string;
+  target: VisualAuditMeta['target'];
+  verdict: VisualAuditVerdict;
+  differences: string;
+  imageUrl?: string;
+  anchorExcerpt?: string;
+  shotId?: string;
+}
+
+/** 看图审计报告（POST /qc/visual-audit 与 GET /qc/visual-audit/latest 返回） */
+export interface VisualAuditReport {
+  id: string;
+  projectId: string;
+  auditType: 'visual';
+  overallScore: number;
+  pass: boolean;
+  items: VisualAuditEntry[];
+  recommendations: QcRecommendation[];
+  createdAt: string;
+}
+
+/* ================= 分镜时间分段（migration 0025，对标 Pavo / huobao 分镜编辑） ================= */
+
+/** 单镜时间段落：每段独立景别/时长/画面描述/出场角色，生成时按段拼接提示词 */
+export interface ShotTimeSegment {
+  /** 段 id（编辑器内排序/拖拽键；归一化缺省时自动生成） */
+  id: string;
+  /** 景别（如 medium_shot / close_up），空 = 沿用镜头级 shotSize */
+  shotType?: string;
+  /** 时长（秒）；全段之和 ≈ 镜头时长 */
+  duration: number;
+  /** 这段时间的画面描述（可见的物理现象） */
+  description: string;
+  /** 出场角色名（@自动补全来自 characters 表；生成提示词直接可读） */
+  characters: string[];
+  /** 本段运镜（可选；空 = 沿用镜头级 movement） */
+  movement?: string;
+  /** 场景引用（可选；场景名或场景 id 摘要） */
+  sceneRef?: string;
+}
+
+/* ================= 失败续跑（对标 huobao POST /tasks/:id/recover） ================= */
+
+export interface PipelineRecoverItem {
+  jobId: string;
+  jobType: string;
+  targetId?: string;
+  /** 原状态 */
+  previousStatus: string;
+  /** 续跑处置：resumed=从上游续拉（保留 externalTaskId，重新进入轮询）；requeued=重新排队重做 */
+  action: 'resumed' | 'requeued' | 'released';
+  reason: string;
+}
+
+export interface PipelineRecoverResult {
+  projectId: string;
+  /** 诊断出的非终态/失败任务总数 */
+  diagnosed: number;
+  resumed: PipelineRecoverItem[];
+  requeued: PipelineRecoverItem[];
+  released: PipelineRecoverItem[];
+  /** 卡在生成中但已无在途任务的镜头数（状态已修回 failed） */
+  shotsRepaired: number;
+  message: string;
+}
+
+/* ================= 对话确认卡（对标 zenstory pendingEdits） ================= */
+
+/** Agent 建议的数据变更（后端协议块解析产物；用户点「应用」才真实执行） */
+export interface AgentActionProposal {
+  action: 'update_shot' | 'update_script';
+  /** update_shot 的目标镜头 id */
+  targetId?: string;
+  /** 人话摘要（确认卡标题） */
+  summary?: string;
+  /** update_shot：字段补丁（Partial<Shot> 的白名单子集）；update_script：整段剧本 */
+  patch?: Record<string, unknown>;
+  script?: string;
 }
 
 export type TemplateType = 'duration' | 'genre' | 'style' | 'full';
@@ -1636,6 +1748,35 @@ export interface AssembleFinalVideoResult {
   warnings: string[];
   /** 自动提取的封面资产（提取失败时缺省，不阻断导出） */
   cover?: Asset;
+}
+
+/* ================= 逐镜导出（按镜头拆分成独立 MP4） ================= */
+
+export interface PerShotExportRequest {
+  /** 可选：只导出这些镜头；缺省导出全部有视频的镜头 */
+  shotIds?: string[];
+  /** 是否把该镜字幕烧进画面（单镜一条 ASS，默认 true；失败自动降级并附警告） */
+  burnSubtitles?: boolean;
+}
+
+export interface PerShotExportItem {
+  shotId: string;
+  shotNumber: number;
+  /** 镜头标题（subject 摘要） */
+  title?: string;
+  fileUrl: string;
+  durationSeconds?: number;
+  /** 该镜导出过程中的非致命警告 */
+  warnings: string[];
+}
+
+export interface PerShotExportResult {
+  projectId: string;
+  /** 成功导出的镜头文件 */
+  items: PerShotExportItem[];
+  /** 跳过（无成片）的镜号 */
+  skipped: number[];
+  warnings: string[];
 }
 
 export interface ExportTimelineResult {

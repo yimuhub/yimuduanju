@@ -50,6 +50,7 @@ import {
   type StyleBibleLike,
 } from '@shared/prompt-formula';
 import { composeNegativePrompt } from '@shared/negative-prompt';
+import { timeSegmentsToBeats, timeSegmentsOf } from '@shared/shot-time-segments';
 import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
 import { StageBindingsService } from '../providers/stage-bindings.service';
 import { GenerationService } from './generation.service';
@@ -2285,6 +2286,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         sceneEnv: shots.sceneEnv,
         action: shots.action,
         beats: shots.beats,
+        metadata: shots.metadata,
         characterIds: shots.characterIds,
       })
       .from(shots)
@@ -2391,7 +2393,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         .map((c) => c.name);
     }
 
-    const beats = Array.isArray(shot.beats) ? (shot.beats as ShotBeat[]) : null;
+    // 时间分段（migration 0025）：用户在分段编辑器编排的时间段落优先——直接映射成
+    // 视频节拍（每段景别/运镜/描述/在场角色），比 LLM 自动拆的 beats 更贴近导演意图。
+    // 无分段（旧数据）回落 shot.beats，行为与 3.9.x 完全一致。
+    const segmentBeats = timeSegmentsToBeats(timeSegmentsOf(shot.metadata));
+    const beats = segmentBeats ?? (Array.isArray(shot.beats) ? (shot.beats as ShotBeat[]) : null);
     const r = buildSegmentedVideoPrompt({
       duration,
       beats,

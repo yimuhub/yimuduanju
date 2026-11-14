@@ -185,6 +185,11 @@ export const qcReports = pgTable("qc_reports", {
   pass: boolean("pass").default(false),
   thresholdPass: integer("threshold_pass").default(90),
   thresholdReview: integer("threshold_review").default(80),
+  /**
+   * 报告类型（migration 0025）：standard=规则质检；visual=角色一致性看图审计。
+   * 读取路径按类型过滤；旧行由迁移默认值补齐为 standard。
+   */
+  auditType: varchar("audit_type", { length: 30 }).default('standard'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -381,6 +386,12 @@ export const shots = pgTable("shots", {
   negativePrompt: text("negative_prompt"),
   /** 逐镜场景环境（migration 0021）：结构化中文事实，首帧与视频提示词共用 */
   sceneEnv: jsonb("scene_env"),
+  /**
+   * 镜头扩展元数据（migration 0025）：{ timeSegments: ShotTimeSegment[] }。
+   * 生成时按分段拼接 visualPrompt / 视频节拍；无分段 = 单段兼容模式（旧行为不变）。
+   * 注意：schema.ts 标注为自动生成，若重新执行 gen:db-schema，本手工映射可能被覆盖。
+   */
+  metadata: jsonb("metadata"),
   startFrameUrl: text("start_frame_url"),
   endFrameUrl: text("end_frame_url"),
   // 白模产线（0008）：镜头绑定的白模参考视频 URL + 元数据

@@ -181,6 +181,11 @@ export class CreateShotDto {
   @IsOptional()
   status?: string;
 
+  // 镜头扩展元数据（migration 0025）：建镜时即可携带时间分段
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -306,6 +311,12 @@ export class UpdateShotDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  // 镜头扩展元数据（migration 0025）：{ timeSegments: [...] }。
+  // 结构化校验在 service 层 sanitizeShotMetadata 完成（DTO 只挡非对象注入）。
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 
   @IsOptional()
   @Type(() => Number)

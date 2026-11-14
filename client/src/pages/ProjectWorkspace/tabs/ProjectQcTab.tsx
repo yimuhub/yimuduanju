@@ -7,10 +7,12 @@ import {
   XCircle,
   Lightbulb,
   Crosshair,
+  ScanSearch,
 } from 'lucide-react';
 import { qc } from '@client/src/api';
-import type { QcReport, QcIssue } from '@shared/api.interface';
+import type { QcReport, QcIssue, VisualAuditReport, VisualAuditEntry } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
+import { toast } from 'sonner';
 
 const scoreItems: { key: keyof QcReport; label: string }[] = [
   { key: 'characterConsistency', label: '角色一致性' },
@@ -155,6 +157,45 @@ const ProjectQcTab = () => {
     }
   };
 
+  // 看图一致性审计（migration 0025，对标 ArcReel inspect_images）：
+  // 定妆照 + 场景图 + 最新分镜首帧逐一对角色 LOCK 锚点审计
+  const [audit, setAudit] = useState<VisualAuditReport | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoaded, setAuditLoaded] = useState(false);
+  useEffect(() => {
+    if (!id) return;
+    qc.getLatestVisualAudit(id)
+      .then((r) => setAudit(r))
+      .catch(() => setAudit(null))
+      .finally(() => setAuditLoaded(true));
+  }, [id]);
+
+  const handleVisualAudit = async () => {
+    if (!id || auditLoading) return;
+    setAuditLoading(true);
+    try {
+      const r = await qc.runVisualAudit(id);
+      setAudit(r);
+      toast.success(`审计完成：${r.items.length} 条，一致性得分 ${r.overallScore}`, { duration: 3000 });
+    } catch (err) {
+      const axiosMsg =
+        typeof err === 'object' && err && 'response' in err
+          ? ((err as { response?: { data?: { message?: string } } }).response?.data?.message ?? '')
+          : '';
+      logger.error('Visual audit failed:', String(err));
+      toast.error(axiosMsg || (err as Error).message || '一致性审计失败');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const VERDICT_META: Record<VisualAuditEntry['verdict'], { label: string; className: string }> = {
+    consistent: { label: '一致', className: 'pill-ok' },
+    deviation: { label: '偏差', className: 'pill-wait' },
+    severe_deviation: { label: '严重偏差', className: 'pill-fail' },
+    unverifiable: { label: '无法核验', className: 'pill-neutral' },
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -247,6 +288,15 @@ const ProjectQcTab = () => {
           >
             <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} />
             {retrying ? '发起中...' : '一键重跑问题镜头'}
+          </button>
+          <button
+            onClick={() => void handleVisualAudit()}
+            disabled={auditLoading}
+            title="定妆照 + 场景图 + 最新分镜首帧逐一对角色锁定锚点审计（对标 ArcReel inspect_images）"
+            className="flex items-center gap-2 rounded-lg border border-input bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+          >
+            <ScanSearch className={`h-4 w-4 ${auditLoading ? 'animate-pulse' : ''}`} />
+            {auditLoading ? '审计中...' : '一致性审计'}
           </button>
         </div>
       </div>
@@ -365,6 +415,106 @@ const ProjectQcTab = () => {
               );
             })}
           </div>
+        )}
+      </div>
+
+      {/* 看图一致性审计（migration 0025）：角色名 | 一致/偏差/严重偏差 | 差异描述 */}
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <ScanSearch className="h-5 w-5 text-primary" />
+            <h3 className="text-base font-semibold text-foreground">一致性审计</h3>
+            {audit && (
+              <span className="ml-1 flex items-center gap-2">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  {audit.items.length} 条
+                </span>
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${audit.pass ? 'pill-ok' : 'pill-fail'} !h-auto`}
+                >
+                  {audit.pass ? '可用' : '存在偏差'}
+                </span>
+                <span className="text-xs text-muted-foreground">一致性得分 {audit.overallScore}</span>
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => void handleVisualAudit()}
+            disabled={auditLoading}
+            className="flex items-center gap-1.5 rounded-lg border border-input bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${auditLoading ? 'animate-spin' : ''}`} />
+            {auditLoading ? '审计中...' : audit ? '重新审计' : '开始审计'}
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          用 LLM 对照角色锁定锚点逐张审计：角色定妆照、场景图与最新分镜首帧，结论分一致 / 偏差 / 严重偏差。
+        </p>
+        {!auditLoaded ? (
+          <div className="mt-4 text-sm text-muted-foreground">加载中...</div>
+        ) : !audit ? (
+          <div className="mt-4 rounded-lg border border-dashed border-border bg-background p-6 text-center text-sm text-muted-foreground">
+            尚未进行一致性审计——点击「开始审计」检查角色是否前后一致（对标 ArcReel 看图审计回路）
+          </div>
+        ) : audit.items.length === 0 ? (
+          <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/15 p-4 text-sm text-green-400">
+            没有可审计对象（请先生成角色定妆照或镜头首帧）
+          </div>
+        ) : (
+          <div className="mt-4 space-y-2">
+            {audit.items.map((item, idx) => {
+              const meta = VERDICT_META[item.verdict] ?? VERDICT_META.unverifiable;
+              return (
+                <div key={`${item.name}-${idx}`} className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
+                  {item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.name}
+                      loading="lazy"
+                      className="h-12 w-12 shrink-0 rounded-md border border-border object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] text-muted-foreground">无图</span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">{item.name}</span>
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${meta.className}`}>{meta.label}</span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {item.target === 'scene' ? '场景图' : item.shotId ? '镜头首帧' : '定妆照'}
+                      </span>
+                      {item.shotId && (
+                        <button
+                          onClick={() => navigate(`/project/${id}/storyboard`)}
+                          className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
+                        >
+                          <Crosshair className="h-3 w-3" /> 去修复
+                        </button>
+                      )}
+                    </div>
+                    {item.differences && (
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.differences}</p>
+                    )}
+                    {item.anchorExcerpt && (
+                      <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground/70" title={item.anchorExcerpt}>
+                        锚点：{item.anchorExcerpt}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {audit && audit.recommendations.length > 0 && (
+          <ul className="mt-3 space-y-1.5">
+            {audit.recommendations.map((rec, idx) => (
+              <li key={idx} className="flex items-start gap-2 text-xs text-muted-foreground">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                {rec.suggestion}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

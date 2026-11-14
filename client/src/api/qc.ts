@@ -1,5 +1,5 @@
 import { axiosForBackend } from '@client/src/api/http';
-import type { QcReport } from '@shared/api.interface';
+import type { QcReport, VisualAuditReport } from '@shared/api.interface';
 
 export const listReports = (projectId: string) =>
   axiosForBackend
@@ -29,4 +29,18 @@ export const retryFailedShots = (projectId: string) =>
 export const getLatestReport = (projectId: string) =>
   axiosForBackend
     .get<QcReport>(`/api/projects/${projectId}/qc/latest`)
+    .then((res) => res.data);
+
+/**
+ * 角色一致性看图审计（对标 ArcReel inspect_images）：定妆照 + 场景图 + 最新分镜
+ * 首帧逐一对照角色 LOCK 锚点审计，结果写 qc 审计表（auditType=visual）。
+ */
+export const runVisualAudit = (projectId: string) =>
+  axiosForBackend
+    .post<VisualAuditReport>(`/api/projects/${projectId}/qc/visual-audit`)
+    .then((res) => res.data);
+
+export const getLatestVisualAudit = (projectId: string) =>
+  axiosForBackend
+    .get<VisualAuditReport | null>(`/api/projects/${projectId}/qc/visual-audit/latest`)
     .then((res) => res.data);

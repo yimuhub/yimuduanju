@@ -48,11 +48,29 @@ import {
   type RuleHit,
 } from '@shared/qc-rules';
 import { contentDrivenShotSeconds } from '@shared/shot-duration';
+import {
+  normalizeTimeSegments,
+  timeSegmentsOf,
+  withTimeSegmentBlock,
+} from '@shared/shot-time-segments';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { ArtifactQcService } from '../generation/artifact-qc.service';
 import { StorySkillsService, type RigRunResult } from '../story-skills/story-skills.service';
 import { buildSheetPrompt } from '../story-skills/skills';
 import { getStylePreset } from '../story-skills/styles';
+
+/**
+ * 镜头扩展元数据（migration 0025）入库前归一：
+ * 保留除 timeSegments 外的未知键（其他消费方可能往 metadata 写东西），
+ * timeSegments 走 shared 归一（空段丢弃 / 时长钳制 / 段数封顶）。
+ * 非对象输入 → {}（DTO 已挡非对象，这里是 service 层兜底）。
+ */
+function sanitizeShotMetadata(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const base = { ...(raw as Record<string, unknown>) };
+  base.timeSegments = normalizeTimeSegments(base.timeSegments);
+  return base;
+}
 
 @Injectable()
 export class StoryboardService {
@@ -372,6 +390,7 @@ export class StoryboardService {
         subtitleText: dto.subtitleText,
         characterIds: dto.characterIds ?? [],
         status: dto.status ?? 'draft',
+        metadata: sanitizeShotMetadata(dto.metadata),
         sortOrder: dto.sortOrder ?? nextNumber,
       })
       .returning();
@@ -423,6 +442,9 @@ export class StoryboardService {
     }
     if (dto.locked !== undefined) patch.locked = dto.locked;
     if (dto.status !== undefined) patch.status = dto.status;
+    // 时间分段（migration 0025）：结构化归一后整体写入 metadata；
+    // 传 null/{} 视为清除分段（回到单段兼容模式）
+    if (dto.metadata !== undefined) patch.metadata = sanitizeShotMetadata(dto.metadata);
     if (dto.sortOrder !== undefined) patch.sortOrder = dto.sortOrder;
 
     if (Object.keys(patch).length === 0) {
@@ -641,7 +663,12 @@ export class StoryboardService {
         targetId: shot.id,
         status: 'pending',
         inputData: {
-          prompt: shot.visualPrompt ?? shot.subject ?? '',
+          // 时间分段（migration 0025）：有分段时按段拼接（景别/运镜/画面描述），
+          // 无分段时与旧行为逐字节一致
+          prompt: withTimeSegmentBlock(
+            shot.visualPrompt ?? shot.subject ?? '',
+            timeSegmentsOf(shot.metadata),
+          ),
           negativePrompt: shot.negativePrompt ?? '',
           references: [...(shot.referenceImageUrls ?? []), ...charRefs],
           ...prev,
@@ -1393,7 +1420,11 @@ export class StoryboardService {
         targetId: shot.id,
         status: 'pending',
         inputData: {
-          prompt: shot.visualPrompt ?? (jobType === 'image' ? shot.subject ?? '' : shot.dialogue ?? ''),
+          // 时间分段：图片任务按段拼接；tts 任务描述无时间结构，原样保留
+          prompt: withTimeSegmentBlock(
+            shot.visualPrompt ?? (jobType === 'image' ? shot.subject ?? '' : shot.dialogue ?? ''),
+            jobType === 'image' ? timeSegmentsOf(shot.metadata) : [],
+          ),
           negativePrompt: jobType === 'image' ? shot.negativePrompt ?? '' : undefined,
           references: [...(jobType === 'image' ? shot.referenceImageUrls ?? [] : []), ...charRefs],
           ...prev,
@@ -1495,7 +1526,11 @@ export class StoryboardService {
               }
             : jobType === 'image'
               ? {
-                  prompt: shot.visualPrompt ?? shot.subject ?? '',
+                  // 时间分段：批量首帧与单镜 generateShotImage 同口径
+                  prompt: withTimeSegmentBlock(
+                    shot.visualPrompt ?? shot.subject ?? '',
+                    timeSegmentsOf(shot.metadata),
+                  ),
                   negativePrompt: shot.negativePrompt ?? '',
                   references: [...(shot.referenceImageUrls ?? []), ...charRefs],
                 }
@@ -2221,6 +2256,7 @@ export class StoryboardService {
       endFrameUrl: row.endFrameUrl ?? undefined,
       whitemodelUrl: row.whitemodelUrl ?? undefined,
       whitemodelMeta: (row.whitemodelMeta as WhitemodelMeta | null) ?? undefined,
+      metadata: (row.metadata as Shot['metadata']) ?? undefined,
       referenceImageUrls: row.referenceImageUrls ?? [],
       videoUrl: row.videoUrl ?? undefined,
       voiceUrl: row.voiceUrl ?? undefined,

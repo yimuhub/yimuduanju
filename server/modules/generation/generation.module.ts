@@ -2,6 +2,9 @@ import { forwardRef, Module } from '@nestjs/common';
 import { GenerationController } from './generation.controller';
 import { QueueAdminController } from '../queue/queue-admin.controller';
 import { QueueAdminService } from '../queue/queue-admin.service';
+// 失败续跑（对标 huobao recover）：诊断非终态/失败任务，可续跑的从上游续拉，需重做的重新排队
+import { PipelineRecoverService } from './pipeline-recover.service';
+import { PipelineRecoverController } from './pipeline-recover.controller';
 import { GenerationService } from './generation.service';
 import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
@@ -31,7 +34,7 @@ import { BibleModule } from '../bible/bible.module';
     forwardRef(() => QcModule),
     forwardRef(() => BibleModule),
   ],
-  controllers: [GenerationController, QueueAdminController],
+  controllers: [GenerationController, QueueAdminController, PipelineRecoverController],
   providers: [
     GenerationService,
     ModelGatewayService,
@@ -44,6 +47,7 @@ import { BibleModule } from '../bible/bible.module';
     ProviderKeyPoolService,
     StorySkillsService,
     QueueAdminService,
+    PipelineRecoverService,
   ],
   exports: [ModelGatewayService, BudgetCapService, ArtifactQcService, RoutingService, ProviderKeyPoolService, StorySkillsService, QueueAdminService],
 })

@@ -34,7 +34,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { exportApi, storyboard, templates as templatesApi, assets as assetsApi } from '@client/src/api';
-import type { Asset, Shot } from '@shared/api.interface';
+import type { Asset, PerShotExportResult, Shot } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { toast } from 'sonner';
 // P1 性能：ffmpeg.wasm 只在点击合成时动态加载，不再进主包
@@ -175,6 +175,32 @@ const ProjectExportTab = () => {
     }
   };
   const [synthName, setSynthName] = useState('yimu-export.mp4');
+
+  // 逐镜导出（migration 0025）：每个有视频的镜头独立 MP4（画幅归一 + 该镜字幕烧录可选）
+  const [perShotBusy, setPerShotBusy] = useState(false);
+  const [perShotResult, setPerShotResult] = useState<PerShotExportResult | null>(null);
+  const handlePerShotExport = async () => {
+    if (!id || perShotBusy) return;
+    setPerShotBusy(true);
+    try {
+      const data = await exportApi.exportPerShot(id, { burnSubtitles });
+      setPerShotResult(data);
+      if (data.warnings.length) toast.warning(data.warnings.slice(0, 3).join('；'), { duration: 4000 });
+      toast.success(
+        `逐镜导出完成：${data.items.length} 个镜头文件已落盘并登记到「项目资产」` +
+          (data.skipped.length ? `；跳过 ${data.skipped.length} 个无成片镜头` : ''),
+        { duration: 3600 },
+      );
+    } catch (e) {
+      const axiosMsg =
+        typeof e === 'object' && e && 'response' in e
+          ? ((e as { response?: { data?: { message?: string } } }).response?.data?.message ?? '')
+          : '';
+      toast.error(axiosMsg || (e as Error).message || '逐镜导出失败');
+    } finally {
+      setPerShotBusy(false);
+    }
+  };
 
   useEffect(
     () => () => {
@@ -474,6 +500,56 @@ const ProjectExportTab = () => {
               {assembling ? '合成中…' : videoClips.length === 0 ? '暂无片段' : '开始合成'}
             </button>
           </div>
+
+          {/* 逐镜导出（migration 0025）：模式选择——每个镜头独立 MP4，交付下游按镜取用 */}
+          <div className="ex-synth-alt">
+            <div className="ex-synth-alt-l">
+              <span className="ex-synth-alt-ico"><Layers size={14} /></span>
+              <div>
+                <b>逐镜导出（按镜头拆分）</b>
+                <span>每个镜头独立 MP4（画幅归一 · 可选烧该镜字幕），登记到「项目资产」，单镜失败不阻断</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="ex-btn ex-btn-quiet"
+              onClick={handlePerShotExport}
+              disabled={videoClips.length === 0 || perShotBusy}
+            >
+              {perShotBusy ? <Loader2 size={13} className="spin" /> : <Film size={13} />}
+              {perShotBusy ? '导出中…' : videoClips.length === 0 ? '暂无片段' : '逐镜导出'}
+            </button>
+          </div>
+
+          {perShotResult && perShotResult.items.length > 0 ? (
+            <div className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>已导出 {perShotResult.items.length} 个镜头文件（点击下载）</span>
+                {perShotResult.skipped.length > 0 && <span>跳过无成片镜头：{perShotResult.skipped.join('、')}</span>}
+              </div>
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                {perShotResult.items.map((it) => (
+                  <div
+                    key={it.shotId}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="truncate text-foreground">
+                      镜 {String(it.shotNumber).padStart(2, '0')}{it.title ? ` · ${it.title.slice(0, 20)}` : ''}
+                      {it.durationSeconds ? ` · ${it.durationSeconds}s` : ''}
+                      {it.warnings.length ? ` · ⚠ ${it.warnings.join('；')}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => exportApi.downloadDeliverable(it.fileUrl).catch(() => toast.error('下载失败'))}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-input px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary hover:text-primary"
+                    >
+                      <Download size={11} /> 下载
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {/* 服务端合成选项：烧录字幕（默认开）/ 字幕样式 / BGM 选择 */}
           <div className="ex-opts ex-opts-server">

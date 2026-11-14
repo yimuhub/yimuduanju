@@ -19,9 +19,15 @@ import {
 } from 'lucide-react';
 import { assets as assetsApi, assistant as assistantApi, dashboard as dashboardApi, generation as generationApi, projects as projectsApi, providers as providersApi, templates as templatesApi } from '@client/src/api';
 import type { Template } from '@shared/api.interface';
-import type { Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
+import type { AgentActionProposal, Asset, GenerationJob, Project, ProjectProgressResponse } from '@shared/api.interface';
 import { openJobStream, type JobStreamSnapshot } from '@client/src/api/generation';
 import { useVisibleInterval } from '@client/src/lib/hooks';
+// 对话确认卡（migration 0025，对标 zenstory pendingEdits）：AI 修改 = 待审批 diff
+import { parseAgentActions } from '@client/src/lib/agent-actions';
+import AgentActionCard from '@client/src/components/AgentActionCard';
+// 提示词模板库（migration 0025）：经验/技能片段插入光标位置
+import { PromptTemplateButton } from '@client/src/components/PromptTemplateMenu';
+import { insertAtCursor } from '@client/src/lib/prompt-templates';
 import TriPane from '@client/src/components/TriPane';
 import WorkspaceRightDock from '@client/src/components/workspace/WorkspaceRightDock';
 import SidebarUserCard from '@client/src/components/SidebarUserCard';
@@ -59,6 +65,8 @@ interface ChatMsg {
   attachments?: Attachment[];
   /** 动作卡片：建好的项目 / 任务列表，点击直达工作台 */
   card?: { kind: 'project'; projectId: string; title: string; status?: string } | { kind: 'jobs'; jobs: GenerationJob[] };
+  /** 确认卡（migration 0025）：AI 建议的数据变更（before/after），点「应用」才执行 */
+  actions?: AgentActionProposal[];
   chips?: string[];
 }
 
@@ -150,6 +158,8 @@ const AgentStudio = () => {
   const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 提示词模板插入光标定位（migration 0025）
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? sessions[0],
@@ -368,7 +378,11 @@ const AgentStudio = () => {
       if (text.includes('一句话创建')) {
         setInput('');
         appendMsg(sid, { id: uid(), role: 'user', text: '🎬 一句话创建短剧项目' });
-        setQuickCreateText('');
+        // 回填最近一条用户创意（AI 已基于它给出方案；弹窗留空会丢上下文，逼用户重打一遍）
+        const lastIdea = [...(active.messages ?? [])]
+          .reverse()
+          .find((m) => m.role === 'user' && m.text && !m.text.includes('一句话创建'));
+        setQuickCreateText(lastIdea?.text?.slice(0, 500) ?? '');
         setQuickCreateOpen(true);
         return;
       }
@@ -396,10 +410,14 @@ const AgentStudio = () => {
     setAttachments([]);
     setBusy(true);
     try {
-      const res = await assistantApi.chat(payloadText);
+      // 会话绑定项目时传 projectId：服务端注入项目上下文 + 确认卡协议（migration 0025）
+      const res = await assistantApi.chat(payloadText, active.projectId);
+      const parsed = parseAgentActions(res.reply);
       appendMsg(sid, {
-        id: uid(), role: 'agent', text: res.reply,
-        chips: /剧|片|故事|创意/.test(res.reply) ? ['🎬 一句话创建短剧项目'] : undefined,
+        id: uid(), role: 'agent', text: parsed.text || res.reply,
+        // 确认卡只在会话绑定了项目时渲染（未绑定项目无法执行 update_shot）
+        actions: active.projectId ? parsed.actions : undefined,
+        chips: /剧|片|故事|创意/.test(parsed.text || res.reply) ? ['🎬 一句话创建短剧项目'] : undefined,
       });
     } catch (e) {
       appendMsg(sid, { id: uid(), role: 'agent', text: `连接失败：${(e as Error).message}\n请确认后端已启动（scripts/start.sh）。` });
@@ -511,7 +529,8 @@ const AgentStudio = () => {
             key={String(v)}
             onClick={() => set(String(v))}
             className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
-              String(cur) === String(v) ? 'border-primary bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:border-primary/50'
+              // 画风/预算档存的是 label 前缀（如 'manhwa'），label 是 'manhwa 韩漫'——按前缀比较才能正确高亮
+              String(cur) === String(v).split(' ')[0] ? 'border-primary bg-primary/10 text-primary' : 'border-input text-muted-foreground hover:border-primary/50'
             }`}
           >
             {v}
@@ -893,6 +912,15 @@ const AgentStudio = () => {
                     </div>
                   )}
                   {msgCard(m)}
+                  {/* 确认卡：AI 建议的数据变更（before/after diff），点「应用」调真实 API */}
+                  {m.actions && m.role === 'agent' && active?.projectId &&
+                    m.actions.map((a, i) => (
+                      <AgentActionCard
+                        key={`${m.id}-action-${i}`}
+                        projectId={active.projectId as string}
+                        action={a}
+                      />
+                    ))}
                   {m.chips && m.role === 'agent' && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {m.chips.map((c) => (
@@ -952,8 +980,16 @@ const AgentStudio = () => {
               >
                 🎯
               </button>
+              {/* 提示词模板库（migration 0025）：从经验/技能目录选片段插入光标位置 */}
+              <PromptTemplateButton
+                label=""
+                onInsert={(body) =>
+                  insertAtCursor(chatInputRef.current, body, input, (next) => setInput(next))
+                }
+              />
               <input ref={fileRef} type="file" multiple accept="image/*,.txt,.md,.srt,.ass,.json" className="hidden" onChange={(e) => void onPickFiles(e.target.files)} />
               <textarea
+                ref={chatInputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {

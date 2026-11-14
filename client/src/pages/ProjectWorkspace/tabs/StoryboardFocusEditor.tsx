@@ -1,18 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, ChevronLeft, ChevronRight, Save, RefreshCw, FileText, Loader2, ZoomIn, ImageOff } from 'lucide-react';
-import type { Asset, Scene, Shot } from '@shared/api.interface';
+import {
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Save,
+  RefreshCw,
+  FileText,
+  Loader2,
+  ZoomIn,
+  ImageOff,
+  Layers,
+  Plus,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  GripVertical,
+  Wand2,
+} from 'lucide-react';
+import type { Asset, Character, Scene, Shot, ShotTimeSegment } from '@shared/api.interface';
 import { CAMERA_RIGS, movementLabel } from '@shared/camera-rigs';
+import { blankTimeSegment, segmentsTotalSeconds, timeSegmentsOf } from '@shared/shot-time-segments';
+// 提示词模板库（migration 0025）：从技能库/内置目录选片段插入光标位置
+import { PromptTemplateButton } from '@client/src/components/PromptTemplateMenu';
 
 /**
  * 分镜聚焦编辑器（全屏覆盖层）——精修检查器完全体：
  * 三区：左=镜头导航（缩略图小图+镜号），中=首帧大图+剧本原文并排核对，右=检查器
  * （画面提示词 / 字段级精修：镜头标题·动作描述·时长·运镜，全部 blur 即单字段
- * PATCH 保存，失败回滚+toast / forceNew 局部重跑 / 历史点选回填主图）。
+ * PATCH 保存，失败回滚+toast / forceNew 局部重跑 / 历史点选回填主图 /
+ * 时间分段编辑：每段独立景别·时长·运镜·画面描述·@出场角色，可增删拖拽排序）。
  * 编辑逻辑全部回调 ProjectStoryboardTab 现有 handlers，行为零分叉。
  */
 interface FocusEditorProps {
   shots: Shot[];
   scenes: Scene[];
+  /** 项目角色表：时间分段「@出场角色」自动补全的数据源 */
+  characters: Character[];
   initialShotId: string;
   promptDrafts: Record<string, string>;
   onPromptDraftChange: (shotId: string, value: string) => void;
@@ -51,9 +74,325 @@ const FIELD_META: { key: FieldKey; label: string; hint: string }[] = [
   { key: 'movement', label: '运镜（机位预设）', hint: '视频提示词会拼入运镜事实' },
 ];
 
+/* ================= 时间分段编辑器（migration 0025，对标 Pavo / huobao 分镜编辑） ================= */
+
+const SEGMENT_SHOT_TYPES: { value: string; label: string }[] = [
+  { value: 'extreme_close_up', label: '大特写' },
+  { value: 'close_up', label: '特写' },
+  { value: 'medium_close_up', label: '近景' },
+  { value: 'medium_shot', label: '中景' },
+  { value: 'medium_long_shot', label: '全景' },
+  { value: 'long_shot', label: '远景' },
+  { value: 'over_the_shoulder', label: '过肩' },
+];
+
+/** @出场角色：输入以 @ 开头时从 characters 表自动补全（选中即加 chip） */
+const SegmentCharactersInput = ({
+  characters,
+  value,
+  onChange,
+}: {
+  characters: Character[];
+  value: string[];
+  onChange: (next: string[]) => void;
+}) => {
+  const [query, setQuery] = useState('');
+  const showAt = query.startsWith('@');
+  const q = query.slice(1).trim().toLowerCase();
+  const candidates = showAt
+    ? characters
+        .filter((c) => !value.includes(c.name))
+        .filter((c) => !q || c.name.toLowerCase().includes(q))
+        .slice(0, 6)
+    : [];
+  const add = (name: string) => {
+    if (!value.includes(name)) onChange([...value, name]);
+    setQuery('');
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-1">
+        {value.map((name) => (
+          <span
+            key={name}
+            className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary"
+          >
+            @{name}
+            <button
+              onClick={() => onChange(value.filter((v) => v !== name))}
+              className="ml-0.5 text-primary/70 hover:text-primary"
+              aria-label={`移除 ${name}`}
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        ))}
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && candidates[0]) {
+              e.preventDefault();
+              add(candidates[0].name);
+            }
+            if (e.key === 'Backspace' && !query && value.length > 0) {
+              onChange(value.slice(0, -1));
+            }
+          }}
+          placeholder={value.length === 0 ? '@角色（自动补全）' : '@再加'}
+          className="min-w-[80px] flex-1 border-none bg-transparent p-0 text-[11px] outline-none placeholder:text-muted-foreground/60"
+        />
+      </div>
+      {candidates.length > 0 && (
+        <div className="mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+          {candidates.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => add(c.name)}
+              className="block w-full px-2 py-1 text-left text-[11px] text-foreground hover:bg-muted"
+            >
+              @{c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** 单镜时间段落列表：每段独立景别/时长/运镜/描述/@角色，可增删、上下移与拖拽排序 */
+const TimeSegmentEditor = ({
+  shot,
+  characters,
+  scenes,
+  onPatchField,
+}: {
+  shot: Shot;
+  characters: Character[];
+  scenes: Scene[];
+  onPatchField: (shot: Shot, patch: Partial<Shot>) => Promise<void>;
+}) => {
+  const [segs, setSegs] = useState<ShotTimeSegment[]>(() => timeSegmentsOf(shot.metadata));
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
+
+  // 切镜时重置草稿为该镜当前分段
+  useEffect(() => {
+    setSegs(timeSegmentsOf(shot.metadata));
+    setDirty(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.id]);
+
+  const update = (i: number, patch: Partial<ShotTimeSegment>) => {
+    setSegs((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+    setDirty(true);
+  };
+  const remove = (i: number) => {
+    setSegs((prev) => prev.filter((_, j) => j !== i));
+    setDirty(true);
+  };
+  const add = () => {
+    setSegs((prev) => [...prev, blankTimeSegment(prev.length + 1)]);
+    setDirty(true);
+  };
+  const move = (from: number, to: number) => {
+    setSegs((prev) => {
+      if (to < 0 || to >= prev.length || from === to) return prev;
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+    setDirty(true);
+  };
+  const drop = (to: number) => {
+    if (dragIdx !== null) move(dragIdx, to);
+    setDragIdx(null);
+    setOverIdx(null);
+  };
+
+  const total = segmentsTotalSeconds(segs);
+  const shotDur = Number(shot.duration) || 0;
+  const mismatched = segs.length > 0 && Math.abs(total - shotDur) > 0.5;
+
+  const commit = async () => {
+    setSaving(true);
+    try {
+      await onPatchField(shot, {
+        metadata: { ...(shot.metadata ?? {}), timeSegments: segs },
+      });
+      setDirty(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border pt-4">
+      <div className="flex items-center justify-between">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
+          <Layers className="h-3.5 w-3.5 text-primary" /> 时间分段
+          <span className="text-[10px] font-normal text-muted-foreground">
+            生成时按段拼接提示词（景别/运镜/描述/@角色）
+          </span>
+        </span>
+        <button
+          onClick={add}
+          className="inline-flex items-center gap-1 rounded-lg border border-input px-2 py-1 text-[10px] font-medium text-foreground hover:border-primary hover:text-primary"
+        >
+          <Plus className="h-3 w-3" /> 加一段
+        </button>
+      </div>
+
+      {segs.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border bg-background px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+          未分段（单段模式）：生成时沿用整镜提示词。点「加一段」把镜头按 3-6s 拆成时间段落，
+          每段可独立指定景别、运镜、画面与出场角色。
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {segs.map((seg, i) => (
+            <div
+              key={seg.id}
+              draggable
+              onDragStart={() => setDragIdx(i)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOverIdx(i);
+              }}
+              onDragLeave={() => setOverIdx((v) => (v === i ? null : v))}
+              onDrop={() => drop(i)}
+              onDragEnd={() => {
+                setDragIdx(null);
+                setOverIdx(null);
+              }}
+              className={`rounded-xl border bg-background p-2.5 ${
+                overIdx === i && dragIdx !== null && dragIdx !== i
+                  ? 'border-primary ring-1 ring-primary/40'
+                  : 'border-border'
+              } ${dragIdx === i ? 'opacity-50' : ''}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground">
+                  <GripVertical className="h-3 w-3 cursor-grab text-muted-foreground/70" />
+                  段 {i + 1}
+                </span>
+                <span className="flex items-center gap-1">
+                  <button
+                    onClick={() => move(i, i - 1)}
+                    disabled={i === 0}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted disabled:opacity-30"
+                    aria-label="上移"
+                  >
+                    <ChevronUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={() => move(i, i + 1)}
+                    disabled={i === segs.length - 1}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted disabled:opacity-30"
+                    aria-label="下移"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={() => remove(i)}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-red-500/10 hover:text-red-400"
+                    aria-label="删除该段"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </span>
+              </div>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <select
+                  value={seg.shotType ?? ''}
+                  onChange={(e) => update(i, { shotType: e.target.value })}
+                  className="rounded-lg border border-input bg-background px-2 py-1.5 text-[11px] outline-none focus:border-primary"
+                  title="本段景别（空 = 沿用镜头级景别）"
+                >
+                  <option value="">景别（沿用整镜）</option>
+                  {SEGMENT_SHOT_TYPES.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={seg.movement ?? ''}
+                  onChange={(e) => update(i, { movement: e.target.value })}
+                  className="rounded-lg border border-input bg-background px-2 py-1.5 text-[11px] outline-none focus:border-primary"
+                  title="本段运镜（空 = 沿用镜头级运镜）"
+                >
+                  <option value="">运镜（沿用整镜）</option>
+                  {movementOptions(shot.movement).map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-2">
+                <SegmentCharactersInput
+                  characters={characters}
+                  value={seg.characters}
+                  onChange={(next) => update(i, { characters: next })}
+                />
+              </div>
+              <textarea
+                value={seg.description}
+                onChange={(e) => update(i, { description: e.target.value })}
+                rows={2}
+                placeholder="这段时间画面发生什么（可见的物理现象）"
+                className="mt-2 w-full resize-y rounded-lg border border-input bg-background p-2 text-[11px] leading-relaxed outline-none focus:border-primary"
+              />
+              <div className="mt-1.5 flex items-center gap-2">
+                <label className="shrink-0 text-[10px] text-muted-foreground">时长</label>
+                <input
+                  type="number"
+                  min={0.5}
+                  step={0.5}
+                  value={seg.duration}
+                  onChange={(e) => update(i, { duration: Number(e.target.value) })}
+                  className="w-16 rounded-lg border border-input bg-background px-1.5 py-1 text-[11px] tabular-nums outline-none focus:border-primary"
+                />
+                <span className="text-[10px] text-muted-foreground">秒</span>
+                <select
+                  value={seg.sceneRef ?? ''}
+                  onChange={(e) => update(i, { sceneRef: e.target.value })}
+                  className="ml-auto rounded-lg border border-input bg-background px-2 py-1 text-[11px] outline-none focus:border-primary"
+                  title="场景引用（可选）"
+                >
+                  <option value="">场景（沿用）</option>
+                  {scenes.map((s) => (
+                    <option key={s.id} value={s.title || `第${s.sceneNumber}场`}>
+                      {s.title || `第${s.sceneNumber}场`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between rounded-lg bg-muted/40 px-2.5 py-2">
+            <span className={`text-[10px] ${mismatched ? 'text-amber-500' : 'text-muted-foreground'}`}>
+              共 {total}s / 镜头 {shotDur}s{mismatched ? ' · 分段总时长与镜头时长不一致（不影响生成，建议对齐）' : ''}
+            </span>
+            <button
+              onClick={() => void commit()}
+              disabled={saving || !dirty}
+              className="inline-flex items-center gap-1 rounded-lg bg-brand-gradient px-3 py-1 text-[10px] font-semibold text-white disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              保存分段
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const StoryboardFocusEditor = ({
   shots,
   scenes,
+  characters,
   initialShotId,
   promptDrafts,
   onPromptDraftChange,
@@ -228,7 +567,28 @@ const StoryboardFocusEditor = ({
           <div className="border-b border-border px-4 py-3 text-sm font-semibold text-foreground">镜头编辑</div>
           <div className="space-y-4 p-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">画面提示词（生成依据）</label>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-xs font-medium text-muted-foreground">画面提示词（生成依据）</label>
+                {/* 提示词模板库：从技能库/内置目录选片段插入光标位置 */}
+                <PromptTemplateButton
+                  onInsert={(text) => {
+                    const ta = taRef.current;
+                    if (!ta) {
+                      onPromptDraftChange(shot.id, `${draft}${text}`);
+                      return;
+                    }
+                    const start = ta.selectionStart ?? draft.length;
+                    const end = ta.selectionEnd ?? draft.length;
+                    const next = draft.slice(0, start) + text + draft.slice(end);
+                    onPromptDraftChange(shot.id, next);
+                    requestAnimationFrame(() => {
+                      ta.focus();
+                      const pos = start + text.length;
+                      ta.setSelectionRange(pos, pos);
+                    });
+                  }}
+                />
+              </div>
               <textarea
                 ref={taRef}
                 value={draft}
@@ -314,6 +674,9 @@ const StoryboardFocusEditor = ({
                 </div>
               ))}
             </div>
+
+            {/* 时间分段（migration 0025）：每段独立景别/时长/运镜/描述/@角色，生成时按段拼接 */}
+            <TimeSegmentEditor shot={shot} characters={characters} scenes={scenes} onPatchField={onPatchField} />
 
             {/* 生成历史：点选回填主图（确认后写回 startFrameUrl），角标放大预览 */}
             <div className="border-t border-border pt-4">

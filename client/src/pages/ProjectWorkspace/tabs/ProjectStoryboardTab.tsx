@@ -25,9 +25,9 @@ import {
   Check,
   ChevronDown as ChevronDownSmall,
 } from 'lucide-react';
-import { storyboard, assets, projects, episodes as episodesApi } from '@client/src/api';
+import { storyboard, assets, projects, bible, episodes as episodesApi } from '@client/src/api';
 import { useEpisodeScope } from '../EpisodeContext';
-import type { Shot, Scene, Segment, Asset, BlockedVideoSummary } from '@shared/api.interface';
+import type { Shot, Scene, Segment, Asset, Character, BlockedVideoSummary } from '@shared/api.interface';
 import type { ProjectDiagnosis } from '@shared/artifact-state';
 import { isBoardTextInLanguage } from '@shared/boards-language';
 import { logger } from '@client/src/utils/logger';
@@ -91,6 +91,8 @@ const ProjectStoryboardTab = () => {
   const [searchParams] = useSearchParams();
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [shots, setShots] = useState<Shot[]>([]);
+  // 时间分段「@出场角色」自动补全的数据源（聚焦编辑器用）
+  const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedScene, setSelectedScene] = useState<string>('all');
@@ -503,6 +505,11 @@ const ProjectStoryboardTab = () => {
           : await storyboard.listAllShots(id);
         const sorted = allShots.sort((a, b) => a.shotNumber - b.shotNumber);
         setShots(sorted);
+        // 时间分段「@出场角色」自动补全的数据源（加载失败不挡分镜主流程）
+        bible
+          .listCharacters(id)
+          .then((rows) => setCharacters(rows ?? []))
+          .catch(() => setCharacters([]));
         // 画布深链 ?shot=<id>：展开并滚动定位到该镜头
         const targetShot = searchParams.get('shot');
         if (targetShot && sorted.some((s) => s.id === targetShot)) {
@@ -1361,11 +1368,13 @@ const ProjectStoryboardTab = () => {
       )}
 
       {/* 全屏聚焦编辑器（精修检查器完全体）：左缩略图导航 / 中首帧+剧本对照 /
-          右提示词+字段精修（blur 单字段保存）+ forceNew 重跑 + 历史回填主图 */}
+          右提示词+字段精修（blur 单字段保存）+ forceNew 重跑 + 历史回填主图 +
+          时间分段编辑（每段景别/时长/运镜/描述/@角色） */}
       {focusShotId && shots.some((s) => s.id === focusShotId) && (
         <StoryboardFocusEditor
           shots={filteredShots.length > 0 ? filteredShots : shots}
           scenes={scenes}
+          characters={characters}
           initialShotId={focusShotId}
           promptDrafts={promptDrafts}
           onPromptDraftChange={(shotId, value) =>

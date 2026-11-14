@@ -13,9 +13,10 @@ import {
   Grid3X3,
   PenTool,
   RefreshCw,
+  Wrench,
 } from 'lucide-react';
 import { projects } from '@client/src/api';
-import type { GenerationProgress, ProjectProgressResponse } from '@shared/api.interface';
+import type { GenerationProgress, ProjectProgressResponse, PipelineRecoverResult } from '@shared/api.interface';
 import { toast } from 'sonner';
 import { logger } from '@client/src/utils/logger';
 import { useVisibleInterval } from '@client/src/lib/hooks';
@@ -80,6 +81,25 @@ const ProjectFlowTab = () => {
   const [progress, setProgress] = useState<ProjectProgressResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
+  // 失败续跑（对标 huobao recover）：诊断非终态/失败任务，可续跑的从上游续拉不重复计费
+  const [recovering, setRecovering] = useState(false);
+  const [recoverResult, setRecoverResult] = useState<PipelineRecoverResult | null>(null);
+
+  const handleRecover = async () => {
+    if (!id || recovering) return;
+    setRecovering(true);
+    try {
+      const r = await projects.recoverPipeline(id);
+      setRecoverResult(r);
+      toast.success(r.message, { duration: 3600 });
+      load();
+    } catch (err) {
+      logger.error('pipeline recover failed:', String(err));
+      toast.error(`诊断续跑失败：${(err as Error).message}`);
+    } finally {
+      setRecovering(false);
+    }
+  };
 
   const load = useCallback(() => {
     if (!id) return;
@@ -184,9 +204,46 @@ const ProjectFlowTab = () => {
               : progress.overallStatus === 'ready' || progress.overallStatus === 'exported'
                 ? '🎬 全流程已完成，可前往「导出」页播放或下载成片。'
                 : progress.overallStatus === 'failed'
-                  ? '流程中有环节失败，请前往「任务队列」定位失败任务并重试。'
+                  ? '流程中有环节失败，可点击下方「诊断并续跑」：已产出的任务会从上游续拉（不重复计费），无法续跑的自动重新排队。'
                   : '流水线自动段进行中，无需操作——完成每一段会自动进入下一段，可随时到「任务队列」看实时进度。'}
           </p>
+        )}
+
+        {/* 失败续跑（对标 huobao recover）：失败段一键诊断 + 续跑 */}
+        {progress && (progress.overallStatus === 'failed' || progress.steps.some((s) => s.status === 'failed')) && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
+            <div className="min-w-0 text-xs leading-relaxed text-red-400">
+              检测到流水线存在失败段。续跑不会丢弃已产出：上游已建单的任务继续轮询取结果，
+              其余失败任务重新排队；镜头上已写入的首帧/成片/配音全部保留。
+            </div>
+            <button
+              onClick={() => void handleRecover()}
+              disabled={recovering}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/15 px-3.5 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
+            >
+              {recovering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
+              {recovering ? '诊断中…' : '诊断并续跑'}
+            </button>
+          </div>
+        )}
+        {recoverResult && (
+          <div className="mt-3 rounded-xl border border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+            <div className="font-semibold text-foreground">续跑结果</div>
+            <div className="mt-1.5">
+              诊断 {recoverResult.diagnosed} 个任务 · 上游续拉 {recoverResult.resumed.length} ·
+              重新排队 {recoverResult.requeued.length} · 恢复暂停 {recoverResult.released.length} ·
+              修复卡住镜头 {recoverResult.shotsRepaired}
+            </div>
+            {(recoverResult.resumed.length > 0 || recoverResult.requeued.length > 0) && (
+              <ul className="mt-1.5 max-h-32 space-y-1 overflow-y-auto">
+                {[...recoverResult.resumed, ...recoverResult.requeued].slice(0, 12).map((i) => (
+                  <li key={i.jobId} className="truncate">
+                    · {i.jobType} 任务 {i.jobId.slice(0, 8)}：{i.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </div>
 
@@ -241,6 +298,20 @@ const ProjectFlowTab = () => {
                   {/* 前置资产串行链细分（人物定妆 → 场景图 → 道具设定图）与阶段说明 */}
                   {step.message && step.status === 'running' && (
                     <p className="mt-1.5 text-xs text-primary/80">{step.message}</p>
+                  )}
+                  {/* 失败段：行内「诊断并续跑」入口（huobao 式恢复优先、重跑兜底） */}
+                  {step.status === 'failed' && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <p className="text-xs text-red-400">该段存在失败任务</p>
+                      <button
+                        onClick={() => void handleRecover()}
+                        disabled={recovering}
+                        className="inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        {recovering ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wrench className="h-3 w-3" />}
+                        诊断并续跑
+                      </button>
+                    </div>
                   )}
                   {step.step === 'assets_generating' &&
                     step.status === 'running' &&

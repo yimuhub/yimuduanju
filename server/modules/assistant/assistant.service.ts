@@ -6,6 +6,7 @@ import {
   chatMessages,
   chatSessions,
   projects,
+  shots,
 } from '@server/database/schema';
 import { ModelGatewayService } from '../generation/model-gateway.service';
 import type {
@@ -26,6 +27,19 @@ const SYSTEM_PROMPT =
 const TITLE_SYSTEM_PROMPT =
   '你是短剧作品的命名助手。根据用户描述的作品需求，起一个简洁、有画面感、适合做片名的中文标题。' +
   '要求：4-14 个汉字，不要书名号、引号、标点、序号或任何解释，只输出标题本身。';
+
+/**
+ * 对话确认卡协议（migration 0025，对标 zenstory pendingEdits）：
+ * 项目会话中的助手若建议修改分镜数据，回复末尾用 ```yimu-action 围栏输出 JSON，
+ * 前端作战室渲染确认卡，用户点「应用」才调真实 API。草稿会话（无项目）不注入。
+ */
+const PROJECT_ACTION_PROTOCOL = [
+  '# 变更建议输出协议',
+  '当对话明确建议修改某个分镜（提示词/对白/景别/运镜等）时，回复末尾追加 ```yimu-action 代码块：',
+  '{"actions":[{"action":"update_shot","targetId":"<镜头 id>","summary":"一句话说明","patch":{"visualPrompt":"新提示词"}}]}',
+  'patch 只允许 subject/action/emotion/dialogue/visualPrompt/negativePrompt/subtitleText/shotSize/cameraAngle/lens/movement/duration；',
+  '无具体镜头 id 或用户没有要求修改时不要输出该代码块。',
+].join('\n');
 
 /** 上下文预算：最近 16 条消息、单条 2000 字、合计约 12000 字 */
 const CONTEXT_MESSAGES = 16;
@@ -109,12 +123,22 @@ export class AssistantService {
     };
   }
 
-  /** 兼容旧版无会话的全局问答 */
-  async chat(message: string): Promise<{ reply: string }> {
+  /** 兼容旧版无会话的全局问答；作战室会话绑定项目时传 projectId 注入上下文与确认卡协议 */
+  async chat(message: string, projectId?: string): Promise<{ reply: string }> {
     try {
+      // 项目会话：注入确认卡协议（migration 0025）与项目上下文；
+      // Agent 要拿到真实镜头 id 才能给出合法的 update_shot targetId
+      const shotsContext = projectId ? await this.shotContext(projectId) : '';
       const reply = await this.modelGateway.generateText({
         prompt: message,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: [
+          SYSTEM_PROMPT,
+          projectId ? PROJECT_ACTION_PROTOCOL : '',
+          await this.projectContext(projectId),
+          shotsContext,
+        ]
+          .filter(Boolean)
+          .join('\n'),
       });
       return { reply };
     } catch (e) {
@@ -122,6 +146,26 @@ export class AssistantService {
       this.logger.warn(`全局助手调用失败: ${msg}`);
       throw new BadRequestException(`AI 助手暂不可用：${msg}`);
     }
+  }
+
+  /** 可用镜头清单（确认卡协议的 targetId 取值来源；控制在 ~1200 字内） */
+  private async shotContext(projectId: string): Promise<string> {
+    const rows = await this.db
+      .select({
+        id: shots.id,
+        shotNumber: shots.shotNumber,
+        subject: shots.subject,
+        visualPrompt: shots.visualPrompt,
+      })
+      .from(shots)
+      .where(eq(shots.projectId, projectId))
+      .orderBy(asc(shots.shotNumber))
+      .limit(30);
+    if (rows.length === 0) return '';
+    const lines = rows.map(
+      (s) => `- 镜 ${s.shotNumber}｜id=${s.id}｜${(s.subject ?? s.visualPrompt ?? '').slice(0, 24)}`,
+    );
+    return `可用镜头（update_shot 的 targetId 必须取自这里）：\n${lines.join('\n')}`;
   }
 
   /**
@@ -380,7 +424,12 @@ export class AssistantService {
       .orderBy(asc(chatMessages.createdAt));
 
     const prompt = this.buildPrompt(contextRows.slice(0, -1), userText, attachments);
-    const systemPrompt = [SYSTEM_PROMPT, await this.projectContext(detail.session.projectId)]
+    const systemPrompt = [
+      SYSTEM_PROMPT,
+      // 确认卡协议只在项目会话生效（草稿会话没有可改对象，注入只会诱导编造 id）
+      detail.session.projectId ? PROJECT_ACTION_PROTOCOL : '',
+      await this.projectContext(detail.session.projectId),
+    ]
       .filter(Boolean)
       .join('\n');
 

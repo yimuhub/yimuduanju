@@ -29,6 +29,9 @@ import type {
   CanvasComposeClipInput,
   CanvasComposeInput,
   CanvasComposeResult,
+  PerShotExportItem,
+  PerShotExportRequest,
+  PerShotExportResult,
 } from '@shared/api.interface';
 
 /**
@@ -1217,6 +1220,192 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       for (const f of cleanup) await unlink(f).catch(() => {});
       await unlink(join(work, 'list.txt')).catch(() => {});
     }
+  }
+
+  /**
+   * 逐镜导出（按镜头拆分，migration 0025）：每个有视频的镜头独立产出一条
+   * 归一化 MP4（画幅/编码与整片合成同一套），可选烧录该镜自己的字幕
+   * （单镜单条 ASS，时间轴从 0 开始）。全部落盘到项目 uploads 目录并登记
+   * video 资产（sourceId 带 per-shot 标记），交付下游剪辑/投放时按镜取用。
+   * 单镜失败不阻断整批（失败镜进 skipped/warnings），与整片合成的降级纪律一致。
+   */
+  async exportPerShot(projectId: string, options?: PerShotExportRequest): Promise<PerShotExportResult> {
+    const project = await this.requireProject(projectId);
+    const shotRows = await this.db
+      .select({
+        id: shots.id,
+        sceneSort: scenes.sortOrder,
+        shotNumber: shots.shotNumber,
+        subject: shots.subject,
+        duration: shots.duration,
+        videoUrl: shots.videoUrl,
+        subtitleText: shots.subtitleText,
+        dialogue: shots.dialogue,
+      })
+      .from(shots)
+      .innerJoin(scenes, eq(shots.sceneId, scenes.id))
+      .where(eq(shots.projectId, projectId))
+      .orderBy(asc(scenes.sceneNumber), asc(shots.shotNumber));
+    const wanted = options?.shotIds?.length
+      ? shotRows.filter((s) => options.shotIds!.includes(s.id))
+      : shotRows;
+    const withVideo = wanted.filter((s) => s.videoUrl);
+    const skipped = wanted
+      .filter((s) => !s.videoUrl)
+      .map((s) => s.shotNumber);
+    if (withVideo.length === 0) {
+      throw new BadRequestException('暂无镜头成片可导出：请先生成视频');
+    }
+
+    const ffmpegBin = this.resolveFfmpegBin();
+    const target = videoSizeForAspect(project.aspectRatio);
+    const [tw, th] = target
+      .split('x')
+      .map((n) => Math.max(2, Math.round(Number(n) / 2) * 2)) as [number, number];
+    const scaleFilter =
+      `scale=${tw}:${th}:force_original_aspect_ratio=decrease,` +
+      `pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+    const aigcMeta = ['-metadata', 'comment=AIGC-Generated-By-YIMU-AI-Workshop'];
+    const dir = join(uploadDir(), projectId);
+    await mkdir(dir, { recursive: true });
+    const cacheDir = join(dir, 'clips');
+    const work = join(tmpdir(), `yimu-per-shot-${randomUUID()}`);
+    await mkdir(work, { recursive: true });
+    const cleanup: string[] = [];
+
+    const items: PerShotExportItem[] = [];
+    const warnings: string[] = [];
+    const vertical = (project.aspectRatio ?? '9:16') === '9:16';
+    try {
+      for (let i = 0; i < withVideo.length; i += 1) {
+        const shot = withVideo[i];
+        const shotWarnings: string[] = [];
+        const rawLocal = join(work, `raw_${String(i).padStart(3, '0')}.mp4`);
+        cleanup.push(rawLocal);
+        // eslint-disable-next-line no-await-in-loop
+        const got = await this.materializeMediaToFile(shot.videoUrl as string, rawLocal, cacheDir);
+        if (!got) {
+          warnings.push(`镜头 ${shot.shotNumber} 成片下载失败，已跳过`);
+          skipped.push(shot.shotNumber);
+          continue;
+        }
+        // 归一：与整片合成同一画幅/编码/帧率口径；无配音轨的镜头保持纯画面（-an）
+        let normLocal = join(work, `norm_${String(i).padStart(3, '0')}.mp4`);
+        cleanup.push(normLocal);
+        // eslint-disable-next-line no-await-in-loop
+        let ok = await this.runFfmpeg(
+          ffmpegBin,
+          [
+            '-y', '-i', rawLocal,
+            '-vf', scaleFilter,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+            '-r', '30', '-an', ...aigcMeta,
+            normLocal,
+          ],
+          work,
+        );
+        if (!ok) {
+          warnings.push(`镜头 ${shot.shotNumber} 画幅归一失败，已跳过`);
+          skipped.push(shot.shotNumber);
+          continue;
+        }
+
+        // 可选：该镜自己的字幕烧录（单条 ASS，0s 起）；失败降级为不烧并警告
+        const text = (shot.subtitleText || shot.dialogue || '').trim();
+        if (options?.burnSubtitles !== false && text) {
+          // eslint-disable-next-line no-await-in-loop
+          const burnBin = await this.resolveFfmpegForSubtitles();
+          if (!burnBin) {
+            shotWarnings.push('本机 ffmpeg 不带 libass，该镜未烧字幕');
+          } else {
+            const segDur = (await this.probeSeconds(normLocal)) || Number(shot.duration) || 4;
+            const assContent = this.buildBurnAss(
+              [{ text, start: 0, dur: Math.max(0.5, segDur) }],
+              `${project.title}-镜${shot.shotNumber}`,
+              vertical,
+              'outline',
+            );
+            if (assContent.includes('Dialogue:')) {
+              const assPath = join(work, `burn_${String(i).padStart(3, '0')}.ass`);
+              await writeFile(assPath, assContent, 'utf8');
+              cleanup.push(assPath);
+              const burnedLocal = join(work, `burned_${String(i).padStart(3, '0')}.mp4`);
+              cleanup.push(burnedLocal);
+              // eslint-disable-next-line no-await-in-loop
+              const burnOk = await this.burnSubtitleTrack(
+                burnBin,
+                normLocal,
+                `burn_${String(i).padStart(3, '0')}.ass`,
+                burnedLocal,
+                work,
+              );
+              if (burnOk) {
+                normLocal = burnedLocal;
+              } else {
+                shotWarnings.push('字幕烧录失败，该镜为无字幕版本');
+              }
+            }
+          }
+        }
+
+        // 落盘 + 登记 video 资产（资产页按「逐镜」前缀聚合可见）
+        const outName = `shot_${String(shot.shotNumber).padStart(3, '0')}_${randomUUID().slice(0, 6)}.mp4`;
+        const outAbs = join(dir, outName);
+        // eslint-disable-next-line no-await-in-loop
+        const finalOk = await this.runFfmpeg(ffmpegBin, ['-y', '-i', normLocal, '-c', 'copy', ...aigcMeta, outAbs], work);
+        if (!finalOk) await copyFile(normLocal, outAbs);
+        // eslint-disable-next-line no-await-in-loop
+        const outStat = await stat(outAbs).catch(() => null);
+        // eslint-disable-next-line no-await-in-loop
+        const dur = await this.probeSeconds(outAbs);
+        const fileUrl = `/uploads/${projectId}/${outName}`;
+        // eslint-disable-next-line no-await-in-loop
+        await this.db
+          .insert(assets)
+          .values({
+            projectId,
+            assetType: 'video',
+            name: `逐镜-镜${shot.shotNumber}-${(shot.subject ?? '').slice(0, 60) || project.title}`.slice(0, 120),
+            fileUrl,
+            filePath: outAbs,
+            mimeType: 'video/mp4',
+            fileSize: outStat?.size,
+            durationSeconds: dur ? String(Math.round(dur * 10) / 10) : undefined,
+            sourceType: 'generated',
+            sourceId: `per-shot-${shot.id}`,
+            generationPrompt: `逐镜导出（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}${shotWarnings.length ? '，' + shotWarnings.join('；') : ''}）`,
+            metadata: {
+              aigcGenerated: true,
+              perShot: true,
+              shotId: shot.id,
+              shotNumber: shot.shotNumber,
+              width: tw,
+              height: th,
+            } as any,
+            status: 'ready',
+          })
+          .catch((e: Error) => {
+            this.logger.warn(`逐镜资产登记失败 ${shot.id}：${e.message}`);
+            shotWarnings.push('资产登记失败（文件已落盘）');
+          });
+        warnings.push(...shotWarnings.map((w) => `镜头 ${shot.shotNumber}：${w}`));
+        items.push({
+          shotId: shot.id,
+          shotNumber: shot.shotNumber,
+          title: shot.subject ?? undefined,
+          fileUrl,
+          durationSeconds: dur ? Math.round(dur * 10) / 10 : undefined,
+          warnings: shotWarnings,
+        });
+      }
+    } finally {
+      for (const f of cleanup) await unlink(f).catch(() => {});
+      await rm(work, { recursive: true, force: true }).catch(() => {});
+    }
+    this.logger.log(
+      `逐镜导出 ${projectId}：成功 ${items.length} 镜，跳过 ${skipped.length} 镜，警告 ${warnings.length} 条`,
+    );
+    return { projectId, items, skipped: [...new Set(skipped)], warnings };
   }
 
   /**
