@@ -24,6 +24,18 @@ export const RATE_LIMIT_COOLDOWN_MAX_MS = 300_000;
  */
 export const VIDEO_QUEUE_FULL_RETRY_MS = 10_000;
 
+/**
+ * 视频队列满时**单把 Key** 的探测冷却，以及用于打散的抖动上限。
+ *
+ * 为什么必须带抖动：4 把 Key 若在同一秒各撞一次 503，就会同时进入等长冷却，
+ * 形成「4 连发 → 静默 20s → 4 连发」的齐射模式。Agnes 的空位是在两次齐射
+ * 之间随机放出的，这种模式几乎必然错过。基础 4s + 0~2s 随机抖动让
+ * 4 条车道的探测时刻错开，形成近似连续的低频探测流（约 40~60 次/分钟）。
+ * 官方明确 503 发生在建单前、不创建任务、不消耗额度，因此高频探测不产生费用。
+ */
+export const VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS = 3_000;
+export const VIDEO_QUEUE_FULL_KEY_JITTER_MS = 5_000;
+
 /** Agnes 免费视频队列饱和：与账号/Key 无关的全局容量拒绝 */
 export function isVideoQueueFullMessage(message: string): boolean {
   return /video_queue_full|video queue is full/i.test(message);

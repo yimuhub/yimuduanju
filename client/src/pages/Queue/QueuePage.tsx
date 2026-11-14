@@ -59,6 +59,30 @@ const STATUS_META: Record<JobStatus, { label: string; pill: string }> = {
   paused: { label: '已暂停', pill: 'pill-wait' },
 };
 
+/**
+ * pending 不是一种状态，至少要分成三种，否则用户看到「全站在排队、没有一个
+ * 在进行中」却分不清系统到底卡在哪一层：
+ *  1) 真·排队：还没被 worker 认领；
+ *  2) 等上游产能：已认领、已向上游建单，被 503 video_queue_full 拒绝后放回，
+ *     worker 正在短周期持续探测（这是最容易被误读成「没在干活」的一种）；
+ *  3) 等密钥车道 / 待配置：本地资源不足，属于可自愈或需人工介入。
+ * 真正「进行中」是 running 且已有 externalTaskId —— 建单前被拒不会有这个态。
+ */
+function statusMeta(item: QueueItem): { label: string; pill: string } {
+  if (item.status !== 'pending') return STATUS_META[item.status] ?? STATUS_META.pending;
+  const reason = item.errorMessage ?? '';
+  if (/上游视频队列已满|video_queue_full|等上游产能|队列满/.test(reason)) {
+    return { label: '等上游产能', pill: 'pill-wait' };
+  }
+  if (/密钥车道|冷却中|限流/.test(reason)) {
+    return { label: '等密钥车道', pill: 'pill-wait' };
+  }
+  if (/等待 Provider 配置|未配置/.test(reason)) {
+    return { label: '待配置', pill: 'pill-wait' };
+  }
+  return STATUS_META.pending;
+}
+
 const TYPE_LABEL: Record<JobType, string> = {
   text: '文本生成',
   image: '首帧 / 图像',
@@ -505,7 +529,7 @@ export default function QueuePage() {
           </div>
         ) : (
           items.map((item) => {
-            const meta = STATUS_META[item.status] ?? STATUS_META.pending;
+            const meta = statusMeta(item);
             const movable = isMovable(item.status);
             const keyBusy = busy !== null;
             return (
@@ -534,6 +558,16 @@ export default function QueuePage() {
                     {item.blockedReason && (
                       <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600">
                         被阻断：{BLOCK_LABEL[item.blockedReason] ?? item.blockedReason}（暂不参与认领）
+                      </span>
+                    )}
+                    {item.status === 'pending' && item.errorMessage && (
+                      <span
+                        className="text-[11px] text-muted-foreground"
+                        title={item.errorMessage}
+                      >
+                        {item.errorMessage.length > 30
+                          ? `${item.errorMessage.slice(0, 30)}…`
+                          : item.errorMessage}
                       </span>
                     )}
                     {item.pausedByDependency && (

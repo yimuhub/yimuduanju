@@ -106,6 +106,8 @@ import {
   isVideoQueueFullMessage,
   RATE_LIMIT_COOLDOWN_MAX_MS,
   RATE_LIMIT_COOLDOWN_MS,
+  VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS,
+  VIDEO_QUEUE_FULL_KEY_JITTER_MS,
   VIDEO_QUEUE_FULL_RETRY_MS,
 } from './rate-limit.util';
 
@@ -196,6 +198,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   /** 临时公开首帧副本 TTL 扫描的上次执行时刻 */
   private lastStagedSweepAt = 0;
+  /** 流水线自动链驱动的独立低频定时器（不占用消费主循环的 tick） */
+  private pipelineTimer: ReturnType<typeof setInterval> | null = null;
 
   /** 排队页切换全站暂停：只冻结消费，不改任何任务的 queue_seq / status */
   setQueuePaused(paused: boolean): void {
@@ -317,10 +321,25 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`消费器轮询异常: ${(err as Error).message}`),
       );
     }, intervalMs);
+
+    /*
+     * 流水线自动链驱动（图→视频→配音→剪辑→质检）独立跑低频定时器。
+     * 它是「对账/补链」性质的慢活，不是出片关键路径；runStep 自带
+     * stepInFlight 防重入，超时后下一周期再试，不会堆积并发。
+     */
+    const pipelineMs = Math.max(
+      15_000,
+      Number(process.env.JOB_WORKER_PIPELINE_INTERVAL_MS) || 60_000,
+    );
+    this.pipelineTimer = setInterval(() => {
+      if (this.queuePaused) return;
+      void this.runStep('流水线驱动', 30_000, () => this.drivePipeline());
+    }, pipelineMs);
   }
 
   async onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+    if (this.pipelineTimer) clearInterval(this.pipelineTimer);
     if (this.worker) await this.worker.close().catch(() => {});
     if (this.queue) await this.queue.close().catch(() => {});
     if (this.redis) this.redis.disconnect();
@@ -696,8 +715,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.runStep('首帧依赖对账', 30_000, () => this.reconcileFirstFrameDependencies());
       // 资产门对账：人物/场景定妆图到齐 → 解封分镜物化与首帧任务
       await this.runStep('资产门对账', 30_000, () => this.reconcileAssetGate());
-      // 流水线自动链驱动（P0 断链修复）：图→视频→配音→剪辑→质检 段内自动连跑
-      await this.runStep('流水线驱动', 30_000, () => this.drivePipeline());
+      /*
+       * 流水线自动链驱动已移到独立低频定时器（见 onModuleInit）。
+       * 原因：drivePipeline() 实测每轮跑满 30s 看门狗超时，而 tick() 里
+       * 所有 runStep 是串行 await 的 —— 它一超时就把整个 tick 拖成 30s 一轮，
+       * 连「认领 pending 任务」也被压到 30s 一次。表现就是排队页全是
+       * 「等待中」、看不见任何执行中的任务，且把 JOB_WORKER_INTERVAL_MS
+       * 调小完全无效（tick 重入锁会直接 return）。认领是出片的关键路径，
+       * 绝不能被对账类慢步骤阻塞。
+       */
       // 修复：queued 滞留回收必须周期性执行，不能只在启动时跑一次
       await this.recoverStaleQueued();
 
@@ -1150,10 +1176,24 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 旧实现直接 return，retryCount 永不增长，任务可以无限重排队，
    * 且永远占着队列页第一行 —— 用户既看不到进展也没法判断该不该换供应商。
    */
+  /**
+   * 上游整体无产能时，指定项目保持队首，不重排到队尾。
+   * 用环境变量切换，避免把「用户当前正在盯的项目」硬编码进代码；
+   * 未指定的项目照常轮转，不会被饿死。
+   */
+  private isPriorityProject(projectId?: string | null): boolean {
+    if (!projectId) return false;
+    return (process.env.YIMU_PRIORITY_PROJECT_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .includes(projectId);
+  }
+
   private async releaseTransient(
     job: GenerationJob,
     reason: string,
-    opts?: { soft?: boolean },
+    opts?: { soft?: boolean; keepPosition?: boolean },
   ): Promise<void> {
     const input = (job.inputData ?? {}) as Record<string, unknown>;
     const releases = Number(input.transientReleases ?? 0) + 1;
@@ -1191,7 +1231,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .update(generationJobs)
       .set({
         status: 'pending',
-        queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
+        // 上游整体无产能（503 队列满）时保序：轮转不会改变任何结果，反而让
+        // 用户正在盯的项目反复被挤到队尾，抢不到偶然放出的空位。
+        ...(opts?.keepPosition
+          ? {}
+          : { queueSeq: sql`nextval('generation_jobs_queue_seq_seq')` }),
         /*
          * 重排队必须清掉上一轮的远端身份，否则是两处实打实的错：
          *  1) 旧 externalTaskId 还在 → pollJob 会拿它去查上游，
@@ -1903,7 +1947,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       if (lease && lease.status === 'busy') {
         // 所有车道都在途/冷却：不空转，放回队列等冷却结束。
         // soft：这是「等上游产能」，不是任务本身的错，不能按失败次数把任务判死。
-        await this.releaseTransient(job, '所有密钥车道均在途/冷却中', { soft: true });
+        // 优先项目保序：否则每轮撞 busy 都会被 nextval 挤到队尾，
+        // 队列偶然放出空位时永远轮不到它。
+        await this.releaseTransient(job, '所有密钥车道均在途/冷却中', {
+          soft: true,
+          keepPosition: this.isPriorityProject(job.projectId),
+        });
         return null;
       }
       const keyId = lease && lease.status === 'leased' ? lease.keyId : undefined;
@@ -1961,11 +2010,35 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         const message = (e as Error)?.message ?? '未知错误';
         try {
           if (keyId && (isRateLimitMessage(message) || /503|429/.test(message))) {
+            const queueFull = isVideoQueueFullMessage(message);
+            /*
+             * 503 video_queue_full 是**全局共享队列**满，与具体账号/Key 无关。
+             * 旧逻辑 continue 换下一把 Key 立即重试，一轮把 4 条车道在同一秒
+             * 全部打进 20s 冷却 → 之后 20 秒无人探测 → Agnes 若在这段静默中
+             * 放出空位，必然错过（今天只抢到 2 支视频就是这么来的）。
+             * 改为：该 Key 短冷却 + 随机抖动，并立即放回队列，让下一个任务
+             * 去租另一把**空闲**车道，形成错峰连续的探测流。
+             */
+            const keyCooldown = queueFull
+              ? VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS +
+                Math.floor(Math.random() * VIDEO_QUEUE_FULL_KEY_JITTER_MS)
+              : RATE_LIMIT_COOLDOWN_MS;
             // eslint-disable-next-line no-await-in-loop
-            await this.keyPool.cooldown(keyId, RATE_LIMIT_COOLDOWN_MS, message);
+            await this.keyPool.cooldown(keyId, keyCooldown, message);
             settled = true;
             lastErr = e as Error;
-            continue; // 换下一把 Key 立即重试
+            if (queueFull) {
+              // keepPosition：上游整体无产能时轮转没有意义（轮到谁都撞 503）。
+              // 只给 YIMU_PRIORITY_PROJECT_IDS 指定的项目保序，让它稳居队首，
+              // 一旦放开空位就先建单；其它项目仍照常轮转，不会被饿死。
+              // eslint-disable-next-line no-await-in-loop
+              await this.releaseTransient(job, '上游视频队列已满（持续探测中）', {
+                soft: true,
+                keepPosition: this.isPriorityProject(job.projectId),
+              });
+              return null;
+            }
+            continue; // 429/账号级限流：换下一把 Key 立即重试仍有意义
           }
           if (keyId && /401|403/.test(message)) {
             // eslint-disable-next-line no-await-in-loop
@@ -1993,7 +2066,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 与「一把 Key 一条车道、互不牵连」的设计直接冲突。
     // 正确做法：只放回队列，等最早那把 Key 的冷却结束，由下一轮 tick 重新领。
     if (lastErr && isRateLimitMessage(lastErr.message)) {
-      await this.releaseTransient(job, '所有密钥车道均在途/冷却中', { soft: true });
+      await this.releaseTransient(job, '所有密钥车道均在途/冷却中', {
+        soft: true,
+        keepPosition: this.isPriorityProject(job.projectId),
+      });
       return null;
     }
     throw lastErr ?? new Error('所有密钥均不可用，请稍后重试或增加密钥');

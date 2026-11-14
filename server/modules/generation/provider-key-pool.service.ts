@@ -74,7 +74,7 @@ export class ProviderKeyPoolService {
         SELECT id FROM provider_api_keys
         WHERE provider_id = ${providerId}
           AND enabled = true
-          AND status = 'active'
+          AND status <> 'invalid'
           AND (cooldown_until IS NULL OR cooldown_until < now())
           AND in_flight < GREATEST(concurrency, 1)
           AND (${pinnedKeyId ?? null}::uuid IS NULL OR id = ${pinnedKeyId ?? null}::uuid)
@@ -285,24 +285,43 @@ export class ProviderKeyPoolService {
       return { status: 'no_keys' };
     }
 
-    const rows = await this.db.execute(sql`
-      UPDATE provider_api_keys
-      SET in_flight = in_flight + 1, last_used_at = now()
-      WHERE id = (
-        SELECT id FROM provider_api_keys
-        WHERE provider_id IN ${agnesProviderIds}
-          AND enabled = true
-          AND status = 'active'
-          AND (cooldown_until IS NULL OR cooldown_until < now())
-          AND in_flight < GREATEST(concurrency, 1)
-          AND (${pinnedKeyId}::uuid IS NULL OR id = ${pinnedKeyId}::uuid)
-        ORDER BY in_flight ASC, priority DESC, last_used_at ASC NULLS FIRST
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING id, label, provider_id
-    `);
-    const row = (rows as unknown as Array<{ id: string; label: string; provider_id: string }>)[0];
+    /*
+     * status 不能写死 'active'：cooldown() 把 status 置为 'cooldown' 后，
+     * 只有每 60s 一次的 recoverStaleLeases() 才会改回 active。于是
+     * cooldown_until 明明已经过期、这把 Key 却仍租不到，形成几十秒的
+     * 假性「所有车道都在冷却」。这里以「冷却时间是否真的过了」为准。
+     */
+    const tryLease = async (pinned: string | null) => {
+      const rows = await this.db.execute(sql`
+        UPDATE provider_api_keys
+        SET in_flight = in_flight + 1, last_used_at = now()
+        WHERE id = (
+          SELECT id FROM provider_api_keys
+          WHERE provider_id IN ${agnesProviderIds}
+            AND enabled = true
+            AND status <> 'invalid'
+            AND (cooldown_until IS NULL OR cooldown_until < now())
+            AND in_flight < GREATEST(concurrency, 1)
+            AND (${pinned}::uuid IS NULL OR id = ${pinned}::uuid)
+          ORDER BY in_flight ASC, priority DESC, last_used_at ASC NULLS FIRST
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, label, provider_id
+      `);
+      return (rows as unknown as Array<{ id: string; label: string; provider_id: string }>)[0];
+    };
+
+    let row = await tryLease(pinnedKeyId);
+    if (!row && pinnedKeyId) {
+      /*
+       * 钉 Key 是「优先偏好」，不是硬锁。旧实现把候选集合直接缩到这一把，
+       * 于是一旦它被 503 冷却，整个项目所有镜头全部 busy —— 用户看到的
+       * 「4 个账号实际只有 2 个在跑」就是这里：两个项目各自钉了一把 Key。
+       * 钉 Key 忙/冷却时回落到全部 Agnes 车道，既保留偏好又不牺牲产能。
+       */
+      row = await tryLease(null);
+    }
     if (!row) return { status: 'busy' };
 
     const names = await this.db.execute(sql`
