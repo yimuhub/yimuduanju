@@ -18,7 +18,7 @@
  * - 命中缓存（LRU 48 条），同一张人物主图反复用于几十个镜头时只读一次盘。
  */
 import { execFile } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { extname, join } from 'path';
 import { uploadDir } from '../assets/upload-dir';
@@ -154,9 +154,40 @@ export interface VideoFrameResult {
   reason?: string;
 }
 
-/** 公网媒体基址：自部署用户把自己的域名/对象存储前缀配在这里 */
-function publicMediaBase(): string {
+/**
+ * 隧道地址文件：`scripts/tunnel.sh` 每次拿到新域名都会覆写它。
+ * 为什么要有这一层：trycloudflare 的临时隧道**每次重启都会换域名**，
+ * 而媒体基址如果只在启动时读一次 process.env，隧道一重连就得重启整个后端，
+ * 否则所有首帧会被悄悄判定「送不出去」退回纯文生视频。读文件 + 15s 缓存，
+ * 隧道重连后最迟 15 秒自动跟上，不需要重启任何进程。
+ */
+const TUNNEL_URL_FILE =
+  process.env.YIMU_TUNNEL_URL_FILE || join(process.cwd(), '.tunnel-url');
+let tunnelUrlCache = { at: 0, url: '' };
+
+function tunnelUrlFromFile(): string {
+  const now = Date.now();
+  if (now - tunnelUrlCache.at < 15_000) return tunnelUrlCache.url;
+  let url = '';
+  try {
+    url = readFileSync(TUNNEL_URL_FILE, 'utf8').trim().split(/\s/)[0] ?? '';
+  } catch {
+    url = '';
+  }
+  if (!/^https?:\/\//i.test(url)) url = '';
+  tunnelUrlCache = { at: now, url };
+  return url;
+}
+
+/**
+ * 公网媒体基址：自部署用户把自己的域名/对象存储前缀配在这里。
+ * 导出给 staged-media 复用 —— 隧道域名必须只有这一个真源，否则临时公开副本
+ * 拼出的 URL 会与首帧规范化链路用的域名不一致，隧道重连后一方失效。
+ */
+export function publicMediaBase(): string {
+  // 隧道文件优先：它是「当前正在跑的那条隧道」，env 里的值可能已经过期。
   const raw =
+    tunnelUrlFromFile() ||
     process.env.YIMU_PUBLIC_MEDIA_BASE ||
     process.env.PUBLIC_MEDIA_BASE ||
     process.env.YIMU_PUBLIC_BASE_URL ||

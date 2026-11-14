@@ -89,6 +89,11 @@ export interface ProjectMetadata {
    * 关闭时提交视频任务会追加“画面无文字”约束，字幕统一由时间线后期烧录。
    */
   videoSubtitles?: boolean;
+  /**
+   * 当前活跃集（migration 0024 长篇多集）：新建 shots/scenes 未指定 episode_id 时
+   * 自动归入；开集模式由 projects.has_episodes 控制，旧项目无此键。
+   */
+  activeEpisodeId?: string;
 }
 
 /**
@@ -121,6 +126,8 @@ export interface Project {
   worldView?: WorldView;
   styleBible?: StyleBible;
   metadata?: ProjectMetadata;
+  /** 开集模式（migration 0024）：true=长篇多集；false/缺省=单集形态，行为与 3.8.x 一致 */
+  hasEpisodes?: boolean;
   /** 项目级供应商覆盖（覆盖全局默认；空表示跟随全局） */
   providerOverride?: ProviderOverride | null;
   createdAt: string;
@@ -271,6 +278,12 @@ export interface Character {
   referenceImageUrls: string[];
   /** 人物视觉资产包（主图 + 四视图 + 文本锁） */
   identityKit?: CharacterIdentityKit;
+  /** 所属集（migration 0024）；空 = 全剧共享资产（长篇方案②：资产挂剧） */
+  episodeId?: string;
+  /** 身份锁短语数组（migration 0024 一致性工程）；空 = 回落 identityKit 文本锁 */
+  lockAnchors?: string[];
+  /** 锚点最近一次重出时间（锚点重出时下游据此标记引用镜头「过期需重生成」） */
+  anchorUpdatedAt?: string;
   locked: boolean;
   sortOrder: number;
   createdAt: string;
@@ -285,6 +298,10 @@ export interface CreateCharacterRequest {
   canonicalDescription?: string;
   referenceImageUrls?: string[];
   identityKit?: CharacterIdentityKit;
+  /** 所属集；缺省 = 全剧共享 */
+  episodeId?: string;
+  /** 身份锁短语数组（一致性工程 B1） */
+  lockAnchors?: string[];
 }
 
 export interface UpdateCharacterRequest {
@@ -305,6 +322,8 @@ export interface UpdateCharacterRequest {
   forbiddenChanges?: string;
   referenceImageUrls?: string[];
   identityKit?: CharacterIdentityKit;
+  episodeId?: string | null;
+  lockAnchors?: string[];
   locked?: boolean;
 }
 
@@ -508,6 +527,8 @@ export interface Scene {
   dialogues: Dialogue[];
   actions: SceneAction[];
   props: string[];
+  /** 所属集（migration 0024）；空 = 公共资产 */
+  episodeId?: string;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -607,6 +628,8 @@ export interface Shot {
   sceneId: string;
   /** 所属片段；历史数据为空表示未归段 */
   segmentId?: string;
+  /** 所属集（migration 0024）；空 = 不属于任何集的公共资产（旧项目恒为空） */
+  episodeId?: string;
   shotNumber: number;
   /** 画面主体运动/视线方向，供轴线连续性校验 */
   screenDirection?: ScreenDirection;
@@ -849,6 +872,57 @@ export interface QueueOverviewResponse {
 
 export type QueueMoveDirection = 'up' | 'down' | 'top' | 'bottom';
 
+// ==================== 密钥车道（一把 Key = 一条独立并发车道） ====================
+
+/**
+ * 为什么按 Key 展示：供应商排队是**账号级**的，用户加多把 Key 的收益取决于
+ * 「每把 Key 各自能并发几单、现在有几单在途、是否被限流冷却」。这些状态原来
+ * 只写在数据库里，界面上完全看不见，于是「加了 10 把 Key 到底有没有加速」
+ * 无法判断。这个结构就是给排队页直接渲染用的。
+ */
+export interface KeyLane {
+  keyId: string;
+  /** 用户自己起的名字（如「Mac1」「ai1」），没有则回落到 Key 尾号 */
+  label: string;
+  providerId: string;
+  providerName: string;
+  formatType?: string;
+  /** active 可用 / cooldown 限流冷却中 / invalid 失效（401/403） */
+  status: string;
+  enabled: boolean;
+  /** 自动探测出来的并发上限（1~3） */
+  concurrency: number;
+  /** 当前在途（已建单等回调）的任务数 */
+  inFlight: number;
+  cooldownRemainingMs: number;
+  cooldownUntil?: string;
+  lastError?: string;
+  lastUsedAt?: string;
+  /** 钉了这把 Key 的项目（项目间互不打扰） */
+  pinnedProjects: { projectId: string; projectTitle: string }[];
+}
+
+export interface KeyLaneGroup {
+  providerId: string;
+  providerName: string;
+  formatType?: string;
+  lanes: KeyLane[];
+  totalConcurrency: number;
+  totalInFlight: number;
+}
+
+export interface KeyLanesResponse {
+  groups: KeyLaneGroup[];
+  generatedAt: string;
+}
+
+export interface PinProjectKeyResult {
+  projectId: string;
+  pinnedKeyId: string | null;
+  message: string;
+}
+
+
 export interface QueueActionResult {
   id: string;
   status: JobStatus;
@@ -858,8 +932,7 @@ export interface QueueActionResult {
   message?: string;
 }
 
-export type ProviderType = 'volcengine_ark' | 'openai_proxy' | 'custom' | 'official';
-export type FormatType = 'openai' | 'volcengine_ark' | 'mock' | 'agnes';
+export type ProviderType = 'volcengine_ark' | 'openai_proxy' | 'custom' | 'official';export type FormatType = 'openai' | 'volcengine_ark' | 'mock' | 'agnes';
 
 export interface ModelCapabilities {
   text: boolean;
@@ -1585,4 +1658,95 @@ export interface CanvasComposeResult {
   size: number;
   registered: boolean;
   assetId?: string;
+}
+
+/* ================= 长篇多集架构（migration 0024，方案②③） ================= */
+
+/** 集内产线状态：draft → script_ready → shots_ready → video_generating → completed */
+export type EpisodeStatus =
+  | 'draft'
+  | 'script_ready'
+  | 'shots_ready'
+  | 'video_generating'
+  | 'completed';
+
+/** 跨集交接账本：不可逆事实 / 道具归属 / 关系变化（方案③「集间状态账本」） */
+export interface HandoffFact {
+  text: string;
+  createdAt: string;
+}
+
+export interface HandoffProp {
+  name: string;
+  /** 当前持有者（人物名/地点名/「销毁」等终态） */
+  holder: string;
+  /** 最近一次转手时间（可缺省，由 appendFact 语义补充） */
+  updatedAt?: string;
+}
+
+export interface HandoffRelation {
+  a: string;
+  b: string;
+  status: string;
+}
+
+export interface HandoffState {
+  facts: HandoffFact[];
+  props: HandoffProp[];
+  relations: HandoffRelation[];
+}
+
+export const emptyHandoffState = (): HandoffState => ({
+  facts: [],
+  props: [],
+  relations: [],
+});
+
+export interface Episode {
+  id: string;
+  projectId: string;
+  season: number;
+  /** 季内集号，从 1 自动递增，上限 500 */
+  number: number;
+  title?: string;
+  status: EpisodeStatus;
+  handoffState: HandoffState;
+  /** 按集门通过时间与进度聚合（语义同 projects.metadata.pipeline 的按集版本） */
+  pipeline?: EpisodePipeline;
+  locked: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 按集流水线（复用 project 级门的按集版本； approvals 值为通过时间 ISO 字符串） */
+export interface EpisodePipeline {
+  approvals?: {
+    script?: string;
+    storyboard?: string;
+    preview?: string;
+    final?: string;
+  };
+}
+
+/** 按集进度聚合：管线进度按集聚合（A4 最小实现），不重写 project 级状态机 */
+export interface EpisodeProgress {
+  episodeId: string;
+  season: number;
+  number: number;
+  status: EpisodeStatus;
+  approvals: NonNullable<EpisodePipeline['approvals']>;
+  totalShots: number;
+  withFirstFrame: number;
+  withVideo: number;
+  /** 集内 shots 是否全部有成片 */
+  videoComplete: boolean;
+}
+
+/** 身份锁锚点聚合（一致性工程 B1）：getLockAnchors 的返回行 */
+export interface CharacterLockAnchors {
+  characterId: string;
+  name: string;
+  /** 身份锁短语数组；空 = 回落 identityKit 文本锁（现状不变） */
+  anchors: string[];
+  anchorUpdatedAt?: string;
 }

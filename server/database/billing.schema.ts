@@ -5,7 +5,7 @@
  * 表结构以 server/database/migrations/*.sql 为准，此处仅为类型安全映射。
  */
 import { sql } from 'drizzle-orm';
-import { boolean, numeric, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { boolean, integer, numeric, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 import { customTimestamptz } from './schema';
 
 export const officialChannel = pgTable('official_channel', {
@@ -36,8 +36,16 @@ export type OfficialChannelRow = typeof officialChannel.$inferSelect;
 export type ModelPricingRow = typeof modelPricing.$inferSelect;
 
 /**
- * 同一供应商的多 Key 管理（对标 ArcReel 多 Key：隔离项目/测试生产分离/轮换）。
- * 生效 Key = 该供应商下 is_active 的最新一条；无行时回落 model_providers.apiKey。
+ * 同一供应商的多 Key 密钥池（migration 0023）。
+ *
+ * 旧语义「is_active 最新一条生效」是单 Key 二选一，加 N 把也只跑 1 把；
+ * 现在每把 Key 是一条独立「车道」：
+ *  - enabled 控制是否参与调度；
+ *  - concurrency 是该车道的并发额度（视频默认 1，自动探测会在其上下浮动）；
+ *  - in_flight 在途计数（领 Key 时原子 +1，结束/冷却 -1）；
+ *  - status + cooldown_until 做「按 Key 冷却」，限流只冻这一把；
+ *  - is_active 保留为「历史激活标记」，不再作为调度依据。
+ * 无任何 Key 行时回落 model_providers.apiKey（主 Key 列）。
  */
 export const providerApiKeys = pgTable('provider_api_keys', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -45,6 +53,18 @@ export const providerApiKeys = pgTable('provider_api_keys', {
   label: text('label').notNull().default('Key'),
   apiKey: text('api_key').notNull(),
   isActive: boolean('is_active').notNull().default(true),
+  /** 是否参与调度（false=停用，不参与领 Key） */
+  enabled: boolean('enabled').notNull().default(true),
+  /** 该 Key 的并发额度：视频默认 1；自动探测会在此值上下浮动 */
+  concurrency: integer('concurrency').notNull().default(1),
+  /** 当前在途任务数；领 Key 时原子 +1，结束/冷却时 -1 */
+  inFlight: integer('in_flight').notNull().default(0),
+  /** active=可用；cooldown=限流冷却中；invalid=鉴权失效 */
+  status: text('status').notNull().default('active'),
+  cooldownUntil: customTimestamptz('cooldown_until', { precision: 3 }),
+  lastUsedAt: customTimestamptz('last_used_at', { precision: 3 }),
+  lastError: text('last_error'),
+  priority: integer('priority').notNull().default(0),
   createdAt: customTimestamptz('created_at', { precision: 3 }).notNull(),
 });
 

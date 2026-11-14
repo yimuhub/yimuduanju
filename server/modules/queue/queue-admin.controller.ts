@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { IsBoolean, IsIn } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsUUID } from 'class-validator';
 import type {
+  KeyLanesResponse,
+  PinProjectKeyResult,
   QueueActionResult,
   QueueMoveDirection,
   QueueOverviewResponse,
@@ -17,6 +19,13 @@ class QueueMoveDto {
 class QueueGlobalPauseDto {
   @IsBoolean()
   paused!: boolean;
+}
+
+/** 钉 Key：传 keyId 表示钉住，传 null 表示解钉 */
+class PinProjectKeyDto {
+  @IsOptional()
+  @IsUUID()
+  keyId?: string | null;
 }
 
 /**
@@ -70,5 +79,30 @@ export class QueueAdminController {
   @Post('global-pause')
   globalPause(@Body() body: QueueGlobalPauseDto): { globallyPaused: boolean; message: string } {
     return this.queue.setGlobalPause(body.paused);
+  }
+
+  /** 密钥车道：每把 Key 的并发额度 / 在途 / 冷却 / 钉住它的项目 */
+  @Get('key-lanes')
+  keyLanes(): Promise<KeyLanesResponse> {
+    return this.queue.keyLanes();
+  }
+
+  /**
+   * 重算排队任务的通道路由（改完环节绑定后点一下）：
+   * 把当前绑定的供应商/模型写回还没上游建单的任务，否则换了模型的老任务
+   * 会一直在旧供应商那边轮询，表现为「改了没用、一直失败」。
+   */
+  @Post('recalculate-routes')
+  recalculateRoutes(): Promise<{ updated: number; skipped: number; message: string }> {
+    return this.queue.recalculateRoutes();
+  }
+
+  /** 给项目钉一把 Key（项目间互不抢并发额度）；keyId=null 解钉 */
+  @Post('projects/:id/pin-key')
+  pinProjectKey(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: PinProjectKeyDto,
+  ): Promise<PinProjectKeyResult> {
+    return this.queue.pinProjectKey(id, body.keyId ?? null);
   }
 }

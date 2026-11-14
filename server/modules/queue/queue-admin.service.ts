@@ -20,9 +20,12 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { generationJobs, projects } from '@server/database/schema';
+import { generationJobs, modelProviders, projects } from '@server/database/schema';
+import { providerApiKeys } from '@server/database/billing.schema';
 import { GenerationService } from '../generation/generation.service';
 import { JobWorkerService } from '../generation/job-worker.service';
+import { StageBindingsService } from '../providers/stage-bindings.service';
+import { stageOfJobType, type StageKey } from '@shared/stage-bindings';
 import {
   QUEUE_NOT_STARTED_STATUSES,
   QUEUE_OPEN_STATUSES,
@@ -31,6 +34,9 @@ import {
 import type {
   JobStatus,
   JobType,
+  KeyLaneGroup,
+  KeyLanesResponse,
+  PinProjectKeyResult,
   QueueActionResult,
   QueueItem,
   QueueMoveDirection,
@@ -58,6 +64,7 @@ export class QueueAdminService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly generationService: GenerationService,
     private readonly worker: JobWorkerService,
+    private readonly stageBindings: StageBindingsService,
   ) {}
 
   // ==================== 查询 ====================
@@ -162,6 +169,192 @@ export class QueueAdminService {
       worker,
       globallyPaused: this.worker.isQueuePaused(),
       generatedAt: new Date(now).toISOString(),
+    };
+  }
+
+  /**
+   * 密钥车道总览：一把 Key = 一条独立并发车道。
+   * ------------------------------------------------------------------
+   * 供应商排队是**账号级**的：同一个账号加 10 把 Key 仍然共用一个视频队列，
+   * 不同账号的 Key 才能真正并行。用户在界面上必须能看出：
+   *   · 这把 Key 现在几单在途 / 并发上限多少（是不是真的在跑）
+   *   · 是否在限流冷却中、剩余多久（冷却说明上游满了，加 Key 才有意义）
+   *   · 哪些项目钉了它（钉住的项目之间互不抢车道）
+   * 只读接口，不做任何调度决策——调度在 ProviderKeyPoolService。
+   */
+  async keyLanes(): Promise<KeyLanesResponse> {
+    const rows = await this.db
+      .select({
+        key: providerApiKeys,
+        providerName: modelProviders.name,
+        formatType: modelProviders.formatType,
+      })
+      .from(providerApiKeys)
+      .leftJoin(modelProviders, eq(providerApiKeys.providerId, modelProviders.id))
+      .orderBy(asc(modelProviders.name), asc(providerApiKeys.createdAt));
+
+    const pinned = await this.db
+      .select({ id: projects.id, title: projects.title, pinnedKeyId: projects.pinnedKeyId })
+      .from(projects)
+      .where(sql`${projects.pinnedKeyId} is not null`);
+
+    const pinnedByKey = new Map<string, { projectId: string; projectTitle: string }[]>();
+    for (const p of pinned) {
+      if (!p.pinnedKeyId) continue;
+      const list = pinnedByKey.get(p.pinnedKeyId) ?? [];
+      list.push({ projectId: p.id, projectTitle: p.title });
+      pinnedByKey.set(p.pinnedKeyId, list);
+    }
+
+    const now = Date.now();
+    const groupMap = new Map<string, KeyLaneGroup>();
+    for (const row of rows) {
+      const k = row.key;
+      const providerId = k.providerId;
+      const providerName = row.providerName ?? '未知供应商';
+      let group = groupMap.get(providerId);
+      if (!group) {
+        group = {
+          providerId,
+          providerName,
+          formatType: row.formatType ?? undefined,
+          lanes: [],
+          totalConcurrency: 0,
+          totalInFlight: 0,
+        };
+        groupMap.set(providerId, group);
+      }
+      const cooldownUntil = iso(k.cooldownUntil);
+      const cooldownRemainingMs = cooldownUntil
+        ? Math.max(0, new Date(cooldownUntil).getTime() - now)
+        : 0;
+      group.lanes.push({
+        keyId: k.id,
+        label: k.label || `Key ${k.id.slice(0, 6)}`,
+        providerId,
+        providerName,
+        formatType: row.formatType ?? undefined,
+        status: k.status,
+        enabled: k.enabled,
+        concurrency: k.concurrency,
+        inFlight: k.inFlight,
+        cooldownRemainingMs,
+        cooldownUntil: cooldownUntil || undefined,
+        lastError: k.lastError ?? undefined,
+        lastUsedAt: iso(k.lastUsedAt) || undefined,
+        pinnedProjects: pinnedByKey.get(k.id) ?? [],
+      });
+      group.totalConcurrency += k.concurrency;
+      group.totalInFlight += k.inFlight;
+    }
+
+    return {
+      groups: [...groupMap.values()].sort((a, b) => b.lanes.length - a.lanes.length),
+      generatedAt: new Date(now).toISOString(),
+    };
+  }
+
+  /**
+   * 给项目钉一把 Key（或解钉）。钉住后该项目只领这一条车道，
+   * 多个项目同时开工时不会互相抢占并发额度。
+   */
+  async pinProjectKey(projectId: string, keyId: string | null): Promise<PinProjectKeyResult> {
+    const [project] = await this.db
+      .select({ id: projects.id, title: projects.title })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!project) throw new NotFoundException(`项目 ${projectId} 不存在`);
+
+    if (keyId) {
+      const [key] = await this.db
+        .select({ id: providerApiKeys.id, label: providerApiKeys.label, enabled: providerApiKeys.enabled })
+        .from(providerApiKeys)
+        .where(eq(providerApiKeys.id, keyId))
+        .limit(1);
+      if (!key) throw new NotFoundException(`Key ${keyId} 不存在`);
+      if (!key.enabled) throw new BadRequestException(`Key「${key.label}」已停用，不能钉给项目`);
+    }
+
+    await this.db.update(projects).set({ pinnedKeyId: keyId }).where(eq(projects.id, projectId));
+    this.logger.log(
+      keyId
+        ? `项目「${project.title}」钉住 Key ${keyId.slice(0, 8)}`
+        : `项目「${project.title}」解除 Key 钉定`,
+    );
+    return {
+      projectId,
+      pinnedKeyId: keyId,
+      message: keyId ? `已为「${project.title}」钉住该 Key` : `已解除「${project.title}」的 Key 钉定`,
+    };
+  }
+
+  /**
+   * 重算排队任务的通道路由：把「环节绑定当前选定的供应商/模型」写回任务行。
+   * ------------------------------------------------------------------
+   * 存在的理由：用户在设置里换了视频模型，新任务会按绑定执行，但**队列里已经
+   * 排着的任务**还带着建单那一刻的 provider_name。执行时虽然会再走一次绑定
+   * 解析，可轮询（pollVideoTask）与结算都读任务行的 provider_name —— 通道一换，
+   * 轮询就去老供应商那里查 taskId，永远查不到。表现出来就是用户说的
+   * 「我已经指定了新模型，可它一直走原来的路线、一直失败」。
+   *
+   * 只动**还没上游建单**的任务（running 一律跳过）：running 的 externalTaskId
+   * 已经落在某个供应商那边，改 provider_name 会让它在错误的地方轮询。
+   */
+  async recalculateRoutes(): Promise<{ updated: number; skipped: number; message: string }> {
+    const rows = await this.db
+      .select({
+        id: generationJobs.id,
+        jobType: generationJobs.jobType,
+        status: generationJobs.status,
+        providerName: generationJobs.providerName,
+        modelName: generationJobs.modelName,
+      })
+      .from(generationJobs)
+      .where(inArray(generationJobs.status, OPEN_STATUSES))
+      .limit(QUEUE_LIMIT);
+
+    const cache = new Map<string, { providerName?: string; model?: string }>();
+    let updated = 0;
+    let skipped = 0;
+
+    for (const row of rows) {
+      if (row.status === 'running') {
+        skipped += 1;
+        continue;
+      }
+      const stage = stageOfJobType(row.jobType);
+      if (!stage) continue;
+      let binding = cache.get(stage);
+      if (!binding) {
+        // eslint-disable-next-line no-await-in-loop
+        const resolved = await this.stageBindings.resolve(stage as StageKey);
+        binding = { providerName: resolved.providerName, model: resolved.model };
+        cache.set(stage, binding);
+      }
+      // 该环节没配绑定：保持任务原样，不做「猜一个默认供应商」的改写
+      if (!binding.providerName && !binding.model) continue;
+      const nextProvider = binding.providerName ?? row.providerName ?? null;
+      const nextModel = binding.model ?? row.modelName ?? null;
+      if (nextProvider === (row.providerName ?? null) && nextModel === (row.modelName ?? null)) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(generationJobs)
+        .set({ providerName: nextProvider, modelName: nextModel, updatedAt: new Date() })
+        .where(eq(generationJobs.id, row.id));
+      updated += 1;
+    }
+
+    this.logger.log(`重算队列路由：更新 ${updated} 条，跳过执行中 ${skipped} 条`);
+    return {
+      updated,
+      skipped,
+      message:
+        updated > 0
+          ? `已把 ${updated} 条排队任务改到当前环节绑定的通道${skipped > 0 ? `（${skipped} 条执行中未动）` : ''}`
+          : '所有排队任务的路由已与环节绑定一致，无需改动',
     };
   }
 

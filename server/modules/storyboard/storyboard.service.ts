@@ -1,6 +1,6 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { scenes, segments, shots, characters, generationJobs, locations, projects, assets } from '@server/database/schema';
+import { scenes, segments, shots, characters, generationJobs, locations, projects, assets, episodes } from '@server/database/schema';
 import { eq, desc, asc, and, count, inArray, lt, sql } from 'drizzle-orm';
 import type {
   CharacterIdentityKit,
@@ -49,6 +49,7 @@ import {
 } from '@shared/qc-rules';
 import { contentDrivenShotSeconds } from '@shared/shot-duration';
 import { BudgetCapService } from '../generation/budget-cap.service';
+import { ArtifactQcService } from '../generation/artifact-qc.service';
 import { StorySkillsService, type RigRunResult } from '../story-skills/story-skills.service';
 import { buildSheetPrompt } from '../story-skills/skills';
 import { getStylePreset } from '../story-skills/styles';
@@ -60,8 +61,36 @@ export class StoryboardService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly budgetCap: BudgetCapService,
+    private readonly artifactQc: ArtifactQcService,
     private readonly storySkills: StorySkillsService,
   ) {}
+
+  /**
+   * QC 确认指纹（migration 0024 B3）：图片/视频重跑（forceNew 语义）在创建新任务前
+   * 快照旧产物指纹（尺寸+文件大小+md5 前 8 位）→ inputData.prevFingerprint。
+   * 新产物完成后由 generation.settleJobSuccess 比对，分数下降 → regressWarn（只警示不拦截）。
+   * 旧产物不存在/不可读/远程 URL → undefined（无对比基准，行为与现状一致）。
+   */
+  private async prevFingerprintFor(
+    projectId: string,
+    shot: Shot,
+    type: 'image' | 'video',
+  ): Promise<Record<string, unknown> | undefined> {
+    try {
+      const url = type === 'image' ? shot.startFrameUrl : shot.videoUrl;
+      if (!url) return undefined;
+      const projRows = await this.db
+        .select({ aspectRatio: projects.aspectRatio })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
+      const snap = await this.artifactQc.snapshot(url, type, projRows[0]?.aspectRatio ?? undefined);
+      return snap ? { prevFingerprint: snap } : undefined;
+    } catch (e) {
+      this.logger.warn(`旧产物指纹快照失败（shot ${shot.id}）：${(e as Error).message}`);
+      return undefined;
+    }
+  }
 
   // ========== Scenes ==========
   async listScenes(projectId: string): Promise<Scene[]> {
@@ -71,6 +100,82 @@ export class StoryboardService {
       .where(eq(scenes.projectId, projectId))
       .orderBy(scenes.sceneNumber, desc(scenes.createdAt));
     return rows.map((r) => this.mapScene(r));
+  }
+
+  /** 按集查场景（A3）：只查挂在该集的场景；公共场景（episode_id 为空）不混入，语义与 shots 按集一致 */
+  async listScenesByEpisode(projectId: string, episodeId: string): Promise<Scene[]> {
+    const rows = await this.db
+      .select()
+      .from(scenes)
+      .where(and(eq(scenes.projectId, projectId), eq(scenes.episodeId, episodeId)))
+      .orderBy(scenes.sceneNumber, desc(scenes.createdAt));
+    return rows.map((r) => this.mapScene(r));
+  }
+
+  /** 按集查分镜（A3，供 GET /episodes/:eid/shots）：mock 标注与项目级 listShots 同口径 */
+  async listShotsByEpisode(projectId: string, episodeId: string): Promise<Shot[]> {
+    const rows = await this.db
+      .select()
+      .from(shots)
+      .where(and(eq(shots.projectId, projectId), eq(shots.episodeId, episodeId)))
+      .orderBy(shots.shotNumber, desc(shots.createdAt));
+    const mockUrls = await this.collectMockUrls(projectId);
+    return rows.map((r) => {
+      const shot = this.mapShot(r);
+      if (
+        this.isMockProductUrl(r.startFrameUrl, mockUrls) ||
+        this.isMockProductUrl(r.videoUrl, mockUrls)
+      ) {
+        shot.mock = true;
+      }
+      return shot;
+    });
+  }
+
+  /**
+   * 新建 shots/scenes 的归集解析（A3）：
+   * - 显式指定 episodeId → 校验归属后直接用；
+   * - 项目是开集模式（has_episodes）→ 当前活跃集（project.metadata.activeEpisodeId，
+   *   失效回落最新一集）；
+   * - 旧项目 / 无集项目 → null（公共资产，行为与 3.8.x 完全一致）。
+   */
+  private async resolveEpisodeForNewRow(
+    projectId: string,
+    explicitEpisodeId?: string | null,
+  ): Promise<string | null> {
+    if (explicitEpisodeId) {
+      const owned = await this.db
+        .select({ id: episodes.id })
+        .from(episodes)
+        .where(and(eq(episodes.id, explicitEpisodeId), eq(episodes.projectId, projectId)))
+        .limit(1);
+      if (owned.length === 0) throw new NotFoundException('指定的集不存在');
+      return explicitEpisodeId;
+    }
+    const projRows = await this.db
+      .select({ hasEpisodes: projects.hasEpisodes, metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (projRows.length === 0) throw new NotFoundException('项目不存在');
+    if (projRows[0].hasEpisodes !== true) return null;
+    const meta = (projRows[0].metadata ?? {}) as Record<string, unknown>;
+    const active = typeof meta.activeEpisodeId === 'string' ? meta.activeEpisodeId : null;
+    if (active) {
+      const owned = await this.db
+        .select({ id: episodes.id })
+        .from(episodes)
+        .where(and(eq(episodes.id, active), eq(episodes.projectId, projectId)))
+        .limit(1);
+      if (owned.length > 0) return active;
+    }
+    const latest = await this.db
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(eq(episodes.projectId, projectId))
+      .orderBy(desc(episodes.season), desc(episodes.number))
+      .limit(1);
+    return latest[0]?.id ?? null;
   }
 
   async getScene(projectId: string, id: string): Promise<Scene> {
@@ -83,13 +188,15 @@ export class StoryboardService {
 
   async createScene(
     projectId: string,
-    dto: Partial<Scene>,
+    dto: Partial<Scene> & { episodeId?: string | null },
   ): Promise<Scene> {
     const countResult = await this.db
       .select({ count: count() })
       .from(scenes)
       .where(eq(scenes.projectId, projectId));
     const nextNumber = Number(countResult[0].count) + 1;
+    // A3：开集模式下新建场景自动归入当前活跃集（显式指定优先；旧项目归集结果为 null）
+    const episodeId = await this.resolveEpisodeForNewRow(projectId, dto.episodeId);
 
     const rows = await this.db
       .insert(scenes)
@@ -105,6 +212,7 @@ export class StoryboardService {
         dialogues: (dto.dialogues ?? []) as Dialogue[],
         actions: (dto.actions ?? []) as SceneAction[],
         props: dto.props ?? [],
+        episodeId: episodeId ?? undefined,
         sortOrder: dto.sortOrder ?? nextNumber,
       })
       .returning();
@@ -216,7 +324,7 @@ export class StoryboardService {
 
   async createShot(
     projectId: string,
-    dto: Partial<Shot> & { sceneId: string },
+    dto: Partial<Shot> & { sceneId: string; episodeId?: string | null },
   ): Promise<Shot> {
     if (!dto.sceneId) throw new BadRequestException('sceneId 不能为空');
     // P0 安全修复：确认 scene 归属本项目，防止传入他项目的 sceneId 建镜
@@ -232,12 +340,15 @@ export class StoryboardService {
       .from(shots)
       .where(eq(shots.projectId, projectId));
     const nextNumber = Number(maxRow[0]?.max ?? 0) + 1;
+    // A3：开集模式且未指定 episode_id → 自动归入当前活跃集；旧项目恒为 null（公共资产）
+    const episodeId = await this.resolveEpisodeForNewRow(projectId, dto.episodeId);
 
     const rows = await this.db
       .insert(shots)
       .values({
         projectId,
         sceneId: dto.sceneId,
+        episodeId: episodeId ?? undefined,
         shotNumber: dto.shotNumber ?? nextNumber,
         duration: dto.duration?.toString() ?? '8.0',
         inPoint: dto.inPoint !== undefined ? dto.inPoint.toString() : undefined,
@@ -304,6 +415,12 @@ export class StoryboardService {
     if (dto.sfxUrls !== undefined) patch.sfxUrls = dto.sfxUrls;
     if (dto.subtitleText !== undefined) patch.subtitleText = dto.subtitleText;
     if (dto.characterIds !== undefined) patch.characterIds = dto.characterIds;
+    // A3：移动镜到另一集（null/undefined 语义区分：undefined=不改；null=转为公共资产）
+    if (dto.episodeId !== undefined) {
+      patch.episodeId = dto.episodeId === null
+        ? null
+        : await this.resolveEpisodeForNewRow(projectId, dto.episodeId);
+    }
     if (dto.locked !== undefined) patch.locked = dto.locked;
     if (dto.status !== undefined) patch.status = dto.status;
     if (dto.sortOrder !== undefined) patch.sortOrder = dto.sortOrder;
@@ -443,6 +560,7 @@ export class StoryboardService {
         .values({
           projectId,
           sceneId: original.sceneId,
+          episodeId: original.episodeId,
           shotNumber: idx + 2,
           sortOrder: idx + 2,
           duration: String(round3(duration - atSecond)),
@@ -512,6 +630,8 @@ export class StoryboardService {
     const shot = await this.getShot(projectId, id);
     // W4 一致性：自动带入本镜角色的参考图（最多 3 张），保证跨镜角色一致
     const charRefs = await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
+    // B3：已有首帧时本次生成即「重跑」——快照旧产物指纹供结算时「不更坏」比对
+    const prev = await this.prevFingerprintFor(projectId, shot, 'image');
     const rows = await this.db
       .insert(generationJobs)
       .values({
@@ -524,6 +644,7 @@ export class StoryboardService {
           prompt: shot.visualPrompt ?? shot.subject ?? '',
           negativePrompt: shot.negativePrompt ?? '',
           references: [...(shot.referenceImageUrls ?? []), ...charRefs],
+          ...prev,
         },
       })
       .returning({ id: generationJobs.id });
@@ -1074,6 +1195,8 @@ export class StoryboardService {
     if (opts?.strict && errors.length > 0) {
       throw new BadRequestException(`硬门阻断（strict）：${errors.join('；')}`);
     }
+    // B3：镜头已有成片时本次生成即「重跑」——快照旧产物指纹供结算时「不更坏」比对
+    const prev = await this.prevFingerprintFor(projectId, shot, 'video');
     const rows = await this.db
       .insert(generationJobs)
       .values({
@@ -1088,6 +1211,7 @@ export class StoryboardService {
           references: built.references,
           ...(built.chainedFrom ? { chainedFrom: built.chainedFrom } : {}),
           ...(warnings.length > 0 ? { preflight: warnings } : {}),
+          ...prev,
         },
       })
       .returning({ id: generationJobs.id });
@@ -1231,6 +1355,8 @@ export class StoryboardService {
     // 时长静默回落 5s。现与 generateShotVideo 同口径走 buildVideoJobInput。
     if (jobType === 'video') {
       const built = await this.buildVideoJobInput(projectId, shot);
+      // B3：重跑快照旧成片指纹，结算时「不更坏」比对（分数下降只警示）
+      const prev = await this.prevFingerprintFor(projectId, shot, 'video');
       const rows = await this.db
         .insert(generationJobs)
         .values({
@@ -1244,6 +1370,7 @@ export class StoryboardService {
             duration: built.duration,
             references: built.references,
             ...(built.chainedFrom ? { chainedFrom: built.chainedFrom } : {}),
+            ...prev,
           },
         })
         .returning({ id: generationJobs.id });
@@ -1255,6 +1382,8 @@ export class StoryboardService {
       jobType === 'tts'
         ? []
         : await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
+    // B3：图片重跑快照旧首帧指纹（tts 无产物指纹可比）
+    const prev = jobType === 'image' ? await this.prevFingerprintFor(projectId, shot, 'image') : undefined;
     const rows = await this.db
       .insert(generationJobs)
       .values({
@@ -1267,6 +1396,7 @@ export class StoryboardService {
           prompt: shot.visualPrompt ?? (jobType === 'image' ? shot.subject ?? '' : shot.dialogue ?? ''),
           negativePrompt: jobType === 'image' ? shot.negativePrompt ?? '' : undefined,
           references: [...(jobType === 'image' ? shot.referenceImageUrls ?? [] : []), ...charRefs],
+          ...prev,
         },
       })
       .returning({ id: generationJobs.id });
@@ -1833,6 +1963,7 @@ export class StoryboardService {
       dialogues: (row.dialogues as Dialogue[]) ?? [],
       actions: (row.actions as SceneAction[]) ?? [],
       props: row.props ?? [],
+      episodeId: row.episodeId ?? undefined,
       sortOrder: row.sortOrder,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -2096,6 +2227,7 @@ export class StoryboardService {
       sfxUrls: row.sfxUrls ?? [],
       subtitleText: row.subtitleText ?? undefined,
       characterIds: row.characterIds ?? [],
+      episodeId: row.episodeId ?? undefined,
       locked: row.locked,
       status: row.status,
       sortOrder: row.sortOrder,

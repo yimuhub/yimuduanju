@@ -8,9 +8,11 @@ import {
   Body,
   Param,
   ParseUUIDPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import type {
   Character,
+  CharacterLockAnchors,
   Location,
   Prop,
   WorldView,
@@ -72,6 +74,31 @@ export class BibleController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     return this.bibleService.deleteCharacter(projectId, id);
+  }
+
+  // ========== 身份锁锚点（migration 0024 一致性工程 B1） ==========
+  // 分镜首帧提示词已注入的 identityKit 文本锁维持现状（不受本端点影响）；
+  // 本组端点服务于锚点账本与集间一致性校验。
+
+  /** 全部角色锚点聚合：lock_anchors 优先，为空回落 identityKit 文本锁 */
+  @Get('lock-anchors')
+  async getLockAnchors(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<CharacterLockAnchors[]> {
+    return this.bibleService.getLockAnchors(projectId);
+  }
+
+  /** 写单个人物的身份锁短语（整体替换），anchor_updated_at 记录重出时间 */
+  @Patch('characters/:id/lock-anchors')
+  async setLockAnchors(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { anchors?: string[] },
+  ): Promise<Character> {
+    if (!body || !Array.isArray(body.anchors)) {
+      throw new BadRequestException('anchors 必须是字符串数组');
+    }
+    return this.bibleService.setLockAnchors(projectId, id, body.anchors);
   }
 
   @Post('characters/:id/generate-image')

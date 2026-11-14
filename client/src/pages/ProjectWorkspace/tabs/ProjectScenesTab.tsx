@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Plus, MapPin, Image as ImageIcon, Trash2, X, Sparkles, Clapperboard, Sun, Moon, CloudSun,
 } from 'lucide-react';
-import { storyboard, bible } from '@client/src/api';
+import { storyboard, bible, episodes as episodesApi } from '@client/src/api';
 import type { Scene, Location } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
+import { useEpisodeScope } from '../EpisodeContext';
 
 const timeIcon = (t?: string) => {
   const v = (t || '').toLowerCase();
@@ -19,6 +20,8 @@ const timeIcon = (t?: string) => {
 const ProjectScenesTab = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 长篇多集：has_episodes=true 时按当前集加载场景；旧项目（关集模式）走项目级查询
+  const { hasEpisodes, activeEpisodeId } = useEpisodeScope();
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,14 +35,20 @@ const ProjectScenesTab = () => {
   const load = () => {
     if (!id) return;
     setLoading(true);
+    // 开集模式：场景按当前集查询（GET /episodes/:episodeId/scenes）
+    const scenesTask =
+      hasEpisodes && activeEpisodeId
+        ? episodesApi.listEpisodeScenes(id, activeEpisodeId).catch((e) => { logger.error('scenes(ep)', String(e)); return [] as Scene[]; })
+        : storyboard.listScenes(id).catch((e) => { logger.error('scenes', String(e)); return [] as Scene[]; });
     Promise.all([
-      storyboard.listScenes(id).catch((e) => { logger.error('scenes', String(e)); return [] as Scene[]; }),
+      scenesTask,
       bible.listLocations(id).catch((e) => { logger.error('locs', String(e)); return [] as Location[]; }),
     ]).then(([sc, lo]) => { setScenes(sc); setLocations(lo); setLoading(false); })
       .catch(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, hasEpisodes, activeEpisodeId]);
 
   const handleCreateScene = async () => {
     if (!id || !sceneForm.title.trim()) return;

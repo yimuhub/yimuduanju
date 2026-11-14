@@ -3,6 +3,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -49,6 +50,17 @@ export class CreateCharacterDto {
   @IsOptional()
   @IsObject()
   identityKit?: CharacterIdentityKit;
+
+  /** 归集（migration 0024）；缺省 = 全剧共享资产 */
+  @IsOptional()
+  @IsUUID()
+  episodeId?: string;
+
+  /** 身份锁短语数组（一致性工程 B1） */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  lockAnchors?: string[];
 }
 
 export class UpdateCharacterDto {
@@ -127,6 +139,15 @@ export class UpdateCharacterDto {
   @IsOptional()
   @IsObject()
   identityKit?: CharacterIdentityKit;
+
+  @IsOptional()
+  @IsUUID()
+  episodeId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  lockAnchors?: string[];
 
   @IsOptional()
   @IsBoolean()

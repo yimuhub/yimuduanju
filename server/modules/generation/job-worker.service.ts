@@ -9,6 +9,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack
 import {
   assets,
   characters,
+  episodes,
   generationJobs,
   locations,
   modelProviders,
@@ -3283,6 +3284,37 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 分镜表技能任务：LLM 输出分镜 JSON → 按 scene 分组建场建镜。
    * 解析失败（空数组）则降级：链式 parse_script 用原文启发式拆分，不丢任务。
    */
+  /**
+   * 物化归集（migration 0024 A3）：剧本 → 分镜物化时，开集项目（has_episodes）的
+   * 场/镜自动归入当前活跃集（project.metadata.activeEpisodeId，失效回落最新一集）。
+   * 旧项目返回 null —— 全部落公共资产，行为与 3.8.x 完全一致。
+   */
+  private async resolveMaterializationEpisodeId(projectId: string): Promise<string | null> {
+    const projRows = await this.db
+      .select({ hasEpisodes: projects.hasEpisodes, metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (projRows.length === 0 || projRows[0].hasEpisodes !== true) return null;
+    const meta = (projRows[0].metadata ?? {}) as Record<string, unknown>;
+    const active = typeof meta.activeEpisodeId === 'string' ? meta.activeEpisodeId : null;
+    if (active) {
+      const owned = await this.db
+        .select({ id: episodes.id })
+        .from(episodes)
+        .where(and(eq(episodes.id, active), eq(episodes.projectId, projectId)))
+        .limit(1);
+      if (owned.length > 0) return active;
+    }
+    const latest = await this.db
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(eq(episodes.projectId, projectId))
+      .orderBy(desc(episodes.season), desc(episodes.number))
+      .limit(1);
+    return latest[0]?.id ?? null;
+  }
+
   private async processBoardsJob(job: GenerationJob, providerName?: string, opts?: { model?: string; temperature?: number }): Promise<void> {
     if (!job.projectId) {
       await this.generationService.settleJobFailure(job.id, '分镜任务缺少项目归属');
@@ -3482,6 +3514,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         .values({
           projectId: job.projectId,
           sceneNumber,
+          // 物化归集（A3）：开集项目的场自动归入当前活跃集
+          episodeId: await this.resolveMaterializationEpisodeId(job.projectId),
           title: title.slice(0, 200),
           summary: list[0]?.visualPrompt?.slice(0, 200),
           dialogues: sceneDialogues,
@@ -3494,7 +3528,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           ),
           sortOrder: sceneNumber,
         })
-        .returning({ id: scenes.id });
+        .returning({ id: scenes.id, episodeId: scenes.episodeId });
 
       // 场 → 片段 → 镜：LLM 给了段号就用它的叙事边界，没给就按 ≤15s/2-4 镜归段
       const pieces = planPieces(
@@ -3546,6 +3580,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             projectId: job.projectId,
             sceneId: scene.id,
             segmentId: segment.id,
+            episodeId: scene.episodeId,
             shotNumber: shotTotal,
             duration: duration.toFixed(1),
             shotSize: b.shotSize,
@@ -4161,6 +4196,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         .values({
           projectId: job.projectId,
           sceneNumber: i + 1,
+          // 物化归集（A3）：开集项目的场自动归入当前活跃集
+          episodeId: await this.resolveMaterializationEpisodeId(job.projectId),
           title: block.title,
           summary: block.summary,
           dialogues: block.dialogues,
@@ -4170,7 +4207,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           props: sceneProps,
           sortOrder: i + 1,
         })
-        .returning({ id: scenes.id });
+        .returning({ id: scenes.id, episodeId: scenes.episodeId });
 
       const shotsToInsert = this.buildShots(block, prefs, perSceneTarget);
       /*
@@ -4224,6 +4261,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
               projectId: job.projectId,
               sceneId: scene.id,
               segmentId: segment.id,
+              episodeId: scene.episodeId,
               shotNumber: shotTotal,
               duration: prefs.shotDuration.toFixed(1),
               shotSize: s.shotSize,

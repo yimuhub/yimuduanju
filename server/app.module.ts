@@ -26,6 +26,7 @@ import { MemoryModule } from './modules/memory/memory.module';
 import { SkillsModule } from './modules/skills/skills.module';
 import { TimelineModule } from './modules/timeline/timeline.module';
 import { SystemLogsModule } from './modules/system-logs/system-logs.module';
+import { EpisodesModule } from './modules/episodes/episodes.module';
 
 @Module({
   imports: [
@@ -55,6 +56,8 @@ import { SystemLogsModule } from './modules/system-logs/system-logs.module';
     TimelineModule,
     // 系统日志：文件日志 + 结构化事件 + 失败任务诊断（只读）
     SystemLogsModule,
+    // 长篇多集（migration 0024）：集 CRUD/按集查询/跨集账本/按集门；旧项目（无集）不触碰
+    EpisodesModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

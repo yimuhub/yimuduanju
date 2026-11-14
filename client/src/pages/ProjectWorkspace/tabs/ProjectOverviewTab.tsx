@@ -13,8 +13,12 @@ import {
   Download,
   Sparkles,
   BookOpen,
+  Plus,
+  Pencil,
+  Trash2,
+  LocateFixed,
 } from 'lucide-react';
-import { projects, generation, bible, storyboard, assets, providers as providersApi } from '@client/src/api';
+import { projects, generation, bible, storyboard, assets, episodes as episodesApi, providers as providersApi } from '@client/src/api';
 import type {
   Project,
   ContentMode,
@@ -26,9 +30,14 @@ import type {
   Asset,
   ModelProvider,
   SeriesLedger,
+  Episode,
+  EpisodeProgress,
 } from '@shared/api.interface';
 import { CONTENT_MODES } from '@shared/content-modes';
 import { logger } from '@client/src/utils/logger';
+import { toast } from 'sonner';
+import { showConfirm } from '@client/src/components/ui/confirm';
+import { Switch } from '@client/src/components/ui/switch';
 
 const STATUS_STEPS: { key: ProjectStatus; label: string }[] = [
   { key: 'draft', label: '草稿' },
@@ -80,6 +89,122 @@ const ProjectOverviewTab = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [enabledProviders, setEnabledProviders] = useState<ModelProvider[]>([]);
+  // 多集模式（长篇，一次性开关）：集列表 + 按集进度聚合 + 行内重命名
+  const [eps, setEps] = useState<Episode[]>([]);
+  const [epProgress, setEpProgress] = useState<EpisodeProgress[]>([]);
+  const [enabling, setEnabling] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [creatingEp, setCreatingEp] = useState(false);
+  const multiMode = project?.hasEpisodes === true;
+
+  useEffect(() => {
+    if (!multiMode || !id) return;
+    episodesApi.listEpisodes(id).then(setEps).catch((e) => logger.error('list episodes', String(e)));
+    episodesApi.listEpisodeProgress(id).then(setEpProgress).catch(() => undefined);
+  }, [multiMode, id]);
+
+  /** 开启多集模式（一次性）：创建第 1 集 —— 服务端据首个集把项目切到 has_episodes=true */
+  const handleEnableEpisodes = async (checked: boolean) => {
+    if (!id || !checked || enabling) return;
+    const ok = await showConfirm(
+      '开启多集模式？本项目将按集管理剧本/分镜/场景（一次性操作，开启后不可关闭），并自动创建第 1 集。',
+    );
+    if (!ok) return;
+    setEnabling(true);
+    try {
+      const created = await episodesApi.createEpisode(id, { title: '第 1 集' });
+      if (project) {
+        setProject({
+          ...project,
+          hasEpisodes: true,
+          metadata: { ...project.metadata, activeEpisodeId: created.id },
+        });
+      }
+      setEps([created]);
+      toast.success('已开启多集模式，并创建第 1 集');
+    } catch (err) {
+      logger.error('Enable episodes failed:', String(err));
+      toast.error('开启多集模式失败');
+    } finally {
+      setEnabling(false);
+    }
+  };
+
+  const handleCreateEpisode = async () => {
+    if (!id || creatingEp) return;
+    setCreatingEp(true);
+    try {
+      // 集号服务端季内自动递增；新集自动成为活跃集
+      const created = await episodesApi.createEpisode(id);
+      const list = await episodesApi.listEpisodes(id).catch(() => null);
+      if (list) setEps(list);
+      if (project) setProject({ ...project, metadata: { ...project.metadata, activeEpisodeId: created.id } });
+      toast.success(`已创建第 ${created.number} 集`);
+    } catch (err) {
+      logger.error('Create episode failed:', String(err));
+      toast.error('新建集失败');
+    } finally {
+      setCreatingEp(false);
+    }
+  };
+
+  const handleRenameEpisode = async (ep: Episode) => {
+    if (!id) return;
+    if (renamingId !== ep.id) {
+      setRenamingId(ep.id);
+      setRenameDraft(ep.title ?? '');
+      return;
+    }
+    try {
+      await episodesApi.updateEpisode(id, ep.id, { title: renameDraft.trim() });
+      setEps((prev) => prev.map((e) => (e.id === ep.id ? { ...e, title: renameDraft.trim() || undefined } : e)));
+      toast.success('集名已更新');
+    } catch (err) {
+      logger.error('Rename episode failed:', String(err));
+      toast.error('重命名失败');
+    } finally {
+      setRenamingId(null);
+    }
+  };
+
+  const handleDeleteEpisode = async (ep: Episode) => {
+    if (!id) return;
+    const progress = epProgress.find((p) => p.episodeId === ep.id);
+    const ok = await showConfirm(
+      `确定删除第 ${ep.number} 集吗？${progress && progress.totalShots > 0 ? `该集挂有 ${progress.totalShots} 个镜头，将一并删除（不可恢复）。` : '空集将被直接删除。'}`,
+    );
+    if (!ok) return;
+    try {
+      await episodesApi.deleteEpisode(id, ep.id, true);
+      const [list, progress2] = await Promise.all([
+        episodesApi.listEpisodes(id),
+        episodesApi.listEpisodeProgress(id).catch(() => [] as EpisodeProgress[]),
+      ]);
+      setEps(list);
+      setEpProgress(progress2);
+      if (project?.metadata?.activeEpisodeId === ep.id && list[0]) {
+        const nextProject = await projects.getProject(id);
+        setProject(nextProject);
+      }
+      toast.success(`已删除第 ${ep.number} 集`);
+    } catch (err) {
+      logger.error('Delete episode failed:', String(err));
+      toast.error('删除集失败');
+    }
+  };
+
+  const handleActivateEpisode = async (ep: Episode) => {
+    if (!id) return;
+    try {
+      await episodesApi.activateEpisode(id, ep.id);
+      if (project) setProject({ ...project, metadata: { ...project.metadata, activeEpisodeId: ep.id } });
+      toast.success(`第 ${ep.number} 集已设为活跃集：之后新建的镜头自动归入该集`);
+    } catch (err) {
+      logger.error('Activate episode failed:', String(err));
+      toast.error('设为活跃集失败');
+    }
+  };
 
   useEffect(() => {
     providersApi
@@ -260,6 +385,97 @@ const ProjectOverviewTab = () => {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* 多集模式（长篇）：一次性开关 + 集管理（重命名/删除/活跃集/新建集） */}
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-foreground">多集模式（长篇）</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              按集管理剧本、分镜、场景与人物（集内角色 = 本集专属 + 全剧公共）。一次性开关：开启后不可关闭。
+            </p>
+          </div>
+          {multiMode ? (
+            <span className="pill pill-ok shrink-0">已开启 · {eps.length} 集</span>
+          ) : (
+            <Switch checked={false} onChange={(c) => void handleEnableEpisodes(c)} disabled={enabling} />
+          )}
+        </div>
+
+        {multiMode && (
+          <div className="mt-4 space-y-2">
+            {eps.length === 0 && (
+              <p className="text-xs text-muted-foreground">还没有集，点「新建集」开始长篇创作。</p>
+            )}
+            {eps.map((ep) => {
+              const prog = epProgress.find((p) => p.episodeId === ep.id);
+              const isActive = project?.metadata?.activeEpisodeId === ep.id;
+              const isRenaming = renamingId === ep.id;
+              return (
+                <div
+                  key={ep.id}
+                  className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 ${isActive ? 'border-primary/40 bg-primary/5' : 'border-border bg-background'}`}
+                >
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => void handleRenameEpisode(ep)}
+                      onKeyDown={(e) => e.key === 'Enter' && void handleRenameEpisode(ep)}
+                      placeholder="集名（可留空）"
+                      className="w-40 rounded-md border border-input bg-card px-2 py-1 text-xs outline-none focus:border-primary"
+                    />
+                  ) : (
+                    <span className="text-sm font-semibold text-foreground">
+                      第 {ep.number} 集{ep.title ? ` · ${ep.title}` : ''}
+                    </span>
+                  )}
+                  <span className="pill pill-neutral text-[11px]">{prog ? `${prog.totalShots} 镜` : '0 镜'}</span>
+                  {prog && (
+                    <span className="text-[11px] text-muted-foreground">
+                      首帧 {prog.withFirstFrame}/{prog.totalShots} · 成片 {prog.withVideo}/{prog.totalShots}
+                    </span>
+                  )}
+                  {isActive && <span className="pill pill-ok text-[11px]">活跃集</span>}
+                  <span className="ml-auto flex items-center gap-1">
+                    <button
+                      onClick={() => void handleRenameEpisode(ep)}
+                      title="重命名"
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:border-primary hover:text-primary"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    {!isActive && (
+                      <button
+                        onClick={() => void handleActivateEpisode(ep)}
+                        title="设为活跃集：新建镜头自动归入该集"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:border-primary hover:text-primary"
+                      >
+                        <LocateFixed className="h-3 w-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void handleDeleteEpisode(ep)}
+                      title="删除该集（含集内镜头）"
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-input bg-card text-muted-foreground hover:border-red-300 hover:text-red-300"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
+            <button
+              onClick={() => void handleCreateEpisode()}
+              disabled={creatingEp}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5" /> {creatingEp ? '创建中…' : '新建集（集号自动递增）'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Quick actions + recent activity */}

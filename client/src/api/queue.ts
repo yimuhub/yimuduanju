@@ -5,6 +5,8 @@
  */
 import { axiosForBackend } from '@client/src/api/http';
 import type {
+  KeyLanesResponse,
+  PinProjectKeyResult,
   QueueActionResult,
   QueueMoveDirection,
   QueueOverviewResponse,
@@ -43,4 +45,20 @@ export const roundRobinQueue = () =>
 export const setQueueGlobalPause = (paused: boolean) =>
   axiosForBackend
     .post<{ globallyPaused: boolean; message: string }>('/api/queue/global-pause', { paused })
+    .then((res) => res.data);
+
+/** 密钥车道：一把 Key = 一条独立并发车道（并发额度 / 在途 / 冷却 / 钉住的项目） */
+export const keyLanes = () =>
+  axiosForBackend.get<KeyLanesResponse>('/api/queue/key-lanes').then((res) => res.data);
+
+/** 给项目钉一把 Key；keyId 传 null 表示解钉 */
+export const pinProjectKey = (projectId: string, keyId: string | null) =>
+  axiosForBackend
+    .post<PinProjectKeyResult>(`/api/queue/projects/${projectId}/pin-key`, { keyId })
+    .then((res) => res.data);
+
+/** 重算排队任务的通道路由：改完「环节绑定」后点一下，老任务才会走新模型 */
+export const recalculateRoutes = () =>
+  axiosForBackend
+    .post<{ updated: number; skipped: number; message: string }>('/api/queue/recalculate-routes')
     .then((res) => res.data);

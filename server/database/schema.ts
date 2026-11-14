@@ -256,6 +256,12 @@ export const generationJobs = pgTable("generation_jobs", {
    */
   queueSeq: bigint("queue_seq", { mode: "number" }).notNull().default(sql`nextval('generation_jobs_queue_seq_seq')`),
   providerName: varchar("provider_name", { length: 100 }),
+  /**
+   * 任务实际使用的 API Key（migration 0023 密钥池）。
+   * 视频是「异步建单 + 轮询」，轮询与失败重试必须复用创建时那把 Key，
+   * 否则换了 Key 之后上游按 (account, taskId) 查不到任务，直接失败。
+   */
+  boundKeyId: uuid("bound_key_id"),
   modelName: varchar("model_name", { length: 255 }),
   /**
    * @type { prompt: string, negativePrompt: string, size: string, duration: number, references: string[] }
@@ -350,6 +356,8 @@ export const shots = pgTable("shots", {
   shotNumber: integer("shot_number").notNull().default(1),
   /** 所属片段（场 → 片段 ≤15s/2-4 镜 → 镜），历史数据可为空 */
   segmentId: uuid("segment_id"),
+  /** 所属集（migration 0024）：NULL = 不属于任何集的公共资产（旧项目全部为 NULL，行为不变） */
+  episodeId: uuid("episode_id"),
   /** 画面主体运动/视线方向，用于轴线连续性校验：left_to_right|right_to_left|toward_camera|away_from_camera|static */
   screenDirection: varchar("screen_direction", { length: 30 }),
   /**
@@ -413,6 +421,11 @@ export const shots = pgTable("shots", {
     columns: [table.segmentId],
     foreignColumns: [segments.id],
     name: "shots_segment_id_fkey",
+  }).onDelete("set null"),
+  foreignKey({
+    columns: [table.episodeId],
+    foreignColumns: [episodes.id],
+    name: "shots_episode_id_fkey",
   }).onDelete("set null"),
 ]);
 
@@ -485,6 +498,8 @@ export const scenes = pgTable("scenes", {
    */
   actions: jsonb("actions"),
   props: text("props").array().default([]),
+  /** 所属集（migration 0024）：NULL = 公共资产 */
+  episodeId: uuid("episode_id"),
   sortOrder: integer("sort_order").default(0),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -506,6 +521,11 @@ export const scenes = pgTable("scenes", {
     columns: [table.locationId],
     foreignColumns: [locations.id],
     name: "scenes_location_id_fkey",
+  }).onDelete("set null"),
+  foreignKey({
+    columns: [table.episodeId],
+    foreignColumns: [episodes.id],
+    name: "scenes_episode_id_fkey",
   }).onDelete("set null"),
 ]);
 
@@ -566,24 +586,38 @@ export const characters = pgTable("characters", {
    * @type { portraitUrl?: string, views?: {front?:string,threeQuarter?:string,side?:string,back?:string}, sheetUrl?: string, identityDescriptor?: string, wardrobe?: string, voiceLock?: string, signatureDetails?: string }
    */
   identityKit: jsonb("identity_kit"),
+  /** 所属集（migration 0024）：NULL = 全剧共享资产（长篇方案②：资产挂剧） */
+  episodeId: uuid("episode_id"),
+  /**
+   * 身份锁短语数组（migration 0024 一致性工程）：逐字复用的静态锚点。
+   * 空数组时消费方回落 identityKit 文本锁（现状不变）。
+   */
+  lockAnchors: jsonb("lock_anchors"),
+  /** 锚点最近一次重出时间；下游据此把引用镜头标记「过期需重生成」 */
+  anchorUpdatedAt: customTimestamptz("anchor_updated_at", { precision: 3 }),
   locked: boolean("locked").default(false),
   sortOrder: integer("sort_order").default(0),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
   createdBy: userProfile("_created_by").default(sql`CASE
-    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+    WHEN (current_setting('app.user_id'::text, true) = '' THEN NULL`),
   // System field: Update time (auto-filled, do not modify)
   updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Updater (auto-filled, do not modify)
   updatedBy: userProfile("_updated_by").default(sql`CASE
-    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+    WHEN (current_setting('app.user_id'::text, true) = '' THEN NULL`),
 }, (table) => [
   foreignKey({
     columns: [table.projectId],
     foreignColumns: [projects.id],
     name: "characters_project_id_fkey",
   }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.episodeId],
+    foreignColumns: [episodes.id],
+    name: "characters_episode_id_fkey",
+  }).onDelete("set null"),
 ]);
 
 /**
@@ -645,6 +679,17 @@ export const projects = pgTable("projects", {
   artStyle: varchar("art_style", { length: 50 }).default('realistic'),
   genre: varchar("genre", { length: 50 }),
   budgetMode: varchar("budget_mode", { length: 30 }).default('balanced'),
+  /**
+   * 项目独占的 Key（migration 0023）：非空时该项目任务只从这把 Key 领取，
+   * 多项目并行时互不抢额度；为空则从供应商共享密钥池领取。
+   */
+  pinnedKeyId: uuid("pinned_key_id"),
+  /**
+   * 开集模式（migration 0024 长篇多集）：true=长篇多集（集由 episodes 表管理，
+   * 新建 shots 自动归入当前活跃集）；false=单集形态，行为与 3.8.x 完全一致。
+   * 旧项目一律 false，向后兼容是硬要求。
+   */
+  hasEpisodes: boolean("has_episodes").default(false),
   totalCost: numeric("total_cost").default('0'),
   thumbnailUrl: text("thumbnail_url"),
   scriptText: text("script_text"),
@@ -829,6 +874,45 @@ export const timelineClips = pgTable("timeline_clips", {
   }).onDelete("set null"),
 ]);
 export const timelineClipsTable = timelineClips;
+
+/* ================= 长篇多集架构（migration 0024） =================
+ * 注意：schema.ts 标注为自动生成，若后续重新执行 gen:db-schema，
+ * 本段手工映射可能被覆盖，请检查（同 auditLogs 段的约定）。 */
+
+// 集：导航与确认的原子单位。旧项目（projects.has_episodes=false）完全不使用本表，
+// 行为与 3.8.x 单集形态完全一致；episode_id 为 NULL 的行是「不属于任何集的公共资产」。
+export const episodes = pgTable("episodes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull(),
+  season: integer("season").notNull().default(1),
+  number: integer("number").notNull(),
+  title: text("title"),
+  // 集内产线状态：draft → script_ready → shots_ready → video_generating → completed
+  status: varchar("status", { length: 30 }).default('draft'),
+  /**
+   * 跨集交接账本（一致性工程）：规范化结构
+   * @type { facts: { text: string, createdAt: string }[], props: { name: string, holder: string }[], relations: { a: string, b: string, status: string }[] }
+   */
+  handoffState: jsonb("handoff_state"),
+  /**
+   * 按集流水线：门通过时间（script/storyboard/preview/final）与进度聚合，
+   * 语义同 projects.metadata.pipeline 的按集版本
+   */
+  pipeline: jsonb("pipeline"),
+  locked: boolean("locked").default(false),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "episodes_project_id_fkey",
+  }).onDelete("cascade"),
+  uniqueIndex("episodes_project_season_number_uq").on(table.projectId, table.season, table.number),
+]);
+export const episodesTable = episodes;
 
 // 0018 对话持久化：草稿会话（project_id 为空）+ 项目会话；消息只增不改，保证可追溯
 export const chatSessions = pgTable("chat_sessions", {

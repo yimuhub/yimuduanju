@@ -12,11 +12,12 @@ import {
   Wand2,
   Grid3X3,
 } from 'lucide-react';
-import { bible, storyboard } from '@client/src/api';
+import { bible, storyboard, episodes as episodesApi } from '@client/src/api';
 import type { Character, UpdateCharacterRequest, CreateCharacterRequest } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
+import { useEpisodeScope } from '../EpisodeContext';
 
 const roleTypeColors: Record<string, string> = {
   主角: 'bg-primary/10 text-primary',
@@ -31,6 +32,9 @@ const getRoleColor = (roleType: string): string => {
 
 const ProjectCharactersTab = () => {
   const { id } = useParams<{ id: string }>();
+  // 长篇多集：has_episodes=true 时按当前集加载（本集专属 + 全剧公共角色）；
+  // 旧项目（关集模式）走项目级查询
+  const { hasEpisodes, activeEpisodeId } = useEpisodeScope();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +75,12 @@ const ProjectCharactersTab = () => {
   const loadCharacters = () => {
     if (!id) return;
     setLoading(true);
-    bible.listCharacters(id)
+    // 开集模式：GET /episodes/:episodeId/characters（本集专属 + 全剧公共资产）
+    const task =
+      hasEpisodes && activeEpisodeId
+        ? episodesApi.listEpisodeCharacters(id, activeEpisodeId)
+        : bible.listCharacters(id);
+    task
       .then((data) => setCharacters(data))
       .catch((err) => {
         logger.error('Failed to load characters:', String(err));
@@ -82,7 +91,8 @@ const ProjectCharactersTab = () => {
 
   useEffect(() => {
     loadCharacters();
-  }, [id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, hasEpisodes, activeEpisodeId]);
 
   const filtered = characters.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase()),

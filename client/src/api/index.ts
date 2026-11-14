@@ -1,6 +1,7 @@
 export * as projects from './projects';
 export * as bible from './bible';
 export * as storyboard from './storyboard';
+export * as episodes from './episodes';
 export * as assets from './assets';
 export * as generation from './generation';
 export * as providers from './providers';

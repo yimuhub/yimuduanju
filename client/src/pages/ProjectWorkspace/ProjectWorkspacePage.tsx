@@ -27,6 +27,8 @@ import type { Project, ProjectProgressResponse, ProjectStatus } from '@shared/ap
 import { toast } from 'sonner';
 import { logger } from '@client/src/utils/logger';
 import { useVisibleInterval } from '@client/src/lib/hooks';
+import { EpisodeScopeProvider } from './EpisodeContext';
+import EpisodeSelector from './EpisodeSelector';
 
 // 左侧竖导航（与全站侧栏一致的「图标 + 文字」紧凑语言；fullscreen 画布项点击后进入沉浸全屏路由）
 const tabs = [
@@ -132,6 +134,7 @@ const ProjectWorkspacePage = () => {
     ['pending', 'queued', 'running', 'retrying'].includes(scriptJob.status);
 
   return (
+    <EpisodeScopeProvider project={project}>
     <div className="space-y-5">
       {/* 项目头部：项目名 + 状态徽章 + 快捷入口（全站统一工作台语言） */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -176,6 +179,9 @@ const ProjectWorkspacePage = () => {
           </button>
         </div>
       </div>
+
+      {/* 剧集选择器：仅 has_episodes=true 的项目渲染（长篇多集导航，切换后各 Tab 按集加载） */}
+      <EpisodeSelector />
 
       {/* 剧本阶段状态横幅：生成中 / 待确认 / 失败 三态都必须可见可操作 */}
       {nextGate === 'script' && (
@@ -337,6 +343,7 @@ const ProjectWorkspacePage = () => {
         </div>
       </div>
     </div>
+    </EpisodeScopeProvider>
   );
 };
 

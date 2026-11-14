@@ -5,9 +5,11 @@ import { QueueAdminService } from '../queue/queue-admin.service';
 import { GenerationService } from './generation.service';
 import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
+import { ArtifactQcService } from './artifact-qc.service';
 import { JobWorkerService } from './job-worker.service';
 import { BillingModule } from '../billing/billing.module';
 import { RoutingService } from './routing.service';
+import { ProviderKeyPoolService } from './provider-key-pool.service';
 import { StorySkillsService } from '../story-skills/story-skills.service';
 import { ProvidersModule } from '../providers/providers.module';
 // 流水线自动链（P0 断链修复）：job-worker 需要分镜服务（建视频任务）、
@@ -34,11 +36,15 @@ import { BibleModule } from '../bible/bible.module';
     GenerationService,
     ModelGatewayService,
     BudgetCapService,
+    // 产物指纹与「不更坏」QC 比对（migration 0024 B3）：重跑入口快照旧指纹，
+    // 结算时比对新指纹；分镜模块（rerunShot）也要用，export 供 forwardRef 取用
+    ArtifactQcService,
     JobWorkerService,
     RoutingService,
+    ProviderKeyPoolService,
     StorySkillsService,
     QueueAdminService,
   ],
-  exports: [ModelGatewayService, BudgetCapService, RoutingService, StorySkillsService, QueueAdminService],
+  exports: [ModelGatewayService, BudgetCapService, ArtifactQcService, RoutingService, ProviderKeyPoolService, StorySkillsService, QueueAdminService],
 })
 export class GenerationModule {}

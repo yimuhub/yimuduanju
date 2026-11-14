@@ -4,6 +4,9 @@
  * 直接丢弃 → 每一单都退化成 mode=text（纯文生视频），首帧等于从没送到过模型。
  * 这里锁住「什么形态能送达 / 送不出去时必须给出原因」。
  */
+// 密闭化前置：开发机仓库根常有运行中的 .tunnel-url，会压过本用例「无隧道/仅 env」
+// 的前提。必须在 media-input 导入前重定向隧道文件（见 helpers/hermetic-tunnel.ts）。
+import './helpers/hermetic-tunnel';
 import { toProviderVideoFrame } from '@server/modules/generation/media-input';
 
 describe('视频首帧送达形态', () => {

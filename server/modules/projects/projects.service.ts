@@ -94,6 +94,8 @@ function mapProject(
     worldView: (row.worldView as Project['worldView']) ?? undefined,
     styleBible: (row.styleBible as Project['styleBible']) ?? undefined,
     metadata: (row.metadata as Project['metadata']) ?? undefined,
+    // 开集模式（migration 0024）：旧项目恒为 false/缺省，前端据此判断是否走集导航
+    hasEpisodes: row.hasEpisodes === true,
     // provider_override 列由 migration 0007 添加，生成 schema 尚未包含；运行时列真实存在
     providerOverride:
       (row.provider_override as Project['providerOverride']) ?? undefined,

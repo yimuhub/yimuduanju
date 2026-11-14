@@ -25,7 +25,8 @@ import {
   Check,
   ChevronDown as ChevronDownSmall,
 } from 'lucide-react';
-import { storyboard, assets, projects } from '@client/src/api';
+import { storyboard, assets, projects, episodes as episodesApi } from '@client/src/api';
+import { useEpisodeScope } from '../EpisodeContext';
 import type { Shot, Scene, Segment, Asset, BlockedVideoSummary } from '@shared/api.interface';
 import type { ProjectDiagnosis } from '@shared/artifact-state';
 import { isBoardTextInLanguage } from '@shared/boards-language';
@@ -84,6 +85,8 @@ const shotSizeLabels: Record<string, string> = {
 const ProjectStoryboardTab = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 长篇多集：has_episodes=true 时按当前集加载 shots/scenes；旧项目（关集模式）走原路径
+  const { hasEpisodes, activeEpisodeId } = useEpisodeScope();
   // 画布「在工作台打开」深链：/storyboard?shot=<id> 自动展开并定位该镜头（画布 ↔ 工作台双向打通）
   const [searchParams] = useSearchParams();
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -104,6 +107,11 @@ const ProjectStoryboardTab = () => {
   const [historyMap, setHistoryMap] = useState<Record<string, Asset[]>>({});
   const [historyLoading, setHistoryLoading] = useState<Set<string>>(new Set());
   const [revertingIds, setRevertingIds] = useState<Set<string>>(new Set());
+  // 聚焦编辑器扩展：字段级 blur 保存进行中的镜头 / 历史点选回填主图进行中的资产
+  const [patchingFields, setPatchingFields] = useState<Set<string>>(new Set());
+  const [selectingHistoryIds, setSelectingHistoryIds] = useState<Set<string>>(new Set());
+  // 大列表窗口化：单镜 > 50 时默认只渲染前 50（按集加载通常远小于此；点「展开全部」解除）
+  const [showAllShots, setShowAllShots] = useState(false);
   // 首帧受阻汇总：哪些镜头的视频因首帧未就绪被暂停，以及是否已有在途首帧任务
   const [blocked, setBlocked] = useState<BlockedVideoSummary | null>(null);
   const [recovering, setRecovering] = useState(false);
@@ -197,6 +205,14 @@ const ProjectStoryboardTab = () => {
     }
   };
 
+  // 打开聚焦编辑器时预载该镜历史产物（编辑器内「点选回填主图」需要）
+  useEffect(() => {
+    if (!focusShotId) return;
+    const shot = shots.find((s) => s.id === focusShotId);
+    if (shot && historyMap[shot.id] === undefined) void loadHistory(shot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusShotId]);
+
   const revertTo = async (shot: Shot, asset: Asset) => {
     if (!id) return;
     const assetType = asset.assetType === 'image' ? 'image' : 'video';
@@ -225,10 +241,11 @@ const ProjectStoryboardTab = () => {
     }
   };
 
-  const handleSavePrompt = async (shot: Shot, rerun?: 'image') => {
+  const handleSavePrompt = async (shot: Shot, rerun?: 'image', opts?: { forceNew?: boolean }) => {
     if (!id) return;
-    const draft = promptDrafts[shot.id];
-    if (draft === undefined) return;
+    // 提示词无草稿时回落当前值：聚焦编辑器允许不改提示词直接「保存并重跑首帧」
+    const draft = promptDrafts[shot.id] ?? shot.visualPrompt ?? shot.action ?? '';
+    if (!draft) return;
     setSavingPromptIds((prev) => new Set(prev).add(shot.id));
     try {
       await storyboard.updateShot(id, shot.id, { visualPrompt: draft });
@@ -241,8 +258,17 @@ const ProjectStoryboardTab = () => {
         return next;
       });
       if (rerun === 'image') {
+        // forceNew（「不复用旧产物」）：rerun 接口无 forceNew 参数，但旧产物指纹
+        // （prevFingerprintFor）取自 shots.startFrameUrl —— 先清空主图再重跑即等效
+        // 「全新生成」；新图完成时消费端会自动写回 startFrameUrl。
+        if (opts?.forceNew && shot.startFrameUrl) {
+          await storyboard.updateShot(id, shot.id, { startFrameUrl: '' });
+          setShots((prev) =>
+            prev.map((s) => (s.id === shot.id ? { ...s, startFrameUrl: undefined } : s)),
+          );
+        }
         await storyboard.rerunShot(id, shot.id, { type: 'image' });
-        toast.success('提示词已保存，已重跑该镜首帧');
+        toast.success(opts?.forceNew ? '已保存；旧产物已忽略，首帧全新生成中' : '提示词已保存，已重跑该镜首帧');
       } else {
         toast.success('提示词已保存');
       }
@@ -253,6 +279,55 @@ const ProjectStoryboardTab = () => {
       setSavingPromptIds((prev) => {
         const next = new Set(prev);
         next.delete(shot.id);
+        return next;
+      });
+    }
+  };
+
+  /** 聚焦编辑器字段级 blur 保存：单字段 PATCH，乐观更新，失败回滚 + toast */
+  const handlePatchField = async (shot: Shot, patch: Partial<Shot>) => {
+    if (!id) return;
+    setPatchingFields((prev) => new Set(prev).add(shot.id));
+    const prevShots = shots;
+    // 乐观更新：先把界面改成新值，PATCH 失败再回滚
+    setShots((prev) => prev.map((s) => (s.id === shot.id ? { ...s, ...patch } : s)));
+    try {
+      await storyboard.updateShot(id, shot.id, patch);
+      toast.success('字段已保存', { duration: 1600 });
+    } catch (err) {
+      logger.error('Patch shot field failed:', String(err));
+      setShots(prevShots); // 回滚
+      toast.error('字段保存失败，已还原');
+    } finally {
+      setPatchingFields((prev) => {
+        const next = new Set(prev);
+        next.delete(shot.id);
+        return next;
+      });
+    }
+  };
+
+  /** 聚焦编辑器历史点选回填主图：确认交互 → updateShot 写回 startFrameUrl → toast */
+  const handleSelectHistory = async (shot: Shot, asset: Asset) => {
+    if (!id || !asset.fileUrl) return;
+    const ok = await showConfirm(
+      `将历史版本 v${asset.version ?? 1} 设为该镜主图？当前主图会被覆盖（历史记录不会丢失，可随时换回）。`,
+    );
+    if (!ok) return;
+    setSelectingHistoryIds((prev) => new Set(prev).add(asset.id));
+    try {
+      await storyboard.updateShot(id, shot.id, { startFrameUrl: asset.fileUrl });
+      setShots((prev) =>
+        prev.map((s) => (s.id === shot.id ? { ...s, startFrameUrl: asset.fileUrl } : s)),
+      );
+      toast.success(`已设为主图：v${asset.version ?? 1}`);
+    } catch (err) {
+      logger.error('Select history as start frame failed:', String(err));
+      toast.error('回填主图失败');
+    } finally {
+      setSelectingHistoryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(asset.id);
         return next;
       });
     }
@@ -312,7 +387,9 @@ const ProjectStoryboardTab = () => {
             (res.renumbered ? `，重排镜号 ${res.renumbered} 行` : ''),
           { duration: 3600 },
         );
-        const allShots = await storyboard.listAllShots(id);
+        const allShots = hasEpisodes && activeEpisodeId
+          ? await episodesApi.listEpisodeShots(id, activeEpisodeId)
+          : await storyboard.listAllShots(id);
         setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));
         await refreshDiagnosis();
       } else {
@@ -333,7 +410,9 @@ const ProjectStoryboardTab = () => {
       const res = await storyboard.normalizeShotDurations(id);
       if (res.updated > 0) {
         toast.success(`已补齐 ${res.updated} 个旧镜头时长按内容（8-15s）`);
-        const allShots = await storyboard.listAllShots(id);
+        const allShots = hasEpisodes && activeEpisodeId
+          ? await episodesApi.listEpisodeShots(id, activeEpisodeId)
+          : await storyboard.listAllShots(id);
         setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));
       } else {
         toast.info('当前镜头时长已符合内容驱动策略');
@@ -411,36 +490,49 @@ const ProjectStoryboardTab = () => {
         setScriptText(p.scriptText ?? '');
       })
       .catch((err) => logger.error('Load project subtitle pref failed:', String(err)));
-    storyboard.listScenes(id)
-      .then(async (sceneData) => {
+    // 按集加载（migration 0024）：开集模式且已选集 → episodes 按集端点；否则项目级全量
+    const loadShotsAndScenes = async () => {
+      const perEpisode = hasEpisodes && !!activeEpisodeId;
+      try {
+        const sceneData = perEpisode
+          ? await episodesApi.listEpisodeScenes(id, activeEpisodeId as string)
+          : await storyboard.listScenes(id);
         setScenes(sceneData);
-        // P1 N+1 修复：一次取全量镜头（之前按场景逐个查询）
-        try {
-          const allShots = await storyboard.listAllShots(id);
-          setShots(allShots.sort((a, b) => a.shotNumber - b.shotNumber));
-          // 画布深链 ?shot=<id>：展开并滚动定位到该镜头
-          const targetShot = searchParams.get('shot');
-          if (targetShot && allShots.some((s) => s.id === targetShot)) {
-            setExpandedId(targetShot);
-            setTimeout(() => {
-              document.getElementById(`shot-card-${targetShot}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 300);
-          }
-        } catch {
-          // skip
+        const allShots = perEpisode
+          ? await episodesApi.listEpisodeShots(id, activeEpisodeId as string)
+          : await storyboard.listAllShots(id);
+        const sorted = allShots.sort((a, b) => a.shotNumber - b.shotNumber);
+        setShots(sorted);
+        // 画布深链 ?shot=<id>：展开并滚动定位到该镜头
+        const targetShot = searchParams.get('shot');
+        if (targetShot && sorted.some((s) => s.id === targetShot)) {
+          setExpandedId(targetShot);
+          setTimeout(() => {
+            document.getElementById(`shot-card-${targetShot}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 300);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         logger.error('Failed to load storyboard:', String(err));
         setError('加载分镜失败');
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadShotsAndScenes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, hasEpisodes, activeEpisodeId]);
 
   const filteredShots = selectedScene === 'all'
     ? shots
     : shots.filter((s) => s.sceneId === selectedScene);
+  // 大列表窗口化（简单方案）：>50 镜默认只渲染前 50 张卡，DOM 数量可控；
+  // 按集加载本身已把单集 shots 控制在小几十的量级，通常触发不到，点「展开全部」解除。
+  const SHOT_WINDOW = 50;
+  const windowedShots =
+    showAllShots || filteredShots.length <= SHOT_WINDOW
+      ? filteredShots
+      : filteredShots.slice(0, SHOT_WINDOW);
+  const hiddenShotCount = filteredShots.length - windowedShots.length;
   // 受阻镜头查找表：卡片上直接标出「视频已暂停」，避免用户只看到「失败」不知道原因
   const blockedByShot = new Map((blocked?.items ?? []).map((i) => [i.shotId, i]));
 
@@ -754,7 +846,7 @@ const ProjectStoryboardTab = () => {
         </div>
       ) : viewMode === 'grid' ? (
         <div className="cq-cols grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {filteredShots.map((shot, idx) => {
+          {windowedShots.map((shot, idx) => {
             const statusInfo = getStatusInfo(shot.status);
             const isExpanded = expandedId === shot.id;
             const isRegenerating = regeneratingIds.has(shot.id);
@@ -1162,7 +1254,7 @@ const ProjectStoryboardTab = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredShots.map((shot, idx) => {
+              {windowedShots.map((shot, idx) => {
                 const statusInfo = getStatusInfo(shot.status);
                 return (
                   <tr key={shot.id} className="border-t border-border">
@@ -1253,6 +1345,42 @@ const ProjectStoryboardTab = () => {
       {/* 关键帧大图（Lightbox） */}
       {lightbox && (
         <Lightbox url={lightbox.url} kind="image" title={lightbox.title} onClose={() => setLightbox(null)} />
+      )}
+
+      {/* 大列表窗口化提示：>50 镜默认渲染前 50，点按解除 */}
+      {hiddenShotCount > 0 && (
+        <div className="flex items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+          <span>已显示前 {SHOT_WINDOW} 镜，还有 {hiddenShotCount} 镜未渲染（性能保护）</span>
+          <button
+            onClick={() => setShowAllShots(true)}
+            className="rounded-lg border border-input px-3 py-1.5 font-medium text-foreground hover:border-primary hover:text-primary"
+          >
+            展开全部 {filteredShots.length} 镜
+          </button>
+        </div>
+      )}
+
+      {/* 全屏聚焦编辑器（精修检查器完全体）：左缩略图导航 / 中首帧+剧本对照 /
+          右提示词+字段精修（blur 单字段保存）+ forceNew 重跑 + 历史回填主图 */}
+      {focusShotId && shots.some((s) => s.id === focusShotId) && (
+        <StoryboardFocusEditor
+          shots={filteredShots.length > 0 ? filteredShots : shots}
+          scenes={scenes}
+          initialShotId={focusShotId}
+          promptDrafts={promptDrafts}
+          onPromptDraftChange={(shotId, value) =>
+            setPromptDrafts((prev) => ({ ...prev, [shotId]: value }))
+          }
+          onSavePrompt={handleSavePrompt}
+          savingPromptIds={savingPromptIds}
+          onPatchField={handlePatchField}
+          patchingFields={patchingFields}
+          onSelectHistory={handleSelectHistory}
+          selectingHistoryIds={selectingHistoryIds}
+          historyMap={historyMap}
+          historyLoading={historyLoading}
+          onClose={() => setFocusShotId(null)}
+        />
       )}
     </div>
   );

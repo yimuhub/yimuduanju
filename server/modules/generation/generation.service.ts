@@ -22,8 +22,11 @@ import type {
 } from '@shared/api.interface';
 import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
+import { ArtifactQcService } from './artifact-qc.service';
+import type { ArtifactFingerprint } from '@shared/qc-fingerprint';
 import { BillingService } from '../billing/billing.service';
 import { RoutingService } from './routing.service';
+import { releaseStagedFrames } from './staged-media';
 import { systemLog } from '../../common/system-log.store';
 
 /**
@@ -70,6 +73,7 @@ export class GenerationService {
     private readonly budgetCap: BudgetCapService,
     private readonly billing: BillingService,
     private readonly routing: RoutingService,
+    private readonly artifactQc: ArtifactQcService,
     private readonly stageBindings: StageBindingsService,
   ) {}
 
@@ -304,6 +308,13 @@ export class GenerationService {
 
     // 修复：outputData 不回落 job.inputData。把输入当输出会把用户 prompt 发布成镜头产物，
     // 也会让 adoptJob / writeback 读到伪造的 output.url（我方的增量，补到 main 事务版上）。
+    // B3「不更坏」（migration 0024）：重跑任务带旧产物指纹（inputData.prevFingerprint），
+    // 新产物指纹比对后 QC 分下降 → outputData.regressWarn=true，任务仍 succeeded
+    // （只警示不拦截，拦截策略待产品决策）。比对失败静默跳过，绝不影响成功结算。
+    const regressData: Record<string, unknown> | undefined =
+      job.jobType === 'image' || job.jobType === 'video'
+        ? await this.checkFingerprintRegression(job, outputData)
+        : undefined;
     const settled = await this.db.transaction(async (tx) => {
       const rows = await tx
         .update(generationJobs)
@@ -316,6 +327,8 @@ export class GenerationService {
           // 发布成镜头产物，也会让 adoptJob / writeback 读到伪造的 output.url。
           outputData: {
             ...((outputData ?? {}) as Record<string, unknown>),
+            // B3「不更坏」警示：QC 分数较旧产物下降时置 true（任务仍成功）
+            ...(regressData ?? {}),
             // mock 标记是产物可信度的唯一凭据：任务页/资产库/分镜页据此打「演示」标签
             ...(mock ? { mock: true } : {}),
             billing: {
@@ -353,7 +366,56 @@ export class GenerationService {
 
     // 未抢到结算权：以库内当前状态为准（幂等语义不变，调用方无需区分）
     if (!settled) return this.getJob(id);
+    // 任务已终态：Agnes 官方文档要求媒体 URL「在任务完成前保持有效」，
+    // 因此这里（成功结算后）才是第一个安全的删除时点。只删临时公开副本，
+    // 项目原图（shots.start_frame_url）不动。失败/取消见下方两个终态。
+    void releaseStagedFrames(id);
     return this.mapJob(settled);
+  }
+
+  /**
+   * B3「不更坏」指纹比对（migration 0024）：重跑任务的 inputData.prevFingerprint
+   * 与新产物指纹比对，QC 分下降 → 返回 { regressWarn: true, ... }（并入 outputData）。
+   * 新产物非本地文件（视频直回 CDN URL）/指纹不可算/字段缺失 → undefined（跳过警示）。
+   * 任何异常都吞掉——警示层绝不能把一次成功的生成拖成失败。
+   */
+  private async checkFingerprintRegression(
+    job: GenerationJob,
+    outputData?: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | undefined> {
+    try {
+      const input = (job.inputData ?? {}) as Record<string, unknown>;
+      const prevRaw = input.prevFingerprint;
+      if (!prevRaw || typeof prevRaw !== 'object' || Array.isArray(prevRaw)) return undefined;
+      const prev = prevRaw as ArtifactFingerprint;
+      if ((prev.kind ?? (job.jobType as string)) !== job.jobType) return undefined;
+      const out = (outputData ?? {}) as Record<string, unknown>;
+      // 图片产物 images[0].url；视频产物 url（与 writebackToTarget 的取值口径一致）
+      const newUrl =
+        job.jobType === 'image'
+          ? Array.isArray(out.images) &&
+            typeof (out.images[0] as { url?: unknown } | undefined)?.url === 'string'
+            ? (out.images[0] as { url: string }).url
+            : undefined
+          : typeof out.url === 'string'
+            ? out.url
+            : undefined;
+      if (!newUrl) return undefined;
+      let expectedAspect: string | undefined;
+      if (job.projectId) {
+        const rows = await this.db
+          .select({ aspectRatio: projects.aspectRatio })
+          .from(projects)
+          .where(eq(projects.id, job.projectId))
+          .limit(1);
+        expectedAspect = rows[0]?.aspectRatio ?? undefined;
+      }
+      const regression = await this.artifactQc.compareAgainstPrev(prev, newUrl, expectedAspect);
+      return regression ? (regression as unknown as Record<string, unknown>) : undefined;
+    } catch (e) {
+      this.logger.warn(`「不更坏」指纹比对失败（任务 ${job.id}）：${(e as Error).message}`);
+      return undefined;
+    }
   }
 
   /** 失败结算（幂等 + 并发安全）：只允许从未终结态迁移，绝不覆盖已成功的结算结果 */
@@ -391,6 +453,8 @@ export class GenerationService {
       .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
       .returning();
     if (rows.length === 0) return this.getJob(id);
+    // 失败也是终态：释放临时公开首帧副本，避免公网长期挂着用不到的图片
+    void releaseStagedFrames(id);
     // V5 每镜状态机：任务终结失败 → 镜头 failed（变体不碰主状态）
     const input = (job.inputData ?? {}) as Record<string, unknown>;
     if (job.targetType === 'shot' && job.targetId && typeof input.variantGroup !== 'string') {
@@ -605,6 +669,8 @@ export class GenerationService {
       .returning();
     // 0 行 = 期间已被结算成终态（成功/失败），按当前状态返回，不再抛「任务不存在」
     if (rows.length === 0) return this.getJob(id);
+    // 取消同样是终态：释放临时公开首帧副本
+    void releaseStagedFrames(id);
     const cancelled = this.mapJob(rows[0]);
     // 已知限制（显式记录，不再静默）：取消只改本地状态，不会通知上游。
     // externalTaskId 已存在时供应商仍在生成并照收费用，而随后的 settleJobSuccess
@@ -651,6 +717,8 @@ export class GenerationService {
         const result = await this.modelGateway.pollVideoTask(
           job.externalTaskId,
           job.providerName,
+          // 必须用建单那把 Key 轮询：换 Key 后上游按 (account, taskId) 查不到
+          (job as unknown as { boundKeyId?: string | null }).boundKeyId ?? null,
         );
         if (result.status === 'succeeded') {
           return this.settleJobSuccess(id, result.outputData);
@@ -662,7 +730,37 @@ export class GenerationService {
           return job;
         }
         if (result.status === 'failed') {
-          return this.settleJobFailure(id, result.errorMessage ?? '视频生成失败');
+          const message = result.errorMessage ?? '视频生成失败';
+          /*
+           * Agnes 偶发「上游任务查不到」：建单明明成功，轮询时上游却按
+           * (account, taskId) 返回 404 task not found。诱因包括上游免费队列
+           * 回收任务、后端重启后 boundKeyId 为空的任务回落到「最新激活的 Key」、
+           * 改环节绑定导致跨供应商查询。这些都不是镜头本身的问题，一律判死
+           * 会让用户逐个手动重试；这里限 3 次自动重新建单，超次才落 failed。
+           */
+          if (/task not found|\(404/i.test(message)) {
+            const input = (job.inputData ?? {}) as Record<string, unknown>;
+            const lost = Number(input.lostTaskRetries ?? 0) + 1;
+            if (lost <= 3) {
+              this.logger.warn(`视频任务 ${id} 上游任务丢失（404），第 ${lost}/3 次自动重新建单`);
+              const rows = await this.db
+                .update(generationJobs)
+                .set({
+                  status: 'pending',
+                  queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
+                  externalTaskId: null,
+                  boundKeyId: null,
+                  errorMessage: null,
+                  progress: 0,
+                  inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{lostTaskRetries}', to_jsonb(${lost}::int), true)`,
+                  updatedAt: new Date(),
+                })
+                .where(eq(generationJobs.id, id))
+                .returning();
+              return this.mapJob(rows[0]);
+            }
+          }
+          return this.settleJobFailure(id, message);
         }
         if (result.progress !== undefined) {
           const updated = await this.db

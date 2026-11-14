@@ -6,8 +6,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { characters, locations, projects, scenes, generationJobs, props } from '@server/database/schema';
-import { eq, desc, and, count } from 'drizzle-orm';
+import { characters, locations, projects, scenes, generationJobs, props, episodes } from '@server/database/schema';
+import { eq, desc, and, count, or, isNull } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type {
   Character,
@@ -16,6 +16,7 @@ import type {
   PropStateVariant,
   CharacterIdentityKit,
   CharacterViewKey,
+  CharacterLockAnchors,
   CreateCharacterRequest,
   UpdateCharacterRequest,
   CreateLocationRequest,
@@ -125,6 +126,21 @@ export class BibleService {
     return rows.map((r) => this.mapCharacter(r));
   }
 
+  /** 按集角色（migration 0024）：本集专属（episode_id = eid）+ 全剧公共（episode_id IS NULL） */
+  async listCharactersByEpisode(projectId: string, episodeId: string): Promise<Character[]> {
+    const rows = await this.db
+      .select()
+      .from(characters)
+      .where(
+        and(
+          eq(characters.projectId, projectId),
+          or(eq(characters.episodeId, episodeId), isNull(characters.episodeId)),
+        ),
+      )
+      .orderBy(desc(characters.sortOrder), desc(characters.createdAt));
+    return rows.map((r) => this.mapCharacter(r));
+  }
+
   async getCharacter(projectId: string, id: string): Promise<Character> {
     const rows = await this.db
       .select()
@@ -151,6 +167,12 @@ export class BibleService {
         canonicalDescription: dto.canonicalDescription,
         referenceImageUrls: dto.referenceImageUrls ?? [],
         identityKit: dto.identityKit ?? null,
+        // migration 0024：开集模式可指定归属集；缺省 = 全剧共享资产
+        episodeId: dto.episodeId ? await this.assertEpisodeOwned(projectId, dto.episodeId) : null,
+        lockAnchors: Array.isArray(dto.lockAnchors)
+          ? dto.lockAnchors.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+          : [],
+        anchorUpdatedAt: Array.isArray(dto.lockAnchors) && dto.lockAnchors.length > 0 ? new Date() : null,
       })
       .returning();
     return this.mapCharacter(rows[0]);
@@ -182,6 +204,18 @@ export class BibleService {
     if (dto.referenceImageUrls !== undefined)
       patch.referenceImageUrls = dto.referenceImageUrls;
     if (dto.identityKit !== undefined) patch.identityKit = dto.identityKit;
+    // migration 0024：归集（null=转为全剧共享）；lock_anchors 走专门的锚点接口（见下）
+    if (dto.episodeId !== undefined) {
+      patch.episodeId = dto.episodeId === null
+        ? null
+        : await this.assertEpisodeOwned(projectId, dto.episodeId);
+    }
+    if (dto.lockAnchors !== undefined) {
+      patch.lockAnchors = Array.isArray(dto.lockAnchors)
+        ? dto.lockAnchors.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+        : [];
+      patch.anchorUpdatedAt = new Date();
+    }
     if (dto.locked !== undefined) patch.locked = dto.locked;
 
     if (Object.keys(patch).length === 0) {
@@ -205,6 +239,74 @@ export class BibleService {
       .where(and(eq(characters.id, id), eq(characters.projectId, projectId)))
       .returning({ id: characters.id });
     if (rows.length === 0) throw new NotFoundException('人物不存在');
+  }
+
+  /**
+   * 身份锁锚点聚合（一致性工程 B1）：全部角色锚点一次取齐。
+   * lock_anchors 为空的角色回落 identityKit 文本锁（identityDescriptor + signatureDetails），
+   * 与现状一致 —— 分镜首帧提示词的注入链路不变，本方法先给账本/集间校验消费。
+   */
+  async getLockAnchors(projectId: string): Promise<CharacterLockAnchors[]> {
+    const rows = await this.db
+      .select({
+        id: characters.id,
+        name: characters.name,
+        lockAnchors: characters.lockAnchors,
+        anchorUpdatedAt: characters.anchorUpdatedAt,
+        identityKit: characters.identityKit,
+      })
+      .from(characters)
+      .where(eq(characters.projectId, projectId))
+      .orderBy(desc(characters.sortOrder), desc(characters.createdAt));
+    return rows.map((r) => {
+      const explicit = Array.isArray(r.lockAnchors)
+        ? (r.lockAnchors as unknown[]).filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+        : [];
+      if (explicit.length > 0) {
+        return {
+          characterId: r.id,
+          name: r.name,
+          anchors: explicit,
+          ...(r.anchorUpdatedAt ? { anchorUpdatedAt: r.anchorUpdatedAt.toISOString() } : {}),
+        };
+      }
+      // 回落：identityKit 文本锁（现状口径，不改变任何提示词注入行为）
+      const kit = (r.identityKit as CharacterIdentityKit | null) ?? null;
+      const fallback = [
+        kit?.identityDescriptor ?? '',
+        kit?.signatureDetails ?? '',
+      ].filter((s) => s.trim().length > 0);
+      return {
+        characterId: r.id,
+        name: r.name,
+        anchors: fallback,
+      };
+    });
+  }
+
+  /** 写身份锁锚点（B1）：短语数组整体替换，anchor_updated_at 记录重出时间 */
+  async setLockAnchors(projectId: string, id: string, anchors: string[]): Promise<Character> {
+    const cleaned = Array.isArray(anchors)
+      ? anchors.filter((a): a is string => typeof a === 'string' && a.trim().length > 0).slice(0, 20)
+      : [];
+    const rows = await this.db
+      .update(characters)
+      .set({ lockAnchors: cleaned, anchorUpdatedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(characters.id, id), eq(characters.projectId, projectId)))
+      .returning();
+    if (rows.length === 0) throw new NotFoundException('人物不存在');
+    return this.mapCharacter(rows[0]);
+  }
+
+  /** 校验集归属并返回集 ID（migration 0024：人物归集用） */
+  private async assertEpisodeOwned(projectId: string, episodeId: string): Promise<string> {
+    const rows = await this.db
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(and(eq(episodes.id, episodeId), eq(episodes.projectId, projectId)))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('指定的集不存在');
+    return episodeId;
   }
 
   /**
@@ -1431,6 +1533,9 @@ export class BibleService {
       forbiddenChanges: row.forbiddenChanges ?? undefined,
       referenceImageUrls: row.referenceImageUrls ?? [],
       identityKit: (row.identityKit as CharacterIdentityKit | null) ?? emptyIdentityKit(),
+      episodeId: row.episodeId ?? undefined,
+      lockAnchors: Array.isArray(row.lockAnchors) ? (row.lockAnchors as string[]) : [],
+      anchorUpdatedAt: row.anchorUpdatedAt ? row.anchorUpdatedAt.toISOString() : undefined,
       locked: row.locked,
       sortOrder: row.sortOrder,
       createdAt: row.createdAt.toISOString(),
