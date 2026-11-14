@@ -965,6 +965,7 @@ export class ModelGatewayService {
       // 首帧+尾帧都在：keyframe 模式（连贯性最强，优先级最高）
       body.mode = modeKeyframe;
       if (relaySchema) {
+        // relay 方言：image 数组（≥2 项），尾帧缺失时首帧重复垫
         const last = isUsable(params.lastFrameUrl) ? params.lastFrameUrl : params.imageUrl;
         body.image = [params.imageUrl, last];
       } else {
