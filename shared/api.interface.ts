@@ -1609,6 +1609,35 @@ export interface ExportTimelineRequest {
   burnSubtitles?: boolean;
 }
 
+/**
+ * 服务端成片合成请求（POST /api/projects/:id/export/assemble）。
+ * 字幕烧录 / BGM 混音均为可选增强：失败自动降级为无字幕 / 无 BGM 成片并附 warnings，不整体失败。
+ */
+export interface AssembleFinalVideoRequest {
+  /** 是否把字幕烧录进画面（ASS 硬字幕，默认 true；短剧发布必须带字幕） */
+  burnSubtitles?: boolean;
+  /** 烧录字幕样式：outline 描边（默认，对齐现有 ASS 导出）/ box 底部半透明黑框 */
+  subtitleStyle?: 'outline' | 'box';
+  /** BGM 资产 ID（项目音频资产），缺省不铺 BGM */
+  bgmAssetId?: string;
+  /** 项目无 BGM 资产时自动铺一条本地合成的轻 BGM（仅 budgetMode=quality_first/balanced 时生效） */
+  autoBgm?: boolean;
+}
+
+export interface AssembleFinalVideoResult {
+  asset: Asset;
+  clips: number;
+  durationSeconds: number;
+  /** 字幕是否已烧录进画面（false = 烧录失败降级为软字幕/无字幕成片） */
+  burnedSubtitles: boolean;
+  /** 成片是否已混入 BGM */
+  bgmApplied: boolean;
+  /** 非致命降级警告（字幕烧录失败 / BGM 混音失败 / 封面提取失败等） */
+  warnings: string[];
+  /** 自动提取的封面资产（提取失败时缺省，不阻断导出） */
+  cover?: Asset;
+}
+
 export interface ExportTimelineResult {
   asset: Asset;
   clips: number;

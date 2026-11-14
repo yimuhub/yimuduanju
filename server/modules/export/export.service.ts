@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Inject, Logger, NotFoundException } fr
 import { randomUUID, createHash } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, writeFile, unlink, stat, copyFile } from 'fs/promises';
+import { mkdir, writeFile, unlink, stat, copyFile, rm } from 'fs/promises';
 import { join, resolve as resolvePath } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
@@ -15,7 +15,7 @@ import {
   props,
   characters,
 } from '@server/database/schema';
-import { eq, desc, asc } from 'drizzle-orm';
+import { eq, desc, asc, and } from 'drizzle-orm';
 // 修复（分层）：uploadDir 直接从工具模块导入。
 // 旧写法依赖 uploads.controller 里的再导出，而该再导出已删除
 // （它逼着导出服务在模块加载期拉起整条 Controller → Service → DI 依赖链）。
@@ -24,6 +24,8 @@ import { isSafeExternalUrl, isSafeExternalUrlStatic } from '../../common/url-gua
 import { videoSizeForAspect } from '@shared/aspect';
 import type {
   Asset,
+  AssembleFinalVideoRequest,
+  AssembleFinalVideoResult,
   CanvasComposeClipInput,
   CanvasComposeInput,
   CanvasComposeResult,
@@ -33,6 +35,13 @@ import type {
  * P1 导出真实化：分镜 JSON / 字幕 / 发布包为确定性序列化；
  * assembleFinalVideo 用本机 ffmpeg 把镜头成片按镜序拼成一条 MP4 并归档资产。
  */
+/** 字幕时间轴条目：start/dur 秒；空文本条目会被跳过 */
+interface AssSubtitleEntry {
+  text: string;
+  start: number;
+  dur: number;
+}
+
 @Injectable()
 export class ExportService {
   private readonly logger = new Logger(ExportService.name);
@@ -256,8 +265,12 @@ export class ExportService {
    * 诚实边界：均分≠语音对齐（shorts 用 faster-whisper word_timestamps + difflib
    * 对脚本纠错，我们无词级时间戳，TTS 回传词级时长后可升级为真对齐）。
    * 烧录：ffmpeg -vf "ass=karaoke.ass:fontsdir=./fonts"（短视频竖屏用 1080x1920 头）。
+   * @param style 烧录样式：outline 描边（默认，与既有 ASS 导出一致）/ box 半透明底框
    */
-  async getKaraokeAss(projectId: string): Promise<string> {
+  async getKaraokeAss(
+    projectId: string,
+    style: 'outline' | 'box' = 'outline',
+  ): Promise<string> {
     const project = await this.requireProject(projectId);
     const shotRows = await this.db
       .select({
@@ -270,13 +283,53 @@ export class ExportService {
       .where(eq(shots.projectId, projectId))
       .orderBy(asc(shots.shotNumber));
 
-    const vertical = (project.aspectRatio ?? '9:16') === '9:16';
+    const timeline: AssSubtitleEntry[] = [];
+    let cursor = 0;
+    for (const s of shotRows) {
+      const dur = Math.max(0.5, Number(s.duration ?? 0) || 4);
+      const text = (s.subtitleText || s.dialogue || '').trim().replace(/\s+/g, '');
+      timeline.push({ text, start: cursor, dur });
+      cursor += dur;
+    }
+    return this.buildKaraokeAss(timeline, project.title, (project.aspectRatio ?? '9:16') === '9:16', style);
+  }
+
+  /**
+   * 商业交付 1 · 字幕烧录：按合成实际时间轴构建 ASS。
+   * 与 getKaraokeAss 的差异：时间轴来自「归一化后片段的真实时长」（ffprobe 实测），
+   * 且只包含真正拼进成片的镜头（有视频的镜、按 场序→镜序 排），
+   * 避免无视频镜头占位导致字幕漂移。
+   */
+  private buildBurnAss(
+    timeline: AssSubtitleEntry[],
+    title: string,
+    vertical: boolean,
+    style: 'outline' | 'box',
+  ): string {
+    return this.buildKaraokeAss(timeline, title, vertical, style);
+  }
+
+  /**
+   * 卡拉 OK ASS 构建核心：样式/排版与既有 ASS 导出对齐
+   * （竖屏 1080x1920、字号 84、MarginV 620 的底部安全区——避开抖音/快手平台 UI 遮挡）。
+   */
+  private buildKaraokeAss(
+    timeline: AssSubtitleEntry[],
+    title: string,
+    vertical: boolean,
+    style: 'outline' | 'box',
+  ): string {
     const playResX = vertical ? 1080 : 1920;
     const playResY = vertical ? 1920 : 1080;
     const fontSize = vertical ? 84 : 64;
     const marginV = vertical ? 620 : 120;
+    // outline：描边+阴影（与既有 karaoke.ass 完全一致）；box：BorderStyle=3 不透明底框
+    const styleLine =
+      style === 'box'
+        ? `Style: Karaoke,Noto Sans CJK SC,${fontSize},&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,3,10,0,2,40,40,${marginV},1`
+        : `Style: Karaoke,Noto Sans CJK SC,${fontSize},&H00FFFFFF,&H0000FFFF,&H80000000,&H80000000,0,0,0,0,100,100,0,0,1,7,5,2,40,40,${marginV},1`;
     const header = `[Script Info]
-Title: ${project.title ?? 'yimu'}-karaoke
+Title: ${title ?? 'yimu'}-karaoke
 ScriptType: v4.00+
 PlayResX: ${playResX}
 PlayResY: ${playResY}
@@ -285,24 +338,21 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,Noto Sans CJK SC,${fontSize},&H00FFFFFF,&H0000FFFF,&H80000000,&H80000000,0,0,0,0,100,100,0,0,1,7,5,2,40,40,${marginV},1
+${styleLine}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
-    let cursor = 0;
     const events: string[] = [];
-    for (const s of shotRows) {
-      const dur = Math.max(0.5, Number(s.duration ?? 0) || 4);
-      const text = (s.subtitleText || s.dialogue || '').trim().replace(/\s+/g, '');
-      const start = cursor;
-      cursor += dur;
+    for (const entry of timeline) {
+      const dur = Math.max(0.5, entry.dur);
+      const text = entry.text.trim().replace(/\s+/g, '');
       if (!text) continue;
       // 标点优先断句，每行 ≤15 字（shorts captions.py:55-75 的中文等价版）
       const lines = this.splitKaraokeLines(text, 15);
       const totalChars = lines.join('').length || 1;
-      let t = start;
+      let t = entry.start;
       for (const line of lines) {
         const lineDur = (dur * line.length) / totalChars;
         const end = t + lineDur;
@@ -809,10 +859,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   /**
-   * 服务端成片（升级版）：按镜序下载镜头成片 + 混流各镜 TTS 配音轨（voiceUrl）+ 烧录/封装字幕 + 写入 AIGC 合规元数据。
+   * 服务端成片（商业交付版）：按镜序下载镜头成片 + 混流各镜 TTS 配音轨（voiceUrl）
+   * + 可选 BGM 混音（资产库选择 / 无资产时按预算自动铺轻 BGM，对白段自动压低）
+   * + 可选硬字幕烧录（ASS 样式，对齐现有 karaoke.ass 导出；失败降级软字幕并警告）
+   * + 自动提取封面（第 3 秒帧，登记 image 资产）+ 写入 AIGC 合规元数据。
    * 可拼片段不足时 400 明示；成功返回资产（项目资产页直接可见）。
+   * 非致命失败（字幕/BGM/封面）以 warnings 回报，不整体失败。
    */
-  async assembleFinalVideo(projectId: string): Promise<{ asset: Asset; clips: number; durationSeconds: number }> {
+  async assembleFinalVideo(
+    projectId: string,
+    options?: AssembleFinalVideoRequest,
+  ): Promise<AssembleFinalVideoResult> {
     const project = await this.requireProject(projectId);
     const shotRows = await this.db
       .select({
@@ -858,6 +915,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     let downloaded = 0;
     const hasAnyVoice = withVideo.some((s) => Boolean(s.voiceUrl));
     const cleanup: string[] = [];
+    // 硬字幕烧录时间轴：以归一化片段的实测时长为准（-shortest 会把含配音段截短，
+    // 声明的镜头时长≠成片时长），且只含真正拼进成片的镜头，字幕与画面才不漂移
+    const burnTimeline: AssSubtitleEntry[] = [];
+    let burnCursor = 0;
+    // 声明时长（探针不可用时的兜底）
+    const declaredDuration = Number(
+      withVideo.reduce((sum, s) => sum + (Number(s.duration) > 0 ? Number(s.duration) : 0), 0).toFixed(1),
+    );
     try {
       const cacheDir = join(uploadDir(), projectId, 'clips');
       for (let i = 0; i < withVideo.length; i += 1) {
@@ -913,6 +978,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           );
         }
         const segmentForConcat = normLocal;
+        // eslint-disable-next-line no-await-in-loop
+        const segDur = (await this.probeSeconds(segmentForConcat)) || Math.max(0.5, Number(clip.duration) || 4);
+        burnTimeline.push({
+          text: (clip.subtitleText || clip.dialogue || '').trim(),
+          start: burnCursor,
+          dur: segDur,
+        });
+        burnCursor += segDur;
 
         lines.push(`file '${segmentForConcat.replace(/'/g, "'\\''")}'`);
         downloaded += 1;
@@ -929,22 +1002,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cleanup.push(srtPath);
       }
 
-      const outName = `final_${randomUUID().slice(0, 8)}.mp4`;
-      const dir = join(uploadDir(), projectId);
-      await mkdir(dir, { recursive: true });
-      const outAbs = join(dir, outName);
+      const warnings: string[] = [];
       const aigcMeta = ['-metadata', 'comment=AIGC-Generated-By-YIMU-AI-Workshop'];
-      // 每段已在上面归一到同一画幅/编码/帧率，这里可直接流拷贝；含软字幕则一并封装 mov_text
-      const copyArgs = hasSrt
-        ? [
-            '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
-            '-i', srtPath,
-            '-c:v', 'copy', '-c:a', 'copy', '-c:s', 'mov_text',
-            ...aigcMeta, outAbs,
-          ]
-        : ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', ...aigcMeta, outAbs];
-      const copyOk = await this.runFfmpeg(ffmpegBin, copyArgs, work);
-      if (!copyOk) {
+
+      // 阶段① 拼接：每段已归一到同一画幅/编码/帧率，优先流拷贝
+      const joinedPath = join(work, 'joined.mp4');
+      cleanup.push(joinedPath);
+      const joinOk = await this.runFfmpeg(
+        ffmpegBin,
+        ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', ...aigcMeta, joinedPath],
+        work,
+      );
+      if (!joinOk) {
         // 重编码兜底：保留音轨（若存在配音），不再一刀切 -an 抹除声音
         const reArgs = [
           '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
@@ -952,7 +1021,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
           ...(hasAnyVoice ? ['-c:a', 'aac', '-b:a', '128k'] : ['-an']),
           ...aigcMeta,
-          outAbs,
+          joinedPath,
         ];
         const reOk = await this.runFfmpeg(ffmpegBin, reArgs, work);
         if (!reOk) {
@@ -961,16 +1030,119 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
             '-vf', scaleFilter,
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
-            '-an', ...aigcMeta, outAbs,
+            '-an', ...aigcMeta, joinedPath,
           ];
           const fbOk = await this.runFfmpeg(ffmpegBin, fallbackArgs, work);
           if (!fbOk) throw new BadRequestException('ffmpeg 合成失败：请检查本机 ffmpeg 与片段编码');
         }
       }
+      // 成片实际时长（BGM 循环/截断对齐与封面取帧都用实测值；探针失败退回声明时长）
+      // eslint-disable-next-line no-await-in-loop
+      const actualDuration = (await this.probeSeconds(joinedPath)) || declaredDuration;
+
+      let currentMedia = joinedPath;
+
+      // 阶段② BGM 混音：优先项目音频资产（bgmAssetId），无资产且允许时自动铺轻 BGM
+      let bgmApplied = false;
+      const bgmAssetId = options?.bgmAssetId?.trim();
+      let bgmLocal: string | null = null;
+      if (bgmAssetId) {
+        const bgmRows = await this.db
+          .select()
+          .from(assets)
+          .where(and(eq(assets.id, bgmAssetId), eq(assets.projectId, projectId)))
+          .limit(1);
+        const bgmRow = bgmRows[0];
+        if (!bgmRow || bgmRow.assetType !== 'audio' || !bgmRow.fileUrl) {
+          warnings.push('所选 BGM 资产不存在或不是音频资产，已跳过 BGM');
+        } else {
+          const cand = join(work, 'bgm.media');
+          cleanup.push(cand);
+          // eslint-disable-next-line no-await-in-loop
+          const got = await this.materializeMediaToFile(bgmRow.fileUrl, cand, cacheDir);
+          if (got) bgmLocal = cand;
+          else warnings.push('BGM 素材获取失败，已跳过 BGM');
+        }
+      } else if (options?.autoBgm && ['quality_first', 'balanced'].includes(project.budgetMode)) {
+        // 对标 NarratoAI/MoneyPrinterTurbo 的自动配乐：本地确定性合成轻环境垫乐，
+        // 零成本零供应商依赖；cost_first/fast_first 预算档不启用
+        bgmLocal = await this.synthesizeLightBgm(ffmpegBin, work, cleanup, actualDuration);
+        if (!bgmLocal) warnings.push('轻 BGM 本地合成失败，已跳过 BGM');
+      }
+      if (bgmLocal) {
+        const withBgm = join(work, 'withbgm.mp4');
+        cleanup.push(withBgm);
+        // eslint-disable-next-line no-await-in-loop
+        const mixOk = await this.mixBgmInto(ffmpegBin, currentMedia, bgmLocal, withBgm, work);
+        if (mixOk) {
+          currentMedia = withBgm;
+          bgmApplied = true;
+        } else {
+          warnings.push('BGM 混音失败，成片保留原配音轨');
+        }
+      }
+
+      // 阶段③ 硬字幕烧录（默认开）：ASS 样式对齐既有 karaoke.ass 导出，
+      // 竖屏 9:16 底部安全区排版。失败降级为软字幕/无字幕成片并警告，不整体失败。
+      // 注意：subtitles 滤镜需要带 libass 的 ffmpeg（部分发行版如 homebrew ffmpeg 9
+      // 未编译该滤镜），先探测可用二进制，找不到则如实降级
+      let burnedSubtitles = false;
+      const subtitleStyle = options?.subtitleStyle === 'box' ? 'box' : 'outline';
+      if (options?.burnSubtitles !== false && burnTimeline.some((e) => e.text.trim())) {
+        const burnBin = await this.resolveFfmpegForSubtitles();
+        const assContent = this.buildBurnAss(
+          burnTimeline,
+          project.title,
+          (project.aspectRatio ?? '9:16') === '9:16',
+          subtitleStyle,
+        );
+        if (!burnBin) {
+          warnings.push('本机 ffmpeg 不带 libass（subtitles 滤镜），成片降级为软字幕/无字幕版本');
+        } else if (assContent.includes('Dialogue:')) {
+          const assPath = join(work, 'burn.ass');
+          await writeFile(assPath, assContent, 'utf8');
+          cleanup.push(assPath);
+          const burnedPath = join(work, 'burned.mp4');
+          cleanup.push(burnedPath);
+          // eslint-disable-next-line no-await-in-loop
+          const burnOk = await this.burnSubtitleTrack(burnBin, currentMedia, 'burn.ass', burnedPath, work);
+          if (burnOk) {
+            currentMedia = burnedPath;
+            burnedSubtitles = true;
+          } else {
+            warnings.push('硬字幕烧录失败，成片降级为软字幕/无字幕版本');
+          }
+        }
+      }
+
+      const outName = `final_${randomUUID().slice(0, 8)}.mp4`;
+      const dir = join(uploadDir(), projectId);
+      await mkdir(dir, { recursive: true });
+      const outAbs = join(dir, outName);
+
+      // 阶段④ 归档：未烧录且有 SRT 时退回软字幕封装（mov_text，保持既有交付行为）
+      let finalOk = false;
+      if (!burnedSubtitles && hasSrt) {
+        finalOk = await this.runFfmpeg(
+          ffmpegBin,
+          ['-y', '-i', currentMedia, '-i', srtPath,
+            '-c:v', 'copy', '-c:a', 'copy', '-c:s', 'mov_text', ...aigcMeta, outAbs],
+          work,
+        );
+      }
+      if (!finalOk) {
+        finalOk = await this.runFfmpeg(
+          ffmpegBin,
+          ['-y', '-i', currentMedia, '-c', 'copy', ...aigcMeta, outAbs],
+          work,
+        );
+      }
+      if (!finalOk) {
+        // 终极兜底：直接落盘（丢元数据但不丢成片）
+        await copyFile(currentMedia, outAbs);
+      }
       const outStat = await stat(outAbs);
-      const durationSeconds = Number(
-        withVideo.reduce((sum, s) => sum + (Number(s.duration) > 0 ? Number(s.duration) : 0), 0).toFixed(1),
-      ) || undefined;
+      const durationSeconds = Number(actualDuration.toFixed(1)) || declaredDuration || undefined;
       const fileUrl = `/uploads/${projectId}/${outName}`;
       const rows = await this.db
         .insert(assets)
@@ -985,11 +1157,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           durationSeconds: durationSeconds !== undefined ? String(durationSeconds) : undefined,
           sourceType: 'generated',
           sourceId: `assemble-${randomUUID()}`,
-          generationPrompt: `服务端拼接 ${downloaded} 条镜头成片（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}，${hasAnyVoice ? '含配音音轨混流' : '纯画面'}${hasSrt ? '+内嵌字幕轨' : ''}）`,
+          generationPrompt:
+            `服务端拼接 ${downloaded} 条镜头成片（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}，` +
+            `${hasAnyVoice ? '含配音音轨混流' : '纯画面'}` +
+            `${burnedSubtitles ? `+硬字幕烧录(${subtitleStyle})` : hasSrt ? '+内嵌软字幕轨' : ''}` +
+            `${bgmApplied ? '+BGM混音(对白自动压低)' : ''}）`,
           metadata: {
             aigcGenerated: true,
             hasAudio: hasAnyVoice,
-            hasSubtitles: hasSrt,
+            hasSubtitles: hasSrt || burnedSubtitles,
+            burnedSubtitles,
+            subtitleStyle: burnedSubtitles ? subtitleStyle : undefined,
+            bgmApplied,
             width: tw,
             height: th,
             aspectRatio: project.aspectRatio ?? '16:9',
@@ -997,7 +1176,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           status: 'ready',
         })
         .returning();
-      this.logger.log(`成片合成完成 ${projectId}：${downloaded} 片 → ${fileUrl}（${outStat.size}B）`);
+      this.logger.log(
+        `成片合成完成 ${projectId}：${downloaded} 片 → ${fileUrl}（${outStat.size}B，` +
+          `${burnedSubtitles ? '硬字幕' : hasSrt ? '软字幕' : '无字幕'}，${bgmApplied ? '含BGM' : '无BGM'}）`,
+      );
       const mapped = {
         id: rows[0].id,
         projectId,
@@ -1017,10 +1199,249 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         createdAt: (rows[0].createdAt as Date)?.toISOString?.() ?? new Date().toISOString(),
         updatedAt: (rows[0].updatedAt as Date)?.toISOString?.() ?? new Date().toISOString(),
       } as Asset;
-      return { asset: mapped, clips: downloaded, durationSeconds: durationSeconds ?? 0 };
+
+      // 阶段⑤ 封面提取：第 3 秒帧（不足 3 秒退回 1s/首帧），登记 image 资产；失败不阻断导出
+      const cover = await this.extractCoverAsset(ffmpegBin, outAbs, dir, projectId, project.title);
+      if (!cover) warnings.push('封面提取失败（成片本身不受影响）');
+
+      return {
+        asset: mapped,
+        clips: downloaded,
+        durationSeconds: durationSeconds ?? 0,
+        burnedSubtitles,
+        bgmApplied,
+        warnings,
+        ...(cover ? { cover } : {}),
+      };
     } finally {
       for (const f of cleanup) await unlink(f).catch(() => {});
       await unlink(join(work, 'list.txt')).catch(() => {});
+    }
+  }
+
+  /**
+   * BGM 混音：BGM 循环铺满成片（-stream_loop + -shortest 截断对齐），
+   * 对白段自动压低——优先 sidechaincompress（成片原声作 sidechain 键控 BGM 音量），
+   * 失败退回静态音量 amix（与画布合成同一配方），再失败由调用方降级为无 BGM。
+   */
+  private async mixBgmInto(
+    bin: string,
+    video: string,
+    bgm: string,
+    out: string,
+    cwd: string,
+  ): Promise<boolean> {
+    // 1) ducking 混音：BGM 基准音量 0.55，对白出现时被 sidechain 压到约 0.15-0.2
+    const duckOk = await this.runFfmpeg(
+      bin,
+      [
+        '-y', '-i', video, '-stream_loop', '-1', '-i', bgm,
+        '-filter_complex',
+        '[1:a]volume=0.55[bg];[0:a]asplit=2[main][sc];' +
+          '[bg][sc]sidechaincompress=threshold=0.03:ratio=6:attack=120:release=800[duck];' +
+          '[main][duck]amix=inputs=2:duration=first:dropout_transition=3:normalize=0[aout]',
+        '-map', '0:v', '-map', '[aout]',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+        out,
+      ],
+      cwd,
+    );
+    if (duckOk) return true;
+    // 2) 简化兜底：静态音量混音（无 ducking，量级与 composeCanvas 一致）
+    return this.runFfmpeg(
+      bin,
+      [
+        '-y', '-i', video, '-stream_loop', '-1', '-i', bgm,
+        '-filter_complex',
+        '[1:a]volume=0.3[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]',
+        '-map', '0:v', '-map', '[aout]',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+        out,
+      ],
+      cwd,
+    );
+  }
+
+  /**
+   * 无 BGM 资产时的轻 BGM：本地 ffmpeg 合成 A 小调三音正弦垫乐（零成本、确定性），
+   * tremolo 缓慢起伏 + lowpass 柔化 + 首尾淡入淡出。失败返回 null（调用方降级跳过）。
+   */
+  private async synthesizeLightBgm(
+    bin: string,
+    cwd: string,
+    cleanup: string[],
+    seconds: number,
+  ): Promise<string | null> {
+    const dur = Math.max(4, Math.min(3600, Math.ceil(seconds) || 30));
+    const out = join(cwd, 'bgm_light.wav');
+    cleanup.push(out);
+    const fadeOutStart = Math.max(0, dur - 3);
+    const ok = await this.runFfmpeg(
+      bin,
+      [
+        '-y',
+        '-f', 'lavfi', '-i', `sine=frequency=220:duration=${dur}`,
+        '-f', 'lavfi', '-i', `sine=frequency=261.63:duration=${dur}`,
+        '-f', 'lavfi', '-i', `sine=frequency=329.63:duration=${dur}`,
+        '-filter_complex',
+        `[0:a][1:a][2:a]amix=inputs=3:normalize=0,tremolo=f=0.25:d=0.65,lowpass=f=1100,` +
+          `volume=0.6,afade=t=in:st=0:d=2,afade=t=out:st=${fadeOutStart}:d=3[aout]`,
+        '-map', '[aout]', '-ar', '44100', '-ac', '2',
+        out,
+      ],
+      cwd,
+    );
+    if (!ok) return null;
+    const size = await stat(out).then((s) => s.size).catch(() => 0);
+    return size > 1024 ? out : null;
+  }
+
+  /**
+   * 烧录字幕专用 ffmpeg 探测：subtitles 滤镜依赖 libass，并非所有发行版都编译
+   * （实测 homebrew ffmpeg 9 无此滤镜、ffmpeg 6 有）。优先复用 runFfmpeg 体系的
+   * resolveFfmpegBin 结果，不带滤镜时按常见路径逐个探测，全不带则返回 null（降级）。
+   */
+  private async resolveFfmpegForSubtitles(): Promise<string | null> {
+    const candidates = [this.resolveFfmpegBin()];
+    if (process.platform === 'darwin') {
+      const home = process.env.HOME ?? '';
+      for (const c of [
+        ...(home ? [`${home}/.local/bin/ffmpeg`] : []),
+        '/opt/homebrew/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+      ]) {
+        if (c && existsSync(c)) candidates.push(c);
+      }
+    }
+    candidates.push('ffmpeg');
+    for (const bin of [...new Set(candidates)]) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await this.ffmpegHasSubtitlesFilter(bin)) return bin;
+    }
+    return null;
+  }
+
+  /** 探测 ffmpeg 是否带 subtitles 滤镜（libass） */
+  private ffmpegHasSubtitlesFilter(bin: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      try {
+        const child = spawn(bin, ['-hide_banner', '-filters'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        let out = '';
+        child.stdout?.on('data', (d: Buffer) => {
+          out += d.toString();
+        });
+        child.on('error', () => resolve(false));
+        child.on('close', () => resolve(/\bsubtitles\s/.test(out)));
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  /**
+   * 硬字幕烧录：ffmpeg subtitles 滤镜（libass 渲染，\k 卡拉 OK 高亮可用）。
+   * ASS 文件以相对路径传入（cwd=工作目录），规避滤镜参数转义问题；
+   * filename= 显式键名（新版 ffmpeg 已移除位置参数简写）。
+   */
+  private async burnSubtitleTrack(
+    bin: string,
+    video: string,
+    assRelPath: string,
+    out: string,
+    cwd: string,
+  ): Promise<boolean> {
+    return this.runFfmpeg(
+      bin,
+      [
+        '-y', '-i', video,
+        '-vf', `subtitles=filename=${assRelPath}`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+        '-c:a', 'copy',
+        out,
+      ],
+      cwd,
+    );
+  }
+
+  /**
+   * 封面提取：默认第 3 秒（不够长退回 1s/首帧），JPG 高质量，登记为项目 image 资产。
+   * 失败返回 null，不阻断成片导出。
+   */
+  private async extractCoverAsset(
+    bin: string,
+    videoAbs: string,
+    outDir: string,
+    projectId: string,
+    title: string,
+  ): Promise<Asset | null> {
+    const work = join(tmpdir(), `yimu-cover-${randomUUID()}`);
+    await mkdir(work, { recursive: true });
+    const tmp = join(work, 'cover.jpg');
+    try {
+      for (const ss of [3, 1, 0]) {
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await this.runFfmpeg(
+          bin,
+          ['-y', '-ss', String(ss), '-i', videoAbs, '-frames:v', '1', '-q:v', '2', tmp],
+          work,
+        );
+        if (!ok) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const size = await stat(tmp).then((s) => s.size).catch(() => 0);
+        if (size > 1024) break;
+      }
+      const size = await stat(tmp).then((s) => s.size).catch(() => 0);
+      if (size <= 1024) return null;
+      const name = `cover_${randomUUID().slice(0, 8)}.jpg`;
+      const abs = join(outDir, name);
+      await copyFile(tmp, abs);
+      const fileUrl = `/uploads/${projectId}/${name}`;
+      const rows = await this.db
+        .insert(assets)
+        .values({
+          projectId,
+          assetType: 'image',
+          name: `封面-${title || '未命名作品'}`.slice(0, 120),
+          fileUrl,
+          filePath: abs,
+          thumbnailUrl: fileUrl,
+          mimeType: 'image/jpeg',
+          fileSize: size,
+          sourceType: 'generated',
+          sourceId: `cover-${randomUUID()}`,
+          generationPrompt: '成片封面：自动提取第 3 秒帧（不足 3 秒退回首帧）',
+          metadata: { aigcGenerated: true, coverSource: 'final-video@3s' } as any,
+          status: 'ready',
+        })
+        .returning();
+      this.logger.log(`封面提取完成 ${projectId}：${fileUrl}（${size}B）`);
+      return {
+        id: rows[0].id,
+        projectId,
+        assetType: rows[0].assetType,
+        name: rows[0].name,
+        fileUrl: rows[0].fileUrl ?? undefined,
+        filePath: rows[0].filePath ?? undefined,
+        thumbnailUrl: rows[0].thumbnailUrl ?? undefined,
+        mimeType: rows[0].mimeType ?? undefined,
+        fileSize: rows[0].fileSize ?? undefined,
+        sourceType: rows[0].sourceType ?? 'generated',
+        sourceId: rows[0].sourceId ?? undefined,
+        generationPrompt: rows[0].generationPrompt ?? undefined,
+        version: rows[0].version ?? 1,
+        status: rows[0].status ?? 'ready',
+        locked: rows[0].locked ?? false,
+        createdAt: (rows[0].createdAt as Date)?.toISOString?.() ?? new Date().toISOString(),
+        updatedAt: (rows[0].updatedAt as Date)?.toISOString?.() ?? new Date().toISOString(),
+      } as Asset;
+    } catch (e) {
+      this.logger.warn(`封面提取失败 ${projectId}: ${(e as Error).message}`);
+      return null;
+    } finally {
+      await unlink(tmp).catch(() => {});
+      await rm(work, { recursive: true, force: true }).catch(() => {});
     }
   }
 

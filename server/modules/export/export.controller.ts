@@ -1,22 +1,29 @@
 import { BadRequestException, Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ExportService } from './export.service';
-import type { Asset } from '@shared/api.interface';
+import type { AssembleFinalVideoRequest, AssembleFinalVideoResult } from '@shared/api.interface';
 
 @Controller('api/projects/:projectId/export')
 export class ExportController {
   constructor(private readonly exportService: ExportService) {}
 
   /**
-   * 服务端成片合成：镜头成片按镜序 ffmpeg 拼接 → 落盘 → 登记项目资产。
-   * POST body 可空；返回资产（项目资产页可见）。
+   * 服务端成片合成：镜头成片按镜序 ffmpeg 拼接 → 可选 BGM 混音 → 可选硬字幕烧录
+   * → 落盘 → 登记项目资产 + 自动提取封面。
+   * POST body 可空（默认烧录字幕、无 BGM）；非致命失败以 warnings 回报。
    */
   @Post('assemble')
   async assemble(
     @Param('projectId', ParseUUIDPipe) projectId: string,
-    @Body() _body?: Record<string, unknown>,
-  ): Promise<{ asset: Asset; clips: number; durationSeconds: number }> {
-    return this.exportService.assembleFinalVideo(projectId);
+    @Body() body?: AssembleFinalVideoRequest,
+  ): Promise<AssembleFinalVideoResult> {
+    const options: AssembleFinalVideoRequest = body ?? {};
+    return this.exportService.assembleFinalVideo(projectId, {
+      burnSubtitles: options.burnSubtitles !== false,
+      subtitleStyle: options.subtitleStyle === 'box' ? 'box' : 'outline',
+      bgmAssetId: typeof options.bgmAssetId === 'string' ? options.bgmAssetId : undefined,
+      autoBgm: options.autoBgm === true,
+    });
   }
 
   /**

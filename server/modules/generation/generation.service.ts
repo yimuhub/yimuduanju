@@ -517,7 +517,7 @@ export class GenerationService {
    * 视频是十分钟级任务。混在一条队列里时，队头的慢视频会阻塞后面所有
    * 快任务（队头阻塞）。各类型独立并发上限（环境变量可覆盖），互不占坑。
    */
-  private static readonly TYPE_CONCURRENCY: Record<string, number> = {
+  public static readonly TYPE_CONCURRENCY: Record<string, number> = {
     video: envCapOr(process.env.JOB_CONCURRENCY_VIDEO, 2),
     image: envCapOr(process.env.JOB_CONCURRENCY_IMAGE, 4),
     text: envCapOr(process.env.JOB_CONCURRENCY_TEXT, 4),
@@ -528,7 +528,10 @@ export class GenerationService {
     qc: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
   };
 
-  async claimNextPendingJob(excludeIds: string[] = []): Promise<GenerationJob | null> {
+  async claimNextPendingJob(
+    excludeIds: string[] = [],
+    isBlocked?: (jobType: string, providerName: string | null) => boolean,
+  ): Promise<GenerationJob | null> {
     // 有 blockedReason 的视频仍在等待首帧，必须在 SQL 层排除，避免 limit(1) 队头阻塞。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
     // 全站唯一排序键 queue_seq（migration 0022）：与 BullMQ 队列模式的
@@ -537,7 +540,7 @@ export class GenerationService {
     // 且 priority 在队列模式被忽略 —— 这是多项目并行时顺序不可确定的根因。
     // priority 现在只作为展示字段保留；分组调度意图由插入顺序天然保证。
     const candidates = await this.db
-      .select({ id: generationJobs.id, jobType: generationJobs.jobType })
+      .select({ id: generationJobs.id, jobType: generationJobs.jobType, providerName: generationJobs.providerName })
       .from(generationJobs)
       .where(
         and(
@@ -561,6 +564,9 @@ export class GenerationService {
 
     let pickedId: string | null = null;
     for (const cand of candidates) {
+      // W 退避感知：被上游限流冷却挡住的候选直接跳过（不认领-释放空转），
+      // 队头慢任务不再饿死后面的快任务。
+      if (isBlocked?.(cand.jobType, cand.providerName)) continue;
       const cap = GenerationService.TYPE_CONCURRENCY[cand.jobType] ?? 4;
       if ((used.get(cand.jobType) ?? 0) < cap) {
         pickedId = cand.id;
@@ -568,7 +574,7 @@ export class GenerationService {
         break;
       }
     }
-    if (!pickedId) return null; // 所有候选的类型道都已满
+    if (!pickedId) return null; // 所有候选的类型道都已满或被退避挡住
 
     const claimed = await this.db
       .update(generationJobs)

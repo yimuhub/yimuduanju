@@ -31,13 +31,17 @@ import {
   Clock3,
   Film,
   Sparkles,
+  Image as ImageIcon,
 } from 'lucide-react';
-import { exportApi, storyboard, templates as templatesApi } from '@client/src/api';
-import type { Shot } from '@shared/api.interface';
+import { exportApi, storyboard, templates as templatesApi, assets as assetsApi } from '@client/src/api';
+import type { Asset, Shot } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { toast } from 'sonner';
 // P1 性能：ffmpeg.wasm 只在点击合成时动态加载，不再进主包
 import type { SynthStatus } from '@client/src/utils/ffmpegSynth';
+
+/** BGM 下拉哨兵值：项目无音频资产时自动铺一条轻 BGM（budgetMode 允许时服务端生效） */
+const BGM_AUTO = '__auto__';
 
 const ProjectExportTab = () => {
   const { id } = useParams<{ id: string }>();
@@ -124,13 +128,42 @@ const ProjectExportTab = () => {
   const [synthUrl, setSynthUrl] = useState<string | null>(null);
   // 服务端成片：ffmpeg 拼接后归档为项目资产（资产页可见）
   const [assembling, setAssembling] = useState(false);
+  // 商业交付 1·字幕烧录：默认开（短剧发布必须带字幕），失败服务端自动降级并回报警告
+  const [burnSubtitles, setBurnSubtitles] = useState(true);
+  const [subtitleStyle, setSubtitleStyle] = useState<'outline' | 'box'>('outline');
+  // 商业交付 2·BGM 混音：项目音频资产下拉（无资产可选自动轻 BGM）
+  const [audioAssets, setAudioAssets] = useState<Asset[]>([]);
+  const [bgmAssetId, setBgmAssetId] = useState('');
+  // 商业交付 3·封面：导出成功后展示缩略图 + 下载
+  const [cover, setCover] = useState<Asset | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    assetsApi
+      .listByProject(id)
+      .then((rows) =>
+        setAudioAssets(rows.filter((a) => a.assetType === 'audio' && Boolean(a.fileUrl))),
+      )
+      .catch(() => setAudioAssets([]));
+  }, [id]);
   const handleServerAssemble = async () => {
     if (!id || assembling) return;
     setAssembling(true);
+    setCover(null);
     try {
       // 断链修复：改走 axios 封装（自动携带 CSRF 头；原裸 fetch 直连后端时会 403）
-      const data = await exportApi.assembleVideo(id);
-      toast.success(`成片已合成：${data.clips} 段拼接，已归档到「项目资产」`);
+      const data = await exportApi.assembleVideo(id, {
+        burnSubtitles,
+        subtitleStyle,
+        bgmAssetId: bgmAssetId && bgmAssetId !== BGM_AUTO ? bgmAssetId : undefined,
+        autoBgm: bgmAssetId === BGM_AUTO,
+      });
+      if (data.cover) setCover(data.cover);
+      if (data.warnings?.length) toast.warning(data.warnings.join('；'));
+      toast.success(
+        `成片已合成：${data.clips} 段` +
+          `${data.burnedSubtitles ? ' · 字幕已烧录' : ''}` +
+          `${data.bgmApplied ? ' · 已铺 BGM' : ''}，已归档到「项目资产」`,
+      );
     } catch (e) {
       const axiosMsg =
         typeof e === 'object' && e && 'response' in e
@@ -428,7 +461,7 @@ const ProjectExportTab = () => {
               <span className="ex-synth-alt-ico"><Server size={14} /></span>
               <div>
                 <b>服务端合成并归档</b>
-                <span>服务器 ffmpeg 拼接后归档到「项目资产」，不依赖浏览器跨域</span>
+                <span>服务器 ffmpeg 拼接 · 硬字幕烧录 · BGM 混音 · 自动提取封面，归档到「项目资产」</span>
               </div>
             </div>
             <button
@@ -441,6 +474,66 @@ const ProjectExportTab = () => {
               {assembling ? '合成中…' : videoClips.length === 0 ? '暂无片段' : '开始合成'}
             </button>
           </div>
+
+          {/* 服务端合成选项：烧录字幕（默认开）/ 字幕样式 / BGM 选择 */}
+          <div className="ex-opts ex-opts-server">
+            <label className="ex-toggle" title="把字幕烧进画面（ASS 硬字幕），发布平台必需；失败自动降级为软字幕">
+              <input
+                type="checkbox"
+                checked={burnSubtitles}
+                onChange={(e) => setBurnSubtitles(e.target.checked)}
+              />
+              <span />烧录字幕
+            </label>
+            <select
+              className="ex-opt-select"
+              value={subtitleStyle}
+              onChange={(e) => setSubtitleStyle(e.target.value === 'box' ? 'box' : 'outline')}
+              disabled={!burnSubtitles}
+              title={burnSubtitles ? '烧录字幕样式' : '先开启烧录字幕'}
+            >
+              <option value="outline">样式：白字描边</option>
+              <option value="box">样式：黑底框</option>
+            </select>
+            <select
+              className="ex-opt-select"
+              value={bgmAssetId}
+              onChange={(e) => setBgmAssetId(e.target.value)}
+              title="成片 BGM：循环铺满并对白段自动压低"
+            >
+              <option value="">不铺 BGM</option>
+              {audioAssets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  BGM：{a.name}
+                </option>
+              ))}
+              {audioAssets.length === 0 ? (
+                <option value={BGM_AUTO}>自动铺轻 BGM（按预算档）</option>
+              ) : null}
+            </select>
+          </div>
+
+          {/* 商业交付 3·封面：导出成功后自动提取，可缩略预览与下载 */}
+          {cover ? (
+            <div className="ex-cover">
+              <img src={assetsApi.mediaUrl(cover)} alt={cover.name} />
+              <div className="ex-cover-main">
+                <b><ImageIcon size={12} /> 封面已生成</b>
+                <span>{cover.name} · 取成片第 3 秒帧，已登记到「项目资产」</span>
+              </div>
+              <button
+                type="button"
+                className="ex-btn ex-btn-ghost"
+                onClick={() => {
+                  if (cover.fileUrl) {
+                    exportApi.downloadDeliverable(cover.fileUrl).catch(() => toast.error('封面下载失败'));
+                  }
+                }}
+              >
+                <Download size={13} /> 下载封面
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
 

@@ -735,19 +735,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         // 队列模式：认领 pending → queued → 入队（Worker 并发执行）
         for (let i = 0; i < 5; i += 1) {
           // eslint-disable-next-line no-await-in-loop
-          let claimed = await this.claimForQueue();
-          // W 队头阻塞修复（队列模式）：被供应商退避挡住的任务跳过，试下一个
-          // 候选——否则 FIFO 队头的慢/限流任务会饿死后面所有其他类型任务。
-          let holdGuard = 0;
-          while (claimed && holdGuard < 8) {
-            const holdKey = `${claimed.providerName ?? DEFAULT_PROVIDER_KEY}|${claimed.jobType}`;
-            const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
-            if (holdUntil <= Date.now()) break;
-            await this.releaseToPending(claimed.id);
-            holdGuard += 1;
-            // eslint-disable-next-line no-await-in-loop
-            claimed = await this.claimForQueue();
-          }
+          // W 队头阻塞修复（队列模式，退避感知）：认领查询直接跳过被冷却挡住
+          // 的候选，不再认领-释放空转。
+          const claimed = await this.claimForQueue((jobType, providerName) => {
+            const holdKey = `${providerName ?? DEFAULT_PROVIDER_KEY}|${jobType}`;
+            return (this.providerHoldUntil.get(holdKey) ?? 0) > Date.now();
+          });
           if (!claimed) break;
           // BullMQ 按 jobId 去重：完成过的同 id 再 add 会被静默忽略 →
           // 重试任务永远卡 queued。带 retryCount+时间戳保证唯一。
@@ -780,21 +773,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       } else {
         // 降级模式：进程内串行直接执行。
-        // W 队头阻塞修复：被供应商退避挡住的任务（认领→释放）会以 FIFO 永远
-        // 占住队头，饿死后面的其他任务——认领时携带排除清单循环跳过，
-        // 直到找到未被退避挡住的任务或候选耗尽。
-        const exclude: string[] = [];
-        let job = await this.generationService.claimNextPendingJob(exclude);
-        let guard = 0;
-        while (job && guard < 8) {
-          guard += 1;
-          const holdKey = `${job.providerName ?? DEFAULT_PROVIDER_KEY}|${job.jobType}`;
-          const holdUntil = this.providerHoldUntil.get(holdKey) ?? 0;
-          if (holdUntil <= Date.now()) break; // 未被退避挡住，可以执行
-          await this.releaseToPending(job.id);
-          exclude.push(job.id);
-          job = await this.generationService.claimNextPendingJob(exclude);
-        }
+        // W 队头阻塞修复（退避感知版）：认领查询直接跳过被上游限流冷却挡住的
+        // 候选——队头慢任务不再饿死后面的其他类型任务。
+        const isBlocked = (jobType: string, providerName: string | null) => {
+          const holdKey = `${providerName ?? DEFAULT_PROVIDER_KEY}|${jobType}`;
+          return (this.providerHoldUntil.get(holdKey) ?? 0) > Date.now();
+        };
+        const job = await this.generationService.claimNextPendingJob([], isBlocked);
         if (job) await this.process(job);
       }
     } finally {
@@ -838,7 +823,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 认领一个 pending 并置 queued（队列模式专用，与 claimNextPendingJob 语义一致） */
-  private async claimForQueue(): Promise<GenerationJob | null> {
+  private async claimForQueue(
+    isBlocked?: (jobType: string, providerName: string | null) => boolean,
+  ): Promise<GenerationJob | null> {
     // 修复（按 provider 冷却）：冷却中的 provider 对应的任务本轮不认领。
     // 既不继续打爆对端池，也不会像旧的全局 holdUntil 那样冻住所有通道。
     // providerName 为 NULL 的任务（路由决策尚未落盘）必须放行，
@@ -867,13 +854,42 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 展示与人工调序的唯一字段。旧实现按 _created_at（同事务批量插入时间戳
     // 完全相同、无 tiebreaker），顺序不确定；降级模式还按 priority 另算一套。
     // paused 不在 status='pending' 里，所以暂停/终止后后面的任务自动补位。
+    // W 分类型车道（队列模式）：按 queueSeq 排序取候选批，再按「类型并发水位」
+    // 挑第一个未满道的认领——慢视频不再阻塞快文本/图片（与降级模式同语义）。
+    // W 分类型车道（SQL 级跳过满载类型）：46 个积压视频也不会把候选窗口
+    // 塞满——满载类型在 SQL where 里直接排除，后面的快任务立刻可见。
+    const active = await this.db
+      .select({ jobType: generationJobs.jobType, count: sql<number>`count(*)::int` })
+      .from(generationJobs)
+      .where(sql`${generationJobs.status} in ('running','queued')`)
+      .groupBy(generationJobs.jobType);
+    const caps = GenerationService.TYPE_CONCURRENCY;
+    const fullTypes = active
+      .filter((row) => (caps[row.jobType] ?? 4) <= row.count)
+      .map((row) => row.jobType);
     const rows = await this.db
       .select()
       .from(generationJobs)
-      .where(where)
+      .where(
+        and(
+          where,
+          fullTypes.length ? notInArray(generationJobs.jobType, fullTypes) : undefined,
+        ),
+      )
       .orderBy(asc(generationJobs.queueSeq))
       .limit(1);
-    if (rows.length === 0) return null;
+    if (rows.length === 0) {
+      // 全部候选被满载车道挡住时，按序兜底认领一个（不空转；BullMQ 并发消费
+      // 会自然形成同类型串行，不会超并发——每类型并发上限由 active 水位保证）
+      const fallback = await this.db
+        .select()
+        .from(generationJobs)
+        .where(where)
+        .orderBy(asc(generationJobs.queueSeq))
+        .limit(1);
+      if (fallback.length === 0) return null;
+      return this.generationService.getJob(fallback[0].id);
+    }
     const claimed = await this.db
       .update(generationJobs)
       .set({ status: 'queued', updatedAt: new Date() })
