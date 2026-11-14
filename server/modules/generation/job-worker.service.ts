@@ -1591,7 +1591,24 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 首帧才送得出去，本地 /uploads 版本对它们等于不存在。只存 URL 不存像素。
     const upstreamUrl =
       firstUrl && /^https?:\/\//i.test(firstUrl) ? firstUrl : undefined;
-    if (stableUrl) await this.writebackToTarget(job, { imageUrl: stableUrl });
+    if (stableUrl) {
+      await this.writebackToTarget(job, { imageUrl: stableUrl });
+      // W 项目封面回填：首个成功首帧自动设为项目封面（thumbnail_url），
+      // 让"我的项目"列表每个项目都有可辨识的真实图（零额外生成成本）。
+      try {
+        await this.db
+          .update(projects)
+          .set({ thumbnailUrl: stableUrl, updatedAt: new Date() })
+          .where(
+            and(
+              eq(projects.id, job.projectId),
+              or(isNull(projects.thumbnailUrl), eq(projects.thumbnailUrl, '')),
+            ),
+          );
+      } catch (e: unknown) {
+        this.logger.warn(`项目封面回填失败 ${job.projectId}：${(e as Error).message}`);
+      }
+    }
     const sanitizedImages = images.map((img, idx) => ({
       ...img,
       ...(idx === 0 && upstreamUrl ? { remoteUrl: upstreamUrl } : {}),
