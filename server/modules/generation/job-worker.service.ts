@@ -96,14 +96,17 @@ import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-pro
 // 旧写法依赖 uploads.controller 里的再导出，使消费器在模块加载期
 // 就被迫拉起整条 Controller → Service → DI 依赖链。
 import { uploadDir } from '../assets/upload-dir';
+import { releaseStagedFrames, stageFramesForJob, sweepExpiredStagedFrames } from './staged-media';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import {
   DEFAULT_PROVIDER_KEY,
   isMissingProviderMessage,
   isRateLimitMessage,
+  isVideoQueueFullMessage,
   RATE_LIMIT_COOLDOWN_MAX_MS,
   RATE_LIMIT_COOLDOWN_MS,
+  VIDEO_QUEUE_FULL_RETRY_MS,
 } from './rate-limit.util';
 
 /**
@@ -190,6 +193,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   isQueuePaused(): boolean {
     return this.queuePaused;
   }
+
+  /** 临时公开首帧副本 TTL 扫描的上次执行时刻 */
+  private lastStagedSweepAt = 0;
 
   /** 排队页切换全站暂停：只冻结消费，不改任何任务的 queue_seq / status */
   setQueuePaused(paused: boolean): void {
@@ -677,6 +683,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           this.logger.warn(`密钥池自愈失败: ${e.message}`),
         );
       }
+      // 临时公开首帧副本 TTL 兜底：任务被永久卡住/后端被 SIGKILL 时，
+      // releaseStagedFrames 永远不会执行，这一层保证副本不会长期挂在公网。
+      if (nowMs - (this.lastStagedSweepAt ?? 0) > 10 * 60_000) {
+        this.lastStagedSweepAt = nowMs;
+        const swept = await sweepExpiredStagedFrames();
+        if (swept > 0) this.logger.log(`清理 ${swept} 组过期临时公开首帧副本`);
+      }
 
       await this.runStep('在途视频推进', 45_000, () => this.driveInflightVideoJobs());
       // 首帧依赖对账：首帧成功后解封视频；失败/取消则维持阻断（每轮扫描少量，避免全表）
@@ -1076,12 +1089,20 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         const consecutive = prev > Date.now() ? (this.providerHoldCount.get(key) ?? 0) : 0;
         const nextCount = Math.min(consecutive + 1, 8);
         this.providerHoldCount.set(key, nextCount);
-        const cooldown = Math.min(RATE_LIMIT_COOLDOWN_MS * 2 ** (nextCount - 1), RATE_LIMIT_COOLDOWN_MAX_MS);
+        // 视频队列满必须走短固定档：被拒的提交不建任务、不扣额度，免费重试，
+        // 上游放空位时谁敲得勤谁先抢到。指数退避到 300s 会整段错过错峰窗口。
+        const queueFull = isVideoQueueFullMessage(message);
+        const cooldown = queueFull
+          ? VIDEO_QUEUE_FULL_RETRY_MS
+          : Math.min(RATE_LIMIT_COOLDOWN_MS * 2 ** (nextCount - 1), RATE_LIMIT_COOLDOWN_MAX_MS);
         this.providerHoldUntil.set(key, Date.now() + cooldown);
         this.logger.warn(
-          `任务 ${job.id} 上游限流（provider=${key}），冷却 ${cooldown / 1000}s 后重试（连续第 ${nextCount} 次）：${message.slice(0, 160)}`,
+          `任务 ${job.id} 上游限流（provider=${key}${queueFull ? '，视频队列满' : ''}），${cooldown / 1000}s 后重试：${message.slice(0, 160)}`,
         );
-        await this.releaseTransient(job, `上游持续限流（${key}）`);
+        // soft：这是「等上游产能」，不是任务的错。旧实现不带 soft，按轮次
+        // （MAX_TRANSIENT_RELEASES）判死，Agnes 饱和一天就能把整批镜头全标 failed；
+        // 正确行为是按时长兜底（24h）无限等，队列放开后自动续跑。
+        await this.releaseTransient(job, `上游持续限流（${key}）`, { soft: true });
         return;
       }
       this.logger.warn(`任务 ${job.id} 执行失败：${message}`);
@@ -1171,6 +1192,18 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .set({
         status: 'pending',
         queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
+        /*
+         * 重排队必须清掉上一轮的远端身份，否则是两处实打实的错：
+         *  1) 旧 externalTaskId 还在 → pollJob 会拿它去查上游，
+         *     轻则 404 task not found，重则把旧任务结果结算到本次任务上；
+         *  2) 旧 boundKeyId 属于别的供应商/账号 → 换通道后按 (account, taskId)
+         *     查不到，正是之前「建单走新通道、轮询去老通道」的残留形态。
+         * errorMessage 覆盖成本轮等待原因：既不丢诊断信息，也不会让前台
+         * 一直挂着上一版「127.0.0.1:3425 404」这种早已不存在的故障。
+         */
+        externalTaskId: null,
+        boundKeyId: null,
+        errorMessage: reason,
         // transientSince 只在第一次写入，后续 coalesce 保留原值 —— 计时从「开始等」算起
         inputData: sql`jsonb_set(
           jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{transientReleases}', to_jsonb(${releases}::int), true),
@@ -1991,45 +2024,77 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       const upstreamFrame = await this.latestUpstreamFrame(job.targetId);
       if (upstreamFrame) imageUrl = upstreamFrame;
     }
-    const created = await this.createVideoWithKeyPool(
-      job,
-      {
-        prompt,
-        duration:
-          typeof input.duration === 'number'
-            ? input.duration
-            : composed.duration || 5,
-        imageUrl,
-        referenceVideoUrl: refs[1],
-        lastFrameUrl,
-        model: opts?.model,
-        // Agnes 的 aspect_ratio 与像素尺寸白名单都跟随项目画幅，
-        // 不再写死 9:16 让 16:9 项目出竖屏视频。
-        aspectRatio: policy.aspectRatio,
-      },
-      providerName,
-    );
-    // 所有密钥车道都在途/冷却 → 已放回队列，本轮不继续
-    if (!created) return;
-    const { taskId } = created;
-    // 首帧真的没送出去时，把它记到项目级 pipeline 提示里：
-    // 生产力工具不能让「这一镜其实是文生视频」这种事只躺在日志里。
-    if (created.frameNotSent && job.projectId) {
-      await this.writePipelineField(job.projectId, 'frameNotice', {
-        shotId: job.targetId ?? null,
-        reason: created.frameNotSent,
-        at: new Date().toISOString(),
-      });
+    /*
+     * 首帧/尾帧「临时公开副本」：Agnes 只吃公网 http(s) URL，直接暴露项目原图
+     * 等于把资产永久挂在一个公开地址上。这里改用按 jobId 命名的临时副本
+     * （本地硬链接，零额外磁盘占用），任务一到终态就自动删除，另有 TTL 兜底。
+     * 已是公网 CDN 图的原样透传；暂存失败也回退原路径，绝不阻断提交。
+     * 设 YIMU_STAGED_MEDIA=0 可整体关闭，回到「直接暴露原图」的旧行为。
+     */
+    if (process.env.YIMU_STAGED_MEDIA !== '0') {
+      const staged = await stageFramesForJob(job.id, [imageUrl, lastFrameUrl]);
+      if (staged[0]?.url) imageUrl = staged[0].url;
+      if (staged[1]?.url) lastFrameUrl = staged[1].url;
     }
-    // 远端任务已创建：记录 externalTaskId，保持 running，由轮询完成
-    await this.db
-      .update(generationJobs)
-      .set({ externalTaskId: taskId, progress: 10, updatedAt: new Date() })
-      .where(eq(generationJobs.id, job.id));
-    this.logger.log(
-      `视频远端任务已创建 ${job.id} → ${taskId}` +
-        (composed.degraded ? `（无 3 秒节拍，按整段描述兜底）` : `（${composed.beatCount} 段节拍）`),
-    );
+    /*
+     * 临时公开副本的「失败即清理」。
+     * ------------------------------------------------------------------
+     * 503 video_queue_full / 429 免费额度限速都是**建单前**的拒绝：上游根本
+     * 没建任务，谁也不会来拉这张图。此时 createVideoWithKeyPool 会 soft 放回
+     * 队列并返回 null（或抛异常交给外层 catch）。若不在这些出口立刻删副本，
+     * 10s 一次的探测 × 几十个排队任务，会让 _staged 目录无限堆积、把首帧
+     * 长期挂在公网上 —— 而且每次 stage 都会刷新目录 mtime，24h TTL 兜底
+     * 反而永远不触发。只有「远端真的建单成功」才保留副本到任务终态。
+     */
+    let keepStaged = false;
+    try {
+      const created = await this.createVideoWithKeyPool(
+        job,
+        {
+          prompt,
+          duration:
+            typeof input.duration === 'number'
+              ? input.duration
+              : composed.duration || 5,
+          imageUrl,
+          referenceVideoUrl: refs[1],
+          lastFrameUrl,
+          model: opts?.model,
+          // Agnes 的 aspect_ratio 与像素尺寸白名单都跟随项目画幅，
+          // 不再写死 9:16 让 16:9 项目出竖屏视频。
+          aspectRatio: policy.aspectRatio,
+        },
+        providerName,
+      );
+      // 所有密钥车道都在途/冷却 → 已放回队列，本轮不继续
+      if (!created) return;
+      // 远端已建单：上游随时会来取首帧，此后即使落盘/日志出错也不能删副本，
+      // 否则视频会在生成中途丢图。终态由 GenerationService 统一释放。
+      keepStaged = true;
+      const { taskId } = created;
+      // 首帧真的没送出去时，把它记到项目级 pipeline 提示里：
+      // 生产力工具不能让「这一镜其实是文生视频」这种事只躺在日志里。
+      if (created.frameNotSent && job.projectId) {
+        await this.writePipelineField(job.projectId, 'frameNotice', {
+          shotId: job.targetId ?? null,
+          reason: created.frameNotSent,
+          at: new Date().toISOString(),
+        });
+      }
+      // 远端任务已创建：记录 externalTaskId，保持 running，由轮询完成。
+      // 建单成功即清掉等待原因/历史错误，避免前台把已提交的任务显示成失败。
+      await this.db
+        .update(generationJobs)
+        .set({ externalTaskId: taskId, progress: 10, errorMessage: null, updatedAt: new Date() })
+        .where(eq(generationJobs.id, job.id));
+      this.logger.log(
+        `视频远端任务已创建 ${job.id} → ${taskId}` +
+          (composed.degraded ? `（无 3 秒节拍，按整段描述兜底）` : `（${composed.beatCount} 段节拍）`),
+      );
+    } finally {
+      // 用 await 而非 void：10s 后本任务可能重新 stage，不能让删除与重建竞态。
+      if (!keepStaged) await releaseStagedFrames(job.id);
+    }
   }
 
   /**

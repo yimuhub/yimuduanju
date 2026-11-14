@@ -24,6 +24,7 @@ import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
 import { BillingService } from '../billing/billing.service';
 import { RoutingService } from './routing.service';
+import { releaseStagedFrames } from './staged-media';
 import { systemLog } from '../../common/system-log.store';
 
 /**
@@ -353,6 +354,10 @@ export class GenerationService {
 
     // 未抢到结算权：以库内当前状态为准（幂等语义不变，调用方无需区分）
     if (!settled) return this.getJob(id);
+    // 任务已终态：Agnes 官方文档要求媒体 URL「在任务完成前保持有效」，
+    // 因此这里（成功结算后）才是第一个安全的删除时点。只删临时公开副本，
+    // 项目原图（shots.start_frame_url）不动。失败/取消见下方两个终态。
+    void releaseStagedFrames(id);
     return this.mapJob(settled);
   }
 
@@ -391,6 +396,8 @@ export class GenerationService {
       .where(and(eq(generationJobs.id, id), inArray(generationJobs.status, OPEN_JOB_STATUSES)))
       .returning();
     if (rows.length === 0) return this.getJob(id);
+    // 失败也是终态：释放临时公开首帧副本，避免公网长期挂着用不到的图片
+    void releaseStagedFrames(id);
     // V5 每镜状态机：任务终结失败 → 镜头 failed（变体不碰主状态）
     const input = (job.inputData ?? {}) as Record<string, unknown>;
     if (job.targetType === 'shot' && job.targetId && typeof input.variantGroup !== 'string') {
@@ -605,6 +612,8 @@ export class GenerationService {
       .returning();
     // 0 行 = 期间已被结算成终态（成功/失败），按当前状态返回，不再抛「任务不存在」
     if (rows.length === 0) return this.getJob(id);
+    // 取消同样是终态：释放临时公开首帧副本
+    void releaseStagedFrames(id);
     const cancelled = this.mapJob(rows[0]);
     // 已知限制（显式记录，不再静默）：取消只改本地状态，不会通知上游。
     // externalTaskId 已存在时供应商仍在生成并照收费用，而随后的 settleJobSuccess

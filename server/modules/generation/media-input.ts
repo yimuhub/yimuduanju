@@ -179,8 +179,12 @@ function tunnelUrlFromFile(): string {
   return url;
 }
 
-/** 公网媒体基址：自部署用户把自己的域名/对象存储前缀配在这里 */
-function publicMediaBase(): string {
+/**
+ * 公网媒体基址：自部署用户把自己的域名/对象存储前缀配在这里。
+ * 导出给 staged-media 复用 —— 隧道域名必须只有这一个真源，否则临时公开副本
+ * 拼出的 URL 会与首帧规范化链路用的域名不一致，隧道重连后一方失效。
+ */
+export function publicMediaBase(): string {
   // 隧道文件优先：它是「当前正在跑的那条隧道」，env 里的值可能已经过期。
   const raw =
     tunnelUrlFromFile() ||

@@ -949,9 +949,13 @@ export class ModelGatewayService {
     // 不区分这一点，走中继时首帧仍会被 isPublic 判掉、静默退化成纯文生视频。
     const isUsable = (u?: string) =>
       !!u && (/^https?:\/\//i.test(u) || (relaySchema && /^data:/i.test(u)));
-    if (isPublic(params.referenceVideoUrl)) {
+    if (isPublic(params.referenceVideoUrl) && !relaySchema) {
+      // 官方 agnes-video-2.5-flash 文档：reference 模式只吃 images(≤5)/audios(≤3)，
+      // 「videos is not supported」——传有效 videos 直接 HTTP 400，且不建任务。
+      // 系统里这个位置存的是白模/角色参考图（图片 URL），语义应走 images。
+      // relay 中继 magpie 有自己的方言，保留其原行为不动。
       body.mode = modeReference;
-      body.videos = [{ url: params.referenceVideoUrl }];
+      body.images = [params.referenceVideoUrl];
     } else if (isUsable(params.imageUrl)) {
       body.mode = modeKeyframe;
       if (relaySchema) {
@@ -1558,10 +1562,19 @@ export class ModelGatewayService {
     // 视频多 Key 并行 / 异步轮询必须复用建单那把 Key —— 换 Key 后上游
     // 按 (account, taskId) 查不到任务，轮询必失败。
     if (keyId) {
+      // 必须限定 provider_id：任务行的 boundKeyId 可能残留自**上一次路由**的
+      // 供应商（改环节绑定/换供应商后常见）。旧实现只按 id 查，会把 A 供应商的
+      // Key 拿去调 B 供应商 —— 上游按 (account, taskId) 查不到，轮询必 404
+      // 「task not found」，表现就是「视频提交了却永远等不到结果」。
       const leased = await this.db
         .select({ apiKey: providerApiKeys.apiKey })
         .from(providerApiKeys)
-        .where(eq(providerApiKeys.id, keyId))
+        .where(
+          and(
+            eq(providerApiKeys.id, keyId),
+            eq(providerApiKeys.providerId, provider.id),
+          ),
+        )
         .limit(1);
       if (leased.length > 0 && leased[0].apiKey) {
         return {
@@ -1569,7 +1582,9 @@ export class ModelGatewayService {
           apiKey: tryDecryptApiKey(leased[0].apiKey) ?? null,
         };
       }
-      this.logger.warn(`指定的 Key ${keyId} 不存在或无密钥，回落默认 Key 选择`);
+      this.logger.warn(
+        `指定的 Key ${keyId} 不属于供应商「${provider.name}」或已删除，回落该供应商自己的 Key`,
+      );
     }
     // 旧路径（未指定 keyId）：生效 Key 行优先（最新激活的一条），无行时回落主 Key 列
     const keyRows = await this.db
