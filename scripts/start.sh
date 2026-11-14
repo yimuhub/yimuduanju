@@ -34,8 +34,15 @@ c_red()   { printf "\033[1;31m%s\033[0m\n" "$*"; }
 c_yellow(){ printf "\033[1;33m%s\033[0m\n" "$*"; }
 
 # ---------- 0. 端口占用检查 ----------
+# W 共存（桌面客户端 × 网页版）：桌面客户端自管的后端会占 3000 端口并可能
+# 清掉网页版后端。若 3000 被别的进程占用，网页版自动换 3001 起后端，
+# 网关的 BACKEND_TARGET 同步指向新端口——两端即可同时在线互不干扰。
 if lsof -nP -iTCP:$PORT_SERVER -sTCP:LISTEN >/dev/null 2>&1; then
-  c_yellow "[0] 端口 $PORT_SERVER 已被占用（后端可能已在运行），跳过后端启动"
+  PORT_SERVER=3001
+  c_yellow "[0] 端口 3000 被占用（可能是桌面客户端后端），网页版后端自动改用 3001"
+fi
+if lsof -nP -iTCP:$PORT_SERVER -sTCP:LISTEN >/dev/null 2>&1; then
+  c_yellow "[0] 端口 $PORT_SERVER 也被占用（后端可能已在运行），跳过后端启动"
   SERVER_ALREADY=1
 else
   SERVER_ALREADY=0
@@ -201,7 +208,8 @@ fi
 if [ "$GATEWAY_ALREADY" = "0" ]; then
   c_blue "[5] 启动本地网关（端口 ${PORT_GATEWAY}）..."
   cd "$ROOT_DIR"
-  nohup env SUDA_DATABASE_URL="postgres://localhost:5432/$DB_NAME?schema=$DB_NAME" \
+  nohup env BACKEND_TARGET="http://localhost:${PORT_SERVER}" \
+    SUDA_DATABASE_URL="postgres://localhost:5432/$DB_NAME?schema=$DB_NAME" \
     node scripts/gateway.js >"$GATEWAY_LOG" 2>&1 &
   echo $! > "$LOG_DIR/gateway.pid"
   sleep 2
