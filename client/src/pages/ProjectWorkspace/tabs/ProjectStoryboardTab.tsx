@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import StoryboardFocusEditor from './StoryboardFocusEditor';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Grid3X3,
@@ -92,6 +93,8 @@ const ProjectStoryboardTab = () => {
   const [selectedScene, setSelectedScene] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 全屏聚焦编辑器：解决卡片内/右栏编辑空间太小的问题
+  const [focusShotId, setFocusShotId] = useState<string | null>(null);
   const [batching, setBatching] = useState(false);
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   // P2 修复（方案断点7）：提示词编辑搬进行卡片展开区——改 prompt 与重跑单镜同处完成
@@ -928,6 +931,13 @@ const ProjectStoryboardTab = () => {
                           >
                             <RefreshCw className="h-3 w-3" />
                             保存并重跑首帧
+                          </button>
+                          <button
+                            onClick={() => setFocusShotId(shot.id)}
+                            title="全屏聚焦编辑：大图预览 + 剧本对照 + 历史记录"
+                            className="inline-flex items-center gap-1 rounded-md border border-input bg-card px-2 py-1 text-[11px] font-medium hover:border-primary hover:text-primary"
+                          >
+                            ⛶ 全屏编辑
                           </button>
                         </div>
                       </div>
