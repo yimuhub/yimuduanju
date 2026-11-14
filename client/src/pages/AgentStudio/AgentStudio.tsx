@@ -137,6 +137,10 @@ const AgentStudio = () => {
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [quickCreateText, setQuickCreateText] = useState('');
   const [tpls, setTpls] = useState<Template[]>([]);
+  // 参考资产：把资产库/其他项目的定妆照·场景图等选为本次创作的参考（可注入新项目）
+  const [refPickOpen, setRefPickOpen] = useState(false);
+  const [refCandidates, setRefCandidates] = useState<Asset[]>([]);
+  const [refSelected, setRefSelected] = useState<Asset[]>([]);
   const [panelAssets, setPanelAssets] = useState<Asset[]>([]);
   const [panelJobs, setPanelJobs] = useState<GenerationJob[]>([]);
   const [panelActivity, setPanelActivity] = useState<{ id: string; message: string; createdAt: string }[]>([]);
@@ -203,6 +207,15 @@ const AgentStudio = () => {
   const appendMsg = useCallback((sid: string, msg: ChatMsg) => {
     patchSession(sid, (s) => ({ ...s, messages: [...s.messages, msg] }));
   }, [patchSession]);
+
+  const openRefPicker = () => {
+    setRefPickOpen((v) => !v);
+    if (!refPickOpen) {
+      void assetsApi.listAssets({ page: 1, pageSize: 24 })
+        .then((r) => setRefCandidates((r as { items?: Asset[] }).items ?? []))
+        .catch(() => setRefCandidates([]));
+    }
+  };
 
   useEffect(() => {
     void templatesApi.listTemplates({ page: 1, pageSize: 8 })
@@ -281,6 +294,26 @@ const AgentStudio = () => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' });
   }, [active?.messages.length, busy]);
 
+  /** 把选中的参考资产登记进目标项目资产库（同源 /uploads 引用，零复制成本） */
+  const injectRefAssets = useCallback(async (targetProjectId: string) => {
+    for (const a of refSelected) {
+      try {
+        await assetsApi.createAsset({
+          projectId: targetProjectId,
+          name: `${a.name}（参考）`,
+          assetType: a.assetType,
+          fileUrl: a.fileUrl,
+          mimeType: a.mimeType,
+          fileSize: a.fileSize,
+        } as never);
+      } catch { /* 单个失败不阻断 */ }
+    }
+    if (refSelected.length) {
+      toast.success(`已注入 ${refSelected.length} 项参考资产到项目`);
+      setRefSelected([]);
+    }
+  }, [refSelected]);
+
   // ---- 动作：一句话创建项目（走真实 quick-create 流水线） ----
   const runQuickCreate = useCallback(async (sid: string, prompt: string, opts?: {
     durationSeconds?: number; artStyle?: string; aspectRatio?: string; budgetMode?: string;
@@ -304,6 +337,7 @@ const AgentStudio = () => {
         card: { kind: 'project', projectId: res.projectId, title: prompt.slice(0, 40), status: res.status },
         chips: ['📋 查看最近的生成任务', '🖼 去画布生成图片'],
       });
+      if (refSelected.length) await injectRefAssets(res.projectId);
       void projectsApi.getProject(res.projectId).then((p: Project) => {
         if (p?.title) patchSession(sid, (s) => ({ ...s, title: p.title }));
       }).catch(() => { /* 标题失败不影响 */ });
@@ -726,6 +760,14 @@ const AgentStudio = () => {
               >
                 <Paperclip className="h-5 w-5" />
               </button>
+              <button
+                onClick={openRefPicker}
+                className={`rounded-xl p-2 transition-colors ${refPickOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                aria-label="选择参考资产（角色 / 场景 / 道具）"
+                title="选择参考资产（角色 / 场景 / 道具）"
+              >
+                🎯
+              </button>
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -901,6 +943,14 @@ const AgentStudio = () => {
                 title="添加附件（图片 / 剧本 / 字幕文本）"
               >
                 <Paperclip className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={openRefPicker}
+                className={`rounded-xl p-2 transition-colors ${refPickOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                aria-label="选择参考资产（角色 / 场景 / 道具）"
+                title="选择参考资产（角色 / 场景 / 道具）"
+              >
+                🎯
               </button>
               <input ref={fileRef} type="file" multiple accept="image/*,.txt,.md,.srt,.ass,.json" className="hidden" onChange={(e) => void onPickFiles(e.target.files)} />
               <textarea
