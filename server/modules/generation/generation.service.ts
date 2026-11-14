@@ -673,7 +673,37 @@ export class GenerationService {
           return job;
         }
         if (result.status === 'failed') {
-          return this.settleJobFailure(id, result.errorMessage ?? '视频生成失败');
+          const message = result.errorMessage ?? '视频生成失败';
+          /*
+           * Agnes 偶发「上游任务查不到」：建单明明成功，轮询时上游却按
+           * (account, taskId) 返回 404 task not found。诱因包括上游免费队列
+           * 回收任务、后端重启后 boundKeyId 为空的任务回落到「最新激活的 Key」、
+           * 改环节绑定导致跨供应商查询。这些都不是镜头本身的问题，一律判死
+           * 会让用户逐个手动重试；这里限 3 次自动重新建单，超次才落 failed。
+           */
+          if (/task not found|\(404/i.test(message)) {
+            const input = (job.inputData ?? {}) as Record<string, unknown>;
+            const lost = Number(input.lostTaskRetries ?? 0) + 1;
+            if (lost <= 3) {
+              this.logger.warn(`视频任务 ${id} 上游任务丢失（404），第 ${lost}/3 次自动重新建单`);
+              const rows = await this.db
+                .update(generationJobs)
+                .set({
+                  status: 'pending',
+                  queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
+                  externalTaskId: null,
+                  boundKeyId: null,
+                  errorMessage: null,
+                  progress: 0,
+                  inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{lostTaskRetries}', to_jsonb(${lost}::int), true)`,
+                  updatedAt: new Date(),
+                })
+                .where(eq(generationJobs.id, id))
+                .returning();
+              return this.mapJob(rows[0]);
+            }
+          }
+          return this.settleJobFailure(id, message);
         }
         if (result.progress !== undefined) {
           const updated = await this.db
