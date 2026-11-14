@@ -70,3 +70,31 @@ const MISSING_PROVIDER_PATTERNS: RegExp[] = [
 export function isMissingProviderMessage(message: string): boolean {
   return MISSING_PROVIDER_PATTERNS.some((re) => re.test(message));
 }
+
+/**
+ * Agnes 图片通道判定：formatType 或实际端点任一命中即按 Agnes 处理。
+ *
+ * 不能只信 formatType —— 设置页允许把官方 Agnes URL 配成 openai 格式。
+ * 2026-11-14 事故：「Agnes 官方 API」base_url 是 apihub.agnes-ai.com，但
+ * format_type=openai，网关因此给它发了 negative_prompt，9 张纯文生图全部被
+ * 「negative_prompt is not supported by text image queue」400 拒绝。
+ */
+export function isAgnesImageChannel(formatType: string, baseUrl: string): boolean {
+  return formatType === 'agnes' || /agnes-ai\.com/i.test(baseUrl ?? '');
+}
+
+/**
+ * 确定性上游拒绝：重发同一份请求不会改变结果，不该消耗 3 次重试预算。
+ * 2026-11-14 20 点的雪崩里，gptfree-pool 免费额度上限与 Agnes 参数不支持
+ * 都被重试 3 次，配合 60s 超时把本地中继彻底堵死（单小时 150 次超时）。
+ * 超时 / 429 / 503 不在其中，仍走原有重试或暂时性释放路径。
+ */
+const PERMANENT_IMAGE_ERROR_PATTERNS: RegExp[] = [
+  /negative_prompt is not supported/i,
+  /已达到\s*Free\s*套餐的图像生成请求上限/i,
+  /违反了我们的内容政策/i,
+];
+
+export function isPermanentImageUpstreamError(message: string): boolean {
+  return PERMANENT_IMAGE_ERROR_PATTERNS.some((re) => re.test(message));
+}
