@@ -55,6 +55,7 @@ import { GenerationService } from './generation.service';
 import { ModelGatewayService } from './model-gateway.service';
 import { BudgetCapService } from './budget-cap.service';
 import { RoutingService } from './routing.service';
+import { ProviderKeyPoolService } from './provider-key-pool.service';
 import { StorySkillsService, type BoardsShot } from '../story-skills/story-skills.service';
 import { StoryboardService } from '../storyboard/storyboard.service';
 import { ExportService } from '../export/export.service';
@@ -95,14 +96,19 @@ import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-pro
 // 旧写法依赖 uploads.controller 里的再导出，使消费器在模块加载期
 // 就被迫拉起整条 Controller → Service → DI 依赖链。
 import { uploadDir } from '../assets/upload-dir';
+import { releaseStagedFrames, stageFramesForJob, sweepExpiredStagedFrames } from './staged-media';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import {
   DEFAULT_PROVIDER_KEY,
   isMissingProviderMessage,
   isRateLimitMessage,
+  isVideoQueueFullMessage,
   RATE_LIMIT_COOLDOWN_MAX_MS,
   RATE_LIMIT_COOLDOWN_MS,
+  VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS,
+  VIDEO_QUEUE_FULL_KEY_JITTER_MS,
+  VIDEO_QUEUE_FULL_RETRY_MS,
 } from './rate-limit.util';
 
 /**
@@ -169,6 +175,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 某个供应商限流会把所有项目、所有任务类型一起冻 20s。
    */
   private readonly providerHoldUntil = new Map<string, number>();
+  /** 密钥池自愈节流时间戳（每 60s 一次，避免每轮 tick 都做全表重算） */
+  private lastKeyRecoverAt = 0;
   /** 各 provider 连续限流次数（指数退避用），成功生成后清零 */
   private readonly providerHoldCount = new Map<string, number>();
   private budgetWarned = false;
@@ -187,6 +195,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   isQueuePaused(): boolean {
     return this.queuePaused;
   }
+
+  /** 临时公开首帧副本 TTL 扫描的上次执行时刻 */
+  private lastStagedSweepAt = 0;
+  /** 流水线自动链驱动的独立低频定时器（不占用消费主循环的 tick） */
+  private pipelineTimer: ReturnType<typeof setInterval> | null = null;
 
   /** 排队页切换全站暂停：只冻结消费，不改任何任务的 queue_seq / status */
   setQueuePaused(paused: boolean): void {
@@ -224,6 +237,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly exportService: ExportService,
     private readonly qcService: QcService,
     private readonly assetPrep: AssetPrepService,
+    private readonly keyPool: ProviderKeyPoolService,
   ) {}
 
   /** B1 环节覆盖：分环节绑定的供应商/模型优先于任务自带与路由决策 */
@@ -254,6 +268,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     // 崩溃恢复：无 externalTaskId 的 running 一律回到 pending（有 external 的由轮询继续推进）
     await this.recoverOrphanedRunning();
+    // 密钥池自愈：按实际租约重算 in_flight，回收过期租约，冷却到期的 Key 回到 active
+    await this.keyPool.recoverStaleLeases();
     // Redis 可达 → BullMQ 队列模式；否则进程内串行降级（开发/单机同样可用）
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
     try {
@@ -264,9 +280,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       });
       await redis.ping();
       this.redis = redis;
+      // 密钥池（0023）后并发不再被 8 卡死：N 把 Key × 每把并发额度才是真实上限，
+      // 这里只做进程侧的硬顶（64），具体分配由 provider_api_keys.concurrency 控制。
       const concurrency = Math.max(
         1,
-        Math.min(8, Number(process.env.JOB_WORKER_CONCURRENCY) || 2),
+        Math.min(64, Number(process.env.JOB_WORKER_CONCURRENCY) || 4),
       );
       this.workerConcurrency = concurrency;
       this.queue = new Queue('yimu-generation', { connection: redis });
@@ -303,10 +321,25 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`消费器轮询异常: ${(err as Error).message}`),
       );
     }, intervalMs);
+
+    /*
+     * 流水线自动链驱动（图→视频→配音→剪辑→质检）独立跑低频定时器。
+     * 它是「对账/补链」性质的慢活，不是出片关键路径；runStep 自带
+     * stepInFlight 防重入，超时后下一周期再试，不会堆积并发。
+     */
+    const pipelineMs = Math.max(
+      15_000,
+      Number(process.env.JOB_WORKER_PIPELINE_INTERVAL_MS) || 60_000,
+    );
+    this.pipelineTimer = setInterval(() => {
+      if (this.queuePaused) return;
+      void this.runStep('流水线驱动', 30_000, () => this.drivePipeline());
+    }, pipelineMs);
   }
 
   async onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+    if (this.pipelineTimer) clearInterval(this.pipelineTimer);
     if (this.worker) await this.worker.close().catch(() => {});
     if (this.queue) await this.queue.close().catch(() => {});
     if (this.redis) this.redis.disconnect();
@@ -625,8 +658,22 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(): Promise<void> {
-    if (this.running) return;
+    if (this.running) {
+      // 看门狗：某一轮真的被挂住（上游连接不返回、不设 timeout 的 fetch 等）时，
+      // running 会一直是 true，之后每轮 tick 直接 return，队列永久停摆且日志安静。
+      // 超过 5 分钟强制放开，宁可偶发一次并发重叠，也不能整站不干活。
+      if (this.runningSince && Date.now() - this.runningSince > 300_000) {
+        this.logger.error(
+          `消费器上一轮已挂起 ${Math.round((Date.now() - this.runningSince) / 1000)}s，强制恢复`,
+        );
+        this.running = false;
+        this.stepInFlight.clear();
+      } else {
+        return;
+      }
+    }
     this.running = true;
+    this.runningSince = Date.now();
     try {
       // V8 全站消费暂停：排队页一键冻结消费。只停这一轮，不改任何任务状态，
       // 也不动 queue_seq —— 恢复后仍从原来的队首接着跑，在途任务不受影响。
@@ -647,19 +694,36 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         this.budgetWarned = false;
       }
 
-      await this.driveInflightVideoJobs();
+      // 密钥池周期自愈（每 60s 一次）：回收过期租约、重算 in_flight、冷却到期回 active
+      const nowMs = Date.now();
+      if (nowMs - (this.lastKeyRecoverAt ?? 0) > 60_000) {
+        this.lastKeyRecoverAt = nowMs;
+        await this.keyPool.recoverStaleLeases().catch((e: Error) =>
+          this.logger.warn(`密钥池自愈失败: ${e.message}`),
+        );
+      }
+      // 临时公开首帧副本 TTL 兜底：任务被永久卡住/后端被 SIGKILL 时，
+      // releaseStagedFrames 永远不会执行，这一层保证副本不会长期挂在公网。
+      if (nowMs - (this.lastStagedSweepAt ?? 0) > 10 * 60_000) {
+        this.lastStagedSweepAt = nowMs;
+        const swept = await sweepExpiredStagedFrames();
+        if (swept > 0) this.logger.log(`清理 ${swept} 组过期临时公开首帧副本`);
+      }
+
+      await this.runStep('在途视频推进', 45_000, () => this.driveInflightVideoJobs());
       // 首帧依赖对账：首帧成功后解封视频；失败/取消则维持阻断（每轮扫描少量，避免全表）
-      await this.reconcileFirstFrameDependencies().catch((e: Error) =>
-        this.logger.warn(`首帧依赖对账失败: ${e.message}`),
-      );
+      await this.runStep('首帧依赖对账', 30_000, () => this.reconcileFirstFrameDependencies());
       // 资产门对账：人物/场景定妆图到齐 → 解封分镜物化与首帧任务
-      await this.reconcileAssetGate().catch((e: Error) =>
-        this.logger.warn(`资产门对账失败: ${e.message}`),
-      );
-      // 流水线自动链驱动（P0 断链修复）：图→视频→配音→剪辑→质检 段内自动连跑
-      await this.drivePipeline().catch((e: Error) =>
-        this.logger.warn(`流水线自动链驱动失败: ${e.message}`),
-      );
+      await this.runStep('资产门对账', 30_000, () => this.reconcileAssetGate());
+      /*
+       * 流水线自动链驱动已移到独立低频定时器（见 onModuleInit）。
+       * 原因：drivePipeline() 实测每轮跑满 30s 看门狗超时，而 tick() 里
+       * 所有 runStep 是串行 await 的 —— 它一超时就把整个 tick 拖成 30s 一轮，
+       * 连「认领 pending 任务」也被压到 30s 一次。表现就是排队页全是
+       * 「等待中」、看不见任何执行中的任务，且把 JOB_WORKER_INTERVAL_MS
+       * 调小完全无效（tick 重入锁会直接 return）。认领是出片的关键路径，
+       * 绝不能被对账类慢步骤阻塞。
+       */
       // 修复：queued 滞留回收必须周期性执行，不能只在启动时跑一次
       await this.recoverStaleQueued();
 
@@ -734,6 +798,41 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       }
     } finally {
       this.running = false;
+      this.runningSince = 0;
+    }
+  }
+
+  /**
+   * 分步执行 + 超时看门狗。
+   *
+   * 为什么必须有：tick 是**单线程串行**的，里面既有 DB 也有上游 HTTP 轮询。
+   * 只要有一个子步骤卡住（远端视频轮询长时间不返回、某个查询锁等待），
+   * `this.running` 就一直为 true，后面每一轮 tick 直接 return ——
+   * 表现就是「队列一动不动，日志也安静」，而任务全都好端端躺在 pending 里。
+   * 这里给每个子步骤独立的时间上限与「上一轮还没结束就跳过」的保护：
+   *   - 超时只代表「这一轮不等了」，不会让 tick 整体卡死；
+   *   - 上一轮未结束则本轮跳过，避免同一个驱动被跑两遍（重复建单=重复扣费）。
+   */
+  private readonly stepInFlight = new Set<string>();
+  /** 当前这一轮 tick 的开始时刻（看门狗用）；0 表示没在跑 */
+  private runningSince = 0;
+
+  private async runStep(label: string, timeoutMs: number, fn: () => Promise<unknown>): Promise<void> {
+    if (this.stepInFlight.has(label)) return;
+    this.stepInFlight.add(label);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`超过 ${timeoutMs}ms 未返回`)), timeoutMs);
+        }),
+      ]);
+    } catch (e) {
+      this.logger.warn(`${label} 失败/超时：${(e as Error).message}`);
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.stepInFlight.delete(label);
     }
   }
 
@@ -1016,12 +1115,20 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         const consecutive = prev > Date.now() ? (this.providerHoldCount.get(key) ?? 0) : 0;
         const nextCount = Math.min(consecutive + 1, 8);
         this.providerHoldCount.set(key, nextCount);
-        const cooldown = Math.min(RATE_LIMIT_COOLDOWN_MS * 2 ** (nextCount - 1), RATE_LIMIT_COOLDOWN_MAX_MS);
+        // 视频队列满必须走短固定档：被拒的提交不建任务、不扣额度，免费重试，
+        // 上游放空位时谁敲得勤谁先抢到。指数退避到 300s 会整段错过错峰窗口。
+        const queueFull = isVideoQueueFullMessage(message);
+        const cooldown = queueFull
+          ? VIDEO_QUEUE_FULL_RETRY_MS
+          : Math.min(RATE_LIMIT_COOLDOWN_MS * 2 ** (nextCount - 1), RATE_LIMIT_COOLDOWN_MAX_MS);
         this.providerHoldUntil.set(key, Date.now() + cooldown);
         this.logger.warn(
-          `任务 ${job.id} 上游限流（provider=${key}），冷却 ${cooldown / 1000}s 后重试（连续第 ${nextCount} 次）：${message.slice(0, 160)}`,
+          `任务 ${job.id} 上游限流（provider=${key}${queueFull ? '，视频队列满' : ''}），${cooldown / 1000}s 后重试：${message.slice(0, 160)}`,
         );
-        await this.releaseTransient(job, `上游持续限流（${key}）`);
+        // soft：这是「等上游产能」，不是任务的错。旧实现不带 soft，按轮次
+        // （MAX_TRANSIENT_RELEASES）判死，Agnes 饱和一天就能把整批镜头全标 failed；
+        // 正确行为是按时长兜底（24h）无限等，队列放开后自动续跑。
+        await this.releaseTransient(job, `上游持续限流（${key}）`, { soft: true });
         return;
       }
       this.logger.warn(`任务 ${job.id} 执行失败：${message}`);
@@ -1051,6 +1158,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 重新编号后它自然排到队尾，后面的任务立刻自动跟上。
    */
   private async releaseToPending(id: string, requeue = true): Promise<void> {
+    // 任务既然要回队列，它占的 Key 车道必须先还掉，否则 concurrency=1 的
+    // Key 会被一条根本不在跑的任务占死整个 TTL（30 分钟），队列看起来像卡住。
+    await this.keyPool.releaseByJob(id);
     await this.db
       .update(generationJobs)
       .set({
@@ -1066,25 +1176,85 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 旧实现直接 return，retryCount 永不增长，任务可以无限重排队，
    * 且永远占着队列页第一行 —— 用户既看不到进展也没法判断该不该换供应商。
    */
-  private async releaseTransient(job: GenerationJob, reason: string): Promise<void> {
+  /**
+   * 上游整体无产能时，指定项目保持队首，不重排到队尾。
+   * 用环境变量切换，避免把「用户当前正在盯的项目」硬编码进代码；
+   * 未指定的项目照常轮转，不会被饿死。
+   */
+  private isPriorityProject(projectId?: string | null): boolean {
+    if (!projectId) return false;
+    return (process.env.YIMU_PRIORITY_PROJECT_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .includes(projectId);
+  }
+
+  private async releaseTransient(
+    job: GenerationJob,
+    reason: string,
+    opts?: { soft?: boolean; keepPosition?: boolean },
+  ): Promise<void> {
     const input = (job.inputData ?? {}) as Record<string, unknown>;
     const releases = Number(input.transientReleases ?? 0) + 1;
-    if (releases > MAX_TRANSIENT_RELEASES) {
-      this.logger.error(
-        `任务 ${job.id} 已连续 ${releases} 轮因「${reason}」无法执行，终结并等待人工处理`,
-      );
+    /*
+     * 两类「暂时性」必须分开计数，否则会误杀：
+     *
+     * 1) hard（默认）：配置缺失、偶发错误。按轮次封顶 MAX_TRANSIENT_RELEASES，
+     *    反复失败说明配置真有问题，尽早终结让人看见。
+     * 2) soft：等上游产能（视频队列满 503、所有 Key 冷却中）。这不是任务的错，
+     *    正确行为就是无限等下去 —— 但也不能无声无息永远挂着，所以改用
+     *    **等待时长**兜底（默认 24h，YIMU_TRANSIENT_BUDGET_HOURS 可调）。
+     *    旧实现用 30 轮上限：按 20s→300s 退避算，一小时就能把 52 个镜头
+     *    全部判成 failed，用户回来只剩一屏红叉，等于把队列清空。
+     */
+    const since = typeof input.transientSince === 'string' ? Date.parse(input.transientSince) : NaN;
+    const waitedMs = Number.isFinite(since) ? Date.now() - since : 0;
+    const budgetHours = Number(process.env.YIMU_TRANSIENT_BUDGET_HOURS ?? 24);
+    const softBudgetMs = (Number.isFinite(budgetHours) ? budgetHours : 24) * 3_600_000;
+    const overBudget = opts?.soft ? waitedMs > softBudgetMs : releases > MAX_TRANSIENT_RELEASES;
+    if (overBudget) {
+      const waited =
+        waitedMs > 60_000 ? `已等待约 ${Math.round(waitedMs / 60_000)} 分钟` : '等待时间较短';
+      this.logger.error(`任务 ${job.id} 因「${reason}」无法执行（${waited}），终结并等待人工处理`);
       await this.generationService.settleJobFailure(
         job.id,
-        `${reason}：连续 ${releases} 轮未能执行，已停止自动排队（请检查供应商配置/额度后手动重试）`,
+        opts?.soft
+          ? `${reason}：长时间未能拿到上游产能（${waited}），已停止自动排队（请扩容/换供应商后手动重试）`
+          : `${reason}：连续 ${releases} 轮未能执行，已停止自动排队（请检查供应商配置/额度后手动重试）`,
       );
       return;
     }
+    // 放回队列前先归还 Key 车道（同 releaseToPending 的理由）
+    await this.keyPool.releaseByJob(job.id);
     await this.db
       .update(generationJobs)
       .set({
         status: 'pending',
-        queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
-        inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{transientReleases}', to_jsonb(${releases}::int), true)`,
+        // 上游整体无产能（503 队列满）时保序：轮转不会改变任何结果，反而让
+        // 用户正在盯的项目反复被挤到队尾，抢不到偶然放出的空位。
+        ...(opts?.keepPosition
+          ? {}
+          : { queueSeq: sql`nextval('generation_jobs_queue_seq_seq')` }),
+        /*
+         * 重排队必须清掉上一轮的远端身份，否则是两处实打实的错：
+         *  1) 旧 externalTaskId 还在 → pollJob 会拿它去查上游，
+         *     轻则 404 task not found，重则把旧任务结果结算到本次任务上；
+         *  2) 旧 boundKeyId 属于别的供应商/账号 → 换通道后按 (account, taskId)
+         *     查不到，正是之前「建单走新通道、轮询去老通道」的残留形态。
+         * errorMessage 覆盖成本轮等待原因：既不丢诊断信息，也不会让前台
+         * 一直挂着上一版「127.0.0.1:3425 404」这种早已不存在的故障。
+         */
+        externalTaskId: null,
+        boundKeyId: null,
+        errorMessage: reason,
+        // transientSince 只在第一次写入，后续 coalesce 保留原值 —— 计时从「开始等」算起
+        inputData: sql`jsonb_set(
+          jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{transientReleases}', to_jsonb(${releases}::int), true),
+          '{transientSince}',
+          coalesce(coalesce(${generationJobs.inputData}, '{}'::jsonb) -> 'transientSince', to_jsonb(now())),
+          true
+        )`,
         updatedAt: new Date(),
       })
       .where(eq(generationJobs.id, job.id));
@@ -1316,8 +1486,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     if (job.targetType === 'shot' && job.targetId && job.projectId) {
       // 单镜资产门：本镜引用的人物/场景还没定妆图时不硬闯，挂起等 reconcileAssetGate 解封。
       // 硬闯的代价是「凭空生成一张脸」，一旦回写进 startFrameUrl，用户只能重做整镜。
+      // 例外：项目级资产门已判定「结构性失败、降级放行」（assetGateDegraded）时必须
+      // 真的放行 —— 否则降级只是个标记，这里又把任务打回 waiting_assets，
+      // 两个模块互相拉扯，任务在队头无限空转。
       const refs = await this.loadShotAssetRefs(job.targetId);
-      if (refs) {
+      if (refs && input.assetGateDegraded === true) {
+        this.logger.warn(
+          `首帧任务 ${job.id} 资产门已降级放行，跳过定妆检查（本镜一致性会打折扣，补齐定妆图后建议重跑本镜）`,
+        );
+      } else if (refs) {
         const missing = await this.assetPrep.missingAssetsForShot(job.projectId, refs);
         if (missing.length > 0) {
           await this.setFirstFrameBlock(job.id, 'waiting_assets');
@@ -1720,6 +1897,184 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * 视频建单（密钥池）：从供应商密钥池领一把 Key 建单；
+   * 遇 503 池饱和 / 429 限流时**只冷却这一把**并立即换下一把，而不是像旧实现
+   * 那样把整个 `provider|video` 通道冻 300s 干等 —— 这是「多号并行」的核心。
+   * 401/403 视为该 Key 鉴权失效，标 invalid 换下一把。
+   * 所有车道都忙/冷却时返回 null，调用方把任务放回队列。
+   */
+  private async createVideoWithKeyPool(
+    job: GenerationJob,
+    params: Parameters<ModelGatewayService['generateVideo']>[0],
+    providerName?: string,
+  ): Promise<{ taskId: string; status: string; frameNotSent?: string } | null> {
+    const MAX_KEY_TRIES = 8;
+    let lastErr: Error | null = null;
+    type VideoLease =
+      | { status: 'leased'; keyId: string; label: string; providerName?: string }
+      | { status: 'busy' }
+      | { status: 'no_keys' };
+    for (let attempt = 0; attempt < MAX_KEY_TRIES; attempt += 1) {
+      /*
+       * 视频先用「联邦密钥池」：Agnes 任务可以领用任一 Agnes 供应商下的 Key。
+       * 旧逻辑只按 provider_id 领，而环节绑定只指向一个供应商，用户把 4 个账号
+       * 分散在两个供应商时，另一个供应商的 Key 永远租不到 —— 表现为「加了 4 把
+       * Key 却只有 1~2 个在轮值」。联邦池返回 no_keys 说明这不是 Agnes 通道
+       * （火山/mock/relay），回落到原来的单供应商租约，行为完全不变。
+       */
+      let lease: VideoLease | null = null;
+      // eslint-disable-next-line no-await-in-loop
+      const federated = await this.keyPool.leaseForVideo(job.id, job.projectId).catch((e: Error) => {
+        this.logger.warn(`任务 ${job.id} 联邦密钥池异常，回落单供应商：${e.message}`);
+        return null;
+      });
+      if (federated && federated.status !== 'no_keys') {
+        lease = federated;
+      } else if (providerName) {
+        // 注意：这里**不能**写成 .catch(() => null) 而不记日志。领 Key 失败时
+        // 静默变 null 会退化成「不带 Key 直接调上游」，503 归不到某把 Key 账上。
+        // eslint-disable-next-line no-await-in-loop
+        lease = await this.keyPool.leaseByProviderName(providerName, job.id, job.projectId).catch((e: Error) => {
+          const cause = (e as { cause?: { message?: string; code?: string } }).cause;
+          this.logger.warn(
+            `任务 ${job.id} 领密钥失败（将退回供应商主 Key）：${e.message}` +
+              (cause ? ` ｜ 根因：${cause.code ?? ''} ${cause.message ?? ''}` : ''),
+          );
+          return null;
+        });
+      }
+      if (lease && lease.status === 'busy') {
+        // 所有车道都在途/冷却：不空转，放回队列等冷却结束。
+        // soft：这是「等上游产能」，不是任务本身的错，不能按失败次数把任务判死。
+        // 优先项目保序：否则每轮撞 busy 都会被 nextval 挤到队尾，
+        // 队列偶然放出空位时永远轮不到它。
+        await this.releaseTransient(job, '所有密钥车道均在途/冷却中', {
+          soft: true,
+          keepPosition: this.isPriorityProject(job.projectId),
+        });
+        return null;
+      }
+      const keyId = lease && lease.status === 'leased' ? lease.keyId : undefined;
+      // 建单必须用「这把 Key 所属供应商」：跨账号查任务会 404 task not found。
+      // 同时把它落盘到任务行，轮询阶段才能用同一个 (provider, key) 复查。
+      const effectiveProvider =
+        lease && lease.status === 'leased' && lease.providerName
+          ? lease.providerName
+          : (providerName ?? job.providerName ?? null);
+      // 租约结算标记：只要不是「已明确结算」（成功 release / 限流 cooldown /
+      // 鉴权失效 markInvalid），finally 里就兜底归还车道。
+      // 旧实现依赖每个 catch 分支自觉归还，任何一条分支提前抛错就会把
+      // concurrency=1 的车道占死到 30 分钟 TTL —— 表现为「队列一动不动」。
+      let settled = false;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        // 注意用 effectiveProvider（Key 所属供应商），不是环节绑定里写死的
+        // providerName —— 联邦池可能领到另一个 Agnes 供应商的 Key。
+        const created = await this.modelGateway.generateVideo(
+          params,
+          effectiveProvider ?? undefined,
+          keyId,
+        );
+        /*
+         * 把「实际建单用的通道」写回任务行。
+         * ------------------------------------------------------------------
+         * 为什么必须落盘：轮询用的是 `job.providerName`（pollVideoTask），结算与
+         * 日志也用它。环节绑定（stage_model_bindings）会在执行时把通道换掉，但任务
+         * 行里存的还是建单那一刻的值 —— 于是「建单走新通道、轮询去老通道查」，
+         * 上游按 (provider, taskId) 查不到，任务永远等不到回调。
+         * 联邦池下 effectiveProvider 可能来自另一个 Agnes 供应商，更必须落盘，
+         * 否则轮询会拿错账号查任务，直接 404 task not found。
+         */
+        // eslint-disable-next-line no-await-in-loop
+        await this.db
+          .update(generationJobs)
+          .set({
+            ...(effectiveProvider ? { providerName: effectiveProvider } : {}),
+            ...(params.model ? { modelName: params.model } : {}),
+            ...(keyId ? { boundKeyId: keyId } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(generationJobs.id, job.id))
+          .catch((e: Error) => this.logger.warn(`任务通道路由落盘失败 ${job.id}：${e.message}`));
+        if (keyId) {
+          // eslint-disable-next-line no-await-in-loop
+          await this.keyPool.release(keyId);
+          settled = true;
+          this.logger.log(
+            `任务 ${job.id} 使用密钥「${lease && lease.status === 'leased' ? lease.label : keyId}」建单（通道 ${effectiveProvider ?? '默认'}）`,
+          );
+        }
+        return created;
+      } catch (e) {
+        const message = (e as Error)?.message ?? '未知错误';
+        try {
+          if (keyId && (isRateLimitMessage(message) || /503|429/.test(message))) {
+            const queueFull = isVideoQueueFullMessage(message);
+            /*
+             * 503 video_queue_full 是**全局共享队列**满，与具体账号/Key 无关。
+             * 旧逻辑 continue 换下一把 Key 立即重试，一轮把 4 条车道在同一秒
+             * 全部打进 20s 冷却 → 之后 20 秒无人探测 → Agnes 若在这段静默中
+             * 放出空位，必然错过（今天只抢到 2 支视频就是这么来的）。
+             * 改为：该 Key 短冷却 + 随机抖动，并立即放回队列，让下一个任务
+             * 去租另一把**空闲**车道，形成错峰连续的探测流。
+             */
+            const keyCooldown = queueFull
+              ? VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS +
+                Math.floor(Math.random() * VIDEO_QUEUE_FULL_KEY_JITTER_MS)
+              : RATE_LIMIT_COOLDOWN_MS;
+            // eslint-disable-next-line no-await-in-loop
+            await this.keyPool.cooldown(keyId, keyCooldown, message);
+            settled = true;
+            lastErr = e as Error;
+            if (queueFull) {
+              // keepPosition：上游整体无产能时轮转没有意义（轮到谁都撞 503）。
+              // 只给 YIMU_PRIORITY_PROJECT_IDS 指定的项目保序，让它稳居队首，
+              // 一旦放开空位就先建单；其它项目仍照常轮转，不会被饿死。
+              // eslint-disable-next-line no-await-in-loop
+              await this.releaseTransient(job, '上游视频队列已满（持续探测中）', {
+                soft: true,
+                keepPosition: this.isPriorityProject(job.projectId),
+              });
+              return null;
+            }
+            continue; // 429/账号级限流：换下一把 Key 立即重试仍有意义
+          }
+          if (keyId && /401|403/.test(message)) {
+            // eslint-disable-next-line no-await-in-loop
+            await this.keyPool.markInvalid(keyId, message);
+            settled = true;
+            lastErr = e as Error;
+            continue;
+          }
+        } catch (settleErr) {
+          // 结算本身失败（DB 抖动）：不要吞掉原始上游错误，让它照常上报，
+          // 车道由 finally 兜底归还。
+          this.logger.error(`密钥结算失败 ${job.id}：${(settleErr as Error).message}`);
+        }
+        throw e;
+      } finally {
+        if (keyId && !settled) {
+          // eslint-disable-next-line no-await-in-loop
+          await this.keyPool.releaseSlot(keyId).catch(() => undefined);
+        }
+      }
+    }
+    // 一轮下来所有 Key 都被 503/429 冷却：这是**上游账号级容量**问题。
+    // 关键：绝不能把异常抛回 runJob 的 catch —— 那里会按 `provider|jobType`
+    // 冻结整条视频通道（20s→300s），把「不同账号的 Key」一起冻住，
+    // 与「一把 Key 一条车道、互不牵连」的设计直接冲突。
+    // 正确做法：只放回队列，等最早那把 Key 的冷却结束，由下一轮 tick 重新领。
+    if (lastErr && isRateLimitMessage(lastErr.message)) {
+      await this.releaseTransient(job, '所有密钥车道均在途/冷却中', {
+        soft: true,
+        keepPosition: this.isPriorityProject(job.projectId),
+      });
+      return null;
+    }
+    throw lastErr ?? new Error('所有密钥均不可用，请稍后重试或增加密钥');
+  }
+
   private async processVideo(job: GenerationJob, providerName?: string, opts?: { model?: string }): Promise<void> {
     const input = (job.inputData ?? {}) as Record<string, unknown>;
     const rawPrompt = this.inputPrompt(job);
@@ -1774,42 +2129,85 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       const upstreamFrame = await this.latestUpstreamFrame(job.targetId);
       if (upstreamFrame) imageUrl = upstreamFrame;
     }
-    const created = await this.modelGateway.generateVideo(
-      {
-        prompt,
-        duration:
-          typeof input.duration === 'number'
-            ? input.duration
-            : composed.duration || 5,
-        imageUrl,
-        referenceVideoUrl: refs[1],
-        lastFrameUrl,
-        model: opts?.model,
-        // Agnes 的 aspect_ratio 与像素尺寸白名单都跟随项目画幅，
-        // 不再写死 9:16 让 16:9 项目出竖屏视频。
-        aspectRatio: policy.aspectRatio,
-      },
-      providerName,
-    );
-    const { taskId } = created;
-    // 首帧真的没送出去时，把它记到项目级 pipeline 提示里：
-    // 生产力工具不能让「这一镜其实是文生视频」这种事只躺在日志里。
-    if (created.frameNotSent && job.projectId) {
-      await this.writePipelineField(job.projectId, 'frameNotice', {
-        shotId: job.targetId ?? null,
-        reason: created.frameNotSent,
-        at: new Date().toISOString(),
-      });
+    /*
+     * 首帧/尾帧「临时公开副本」：Agnes 只吃公网 http(s) URL，直接暴露项目原图
+     * 等于把资产永久挂在一个公开地址上。这里改用按 jobId 命名的临时副本
+     * （本地硬链接，零额外磁盘占用），任务一到终态就自动删除，另有 TTL 兜底。
+     * 已是公网 CDN 图的原样透传；暂存失败也回退原路径，绝不阻断提交。
+     * 设 YIMU_STAGED_MEDIA=0 可整体关闭，回到「直接暴露原图」的旧行为。
+     */
+    if (process.env.YIMU_STAGED_MEDIA !== '0') {
+      const staged = await stageFramesForJob(job.id, [imageUrl, lastFrameUrl]);
+      if (staged[0]?.url) imageUrl = staged[0].url;
+      if (staged[1]?.url) lastFrameUrl = staged[1].url;
     }
-    // 远端任务已创建：记录 externalTaskId，保持 running，由轮询完成
-    await this.db
-      .update(generationJobs)
-      .set({ externalTaskId: taskId, progress: 10, updatedAt: new Date() })
-      .where(eq(generationJobs.id, job.id));
-    this.logger.log(
-      `视频远端任务已创建 ${job.id} → ${taskId}` +
-        (composed.degraded ? `（无 3 秒节拍，按整段描述兜底）` : `（${composed.beatCount} 段节拍）`),
-    );
+    /*
+     * 临时公开副本的「失败即清理」。
+     * ------------------------------------------------------------------
+     * 503 video_queue_full / 429 免费额度限速都是**建单前**的拒绝：上游根本
+     * 没建任务，谁也不会来拉这张图。此时 createVideoWithKeyPool 会 soft 放回
+     * 队列并返回 null（或抛异常交给外层 catch）。若不在这些出口立刻删副本，
+     * 10s 一次的探测 × 几十个排队任务，会让 _staged 目录无限堆积、把首帧
+     * 长期挂在公网上 —— 而且每次 stage 都会刷新目录 mtime，24h TTL 兜底
+     * 反而永远不触发。只有「远端真的建单成功」才保留副本到任务终态。
+     */
+    let keepStaged = false;
+    try {
+      const created = await this.createVideoWithKeyPool(
+        job,
+        {
+          prompt,
+          duration:
+            typeof input.duration === 'number'
+              ? input.duration
+              : composed.duration || 5,
+          imageUrl,
+          referenceVideoUrl: refs[1],
+          // W 多图参考（官方 reference 模式 images[]，≤5）：refs[3+] 是前置资产
+          // 阶段注入的角色定妆照/场景图/道具图——排除白模位与首尾帧去重后
+          // 传给网关，配 <Picture N> 占位符实现多参一致性生成。
+          referenceImages: refs
+            .slice(3)
+            .filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u))
+            .filter((u) => u !== imageUrl && u !== lastFrameUrl)
+            .slice(0, 4),
+          lastFrameUrl,
+          model: opts?.model,
+          // Agnes 的 aspect_ratio 与像素尺寸白名单都跟随项目画幅，
+          // 不再写死 9:16 让 16:9 项目出竖屏视频。
+          aspectRatio: policy.aspectRatio,
+        },
+        providerName,
+      );
+      // 所有密钥车道都在途/冷却 → 已放回队列，本轮不继续
+      if (!created) return;
+      // 远端已建单：上游随时会来取首帧，此后即使落盘/日志出错也不能删副本，
+      // 否则视频会在生成中途丢图。终态由 GenerationService 统一释放。
+      keepStaged = true;
+      const { taskId } = created;
+      // 首帧真的没送出去时，把它记到项目级 pipeline 提示里：
+      // 生产力工具不能让「这一镜其实是文生视频」这种事只躺在日志里。
+      if (created.frameNotSent && job.projectId) {
+        await this.writePipelineField(job.projectId, 'frameNotice', {
+          shotId: job.targetId ?? null,
+          reason: created.frameNotSent,
+          at: new Date().toISOString(),
+        });
+      }
+      // 远端任务已创建：记录 externalTaskId，保持 running，由轮询完成。
+      // 建单成功即清掉等待原因/历史错误，避免前台把已提交的任务显示成失败。
+      await this.db
+        .update(generationJobs)
+        .set({ externalTaskId: taskId, progress: 10, errorMessage: null, updatedAt: new Date() })
+        .where(eq(generationJobs.id, job.id));
+      this.logger.log(
+        `视频远端任务已创建 ${job.id} → ${taskId}` +
+          (composed.degraded ? `（无 3 秒节拍，按整段描述兜底）` : `（${composed.beatCount} 段节拍）`),
+      );
+    } finally {
+      // 用 await 而非 void：10s 后本任务可能重新 stage，不能让删除与重建竞态。
+      if (!keepStaged) await releaseStagedFrames(job.id);
+    }
   }
 
   /**
@@ -3584,13 +3982,29 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
 
-      // 结构性失败：放行但明确降级，不假装资产齐全
+      // 结构性失败：放行但明确降级，不假装资产齐全。
+      //
+      // 关键修复（资产门空转死循环）：降级标记必须落在**任务本身**上
+      // （inputData.assetGateDegraded），否则下一轮 processImage 的单镜资产门
+      // 会重新阻断 → 这里又清掉 → 再阻断…… 一秒钟转好几圈，
+      // 而且这些任务始终占着队头 queue_seq（阻断不清序号），
+      // 后面的视频任务永远等不到认领名额 —— 用户看到的就是「队列一动不动」。
+      // 已经降级过的任务直接跳过，不再重复清标记。
+      if (input.assetGateDegraded === true) continue;
       // eslint-disable-next-line no-await-in-loop
       await this.clearFirstFrameBlock(row.id);
       // eslint-disable-next-line no-await-in-loop
+      await this.db
+        .update(generationJobs)
+        .set({
+          inputData: sql`jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{assetGateDegraded}', 'true'::jsonb, true)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(generationJobs.id, row.id));
+      // eslint-disable-next-line no-await-in-loop
       await this.markAssetGateDegraded(row.projectId, row.id);
       this.logger.warn(
-        `资产门降级放行：项目 ${row.projectId} 任务 ${row.id}，资产仍不齐全，已按文生图降级出片`,
+        `资产门降级放行：项目 ${row.projectId} 任务 ${row.id}，资产仍不齐全，已按文生图降级出片（本任务不再重复检查定妆）`,
       );
     }
   }

@@ -78,6 +78,8 @@ interface VideoGenerateParams {
   referenceVideoUrl?: string;
   /** 尾帧 URL（Agnes keyframe 模式用；非公网地址自动忽略） */
   lastFrameUrl?: string;
+  /** 多图参考（官方 reference 模式 images[]，≤4 张额外参考；与首帧合计 ≤5） */
+  referenceImages?: string[];
 }
 
 interface TTSGenerateParams {
@@ -675,8 +677,9 @@ export class ModelGatewayService {
   async generateVideo(
     params: VideoGenerateParams,
     providerName?: string,
+    keyId?: string | null,
   ): Promise<{ taskId: string; status: string; frameNotSent?: string }> {
-    const provider = await this.getProvider(providerName, 'video');
+    const provider = await this.getProvider(providerName, 'video', keyId);
     const formatType = provider.formatType as FormatType;
     if (formatType === 'mock') {
       const taskId = `mock-${randomUUID()}`;
@@ -807,8 +810,14 @@ export class ModelGatewayService {
     // W 智能路由：Agnes hub 被配成 openai 兼容格式时，文本/图片走标准端点
     // 没问题，但视频端点字段是 Agnes 方言（mode/seconds/first_frame，拒绝
     // duration/image_url）。按基址域名或视频模型名自动识别走专用通道。
+    // relay 方言（如「一幕·YIMU 官方API 聚合平台」指向本地中继）虽然 formatType
+    // 是 openai，但视频端点同样是 Agnes 方言（/videos + mode + first_frame），
+    // 且中继能吃 data URL 首帧。显式声明 agnesSchema='relay' 即走专用通道。
+    const declaredRelay =
+      ((provider.modelParams ?? {}) as { agnesSchema?: string }).agnesSchema === 'relay';
     const agnesLike =
       formatType === 'agnes' ||
+      declaredRelay ||
       /agnes-ai\.com/i.test(baseUrl) ||
       /^agnes[-_.]/i.test(provider.videoModel ?? '');
     if (agnesLike) {
@@ -938,19 +947,36 @@ export class ModelGatewayService {
       size: '720P',
       aspect_ratio: videoAspect,
     };
-    if (isPublic(params.referenceVideoUrl)) {
+    // relay 中继能吃 data URL（本地首帧内联），官方 Agnes 只收公网 http(s)。
+    // 不区分这一点，走中继时首帧仍会被 isPublic 判掉、静默退化成纯文生视频。
+    const isUsable = (u?: string) =>
+      !!u && (/^https?:\/\//i.test(u) || (relaySchema && /^data:/i.test(u)));
+    if (isPublic(params.referenceVideoUrl) && !relaySchema) {
+      // 官方 agnes-video-2.5-flash 文档：reference 模式只吃 images(≤5)/audios(≤3)，
+      // 「videos is not supported」——传有效 videos 直接 HTTP 400，且不建任务。
+      // 系统里这个位置存的是白模/角色参考图（图片 URL），语义应走 images。
+      // relay 中继 magpie 有自己的方言，保留其原行为不动。
       body.mode = modeReference;
-      body.videos = [{ url: params.referenceVideoUrl }];
-    } else if (isPublic(params.imageUrl)) {
+      body.images = [params.referenceVideoUrl];
+    } else if (isUsable(params.imageUrl) && isUsable(params.lastFrameUrl)) {
+      // 首帧+尾帧都在：keyframe 模式（连贯性最强，优先级最高）
       body.mode = modeKeyframe;
       if (relaySchema) {
-        // relay 方言：image 数组（≥2 项），尾帧缺失时首帧重复垫
-        const last = isPublic(params.lastFrameUrl) ? params.lastFrameUrl : params.imageUrl;
+        const last = isUsable(params.lastFrameUrl) ? params.lastFrameUrl : params.imageUrl;
         body.image = [params.imageUrl, last];
       } else {
         body.first_frame = params.imageUrl;
-        if (isPublic(params.lastFrameUrl)) body.last_frame = params.lastFrameUrl;
+        body.last_frame = params.lastFrameUrl;
       }
+    } else if (isUsable(params.imageUrl) || (params.referenceImages?.length ?? 0) > 0) {
+      // W 多图参考（官方 reference 模式，Flash 限 images≤5）：
+      // 首帧/角色定妆照/场景图多参 + prompt 用 <Picture N> 占位符注明用途。
+      const imgs = [...new Set([params.imageUrl, ...(params.referenceImages ?? [])].filter(isUsable))].slice(0, 5);
+      body.mode = modeReference;
+      body.images = imgs;
+      const roles = ['画面构图与首帧基准'];
+      for (let i = 1; i < imgs.length; i += 1) roles.push(`角色与场景一致性参考 ${i}`);
+      body.prompt = `${withPrefix(params.prompt)}\n${roles.map((r, i) => `以 <Picture ${i + 1}> 为${r}`).join('，')}。`;
     } else {
       body.mode = modeText;
     }
@@ -1031,6 +1057,7 @@ export class ModelGatewayService {
   async pollVideoTask(
     taskId: string,
     providerName?: string,
+    keyId?: string | null,
   ): Promise<VideoPollResult> {
     // Agnes 通道：externalTaskId 编码为 agnes:{video_id}:{model}
     if (taskId.startsWith('agnes:')) {
@@ -1038,7 +1065,7 @@ export class ModelGatewayService {
       if (!videoId || !model) {
         return { status: 'failed', errorMessage: 'Agnes 任务 ID 非法' };
       }
-      const provider = await this.getProvider(providerName, 'video');
+      const provider = await this.getProvider(providerName, 'video', keyId);
       return this.pollAgnesVideo(provider, videoId, model);
     }
     // P2-3 mock 通道：秒级成功，占位 URL 原样返回（调用方决定传白模还是首帧）
@@ -1054,7 +1081,7 @@ export class ModelGatewayService {
         outputData: { url: entry.url, mock: true },
       };
     }
-    const provider = await this.getProvider(providerName, 'video');
+    const provider = await this.getProvider(providerName, 'video', keyId);
     const apiKey = provider.apiKey;
     if (!apiKey) {
       throw new BadRequestException('Provider 未配置 API Key');
@@ -1491,6 +1518,7 @@ export class ModelGatewayService {
   private async getProvider(
     providerName: string | undefined,
     capability: keyof ModelCapabilities,
+    keyId?: string | null,
   ): Promise<ProviderRecord> {
     let rows: typeof modelProviders.$inferSelect[];
 
@@ -1541,7 +1569,35 @@ export class ModelGatewayService {
       );
     }
 
-    // 多 Key：生效 Key 行优先（最新激活的一条），无行时回落主 Key 列
+    // 密钥池（migration 0023）：显式指定 keyId 时用这一把。
+    // 视频多 Key 并行 / 异步轮询必须复用建单那把 Key —— 换 Key 后上游
+    // 按 (account, taskId) 查不到任务，轮询必失败。
+    if (keyId) {
+      // 必须限定 provider_id：任务行的 boundKeyId 可能残留自**上一次路由**的
+      // 供应商（改环节绑定/换供应商后常见）。旧实现只按 id 查，会把 A 供应商的
+      // Key 拿去调 B 供应商 —— 上游按 (account, taskId) 查不到，轮询必 404
+      // 「task not found」，表现就是「视频提交了却永远等不到结果」。
+      const leased = await this.db
+        .select({ apiKey: providerApiKeys.apiKey })
+        .from(providerApiKeys)
+        .where(
+          and(
+            eq(providerApiKeys.id, keyId),
+            eq(providerApiKeys.providerId, provider.id),
+          ),
+        )
+        .limit(1);
+      if (leased.length > 0 && leased[0].apiKey) {
+        return {
+          ...(provider as unknown as ProviderRecord),
+          apiKey: tryDecryptApiKey(leased[0].apiKey) ?? null,
+        };
+      }
+      this.logger.warn(
+        `指定的 Key ${keyId} 不属于供应商「${provider.name}」或已删除，回落该供应商自己的 Key`,
+      );
+    }
+    // 旧路径（未指定 keyId）：生效 Key 行优先（最新激活的一条），无行时回落主 Key 列
     const keyRows = await this.db
       .select({ apiKey: providerApiKeys.apiKey })
       .from(providerApiKeys)
