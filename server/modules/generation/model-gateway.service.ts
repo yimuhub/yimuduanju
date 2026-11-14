@@ -23,6 +23,7 @@ import type { ProviderType, FormatType, ModelCapabilities } from '@shared/api.in
 // 密钥缺失或 GCM 认证失败（密钥轮换、密文损坏）时应返回 null 让调用方给出
 // 「未配置 API Key」这类可读错误，而不是抛未捕获异常把所有 Provider 接口打成 500。
 import { tryDecryptApiKey } from '../../common/crypto.util';
+import { isAgnesImageChannel } from './rate-limit.util';
 import { systemLog } from '../../common/system-log.store';
 import {
   toProviderImageInput,
@@ -541,7 +542,9 @@ export class ModelGatewayService {
      * 后续视频模型按这张方图理解构图，必然把 16:9 / 9:16 全带偏。
      * 现在不传 size 时按项目画幅映射（供应商白名单存在时自动取最接近的一项）。
      * ------------------------------------------------------------------ */
-    const acceptsNegative = provider.formatType !== 'agnes';
+    // 不能只看 formatType：设置页可以把官方 Agnes URL 配成 openai 格式，
+    // 那样会把 negative_prompt 发给 Agnes 文生图队列并稳定 400。按实际端点兜底。
+    const acceptsNegative = !isAgnesImageChannel(provider.formatType, provider.baseUrl ?? '');
     if (params.negativePrompt && !acceptsNegative) {
       // Agnes 图片接口不收 negative_prompt（传了直接 400）。禁字约束已经写进
       // 正面提示词，这里只丢弃字段，不让「加了负面词」变成新的失败原因。

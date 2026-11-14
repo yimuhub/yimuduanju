@@ -27,6 +27,7 @@ import type { ArtifactFingerprint } from '@shared/qc-fingerprint';
 import { BillingService } from '../billing/billing.service';
 import { RoutingService } from './routing.service';
 import { releaseStagedFrames } from './staged-media';
+import { isPermanentImageUpstreamError } from './rate-limit.util';
 import { systemLog } from '../../common/system-log.store';
 
 /**
@@ -477,6 +478,11 @@ export class GenerationService {
     const job = await this.getJob(id);
     // 已经是终态（含并发结算抢先成功）：不再改状态，避免把 succeeded 拖回 pending
     if (!OPEN_JOB_STATUSES.includes(job.status)) return job;
+    // 确定性上游拒绝（参数不支持 / 免费额度上限 / 内容政策）：重发同一份请求
+    // 不可能成功，直接终结，避免批量任务各占 3 次重试把通道和日志打满。
+    if (isPermanentImageUpstreamError(errorMessage)) {
+      return this.settleJobFailure(id, `${errorMessage}（确定性拒绝，未重试）`);
+    }
     const nextRetry = (job.retryCount ?? 0) + 1;
     // 修复（重试预算差一）：maxRetries=N 意为「最多自动重试 N 次」，即第 N+1 次失败才终结。
     // 旧条件 nextRetry >= maxRetries 在第 N 次失败就放弃，实际只重试了 N-1 次。
