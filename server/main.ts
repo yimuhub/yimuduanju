@@ -46,7 +46,7 @@ async function bootstrap() {
   // 修复：Number('abc') === NaN，app.listen(NaN) 行为不可预期（可能随机端口或直接抛错）。
   // 另外 SERVER_HOST 默认 'localhost' 在容器里只绑回环，不显式设 0.0.0.0 外部访问不到 ——
   // 这是有意保留的默认（安全优先），部署时请按环境显式设置。
-  const port = Number.parseInt(process.env.SERVER_PORT ?? '3000', 10);
+  const port = Number.parseInt(process.env.SERVER_PORT ?? '3301', 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(
       `SERVER_PORT 非法：${JSON.stringify(process.env.SERVER_PORT)}（应为 1-65535 的整数）`,

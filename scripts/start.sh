@@ -5,7 +5,7 @@
 # 功能：
 #   1. 检查并启动 PostgreSQL（Homebrew postgresql@16）
 #   2. 确保数据库 yimu 存在、表结构与种子数据就绪（幂等）
-#   3. 启动后端 NestJS（端口 3000，走平台数据层兼容环境变量）
+#   3. 启动后端 NestJS（端口 3301，走平台数据层兼容环境变量）
 #   4. 启动本地网关（端口 5173，伺服前端产物 + 转发动态请求 + 注入用户身份）
 #   5. 自动打开浏览器访问 http://localhost:5173/（首页直挂根路径）
 #
@@ -26,7 +26,7 @@ GATEWAY_LOG="$LOG_DIR/gateway.log"
 PGDATA="${PGDATA:-/opt/homebrew/var/postgresql@16}"
 DB_NAME="yimu"
 PORT_GATEWAY="${GATEWAY_PORT:-5173}"
-PORT_SERVER="${SERVER_PORT:-3000}"
+PORT_SERVER="${SERVER_PORT:-3301}"
 
 c_blue()  { printf "\033[1;34m%s\033[0m\n" "$*"; }
 c_green() { printf "\033[1;32m%s\033[0m\n" "$*"; }
@@ -39,7 +39,7 @@ c_yellow(){ printf "\033[1;33m%s\033[0m\n" "$*"; }
 # 网关的 BACKEND_TARGET 同步指向新端口——两端即可同时在线互不干扰。
 if lsof -nP -iTCP:$PORT_SERVER -sTCP:LISTEN >/dev/null 2>&1; then
   PORT_SERVER=3001
-  c_yellow "[0] 端口 3000 被占用（可能是桌面客户端后端），网页版后端自动改用 3001"
+  c_yellow "[0] 端口 3300 被占用（桌面客户端）——改用 3301（可能是桌面客户端后端），网页版后端自动改用 3001"
 fi
 if lsof -nP -iTCP:$PORT_SERVER -sTCP:LISTEN >/dev/null 2>&1; then
   c_yellow "[0] 端口 $PORT_SERVER 也被占用（后端可能已在运行），跳过后端启动"

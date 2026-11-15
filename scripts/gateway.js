@@ -12,7 +12,7 @@
  * 用法：node scripts/gateway.js（需先 cd 到工程根目录）
  * 环境变量（亦可写入工程根 .env，网关启动时自动加载）：
  *   GATEWAY_PORT            默认 5173
- *   BACKEND_TARGET          默认 http://localhost:3000
+ *   BACKEND_TARGET          默认 http://localhost:3301
  *   CLIENT_DIST_DIR         默认 <工程根>/dist/client
  *   SUDA_WEBUSER            用户身份 JSON，默认本地一幕用户
  *   ENTERPRISE_ADMIN_TOKEN  管理员 token（W1 生成于 .env），注入 x-admin-token
@@ -40,7 +40,7 @@ try {
 
 const ROOT = process.cwd();
 const PORT = parseInt(process.env.GATEWAY_PORT || '5173', 10);
-const TARGET = process.env.BACKEND_TARGET || 'http://localhost:3000';
+const TARGET = process.env.BACKEND_TARGET || 'http://localhost:3301';
 const DIST_DIR = path.resolve(ROOT, process.env.CLIENT_DIST_DIR || 'dist/client');
 // W4：5 个数据补全接口（recent-projects / activity / usage-trend /
 // GET /api/projects/:id / 嵌套 scenes/:sceneId/shots）已收敛回后端实现，

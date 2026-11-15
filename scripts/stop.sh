@@ -14,11 +14,11 @@ fi
 
 if [ -f "$LOG_DIR/server.pid" ]; then
   # nest start 会派生多个进程，按端口清理
-  lsof -nP -iTCP:3000 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill 2>/dev/null || true
+  lsof -nP -iTCP:3301 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill 2>/dev/null || true
   kill "$(cat "$LOG_DIR/server.pid")" 2>/dev/null && echo "[stop] 后端已停止"
   rm -f "$LOG_DIR/server.pid"
 else
-  lsof -nP -iTCP:3000 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill 2>/dev/null || true
+  lsof -nP -iTCP:3301 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u | xargs -r kill 2>/dev/null || true
   echo "[stop] 后端已停止"
 fi
 
