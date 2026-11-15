@@ -818,11 +818,9 @@ export class ModelGatewayService {
     // 且中继能吃 data URL 首帧。显式声明 agnesSchema='relay' 即走专用通道。
     const declaredRelay =
       ((provider.modelParams ?? {}) as { agnesSchema?: string }).agnesSchema === 'relay';
-    const agnesLike =
-      formatType === 'agnes' ||
-      declaredRelay ||
-      /agnes-ai\.com/i.test(baseUrl) ||
-      /^agnes[-_.]/i.test(provider.videoModel ?? '');
+    // 视频通道格式：formatType=agnes 或 declaredRelay 走专用双接口，
+    // 其余走通用 /video/generations。不硬编码域名——供应商自主选择格式。
+    const agnesLike = formatType === 'agnes' || declaredRelay;
     if (agnesLike) {
       return this.createAgnesVideo(
         provider,
