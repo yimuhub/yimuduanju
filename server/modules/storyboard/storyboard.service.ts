@@ -31,7 +31,11 @@ import {
 import { estimateSpeechSeconds, keywordSimilarity, REUSE_MATCH_THRESHOLD } from '@shared/text-metrics';
 import {
   buildFivePart,
+  CAMERA_ANGLE_EN,
   CINEMATIC_NEGATIVE,
+  renderSceneEnv,
+  SHOT_SIZE_EN,
+  stripDialogueLines,
   styleBibleToStyle,
   withVideoTextPolicy,
   type StyleBibleLike,
@@ -652,6 +656,9 @@ export class StoryboardService {
     const shot = await this.getShot(projectId, id);
     // W4 一致性：自动带入本镜角色的参考图（最多 3 张），保证跨镜角色一致
     const charRefs = await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
+    // P1-1 首帧五段式：景别/运镜/角色外貌/场景环境/风格 + 时间分段（对白行剔除）
+    // eslint-disable-next-line no-await-in-loop
+    const imageInput = await this.buildImageJobInput(projectId, shot);
     // B3：已有首帧时本次生成即「重跑」——快照旧产物指纹供结算时「不更坏」比对
     const prev = await this.prevFingerprintFor(projectId, shot, 'image');
     const rows = await this.db
@@ -663,14 +670,9 @@ export class StoryboardService {
         targetId: shot.id,
         status: 'pending',
         inputData: {
-          // 时间分段（migration 0025）：有分段时按段拼接（景别/运镜/画面描述），
-          // 无分段时与旧行为逐字节一致
-          prompt: withTimeSegmentBlock(
-            shot.visualPrompt ?? shot.subject ?? '',
-            timeSegmentsOf(shot.metadata),
-          ),
+          prompt: imageInput.prompt,
           negativePrompt: shot.negativePrompt ?? '',
-          references: [...(shot.referenceImageUrls ?? []), ...charRefs],
+          references: [...new Set([...(shot.referenceImageUrls ?? []), ...charRefs])],
           ...prev,
         },
       })
@@ -794,6 +796,110 @@ export class StoryboardService {
       `首帧恢复 ${projectId}：重试 ${retried}，跳过 ${skipped}，失败 ${failed}`,
     );
     return { retried, skipped, failed };
+  }
+
+  /**
+   * P1-1 首帧五段式 prompt 组装（与 buildVideoJobInput 同口径，单镜/重跑/批量共用）：
+   * Cinematography（运镜预设英文事实 + 景别/角度中英双语）+ Subject（角色外貌锁，
+   * 取 characters.canonical_description/costume，跨镜一致性的文字锚）+ Action
+   * （画面描述，剥掉「角色名：台词」行）+ Context（场次标题/摘要/逐镜场景环境）
+   * + Style（风格圣经），再叠时间分区块。
+   *
+   * 根因修复：启发式物化（boards LLM 超时降级）会把「旁白+台词」原文写进
+   * visualPrompt（实测："…苏绾绾：窗外那人…"直接当首帧 prompt）。旧首帧任务
+   * 只存 `prompt: shot.visualPrompt`，台词当画面描述、无景别/外貌/场景约束。
+   * 这里在任务创建时兜底成结构化提示词；物化阶段的 LLM 英文转写（job-worker）
+   * 是第一道，本方法是确定性保底 —— LLM 失败时首帧依然有完整视觉规格。
+   */
+  private async buildImageJobInput(
+    projectId: string,
+    shot: Shot,
+  ): Promise<{ prompt: string }> {
+    const [projRows, sceneRows] = await Promise.all([
+      this.db
+        .select({ styleBible: projects.styleBible })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1),
+      shot.sceneId
+        ? this.db
+            .select({ title: scenes.title, summary: scenes.summary })
+            .from(scenes)
+            .where(and(eq(scenes.projectId, projectId), eq(scenes.id, shot.sceneId)))
+            .limit(1)
+        : Promise.resolve([] as { title: string | null; summary: string | null }[]),
+    ]);
+    // 角色外貌锁：按镜头 characterIds 顺序取（与参考图注入同序，指认才不错位）
+    const charIds = (shot.characterIds ?? []).filter(Boolean).slice(0, 3);
+    const charRows = charIds.length
+      ? await this.db
+          .select({
+            id: characters.id,
+            name: characters.name,
+            canonicalDescription: characters.canonicalDescription,
+            costume: characters.costume,
+          })
+          .from(characters)
+          .where(and(eq(characters.projectId, projectId), inArray(characters.id, charIds)))
+      : [];
+    const byId = new Map(charRows.map((c) => [c.id, c] as const));
+    const appearanceLines = charIds
+      .flatMap((id) => {
+        const c = byId.get(id);
+        if (!c) return [];
+        const look = [c.canonicalDescription?.trim(), c.costume?.trim()]
+          .filter((v): v is string => Boolean(v))
+          .map((v) => v.replace(/[。；]+$/, ''))
+          .join('；');
+        return look ? [`${c.name}（出场角色，外貌/服装跨镜严格一致）：${look.slice(0, 220)}`] : [];
+      })
+      .slice(0, 3);
+
+    // 画面动作：剥掉台词行后的旁白描述（对白由 TTS/字幕层负责，不进画面）
+    const visual = stripDialogueLines(shot.visualPrompt ?? '').trim();
+    const action =
+      visual ||
+      stripDialogueLines(shot.action ?? '').trim() ||
+      shot.subject?.trim() ||
+      'Establishing shot of the scene, cinematic composition';
+    const sceneTitle = (sceneRows[0]?.title ?? '').trim();
+    // 场摘要同样剥掉台词行：启发式物化时 summary 是「旁白+台词」原文切片
+    const sceneSummary = stripDialogueLines(sceneRows[0]?.summary ?? '').trim();
+    const sceneEnvLine = renderSceneEnv(shot.sceneEnv ?? null);
+    // 去重：启发式物化时 scene.summary 是 visualPrompt 的切片，重复塞会强化冗余
+    const redundant = (part: string) =>
+      !part || (visual.length > 0 && (visual.includes(part) || part.includes(visual)));
+    const sizeLabel = SHOT_SIZE_LABELS[shot.shotSize] ?? shot.shotSize ?? '';
+    const sizeEn = SHOT_SIZE_EN[shot.shotSize] ?? '';
+    const angleLabel = CAMERA_ANGLE_LABELS[shot.cameraAngle] ?? shot.cameraAngle ?? '';
+    const angleEn = CAMERA_ANGLE_EN[shot.cameraAngle] ?? '';
+    const fivePart = buildFivePart({
+      cinematography: [
+        rigById(shot.movement)?.promptFragment ?? movementLabel(shot.movement),
+        [sizeLabel, sizeEn].filter(Boolean).join(' / '),
+        shot.lens ?? '',
+        [angleLabel, angleEn].filter(Boolean).join(' / '),
+      ]
+        .filter(Boolean)
+        .join('，'),
+      subject: appearanceLines.length > 0 ? appearanceLines.join('；') : undefined,
+      action,
+      context:
+        [
+          sceneTitle,
+          redundant(sceneSummary) ? '' : sceneSummary,
+          // 逐镜场景环境（结构化事实）：LLM 分镜表落库的 sceneEnv 优先，
+          // 启发式物化为空时由运行时 locations 兜底（执行期约束块注入）
+          sceneEnvLine,
+        ]
+          .filter(Boolean)
+          .join('\n') || undefined,
+      style: styleBibleToStyle(projRows[0]?.styleBible as StyleBibleLike | null),
+    });
+    const basePrompt = fivePart || (shot.visualPrompt ?? '').trim() || shot.action || '';
+    return {
+      prompt: withTimeSegmentBlock(basePrompt, timeSegmentsOf(shot.metadata)),
+    };
   }
 
   /**
@@ -1409,6 +1515,9 @@ export class StoryboardService {
       jobType === 'tts'
         ? []
         : await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
+    // P1-1 图片重跑与单镜同口径：五段式结构化 prompt（tts 无画面结构，原样保留）
+    // eslint-disable-next-line no-await-in-loop
+    const imageInput = jobType === 'image' ? await this.buildImageJobInput(projectId, shot) : null;
     // B3：图片重跑快照旧首帧指纹（tts 无产物指纹可比）
     const prev = jobType === 'image' ? await this.prevFingerprintFor(projectId, shot, 'image') : undefined;
     const rows = await this.db
@@ -1420,11 +1529,7 @@ export class StoryboardService {
         targetId: shot.id,
         status: 'pending',
         inputData: {
-          // 时间分段：图片任务按段拼接；tts 任务描述无时间结构，原样保留
-          prompt: withTimeSegmentBlock(
-            shot.visualPrompt ?? (jobType === 'image' ? shot.subject ?? '' : shot.dialogue ?? ''),
-            jobType === 'image' ? timeSegmentsOf(shot.metadata) : [],
-          ),
+          prompt: imageInput?.prompt ?? shot.visualPrompt ?? shot.dialogue ?? '',
           negativePrompt: jobType === 'image' ? shot.negativePrompt ?? '' : undefined,
           references: [...(jobType === 'image' ? shot.referenceImageUrls ?? [] : []), ...charRefs],
           ...prev,
@@ -1508,6 +1613,9 @@ export class StoryboardService {
             : await this.characterReferenceUrls(projectId, shot.characterIds ?? []);
         // eslint-disable-next-line no-await-in-loop
         const videoInput = jobType === 'video' ? await this.buildVideoJobInput(projectId, shot) : null;
+        // P1-1 批量首帧与单镜 generateShotImage 同口径：五段式结构化 prompt
+        // eslint-disable-next-line no-await-in-loop
+        const imageInput = jobType === 'image' ? await this.buildImageJobInput(projectId, shot) : null;
         const dependsOnJobId = jobType === 'video'
           ? opts?.dependsOnJobIdByShotId?.[shot.id]
           : undefined;
@@ -1526,13 +1634,10 @@ export class StoryboardService {
               }
             : jobType === 'image'
               ? {
-                  // 时间分段：批量首帧与单镜 generateShotImage 同口径
-                  prompt: withTimeSegmentBlock(
-                    shot.visualPrompt ?? shot.subject ?? '',
-                    timeSegmentsOf(shot.metadata),
-                  ),
+                  // P1-1 批量首帧与单镜 generateShotImage 同口径：五段式 + 时间分段
+                  prompt: imageInput?.prompt ?? shot.visualPrompt ?? shot.subject ?? '',
                   negativePrompt: shot.negativePrompt ?? '',
-                  references: [...(shot.referenceImageUrls ?? []), ...charRefs],
+                  references: [...new Set([...(shot.referenceImageUrls ?? []), ...charRefs])],
                 }
               : {
                   prompt: shot.visualPrompt ?? shot.dialogue ?? '',

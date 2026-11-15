@@ -33,6 +33,57 @@ export interface FivePartInput {
   style?: string;
 }
 
+/* ==================================================================
+ * 首帧五段式的英文视觉关键词 + 对白净化（图片通道专用）
+ * ------------------------------------------------------------------
+ * 启发式物化（boards LLM 超时降级）会把「旁白+台词」原文塞进 shots.visualPrompt
+ * （实测："李昭悄悄挂上琉璃灯…苏绾绾：窗外那人…"直接当首帧 prompt）。
+ * 这里给首帧 prompt 构建两件事：
+ *   1. stripDialogueLines：把「角色名：台词」行从画面描述里剥掉，只留可见动作；
+ *   2. 景别/机位的英文关键词映射：五段式 cinematography 段中英双语，
+ *      英文词是画图模型真正的强信号（实测中文「全景」经常被当氛围词忽略）。
+ */
+
+/** 单行「角色名：台词」（≤12 字前缀 + 冒号）——与 job-worker splitScenes 同口径 */
+const DIALOGUE_LINE_RE = /^[^：:\n]{1,12}[：:]\s*\S+/;
+
+/** 板文本是否被台词行污染（存在至少一行「角色名：台词」） */
+export function looksLikeDialogueBoard(text: string | null | undefined): boolean {
+  return (text ?? '')
+    .split(/\r?\n|(?<=[。！？!?])\s+/)
+    .some((line) => DIALOGUE_LINE_RE.test(line.trim()));
+}
+
+/** 剥掉「角色名：台词」行，保留旁白/动作描述；全是对白时返回空串 */
+export function stripDialogueLines(text: string | null | undefined): string {
+  const kept = (text ?? '')
+    .split(/\r?\n|(?<=[。！？!?])\s+/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !DIALOGUE_LINE_RE.test(l));
+  return kept.join(' ');
+}
+
+/** 景别 → 英文摄影术语（与 camera-rigs.SHOT_SIZE_LABELS 同键位口径；closeup 是启发式物化的历史别名） */
+export const SHOT_SIZE_EN: Record<string, string> = {
+  extreme_close_up: 'extreme close-up shot',
+  close_up: 'close-up shot',
+  closeup: 'close-up shot',
+  medium_close_up: 'medium close-up shot',
+  medium: 'medium shot',
+  wide: 'wide shot',
+  long: 'long shot, wide establishing view',
+};
+
+/** 机位角度 → 英文摄影术语（与 camera-rigs.CAMERA_ANGLE_LABELS 同键位口径） */
+export const CAMERA_ANGLE_EN: Record<string, string> = {
+  eye_level: 'eye level angle',
+  high: 'high angle',
+  low: 'low angle',
+  over_shoulder: 'over-the-shoulder angle',
+  top: 'top-down bird view',
+  dutch: 'dutch tilt angle',
+};
+
 export function buildFivePart(input: FivePartInput): string {
   return [
     input.cinematography,

@@ -43,6 +43,7 @@ import { DEFAULT_ASPECT_RATIO, normalizeAspect } from '@shared/aspect';
 // 全通道画面策略：禁字 / 画幅构图 / 场景环境 / 视觉风格，只在 prompt-formula 定义一次
 import {
   composeImageNegativePrompt,
+  looksLikeDialogueBoard,
   normalizeSceneEnv,
   renderImageConstraintBlock,
   styleBibleToStyle,
@@ -4212,7 +4213,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     );
     let shotTotal = 0;
     let segmentTotal = 0;
-    const imageTargets: { shotId: string; prompt: string }[] = [];
+    const imageTargets: {
+      shotId: string;
+      prompt: string;
+      dialogue?: string;
+      shotSize?: string;
+    }[] = [];
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
       const blockCast = this.matchCastIds(cast, [
@@ -4328,30 +4334,40 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           imageTargets.push({
             shotId: inserted.id,
             prompt: s.visualPrompt || s.dialogue || '全景 establishing shot',
+            // P1-1 画面转写入参：台词与景别一并给 LLM（台词只作动作/情绪依据）
+            dialogue: s.dialogue,
+            shotSize: s.shotSize,
           });
         }
       }
     }
 
-    // 门2 分镜确认：未过门不自动建首帧任务（分镜保持 draft，等 POST /approve(stage=storyboard)）；
-    // 已过门（或任务显式带 autoSubmit，兼容既有调用方）则照旧批量建图
+    // P1-1 首帧画面转写（物化阶段就完成，不是生成时才转写）：启发式拆分的
+    // visualPrompt 是「旁白+台词」原文（实测 “李昭悄悄挂上琉璃灯…苏绾绾：窗外那人…”
+    // 被直接当首帧 prompt），这里批量转写成英文视觉描述。失败不阻断：
+    // 任务创建侧 buildImageJobInput 的五段式确定性拼装仍会兜底。
+    if (imageTargets.length > 0) {
+      // eslint-disable-next-line no-await-in-loop
+      await this.rewriteShotVisualPrompts(job, imageTargets);
+    }
+
+    // 门2 分镜确认 + 前置资产时序（references 断裂根因修复）：
+    // 物化器**不再 inline 建首帧任务**。旧实现在这里直接插 image jobs
+    // （inputData 只有 prompt）——既不注入角色参考图，也不等前置资产完成，
+    // 角色定妆图 URL 后写回的永远进不了任务（实测：角色表 19:10 已回填，
+    // 19:13 物化建的任务 references 仍为空）。
+    // 现在只推进状态：已过门 → assets_generating，由 driveProjectPipeline 的
+    // 前置资产串行链（人物 → 场景 → 道具）把定妆图 URL 写回 characters /
+    // locations 并全部就绪后，才经 batchGenerate 批量建首帧（五段式 prompt +
+    // references 注入）；资产仍在生成时，链路自会停在本段等待。
     const approvals = await this.pipelineApprovals(job.projectId);
     const autoSubmit =
       Boolean(approvals.storyboard) ||
       ((job.inputData ?? {}) as Record<string, unknown>).autoSubmit === true;
     if (job.projectId && imageTargets.length > 0 && autoSubmit) {
-      await this.db.insert(generationJobs).values(
-        imageTargets.map((t, i) => ({
-          projectId: job.projectId as string,
-          jobType: 'image' as const,
-          targetType: 'shot' as const,
-          targetId: t.shotId,
-          status: 'pending' as const,
-          priority: 65 - Math.min(30, i),
-          inputData: { prompt: t.prompt },
-        })),
+      this.logger.log(
+        `物化完成 ${job.id}：${imageTargets.length} 镜等前置资产链完成后批量建首帧（不再 inline 建图）`,
       );
-      this.logger.log(`物化后已创建 ${imageTargets.length} 个首帧任务`);
     } else if (imageTargets.length > 0) {
       this.logger.log(`分镜已物化，等待分镜确认门（项目 ${job.projectId}）：确认后自动批量生成`);
     }
@@ -4390,6 +4406,84 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `剧本物化完成 ${job.id}：${blocks.length} 场 ${segmentTotal} 片段 ${shotTotal} 镜，首帧任务 ${imageTargets.length}`,
     );
+  }
+
+  /**
+   * P1-1 首帧画面转写（物化阶段）：对白污染的 visualPrompt → 英文视觉描述。
+   * 只转写含「角色名：台词」行的镜头（looksLikeDialogueBoard），干净的板文本
+   * （LLM 分镜表产物）不动。单次 LLM 调用批量转写；任何失败都只降级不阻断 ——
+   * 首帧任务创建时 buildImageJobInput 的五段式拼装仍是确定性兜底。
+   */
+  private async rewriteShotVisualPrompts(
+    job: GenerationJob,
+    targets: { shotId: string; prompt: string; dialogue?: string; shotSize?: string }[],
+  ): Promise<void> {
+    // 两种对白污染形态都要抓：
+    //   1. 「旁白 台词」合并块（wide 兜底镜）：含「角色名：台词」行；
+    //   2. 「X特写，<台词>」对白镜：台词原文嵌在描述里（台词永远不该进画面提示词）。
+    //    匹配时剥掉说话人前缀（prompt 里写的是「X特写，台词」，不是「X：台词」）。
+    const pending = targets.filter((t) => {
+      if (looksLikeDialogueBoard(t.prompt)) return true;
+      const bare = (t.dialogue ?? '').trim().replace(/^[^：:\n]{1,12}[：:]\s*/, '');
+      return bare.length >= 10 && t.prompt.includes(bare.slice(0, 10));
+    });
+    if (pending.length === 0) return;
+    try {
+      const sceneRows = await this.db
+        .select({ id: scenes.id, title: scenes.title, summary: scenes.summary })
+        .from(scenes)
+        .where(eq(scenes.projectId, job.projectId as string));
+      const shotSceneRows = await this.db
+        .select({ id: shots.id, sceneId: shots.sceneId })
+        .from(shots)
+        .where(
+          and(
+            eq(shots.projectId, job.projectId as string),
+            inArray(
+              shots.id,
+              pending.map((t) => t.shotId),
+            ),
+          ),
+        );
+      const sceneIdByShot = new Map(shotSceneRows.map((s) => [s.id, s.sceneId] as const));
+      const sceneById = new Map(sceneRows.map((s) => [s.id, s] as const));
+      const sceneText = (shotId: string): string => {
+        const sc = sceneById.get(sceneIdByShot.get(shotId) ?? '');
+        return [sc?.title, sc?.summary].filter(Boolean).join('：');
+      };
+      const res = await this.storySkills.runShotVisualRewrite({
+        shots: pending.map((t, i) => ({
+          index: i + 1,
+          shotSize: t.shotSize,
+          visualPrompt: t.prompt,
+          dialogue: t.dialogue,
+          sceneSummary: sceneText(t.shotId),
+        })),
+        providerName: job.providerName ?? undefined,
+      });
+      const byIndex = new Map(res.items.map((it) => [it.index, it.visualPrompt] as const));
+      let applied = 0;
+      for (const [i, t] of pending.entries()) {
+        const next = byIndex.get(i + 1);
+        if (!next) continue;
+        applied += 1;
+        // eslint-disable-next-line no-await-in-loop
+        await this.db
+          .update(shots)
+          .set({ visualPrompt: next, subject: next.slice(0, 200), updatedAt: new Date() })
+          .where(eq(shots.id, t.shotId));
+        t.prompt = next;
+      }
+      if (applied > 0) {
+        this.logger.log(
+          `首帧画面转写完成 ${job.id}：${applied}/${pending.length} 镜已改写为英文视觉描述`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `首帧画面转写失败 ${job.id}（保底走五段式结构化）: ${(e as Error).message}`,
+      );
+    }
   }
 
   /** 专业参数收敛：非法值回落默认，保证物化永不崩 */

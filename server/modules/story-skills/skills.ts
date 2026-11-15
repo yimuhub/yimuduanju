@@ -342,3 +342,55 @@ export function buildSheetPrompt(
     `角色：${who}`
   );
 }
+
+/**
+ * 首帧画面转写技能（P1-1）：启发式拆分物化的 visualPrompt 是「旁白+台词」原文，
+ * 直接当首帧 prompt 等于把剧本台词喂给画图模型。这里在**物化阶段**把台词连同
+ * 场景上下文转写成英文视觉描述（每镜 25-60 英词，摄影机可记录的物理现象），
+ * 让首帧任务拿到的是景别/动作/光影明确的画面规格。失败由调用方降级：
+ * 任务创建侧 buildImageJobInput 的五段式确定性拼装仍会兜底。
+ */
+export const SHOT_VISUAL_REWRITE_CONTRACT = `只输出一个 JSON 对象，不要输出任何解释文字，格式如下：
+{"items":[{"index":1,"visualPrompt":"Night interior of a princess chamber, a young man in a dark navy robe quietly hangs a glazed lantern by the open window, warm lantern glow washing over carved wooden frames"},{"index":2,"...":"..."}]}
+
+字段规则：
+- index 必须与输入镜头的编号一一对应，数量相等，不得增删。
+- visualPrompt 一律用英文，25-60 个英文词，只写摄影机能记录的物理现象：人物可见动作、表情、站位、光影、镜头景别。
+- 台词绝不写进画面：不要对话气泡、不要字幕、不要「she says / he replies」这类语言行为描写，把台词背后的动作与情绪外化成可见行为（如攥紧袖口、挑眉、别过脸去）。
+- 场景环境按输入的场摘要写：地点、时段、光源、天气落进描述；同一场相邻镜头的光源方向保持一致。
+- 每句以景别或构图开头（如 wide shot / close-up / medium shot），与输入的 shotSize 一致。`;
+
+export function buildShotVisualRewritePrompt(
+  shots: {
+    index: number;
+    shotSize?: string;
+    visualPrompt?: string;
+    dialogue?: string;
+    sceneSummary?: string;
+  }[],
+): string {
+  const sizeEn: Record<string, string> = {
+    extreme_close_up: 'extreme close-up',
+    close_up: 'close-up',
+    medium_close_up: 'medium close-up',
+    medium: 'medium shot',
+    wide: 'wide shot',
+    long: 'long shot',
+  };
+  const lines = shots
+    .map((s) => {
+      const parts = [
+        `index=${s.index}`,
+        s.shotSize ? `shotSize=${sizeEn[s.shotSize] ?? s.shotSize}` : '',
+        s.sceneSummary ? `场景=${s.sceneSummary.slice(0, 160)}` : '',
+        s.visualPrompt ? `原文=${s.visualPrompt.slice(0, 300)}` : '',
+        s.dialogue ? `台词（只作情绪与动作依据，不进画面）=${s.dialogue.slice(0, 120)}` : '',
+      ].filter(Boolean);
+      return `- ${parts.join('；')}`;
+    })
+    .join('\n');
+  return (
+    `你是分镜画面转写师：把下面每个镜头的中文原文（旁白+台词）改写成**英文视觉描述**，供文生图模型出首帧。\n` +
+    `${SHOT_VISUAL_REWRITE_CONTRACT}\n\n【镜头清单】\n${lines}`
+  );
+}

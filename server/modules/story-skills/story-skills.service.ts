@@ -9,6 +9,7 @@ import {
   buildNovelAdaptPrompt,
   buildRewritePrompt,
   buildRigPrompt,
+  buildShotVisualRewritePrompt,
   type BoardsAssetCatalog,
 } from './skills';
 import { CAMERA_RIGS } from '@shared/camera-rigs';
@@ -308,6 +309,67 @@ export class StorySkillsService {
     const characters = this.parseCharacterJson(raw);
     this.logger.log(`人物卡技能完成：${characters.length} 个人物`);
     return { skillId: 'character_design', characters };
+  }
+
+  /**
+   * 首帧画面转写技能（P1-1）：对白污染的中文板文本 → 英文视觉描述。
+   * 调用方（job-worker 物化阶段）批量传入镜头，一次 LLM 调用转写全部，
+   * 解析失败的条目直接缺失，调用方对缺失条目保持原值（确定性五段式兜底）。
+   */
+  async runShotVisualRewrite(input: {
+    shots: {
+      index: number;
+      shotSize?: string;
+      visualPrompt?: string;
+      dialogue?: string;
+      sceneSummary?: string;
+    }[];
+    providerName?: string;
+    model?: string;
+  }): Promise<{ items: { index: number; visualPrompt: string }[] }> {
+    if (input.shots.length === 0) return { items: [] };
+    let raw: string;
+    try {
+      raw = await this.modelGateway.generateText(
+        { prompt: buildShotVisualRewritePrompt(input.shots), model: input.model },
+        input.providerName,
+      );
+    } catch (e) {
+      throw new BadRequestException(`画面转写技能调用失败：${(e as Error)?.message ?? '未知错误'}`);
+    }
+    const items = this.parseVisualRewriteJson(raw, input.shots.length);
+    this.logger.log(
+      `画面转写技能完成：${items.length}/${input.shots.length} 镜已转写为英文视觉描述`,
+    );
+    return { items };
+  }
+
+  private parseVisualRewriteJson(
+    raw: string,
+    expectedCount: number,
+  ): { index: number; visualPrompt: string }[] {
+    const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start < 0 || end <= start) return [];
+    try {
+      const obj = JSON.parse(cleaned.slice(start, end + 1)) as unknown;
+      const arr = (obj as { items?: unknown }).items;
+      if (!Array.isArray(arr)) return [];
+      const out: { index: number; visualPrompt: string }[] = [];
+      const seen = new Set<number>();
+      for (const b of arr.slice(0, expectedCount)) {
+        const r = (b ?? {}) as Record<string, unknown>;
+        const index = Number(r.index);
+        const text = typeof r.visualPrompt === 'string' ? r.visualPrompt.trim() : '';
+        if (!Number.isFinite(index) || seen.has(index) || text.length < 12) continue;
+        seen.add(index);
+        out.push({ index, visualPrompt: text.slice(0, 600) });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   private parseCharacterJson(raw: string): CharacterCard[] {
