@@ -25,7 +25,7 @@ import {
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { mkdir, open, stat, writeFile } from 'fs/promises';
+import { readFile,  mkdir, open, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type {
   AxisDirection,
@@ -2290,6 +2290,23 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
      */
     let keepStaged = false;
     try {
+      // W 公网 URL 兜底：首帧/尾帧/参考图如果是本地 /uploads/ 路径，
+      // 云端视频 API 无法下载——上传到免费图床获取公网 URL。
+      const resolvePublic = async (u: string | undefined): Promise<string | undefined> => {
+        if (!u) return u;
+        if (/^https?:\/\//i.test(u)) return u; // 已是公网 URL
+        if (!u.startsWith('/uploads/')) return u; // data: / 其他格式不动
+        const pubUrl = await this.uploadToPublicHost(u);
+        if (pubUrl) this.logger.log(`帧图已上传公网图床：${u.slice(-20)} → ${pubUrl.slice(0, 50)}`);
+        return pubUrl ?? u; // 上传失败回落原路径（让 Agnes 报明确错误而非静默）
+      };
+      const pubImageUrl = await resolvePublic(imageUrl);
+      const pubLastFrame = lastFrameUrl ? await resolvePublic(lastFrameUrl) : undefined;
+      const pubRefImages: string[] = [];
+      for (const ref of (refs.slice(3).filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u)).filter((u) => u !== imageUrl && u !== lastFrameUrl))) {
+        const resolved = await resolvePublic(ref);
+        if (resolved) pubRefImages.push(resolved);
+      }
       const created = await this.createVideoWithKeyPool(
         job,
         {
@@ -2298,17 +2315,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             typeof input.duration === 'number'
               ? input.duration
               : composed.duration || 5,
-          imageUrl,
+          imageUrl: pubImageUrl,
           referenceVideoUrl: refs[1],
-          // W 多图参考（官方 reference 模式 images[]，≤5）：refs[3+] 是前置资产
-          // 阶段注入的角色定妆照/场景图/道具图——排除白模位与首尾帧去重后
-          // 传给网关，配 <Picture N> 占位符实现多参一致性生成。
-          referenceImages: refs
-            .slice(3)
-            .filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u))
-            .filter((u) => u !== imageUrl && u !== lastFrameUrl)
-            .slice(0, 4),
-          lastFrameUrl,
+          referenceImages: pubRefImages.slice(0, 4),
+          lastFrameUrl: pubLastFrame,
           model: opts?.model,
           // Agnes 的 aspect_ratio 与像素尺寸白名单都跟随项目画幅，
           // 不再写死 9:16 让 16:9 项目出竖屏视频。
@@ -5134,6 +5144,39 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       url.startsWith('data:') ? (url.slice(5, url.indexOf(';')) || fallbackMime) : fallbackMime,
     );
     return local?.fileUrl ?? url;
+  }
+
+  /**
+   * W 免费图床兜底：本地 /uploads/ 路径无法被云端视频 API 访问——
+   * 用 catbox.moe（免费、无需注册、永久存储）上传获取公网 URL。
+   * 上传失败（网络/服务不可用）返回 null，调用方回退到不传参考图。
+   */
+  private async uploadToPublicHost(
+    localUrl: string,
+  ): Promise<string | null> {
+    try {
+      const filePath = localUrl.startsWith('/uploads/')
+        ? join(process.cwd(), 'data', localUrl)
+        : null;
+          try { await readFile(filePath); } catch { return null; }
+      const buf = await readFile(filePath);
+      if (buf.length > 50 * 1024 * 1024) return null; // 50MB 上限
+
+      const form = new FormData();
+      form.append('reqtype', 'fileupload');
+      form.append('fileToUpload', new Blob([buf], { type: 'image/png' }), 'frame.png');
+      const res = await fetch('https://catbox.moe/user/api.php', {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return null;
+      const text = (await res.text()).trim();
+      if (text.startsWith('https://')) return text;
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**
