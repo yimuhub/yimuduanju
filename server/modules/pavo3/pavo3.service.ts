@@ -18,6 +18,8 @@ import { decryptApiKey } from '../../common/crypto.util';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { BillingService } from '../billing/billing.service';
 import { ModelGatewayService } from '../generation/model-gateway.service';
+import { resolveUpstreamFrameUrl } from '../generation/upstream-frame';
+import { toProviderImageInput } from '../generation/media-input';
 import {
   aspectCompositionLine,
   aspectGuardLine,
@@ -273,6 +275,22 @@ export class Pavo3Service {
     return ref?.url;
   }
 
+  /**
+   * 视频帧公网化：本地 /uploads 路径先回查图片任务回传的上游 CDN 地址
+   * （Agnes 等只吃公网 URL 的通道必需）；查不到再退 data URL（openai/方舟可吃）。
+   * 什么都不行返回 undefined，由调用方决定降级/报错，绝不把本地路径裸发给上游。
+   */
+  private async publicizeFrame(u?: string | null): Promise<string | undefined> {
+    const raw = typeof u === 'string' ? u.trim() : '';
+    if (!raw) return undefined;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (/^data:/i.test(raw)) return raw;
+    const remote = await resolveUpstreamFrameUrl(this.db, raw);
+    if (remote) return remote;
+    const dataUrl = await toProviderImageInput(raw);
+    return dataUrl ?? undefined;
+  }
+
   /** 返回全部图片参考的 url 数组（按前端传入顺序，用于首尾帧等多图场景） */
   private pickImageRefs(req: P3GenerateRequest): string[] {
     return (req.refs ?? [])
@@ -382,7 +400,18 @@ export class Pavo3Service {
 
     // Agnes 专用通道直接复用 ModelGatewayService
     if (formatType === 'agnes') {
-      const refImages = this.pickImageRefs(req);
+      const rawRefs = this.pickImageRefs(req);
+      // 帧公网化（公网 URL 优先 → data URL 也不收 → 报明原因，绝不静默退化成文生视频）
+      const firstFrame = await this.publicizeFrame(rawRefs[0]);
+      const lastFrame = await this.publicizeFrame(rawRefs[1]);
+      if (rawRefs[0] && !firstFrame) {
+        return {
+          ok: false,
+          message:
+            '首帧为本地路径且无公网 URL 可用（图片任务未回传 CDN 地址）；' +
+            '请先重生成首帧（使用返回公网 URL 的图片供应商）或配置公网媒体基址后重试',
+        };
+      }
       const created = req.taskId
         ? { taskId: req.taskId }
         : await this.modelGateway.generateVideo(
@@ -396,8 +425,8 @@ export class Pavo3Service {
               model,
               duration: req.duration ?? 5,
               aspectRatio: req.size ?? '9:16',
-              imageUrl: refImages[0],
-              lastFrameUrl: refImages[1],
+              imageUrl: firstFrame,
+              lastFrameUrl: lastFrame,
             },
             provider.name,
           );
@@ -444,14 +473,14 @@ export class Pavo3Service {
         size: isArk ? '720p' : RATIO_SIZES[req.size ?? '9:16'] ?? '1080x1920',
       };
       if (req.duration) body.duration = req.duration;
-      const refImage = this.pickImageRef(req);
+      const refImage = await this.publicizeFrame(this.pickImageRef(req));
       if (refImage) {
         if (isArk) body.image_url = refImage;
         else body.image = refImage;
       }
-      const refImages = this.pickImageRefs(req);
-      if (refImages.length > 1) {
-        body.image_tail = refImages[1];
+      const tailFrame = await this.publicizeFrame(this.pickImageRefs(req)[1]);
+      if (tailFrame) {
+        body.image_tail = tailFrame;
       }
 
       let data: any;

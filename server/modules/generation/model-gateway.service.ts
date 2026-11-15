@@ -999,13 +999,23 @@ export class ModelGatewayService {
       throw new BadRequestException('Agnes 视频响应中无 video_id');
     }
     this.logger.log(
-      `Agnes 视频任务已创建 ${videoId}（mode=${body.mode}${frameNotSent ? '，首帧未送达' : ''}）`,
+      `Agnes 视频任务已创建 ${videoId}（mode=${body.mode}` +
+        `，first_frame=${this.frameOriginForLog(params.imageUrl)}，last_frame=${this.frameOriginForLog(params.lastFrameUrl)}` +
+        `${frameNotSent ? '，首帧未送达' : ''}）`,
     );
     return {
       taskId: `agnes:${videoId}:${model}`,
       status: data.status ?? 'running',
       frameNotSent,
     };
+  }
+
+  /** 首帧/尾帧来源摘要：公网 URL 记前 80 字符，其余记形态标记。排障时一眼看出「发出去的到底是什么」 */
+  private frameOriginForLog(u?: string): string {
+    if (!u) return '无';
+    if (/^https?:\/\//i.test(u)) return u.slice(0, 80);
+    if (/^data:/i.test(u)) return `data:${u.slice(5, 20)}…`;
+    return `local:${u.slice(0, 60)}`;
   }
 
   /** Agnes 轮询：GET {root}/agnesapi?video_id=&model_name=（root = 基址去 /v1） */

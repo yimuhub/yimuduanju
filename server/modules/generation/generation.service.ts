@@ -42,6 +42,16 @@ const OPEN_JOB_STATUSES: JobStatus[] = ['pending', 'queued', 'running', 'retryin
 const CANCELLABLE_JOB_STATUSES: JobStatus[] = [...OPEN_JOB_STATUSES, 'paused'];
 
 /**
+ * 「media URL could not be downloaded」自动重试参数：
+ * 上游拉不到我们给的首帧/尾帧地址时不立刻判死 —— 放回 pending、写明原因、
+ * 延迟 MEDIA_URL_RETRY_DELAY_MS 后才允许认领（mediaUrlRetryAt 认领门），
+ * 给「图片回传/隧道重连/URL 解析」留时间；超过 MEDIA_URL_RETRY_MAX 次才落 failed。
+ */
+const MEDIA_URL_DOWNLOAD_FAIL_RE = /media URL could not be downloaded/i;
+const MEDIA_URL_RETRY_DELAY_MS = 10_000;
+const MEDIA_URL_RETRY_MAX = 3;
+
+/**
  * 分类型并发水位的环境变量兜底：非法值（"abc"→NaN）、空串（Number("")→0）、
  * 负数都会让该类型的水位判定永不成立 → 任务永久饿死。统一回退默认值。
  */
@@ -540,6 +550,8 @@ export class GenerationService {
   ): Promise<GenerationJob | null> {
     // 有 blockedReason 的视频仍在等待首帧，必须在 SQL 层排除，避免 limit(1) 队头阻塞。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
+    // 「media URL 下载失败」自动重试的延迟门：mediaUrlRetryAt 未到点的任务本轮不认领
+    const retryGateReady = sql`(${generationJobs.inputData} ->> 'mediaUrlRetryAt') IS NULL OR (${generationJobs.inputData} ->> 'mediaUrlRetryAt')::timestamptz <= now()`;
     // 全站唯一排序键 queue_seq（migration 0022）：与 BullMQ 队列模式的
     // claimForQueue 完全同源，Redis 掉线降级时不再出现「顺序语义突变」。
     // 旧实现按 priority DESC + createdAt，而同事务批量插入的 createdAt 完全相同、
@@ -552,6 +564,7 @@ export class GenerationService {
         and(
           eq(generationJobs.status, 'pending'),
           dependencyReady,
+          retryGateReady,
           excludeIds.length ? sql`${generationJobs.id}::text <> all(${excludeIds})` : undefined,
         ),
       )
@@ -590,6 +603,7 @@ export class GenerationService {
           eq(generationJobs.id, pickedId),
           eq(generationJobs.status, 'pending'),
           dependencyReady,
+          retryGateReady,
         ),
       )
       .returning();
@@ -617,6 +631,9 @@ export class GenerationService {
         status: 'pending',
         retryCount: job.retryCount + 1,
         errorMessage: null,
+        // 手动重试 = 用户已确认环境有变（如隧道恢复/配置已改）：
+        // 清掉「media URL 下载失败」的延迟门与计数，立即重投、重计 3 次额度。
+        inputData: sql`coalesce(${generationJobs.inputData}, '{}'::jsonb) - 'mediaUrlRetryAt' - 'mediaUrlRetries'`,
         // 修复（脏状态残留）：旧实现只重置 status / retryCount / errorMessage，
         // 却保留 progress、outputData、startedAt、completedAt、externalTaskId。后果：
         // 1) progress 仍是上次的 95，pollJob 一进演示分支立刻封顶，看不出真的重跑了；
@@ -743,6 +760,47 @@ export class GenerationService {
         }
         if (result.status === 'failed') {
           const message = result.errorMessage ?? '视频生成失败';
+          /*
+           * 「media URL could not be downloaded」≠ 镜头本身的问题：是上游拉不到
+           * 我们给的首帧/尾帧地址（本地路径、隧道断开、暂存副本过期等）。
+           * 旧实现直接判 failed —— 用户点重试秒失败，既没给图片回传/URL 解析
+           * 留时间，也不知道该修什么。现在：放回 pending + 写明「首帧需公网 URL」
+           * + 10s 后才允许再次认领（mediaUrlRetryAt 认领门），限 3 次防死循环；
+           * 超次才落 failed 并带上修复指引。
+           */
+          if (MEDIA_URL_DOWNLOAD_FAIL_RE.test(message)) {
+            const input = (job.inputData ?? {}) as Record<string, unknown>;
+            const mediaRetries = Number(input.mediaUrlRetries ?? 0) + 1;
+            if (mediaRetries <= MEDIA_URL_RETRY_MAX) {
+              const retryAtIso = new Date(Date.now() + MEDIA_URL_RETRY_DELAY_MS).toISOString();
+              this.logger.warn(
+                `视频任务 ${id} 上游拉不到媒体 URL，第 ${mediaRetries}/${MEDIA_URL_RETRY_MAX} 次自动重试（${MEDIA_URL_RETRY_DELAY_MS / 1000}s 后重新提交）`,
+              );
+              const rows = await this.db
+                .update(generationJobs)
+                .set({
+                  status: 'pending',
+                  queueSeq: sql`nextval('generation_jobs_queue_seq_seq')`,
+                  externalTaskId: null,
+                  boundKeyId: null,
+                  errorMessage:
+                    '首帧需公网 URL，当前为本地路径或暂存地址不可达；已安排自动重试' +
+                    `（第 ${mediaRetries}/${MEDIA_URL_RETRY_MAX} 次，${MEDIA_URL_RETRY_DELAY_MS / 1000}s 后重新提交）。` +
+                    '若反复失败请检查隧道/对象存储，或改用返回公网 URL 的图片供应商',
+                  progress: 0,
+                  inputData: sql`jsonb_set(jsonb_set(coalesce(${generationJobs.inputData}, '{}'::jsonb), '{mediaUrlRetries}', to_jsonb(${mediaRetries}::int), true), '{mediaUrlRetryAt}', to_jsonb(${retryAtIso}::text), true)`,
+                  updatedAt: new Date(),
+                })
+                .where(eq(generationJobs.id, id))
+                .returning();
+              return this.mapJob(rows[0]);
+            }
+            return this.settleJobFailure(
+              id,
+              `${message}（首帧需公网 URL：已自动重试 ${MEDIA_URL_RETRY_MAX} 次仍拉不到；` +
+                '请检查 YIMU_PUBLIC_MEDIA_BASE/隧道是否存活、图片供应商是否返回公网 URL，处理后手动重试）',
+            );
+          }
           /*
            * Agnes 偶发「上游任务查不到」：建单明明成功，轮询时上游却按
            * (account, taskId) 返回 404 task not found。诱因包括上游免费队列

@@ -100,6 +100,12 @@ import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-pro
 // 就被迫拉起整条 Controller → Service → DI 依赖链。
 import { uploadDir } from '../assets/upload-dir';
 import { releaseStagedFrames, stageFramesForJob, sweepExpiredStagedFrames } from './staged-media';
+import {
+  isHttpUrl,
+  isPublicUrlReachable,
+  resolveUpstreamFrameUrl,
+  type UpstreamFrameMeta,
+} from './upstream-frame';
 import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import {
@@ -839,19 +845,22 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const localJobs = inArray(generationJobs.jobType, ['parse_script', 'edit', 'qc', 'asset_prep']);
     // 有 blockedReason 的视频在等首帧，必须跳过，避免队头阻塞整条队列。
     const dependencyReady = sql`${generationJobs.inputData} ->> 'blockedReason' IS NULL`;
+    // 「media URL 下载失败」自动重试的延迟门：未到 mediaUrlRetryAt 的任务本轮不认领
+    const retryGateReady = sql`(${generationJobs.inputData} ->> 'mediaUrlRetryAt') IS NULL OR (${generationJobs.inputData} ->> 'mediaUrlRetryAt')::timestamptz <= now()`;
     const providerTypeKey = sql`coalesce(${generationJobs.providerName}, ${DEFAULT_PROVIDER_KEY}) || '|' || ${generationJobs.jobType}`;
     const where =
       cooling.length > 0
         ? and(
             eq(generationJobs.status, 'pending'),
             dependencyReady,
+            retryGateReady,
             or(
               localJobs,
               isNull(generationJobs.providerName),
               notInArray(providerTypeKey, cooling),
             ),
           )
-        : and(eq(generationJobs.status, 'pending'), dependencyReady);
+        : and(eq(generationJobs.status, 'pending'), dependencyReady, retryGateReady);
     // V8 确定性 FIFO：queue_seq 是数据库序列自增的提交顺序，也是排队页
     // 展示与人工调序的唯一字段。旧实现按 _created_at（同事务批量插入时间戳
     // 完全相同、无 tiebreaker），顺序不确定；降级模式还按 priority 另算一套。
@@ -900,6 +909,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           eq(generationJobs.id, rows[0].id),
           eq(generationJobs.status, 'pending'),
           dependencyReady,
+          retryGateReady,
         ),
       )
       .returning();
@@ -1595,6 +1605,27 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       firstUrl && /^https?:\/\//i.test(firstUrl) ? firstUrl : undefined;
     if (stableUrl) {
       await this.writebackToTarget(job, { imageUrl: stableUrl });
+      /*
+       * 公网 URL 快路径落盘（task 修复第 1 层）：{local, remote} 配对写进
+       * shots.metadata.upstreamFrame。视频侧（Agnes 只吃公网 URL）当本地帧
+       * 与 local 一致时直接取 remote，不必再按产物 URL 扫图片任务表。
+       * 注意 local 必须成对校验：用户重生成首帧后旧 remote 立即失效。
+       */
+      if (upstreamUrl && job.targetType === 'shot' && job.targetId) {
+        await this.db
+          .update(shots)
+          .set({
+            metadata: sql`jsonb_set(coalesce(${shots.metadata}, '{}'::jsonb), '{upstreamFrame}', ${JSON.stringify({
+              local: stableUrl,
+              remote: upstreamUrl,
+            })}::jsonb, true)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(shots.id, job.targetId))
+          .catch((e: Error) =>
+            this.logger.warn(`上游公网首帧地址落盘失败 ${job.targetId}：${e.message}`),
+          );
+      }
       // W 项目封面回填：首个成功首帧自动设为项目封面（thumbnail_url），
       // 让"我的项目"列表每个项目都有可辨识的真实图（零额外生成成本）。
       try {
@@ -2128,25 +2159,44 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const policy = await this.loadVisualPolicy(job.projectId);
     const composed = await this.buildVideoPrompt(job, rawPrompt, input, policy);
     const prompt = composed.prompt;
+    /*
+     * 引用位次契约（修复 DB 实证的 b953370d 全军覆没）：
+     *   refs[0]=首帧、refs[1]=白模、refs[2]=尾帧、refs[3+]=角色图。
+     * 旧实现把数组 filter(Boolean) 压缩 —— 白模/尾帧缺失时角色图滑进 1/2 位，
+     * refs[2] 被当尾帧整张发给 keyframe 模式。这里改为**保位映射**：
+     * 非字符串/空串都归位为 ''，绝不前移。
+     */
     const refs = Array.isArray(input.references)
-      ? (input.references as unknown[]).filter(
-          (r): r is string => typeof r === 'string' && r.length > 0,
+      ? (input.references as unknown[]).map((r) =>
+          typeof r === 'string' && r.trim().length > 0 ? r : '',
         )
       : [];
     // 一键成片时 references 在建任务那刻首帧尚未生成：执行时按镜头现状补空
     // （只填空不覆盖已有引用；变体任务同样受益）
-    let imageUrl = refs[0];
-    let lastFrameUrl = refs[2];
+    let imageUrl = refs[0] || undefined;
+    let lastFrameUrl = refs[2] || undefined;
     // 带首帧依赖的任务（一键成片）必须以镜头当前首帧为准：
     // 建单时快照的 references 可能是旧帧或空值，重试后新帧会被旧值挡住。
     const dependsOnJobId =
       typeof input.dependsOnJobId === 'string' ? input.dependsOnJobId : undefined;
-    if ((dependsOnJobId || !imageUrl || !lastFrameUrl) && job.targetType === 'shot' && job.targetId) {
+    let shotMeta: UpstreamFrameMeta | null = null;
+    let composedRefs: string[] = [];
+    // 镜头视频任务一律取镜头现状（首帧/尾帧/组合参考图）：尾帧位防误用的
+    // 判定依赖 referenceImageUrls，不能只在「缺引用」时才查。
+    if (job.targetType === 'shot' && job.targetId) {
       const shotRows = await this.db
-        .select({ startFrameUrl: shots.startFrameUrl, endFrameUrl: shots.endFrameUrl })
+        .select({
+          startFrameUrl: shots.startFrameUrl,
+          endFrameUrl: shots.endFrameUrl,
+          metadata: shots.metadata,
+          referenceImageUrls: shots.referenceImageUrls,
+        })
         .from(shots)
         .where(eq(shots.id, job.targetId))
         .limit(1);
+      shotMeta = ((shotRows[0]?.metadata ?? null) as { upstreamFrame?: UpstreamFrameMeta } | null)
+        ?.upstreamFrame ?? null;
+      composedRefs = shotRows[0]?.referenceImageUrls ?? [];
       if (shotRows[0]?.startFrameUrl && (dependsOnJobId || !imageUrl)) {
         imageUrl = shotRows[0].startFrameUrl;
       }
@@ -2154,16 +2204,30 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     // 白模选填：references[1] 为白模位（generateShotVideo 约定：首帧/白模/尾帧/角色图）。
     // 网关侧再做双门控（供应商 videoReference 开关 + 公网 URL），此处只透传不决策。
-    // 首帧优先用生图时上游 CDN 回传的原始地址：只吃公网 URL 的供应商（Agnes）
-    // 拿到本地 /uploads 等于没有首帧，会静默退化成纯文生视频。
-    if (
-      imageUrl &&
-      !/^https?:\/\//i.test(imageUrl) &&
-      job.targetType === 'shot' &&
-      job.targetId
-    ) {
-      const upstreamFrame = await this.latestUpstreamFrame(job.targetId);
-      if (upstreamFrame) imageUrl = upstreamFrame;
+    /*
+     * 尾帧位防误用（老任务兼容）：生产方旧实现 filter(Boolean) 压缩空槽，
+     * 白模/尾帧缺失时角色图落在 refs[2]。它同时是本镜组合参考图
+     * （shots.referenceImageUrls）成员 —— 据此判定这是被压缩的角色图，
+     * 不是尾帧，直接丢弃（网关自然走「仅首帧」的 reference 模式）。
+     * 真尾帧是独立生成的成帧，不会出现在组合参考图里。
+     */
+    if (lastFrameUrl && composedRefs.includes(lastFrameUrl)) {
+      this.logger.log(
+        `任务 ${job.id} 尾帧位实为本镜组合参考图（旧数组压缩），已丢弃尾帧改走仅首帧模式`,
+      );
+      lastFrameUrl = undefined;
+    }
+    /*
+     * 首帧/尾帧优先用生图时上游 CDN 回传的原始地址：只吃公网 URL 的供应商
+     * （Agnes）拿到本地 /uploads 等于没有首帧。三级查找见 upstream-frame.ts。
+     */
+    if (imageUrl && !isHttpUrl(imageUrl) && job.targetType === 'shot') {
+      const upstream = await resolveUpstreamFrameUrl(this.db, imageUrl, job.targetId, shotMeta);
+      if (upstream) imageUrl = upstream;
+    }
+    if (lastFrameUrl && !isHttpUrl(lastFrameUrl)) {
+      const upstream = await resolveUpstreamFrameUrl(this.db, lastFrameUrl, undefined, undefined);
+      if (upstream) lastFrameUrl = upstream;
     }
     /*
      * 首帧/尾帧「临时公开副本」：Agnes 只吃公网 http(s) URL，直接暴露项目原图
@@ -2172,10 +2236,47 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
      * 已是公网 CDN 图的原样透传；暂存失败也回退原路径，绝不阻断提交。
      * 设 YIMU_STAGED_MEDIA=0 可整体关闭，回到「直接暴露原图」的旧行为。
      */
+    // 首帧是否真的存在（区分「本就没有首帧的纯文生视频」与「有首帧但送不出去」）
+    const hadFirstFrame = Boolean(imageUrl || refs[0]);
     if (process.env.YIMU_STAGED_MEDIA !== '0') {
       const staged = await stageFramesForJob(job.id, [imageUrl, lastFrameUrl]);
       if (staged[0]?.url) imageUrl = staged[0].url;
       if (staged[1]?.url) lastFrameUrl = staged[1].url;
+      /*
+       * 提交前可达性预检：staged 出来的公网 URL（隧道基址/远端素材桶）必须
+       * 是上游真拉得到的。隧道一断（trycloudflare 每次重启换域名），旧实现
+       * 把死 URL 发出去 —— Agnes 建单成功后下载不了，按「media URL could
+       * not be downloaded」整单失败（DB 实证 b953370d 全部如此）。这里在
+       * 本机先探一次：不可达就回退/丢弃，把失败拦在建单之前。
+       */
+      if (staged[0]?.staged && imageUrl && !(await isPublicUrlReachable(imageUrl))) {
+        this.logger.warn(
+          `任务 ${job.id} 首帧暂存地址不可达，放弃提交：${imageUrl.slice(0, 120)}`,
+        );
+        imageUrl = undefined;
+      }
+      if (staged[1]?.staged && lastFrameUrl && !(await isPublicUrlReachable(lastFrameUrl))) {
+        this.logger.warn(`任务 ${job.id} 尾帧暂存地址不可达，丢弃尾帧改走仅首帧模式`);
+        lastFrameUrl = undefined;
+      }
+    }
+    /*
+     * project-level 兜底：首帧确实存在、却怎么都拼不出公网地址（图片任务未
+     * 回传 CDN 地址 + 公网媒体基址未配置/不可达）时，对只吃公网 URL 的通道
+     * （Agnes 方言）提交必然退化成 mode=text —— 画面与分镜对不上还白扣额度。
+     * 不提交，直接以明确的 errorMessage 落失败，修复配置后手动重试即可。
+     */
+    if (
+      !isHttpUrl(imageUrl) &&
+      hadFirstFrame &&
+      (await this.providerRequiresPublicFrame(providerName))
+    ) {
+      await this.generationService.settleJobFailure(
+        job.id,
+        '首帧为本地路径，无公网 URL 可用（图片任务未回传 CDN 地址，且公网媒体基址未配置或不可达）；' +
+          '需配置 YIMU_PUBLIC_MEDIA_BASE/对象存储，或使用返回公网 URL 的图片供应商后重试',
+      );
+      return;
     }
     /*
      * 临时公开副本的「失败即清理」。
@@ -3071,26 +3172,37 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 最近一次成功首帧任务里上游 CDN 的原始地址。
    * 视频侧只有「公网 URL」这一档真正通用（Agnes 连 data URL 都不收），
    * 而我们把图统一落到 /uploads 后就把 CDN 地址丢了 —— 这里按镜头捞回来。
+   * （实现移入 upstream-frame.ts：resolveUpstreamFrameUrl 的镜头兜底档）
    */
-  private async latestUpstreamFrame(shotId: string): Promise<string | undefined> {
+
+  /**
+   * 该通道是否「只吃公网 URL」：Agnes 方言的 first_frame 只接受 http(s)，
+   * 连 data URL 都不收 —— 首帧拼不出公网地址时提交必然退化成 mode=text。
+   * relay（能吃 data URL）/openai/方舟/mock 都不受此限。
+   * 判定口径与网关 createAgnesVideo 的 agnesLike 一致（formatType / baseUrl /
+   * 模型名三特征），只是把 relay 显式排除。
+   */
+  private async providerRequiresPublicFrame(providerName?: string): Promise<boolean> {
+    if (!providerName) return false;
     try {
       const rows = await this.db
-        .select({ outputData: generationJobs.outputData })
-        .from(generationJobs)
-        .where(
-          and(
-            eq(generationJobs.jobType, 'image'),
-            eq(generationJobs.targetId, shotId),
-            eq(generationJobs.status, 'succeeded'),
-          ),
-        )
-        .orderBy(desc(generationJobs.createdAt))
+        .select({
+          formatType: modelProviders.formatType,
+          baseUrl: modelProviders.baseUrl,
+          videoModel: modelProviders.videoModel,
+          modelParams: modelProviders.modelParams,
+        })
+        .from(modelProviders)
+        .where(eq(modelProviders.name, providerName))
         .limit(1);
-      const out = (rows[0]?.outputData ?? {}) as { images?: { remoteUrl?: string }[] };
-      const url = out.images?.[0]?.remoteUrl;
-      return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : undefined;
+      const p = rows[0];
+      if (!p) return false;
+      if (p.formatType === 'agnes') return true;
+      if (((p.modelParams ?? {}) as { agnesSchema?: string }).agnesSchema === 'relay') return false;
+      if (/agnes-ai\.com/i.test(p.baseUrl ?? '')) return true;
+      return /^agnes[-_.]/i.test(p.videoModel ?? '');
     } catch {
-      return undefined;
+      return false;
     }
   }
 

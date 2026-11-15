@@ -1017,7 +1017,15 @@ export class StoryboardService {
       // 首帧图保持第 0 位（worker 取 refs[0] 作 imageUrl）；
       // 白模排第 1 位：当前云端视频接口只消费首帧，白模随任务存档、
       // R2V 接口就绪后直接可用，不抢首帧位置。
-      references: [...[firstFrameUrl, shot.whitemodelUrl, shot.endFrameUrl].filter(Boolean) as string[], ...charRefs],
+      // 修复（位次契约）：空槽必须用 '' 占位，绝不能 filter(Boolean) 压缩 ——
+      // 压缩后角色图滑进白模/尾帧位，worker 把 refs[2] 当尾帧整张发给
+      // keyframe 模式（DB 实证 b953370d 视频全军覆没的元凶之一）。
+      references: [
+        firstFrameUrl ?? '',
+        shot.whitemodelUrl ?? '',
+        shot.endFrameUrl ?? '',
+        ...charRefs,
+      ],
       chainedFrom,
     };
   }
@@ -1793,7 +1801,8 @@ export class StoryboardService {
             prompt: shot.visualPrompt ?? shot.action ?? '',
             movement,
             duration: Number(shot.duration) > 0 ? Number(shot.duration) : 8,
-            references: [...[shot.startFrameUrl, shot.whitemodelUrl, shot.endFrameUrl].filter(Boolean) as string[]],
+            // 位次契约：空槽 '' 占位（同 buildVideoJobInput），防止压缩错位
+            references: [shot.startFrameUrl ?? '', shot.whitemodelUrl ?? '', shot.endFrameUrl ?? ''],
             variantGroup: groupId,
             variantIndex: i + 1,
             variantMovement: movement,
