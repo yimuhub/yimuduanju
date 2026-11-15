@@ -2296,6 +2296,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         if (!u) return u;
         if (/^https?:\/\//i.test(u)) return u; // 已是公网 URL
         if (!u.startsWith('/uploads/')) return u; // data: / 其他格式不动
+        // ① 先查 Agnes CDN URL（图片任务 outputData 已有的公网地址）
+        const shotMeta = null; // 上下文简化：CDN 解析已覆盖主要场景
+        if (shotMeta?.upstreamFrame?.remote && shotMeta.upstreamFrame.local === u) {
+          return shotMeta.upstreamFrame.remote;
+        }
+        const cdnUrl = await resolveUpstreamFrameUrl(this.db, u, job.targetType === 'shot' ? job.targetId : undefined);
+        if (cdnUrl) { this.logger.log(`帧图 CDN 解析: ${u.slice(-20)} → ${cdnUrl.slice(0, 60)}`); return cdnUrl; }
+        // ② 免费图床兜底
         const pubUrl = await this.uploadToPublicHost(u);
         if (pubUrl) this.logger.log(`帧图已上传公网图床：${u.slice(-20)} → ${pubUrl.slice(0, 50)}`);
         return pubUrl ?? u; // 上传失败回落原路径（让 Agnes 报明确错误而非静默）
