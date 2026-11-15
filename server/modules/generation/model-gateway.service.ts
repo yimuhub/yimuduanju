@@ -533,8 +533,11 @@ export class ModelGatewayService {
      * 供应商 modelParams.imageReturnUrl=true 时改要 URL，worker 仍会下载落盘，
      * 只是额外把原始 URL 记进产物（video 侧用它做 first_frame）。
      * ------------------------------------------------------------------ */
+    // W 交付级修复：Agnes 图片 API 默认返回 b64_json → 无公网 CDN URL →
+    // 视频生成时 Agnes 下载不到首帧 → 秒失败。改为默认请求 URL 格式——
+    // 供应商 modelParams.imageReturnUrl=false 可显式关闭（少数只支持 b64 的通道）。
     const returnsUrl =
-      ((provider.modelParams ?? {}) as { imageReturnUrl?: boolean }).imageReturnUrl === true;
+      ((provider.modelParams ?? {}) as { imageReturnUrl?: boolean }).imageReturnUrl !== false;
     /* ------------------------------------------------------------------
      * 画幅：项目 aspect_ratio 是唯一真源。
      * 旧实现 `size: params.size ?? '1024x1024'` 让所有没显式传尺寸的图片
