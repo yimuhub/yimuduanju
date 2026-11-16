@@ -424,6 +424,222 @@
   font-size: 10px;
 }
 
+/* 全功能编辑：顶部项目工具条（对应剪映顶栏） */
+.pro-topbar {
+  flex: 0 0 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+  min-width: 0;
+}
+.pro-topbar .pro-crumb {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.pro-topbar .pro-crumb b {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42vw;
+}
+.pro-topbar .pro-crumb span {
+  color: var(--fg-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.pro-topbar .pro-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--fg-3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.pro-topbar .pro-save i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #4fbf8f;
+}
+.pro-topbar .pro-top-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pro-topbar .pro-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--fg-3);
+  background: transparent;
+}
+.pro-topbar .pro-icon:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+}
+.pro-topbar .pro-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-2);
+  font-size: 12px;
+  background: transparent;
+}
+.pro-topbar .pro-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.pro-topbar .pro-btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.pro-topbar .pro-btn.primary:hover {
+  filter: brightness(1.06);
+}
+
+/* 全功能编辑：预览头部（合成标识 + 画幅 + 安全框 + 全屏） */
+.app.pro-edit .pv .dsub.pro {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 8px;
+}
+.app.pro-edit .pv-pro-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.app.pro-edit .pv-pro-label b {
+  font-size: 12px;
+  color: var(--fg-2);
+  font-weight: 600;
+}
+.app.pro-edit .pv-pro-label span {
+  font-size: 10px;
+  color: var(--fg-3);
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+.app.pro-edit .pro-mini {
+  height: 22px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--fg-3);
+  font-size: 10px;
+  background: transparent;
+}
+.app.pro-edit .pro-mini:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+}
+.app.pro-edit .pro-mini.on {
+  border-color: rgba(255, 64, 58, 0.45);
+  color: #ffb4b0;
+  background: rgba(255, 64, 58, 0.12);
+}
+
+/* 全功能编辑：预览下方播放控制条 */
+.pro-transport {
+  flex: 0 0 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+.pro-transport .pt-tc {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-3);
+  font-size: 11px;
+  white-space: nowrap;
+  width: 168px;
+  flex: 0 0 168px;
+}
+.pro-transport .pt-tc b {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+.pro-transport .pt-play {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  background: #f2f4f7;
+  color: #101215;
+  display: grid;
+  place-items: center;
+}
+.pro-transport .pt-play:hover {
+  background: #fff;
+}
+.pro-transport .pt-scrub {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--primary);
+  height: 4px;
+}
+.pro-transport .pt-vol {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg-3);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.pro-transport .pt-vol-bar {
+  width: 54px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6d747e 62%, #262a31 62%);
+}
+.pro-transport .pt-chip {
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-3);
+  font-size: 10px;
+}
+
+/* 全功能编辑：镜头池已在右侧，时间线底部镜头条不再需要 */
+.app.pro-edit .tl-strip {
+  display: none;
+}
+
 /* ---------- 左：导航轨 ---------- */
 .rail {
   grid-area: rail;
@@ -12279,18 +12495,26 @@ select.nw-input {
   flex: 1;
   min-height: 0;
 }
+/* 全功能编辑里画幅吃满可用高度：9:16 按高度反推宽度，16:9 / 1:1 仍按宽度约束 */
+.app.pro-edit .pro-edit-body .pv-frame {
+  height: 100%;
+  max-height: 100%;
+  width: auto;
+  max-width: 100%;
+}
+.app.pro-edit .pro-edit-body .pv-frame[data-ratio='16:9'],
+.app.pro-edit .pro-edit-body .pv-frame[data-ratio='1:1'] {
+  height: auto;
+  width: min(100%, 720px);
+}
 .app.pro-edit .pro-edit-body .pv-top {
+  height: auto !important; /* 覆盖普通模式按 localStorage 存的固定预览高度 */
   flex: 1 1 auto;
-  padding: 8px 16px 12px;
+  padding: 4px 16px 8px;
 }
-.app.pro-edit .pro-edit-body .pv-top {
-  height: auto !important;
-  flex: 1 1 62%;
-  min-height: 0;
-}
-.app.pro-edit .pro-edit-body .pv-bottom {
-  flex: 0 1 38%;
-  min-height: 0;
+/* 播放条已显示时间码，预览内重复的一行收起，把高度让给画面 */
+.app.pro-edit .pro-edit-body .pv-tc {
+  display: none;
 }
 .app.pro-edit .pro-edit-body .pv-stage {
   min-height: 0;

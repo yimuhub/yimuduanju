@@ -567,6 +567,21 @@ export const StudioTimeline = () => {
   selectedRef.current = editor.selectedIds;
   const fps = editor.fps;
 
+  // 全功能编辑顶栏的撤销/重做/快捷键入口委托到这里：EDL 撤销栈只有一份
+  useEffect(() => {
+    const undo = () => editor.undo();
+    const redo = () => editor.redo();
+    const keys = () => setShortcutsOpen(true);
+    window.addEventListener('yimu:timeline-undo', undo);
+    window.addEventListener('yimu:timeline-redo', redo);
+    window.addEventListener('yimu:timeline-shortcuts', keys);
+    return () => {
+      window.removeEventListener('yimu:timeline-undo', undo);
+      window.removeEventListener('yimu:timeline-redo', redo);
+      window.removeEventListener('yimu:timeline-shortcuts', keys);
+    };
+  }, [editor]);
+
   const shotMap = useMemo(() => new Map(shots.map((s) => [s.id, s])), [shots]);
   const selShot = shots[sel];
 

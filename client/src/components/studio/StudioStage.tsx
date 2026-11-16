@@ -19,6 +19,8 @@ import { useStudio } from './StudioShell';
 import { StudioChat } from './StudioChat';
 import { ProjectSectionNav } from './ProjectSectionNav';
 import { StudioPreview } from './StudioPreview';
+import { StudioProTopBar } from './StudioProTopBar';
+import { StudioProTransport } from './StudioProTransport';
 
 /** 全局页面的面包屑标题（无项目时用） */
 const PAGE_TITLES: Record<string, string> = {
@@ -106,7 +108,8 @@ export const StudioStage = ({ children }: { children?: ReactNode }) => {
         </button>
       </div>
 
-      {projectId ? <ProjectSectionNav /> : null}
+      {proEdit && projectId ? <StudioProTopBar /> : null}
+      {!proEdit && projectId ? <ProjectSectionNav /> : null}
 
       <div className="stage-body">
         {/* 画布体验统一走全屏自由画布（canvas-free3）；中舞台在 page/chat 之间切换。
@@ -116,6 +119,7 @@ export const StudioStage = ({ children }: { children?: ReactNode }) => {
           /* 全功能编辑：中舞台只剩「预览 + 属性」，对话收进浮动球，时间线在下方 */
           <div className="pro-edit-body">
             <StudioPreview />
+            <StudioProTransport />
           </div>
         ) : showPage ? (
           <div className="studio-page">{children}</div>

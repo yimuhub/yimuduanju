@@ -12,7 +12,7 @@
  * 之间有一条可拖拽分隔条，往下拖预览变大、往上拖变小，高度持久保存。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Clapperboard } from 'lucide-react';
+import { Clapperboard, Maximize2, Scan } from 'lucide-react';
 import { resolveTextStyle } from '@shared/api.interface';
 import { useStudio } from './StudioShell';
 import { clipSpan, shotLabel, stateShort, toTimecode } from './model';
@@ -34,7 +34,7 @@ const readPreviewH = (): number => {
 };
 
 export const StudioPreview = () => {
-  const { data, sel, setSel, curT, playing, setPlaying, projectId } = useStudio();
+  const { data, sel, setSel, curT, playing, setPlaying, projectId, proEdit } = useStudio();
   const [charNames, setCharNames] = useState<Record<string, string>>({});
   const [propByCode, setPropByCode] = useState<Record<string, Prop>>({});
   const [ratio, setRatio] = useState<Ratio>('9:16');
@@ -42,6 +42,8 @@ export const StudioPreview = () => {
   const [openModal, setOpenModal] = useState(false);
   const [previewH, setPreviewH] = useState<number>(readPreviewH);
   const [splitting, setSplitting] = useState(false);
+  const [safeOn, setSafeOn] = useState(false);
+  const pvRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
 
@@ -267,10 +269,16 @@ export const StudioPreview = () => {
   const stClass = displayShot.st === 'done' ? 'ok' : displayShot.st === 'render' ? 'run' : 'dim';
 
   return (
-    <div className="pv">
+    <div className="pv" ref={pvRef}>
       {/* ---------- 上区：画面 ---------- */}
       <div className="pv-top" style={{ height: previewH }}>
-        <div className="dsub">
+        <div className={`dsub${proEdit ? ' pro' : ''}`}>
+          {proEdit ? (
+            <div className="pv-pro-label">
+              <b>时间线合成预览</b>
+              <span>只渲染时间线内容</span>
+            </div>
+          ) : null}
           <div className="seg">
             {(['9:16', '16:9', '1:1'] as Ratio[]).map((r) => (
               <button
@@ -284,9 +292,36 @@ export const StudioPreview = () => {
             ))}
           </div>
           <div className="spacer" />
-          <span className="chip num">
-            {shotLabel(shot.no)} / {shots.length}
-          </span>
+          {proEdit ? (
+            <>
+              <button
+                type="button"
+                className={`pro-mini${safeOn ? ' on' : ''}`}
+                title="显示 / 隐藏安全框"
+                onClick={() => setSafeOn((v) => !v)}
+              >
+                <Scan size={12} />
+                安全框
+              </button>
+              <button
+                type="button"
+                className="pro-mini"
+                title="全屏预览"
+                onClick={() => {
+                  const el = pvRef.current;
+                  if (!el) return;
+                  if (document.fullscreenElement) void document.exitFullscreen();
+                  else void el.requestFullscreen?.();
+                }}
+              >
+                <Maximize2 size={12} />
+              </button>
+            </>
+          ) : (
+            <span className="chip num">
+              {shotLabel(shot.no)} / {shots.length}
+            </span>
+          )}
         </div>
 
         <div className="pv-stage">
@@ -394,7 +429,7 @@ export const StudioPreview = () => {
                 })}
               </div>
             ) : null}
-            <div className="pv-safe" />
+            {safeOn ? <div className="pv-safe" /> : null}
             <div className="pv-scan" />
             <span className="pv-no num">{shotLabel(shot.no)}</span>
             <span className="pv-dur num">{clipDur.toFixed(1)}s</span>
