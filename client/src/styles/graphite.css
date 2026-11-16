@@ -3516,6 +3516,10 @@ button.tl-tc:hover {
 }
 
 /* ---------- 素材导入对话框（本地 / 其他任务 / 资产包） ---------- */
+/* Portal 到 body，脱离 .tl 的 z-index 层叠上下文；层级高于浮动球 */
+.tl-import-mask {
+  z-index: 1200;
+}
 .tl-import {
   width: min(560px, 92vw);
   max-height: 80vh;

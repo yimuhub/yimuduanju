@@ -11,6 +11,7 @@
  * 与拖放插入走同一条 addVideo / addAudio 路径，不另起一套写入逻辑。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { FileVideo, FolderOpen, Image, Loader2, Music2, Package, Search, Upload } from 'lucide-react';
 import {
@@ -173,8 +174,9 @@ export const StudioImportDialog = ({
     return otherAssets.filter((a) => (a.name || '').toLowerCase().includes(q));
   }, [otherAssets, keyword]);
 
-  return (
-    <div className="tl-picker-mask" onClick={onClose}>
+  // Portal 到 body：时间线 .tl 带 z-index 建立了层叠上下文，fixed 遮罩留在其中会被挤压/裁剪
+  return createPortal(
+    <div className="tl-picker-mask tl-import-mask" onClick={onClose}>
       <div className="tl-import" onClick={(e) => e.stopPropagation()}>
         <div className="tl-picker-head">
           <b>导入素材</b>
@@ -302,7 +304,8 @@ export const StudioImportDialog = ({
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
