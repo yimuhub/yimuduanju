@@ -108,6 +108,8 @@ export interface EdlEditor {
 
   /** 横向移动片段（秒）；lane 传值时可同时换到同类型轨道的另一层 */
   moveClip: (id: string, timelineStart: number, lane?: number) => void;
+  /** 跨轨拖拽落库：移动 + 必要时建轨，clips/tracks 一次提交，可一次撤销 */
+  moveClipToLane: (id: string, timelineStart: number, lane: number, createTrack: boolean) => void;
   /** 多选编组横向移动（秒） */
   moveClips: (ids: string[], deltaSec: number) => void;
   /** 边缘修剪：left 同时推进 inPoint 与 timelineStart，right 只改 outPoint */
@@ -319,18 +321,31 @@ export function useEdlEditor(): EdlEditor {
     }, 400);
   }, [flush]);
 
-  /** 写入新 clips + 入撤销栈 + 触发保存 */
+  /** 写入新 clips（可同时写 tracks）+ 入撤销栈 + 触发保存 */
   const commit = useCallback(
-    (next: TimelineClip[], label: string, before: TimelineClip[]) => {
+    (
+      next: TimelineClip[],
+      label: string,
+      before: TimelineClip[],
+      tracks?: { next: TimelineTrackMeta[]; before: TimelineTrackMeta[] },
+    ) => {
       if (!docRef.current) return;
       const nextDoc = {
         ...docRef.current,
         clips: next,
+        ...(tracks ? { tracks: tracks.next } : {}),
         updatedAt: new Date().toISOString(),
       };
       docRef.current = nextDoc;
       data.commitTimeline(nextDoc);
-      undoStack.current.push({ label, before, after: next });
+      undoStack.current.push({
+        label,
+        before,
+        after: next,
+        ...(tracks
+          ? { tracksBefore: tracks.before, tracksAfter: tracks.next }
+          : {}),
+      });
       if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
       redoStack.current = [];
       setHistVer((v) => v + 1);
@@ -346,9 +361,12 @@ export function useEdlEditor(): EdlEditor {
       const entry = from[from.length - 1];
       if (!entry || !docRef.current) return;
       const target = direction === 'undo' ? entry.before : entry.after;
+      const targetTracks =
+        direction === 'undo' ? entry.tracksBefore : entry.tracksAfter;
       const nextDoc = {
         ...docRef.current,
         clips: target,
+        ...(targetTracks ? { tracks: targetTracks } : {}),
         updatedAt: new Date().toISOString(),
       };
       docRef.current = nextDoc;
@@ -964,6 +982,47 @@ export function useEdlEditor(): EdlEditor {
     [updateTrack],
   );
 
+  /**
+   * 跨轨拖拽的落库：移动片段到目标 lane，必要时新建一条轨道元信息，
+   * clips 与 tracks 一次提交（不会「轨建了但片段没过去」）。
+   *
+   * 只动被拖片段自己；绑定搭档纵向不联动（绑定只保证横向一起走）；
+   * 原轨其余片段保持原位 —— 这正是用户要的「拖一个出去，其余不动，留空位」。
+   */
+  const moveClipToLane = useCallback(
+    (id: string, timelineStart: number, lane: number, createTrack: boolean): void => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked || lane < 0 || lane > 19) return;
+      const fpsNow = fpsRef.current;
+      const nextStart = quantizeToFrame(Math.max(0, timelineStart), fpsNow);
+      if (Math.abs(nextStart - src.timelineStart) < 1e-6 && lane === (src.lane ?? 0)) return;
+
+      const curTracks = docRef.current?.tracks ?? [];
+      const hasMeta = curTracks.some((t) => t.track === src.track && (t.lane ?? 0) === lane);
+      const nextTracks =
+        createTrack && !hasMeta
+          ? [
+              ...curTracks,
+              {
+                track: src.track,
+                lane,
+                height: ROW_HEIGHT_DEFAULT[src.track],
+              } as TimelineTrackMeta,
+            ]
+          : curTracks;
+      const next = before.map((c) =>
+        c.id === id ? { ...c, timelineStart: nextStart, lane } : c,
+      );
+      const label = createTrack
+        ? `移动到新轨道（${src.track} ${lane + 1}）`
+        : `移动到 ${src.track} ${lane + 1}`;
+      commit(next, label, before,
+        nextTracks !== curTracks ? { next: nextTracks, before: curTracks } : undefined);
+    },
+    [commit],
+  );
+
   const removeTrack = useCallback(
     (track: TimelineTrackMeta['track'], lane: number): string | null => {
       if (!docRef.current) return '时间线尚未就绪';
@@ -1109,6 +1168,7 @@ export function useEdlEditor(): EdlEditor {
     setSelection,
     toggleSelection,
     moveClip,
+    moveClipToLane,
     moveClips,
     trimClip,
     removeClip,

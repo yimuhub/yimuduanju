@@ -1,4 +1,11 @@
-import { laneFromY, pickFreeLane, type OccupiedSpan } from '../../client/src/lib/timeline-drop';
+import {
+  laneFromY,
+  laneHitAtY,
+  pickFreeLane,
+  resolveMoveLane,
+  type MoveRow,
+  type OccupiedSpan,
+} from '../../client/src/lib/timeline-drop';
 import { sameOrigin } from '../../client/src/components/studio/model';
 
 /**
@@ -112,5 +119,113 @@ describe('sameOrigin（音画分离判重/合并）', () => {
 
   it('没有源媒体（空片段）→ 永不同源', () => {
     expect(sameOrigin({ ...base, sourceUrl: null }, { ...base, sourceUrl: null })).toBe(false);
+  });
+});
+
+/**
+ * 跨轨拖拽（已有片段往外拖）的落点判定。
+ * 用户原话「V1 上三四个视频，拖一个向外一拖也能自动生成新轨，其余不动」。
+ * 这里钉住：几何命中空白区会新建、被占会下移、跨类型/锁轨/上限会被拒绝。
+ */
+describe('laneHitAtY（几何命中，含空白区）', () => {
+  const rows: MoveRow[] = [
+    { track: 'subtitle', lane: 0, height: 30 },
+    { track: 'video', lane: 0, height: 62 },
+    { track: 'video', lane: 1, height: 62 },
+    { track: 'audio', lane: 0, height: 46 },
+  ];
+
+  it('命中画面第 2 行 → video lane 1', () => {
+    expect(laneHitAtY(rows, 30 + 62 + 10, 'video')).toMatchObject({
+      lane: 1,
+      sameType: true,
+      blank: false,
+    });
+  });
+
+  it('落在最后一行下方空白 → 同类最大 lane + 1（新建）', () => {
+    expect(laneHitAtY(rows, 30 + 62 + 62 + 46 + 20, 'video')).toMatchObject({
+      lane: 2,
+      sameType: true,
+      blank: true,
+    });
+  });
+
+  it('拖画面到音频行 → sameType=false（应拒绝）', () => {
+    expect(laneHitAtY(rows, 30 + 62 + 62 + 10, 'video')).toMatchObject({
+      sameType: false,
+    });
+  });
+
+  it('锁定行会被标记', () => {
+    const locked = rows.map((r, i) => (i === 1 ? { ...r, locked: true } : r));
+    expect(laneHitAtY(locked, 30 + 10, 'video')).toMatchObject({ lane: 0, locked: true });
+  });
+});
+
+describe('resolveMoveLane（跨轨移动落点）', () => {
+  const rows: MoveRow[] = [
+    { track: 'video', lane: 0, height: 62 },
+    { track: 'video', lane: 1, height: 62 },
+    { track: 'audio', lane: 0, height: 46 },
+  ];
+
+  it('目标行空 → 落到该行', () => {
+    expect(resolveMoveLane(rows, 70, 'video', [], 0, 4)).toEqual({ lane: 1, created: false });
+  });
+
+  it('目标行该时刻被占 → 下移到空行，不覆盖', () => {
+    const occupied: OccupiedSpan[] = [{ lane: 1, start: 0, end: 4 }];
+    expect(resolveMoveLane(rows, 70, 'video', occupied, 0, 4)).toEqual({
+      lane: 0,
+      created: false,
+    });
+  });
+
+  it('所有行都被占 → 新建一条轨', () => {
+    const occupied: OccupiedSpan[] = [
+      { lane: 0, start: 0, end: 4 },
+      { lane: 1, start: 0, end: 4 },
+    ];
+    expect(resolveMoveLane(rows, 70, 'video', occupied, 0, 4)).toEqual({
+      lane: 2,
+      created: true,
+    });
+  });
+
+  it('拖到空白区 → 新建', () => {
+    expect(resolveMoveLane(rows, 62 + 62 + 46 + 30, 'video', [], 5, 9)).toEqual({
+      lane: 2,
+      created: true,
+    });
+  });
+
+  it('跨类型 → 拒绝', () => {
+    expect(resolveMoveLane(rows, 62 + 62 + 10, 'video', [], 0, 4)).toMatchObject({
+      rejected: 'cross-type',
+    });
+  });
+
+  it('锁轨 → 拒绝', () => {
+    const locked = rows.map((r, i) => (i === 1 ? { ...r, locked: true } : r));
+    expect(resolveMoveLane(locked, 70, 'video', [], 0, 4)).toMatchObject({ rejected: 'locked' });
+  });
+
+  it('超出 20 条上限 → 拒绝', () => {
+    const many: MoveRow[] = Array.from({ length: 21 }, (_, lane) => ({
+      track: 'video',
+      lane,
+      height: 10,
+    }));
+    // 空白区 → lane 21 > 19
+    expect(resolveMoveLane(many, 500, 'video', [], 0, 4)).toMatchObject({ rejected: 'limit' });
+  });
+
+  it('首尾相接不算重叠：目标行前一段恰好结束 → 可落该行', () => {
+    const occupied: OccupiedSpan[] = [{ lane: 1, start: 0, end: 4 }];
+    expect(resolveMoveLane(rows, 70, 'video', occupied, 4, 8)).toEqual({
+      lane: 1,
+      created: false,
+    });
   });
 });

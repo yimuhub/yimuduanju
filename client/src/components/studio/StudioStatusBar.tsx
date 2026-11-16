@@ -9,11 +9,12 @@
  */
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Clapperboard } from 'lucide-react';
 import { useStudio } from './StudioShell';
 import { APP_VERSION } from '@client/src/lib/version';
 
 export const StudioStatusBar = () => {
-  const { data } = useStudio();
+  const { data, proEdit, toggleProEdit } = useStudio();
   const navigate = useNavigate();
 
   const running = useMemo(
@@ -68,6 +69,20 @@ export const StudioStatusBar = () => {
         <b className="num">{data.shotStats.done}</b>
       </span>
       <span className="grow" />
+      {data.project ? (
+        <button
+          type="button"
+          className={`sb hoverable sb-pro-edit${proEdit ? ' on' : ''}`}
+          title={
+            proEdit
+              ? '退出全功能编辑：恢复中间的对话区（对话内容不丢）'
+              : '全功能编辑：取消中间的对话区、时间线拉满，对话变成可拖拽的小球'
+          }
+          onClick={toggleProEdit}
+        >
+          <Clapperboard size={11} /> 全功能编辑 <b className={proEdit ? 'sb-ok' : 'sb-accent'}>{proEdit ? '开' : '关'}</b>
+        </button>
+      ) : null}
       <button
         type="button"
         className="sb hoverable"

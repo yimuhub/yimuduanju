@@ -5,12 +5,18 @@
  * 只保留最近 30 条（EDL 快照体积可控），关闭页面再打开仍能撤销。
  * 任何异常都静默降级为「无历史」，绝不阻断编辑。
  */
-import type { TimelineClip } from '@shared/api.interface';
+import type { TimelineClip, TimelineTrackMeta } from '@shared/api.interface';
 
 export interface HistoryEntry {
   label: string;
   before: TimelineClip[];
   after: TimelineClip[];
+  /**
+   * 轨道元信息快照：只有「跨轨拖拽新建轨」这种同时改 tracks 的操作才写。
+   * 旧历史没有这两个字段，travel 时按「不变」处理，向后兼容。
+   */
+  tracksBefore?: TimelineTrackMeta[];
+  tracksAfter?: TimelineTrackMeta[];
 }
 
 export interface HistorySnapshot {

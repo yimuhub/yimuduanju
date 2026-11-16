@@ -48,6 +48,7 @@ import {
   Type,
   Undo2,
   Unlock,
+  Upload,
   Volume2,
   VolumeX,
   X,
@@ -63,6 +64,10 @@ import {
   type AudioRole,
 } from './model';
 import { useEdlEditor } from './useEdlEditor';
+import {
+  StudioImportDialog,
+  type ImportedMedia,
+} from './StudioImportDialog';
 import { Filmstrip, useThumbnails, useWaveform, Waveform } from './timeline-media';
 import { exportTimeline } from '@client/src/api/timeline';
 import { listProjectAssets, mediaUrl } from '@client/src/api/assets';
@@ -80,7 +85,12 @@ import {
   snapClipStart,
   snapPoint,
 } from '@client/src/lib/timeline-frame';
-import { laneFromY, pickFreeLane } from '@client/src/lib/timeline-drop';
+import {
+  laneFromY,
+  pickFreeLane,
+  resolveMoveLane,
+  type MoveRow,
+} from '@client/src/lib/timeline-drop';
 import {
   clearTimelineDrag,
   mediaOfDrag,
@@ -213,6 +223,10 @@ interface DragState {
   edge?: 'left' | 'right';
   delta?: number;
   deltaLane?: number;
+  /** 目标 lane 是本次新建的轨道（松手要写 track 元信息） */
+  willCreate?: boolean;
+  /** 拖动中的非法落点（跨类型 / 锁轨 / 上限），松手时用 */
+  rejectReason?: 'cross-type' | 'locked' | 'limit';
   marqueeRect?: { x: number; y: number; w: number; h: number };
 }
 
@@ -230,6 +244,11 @@ const ClipView = ({
   onDelete,
   rowHeight,
   audioDetached,
+  subEditing,
+  subDraft,
+  onSubDraft,
+  onSubCommit,
+  onSubCancel,
 }: {
   clip: TimelineClip;
   pxPerSec: number;
@@ -244,6 +263,12 @@ const ClipView = ({
   audioDetached?: boolean;
   onDoubleClick: () => void;
   onDelete: () => void;
+  /** 字幕就地编辑：编辑态由外部单一状态源控制 */
+  subEditing?: boolean;
+  subDraft?: string;
+  onSubDraft?: (text: string) => void;
+  onSubCommit?: () => void;
+  onSubCancel?: () => void;
 }) => {
   const span = clipSpan(clip);
   const isVideo = clip.track === 'video';
@@ -256,6 +281,8 @@ const ClipView = ({
   const isSub = clip.track === 'subtitle';
   const role = audioRoleOf(clip);
   const ts = resolveTextStyle(clip.textStyle ?? null);
+  // 输入法组合态：组合中的 Enter 是「确认候选词」，不能当提交（中文用户必踩）
+  const composingRef = useRef(false);
 
   const cls = [
     'clip',
@@ -282,7 +309,14 @@ const ClipView = ({
       role="button"
       tabIndex={0}
       aria-label={tip}
-      title={tip}
+      title={subEditing ? undefined : tip}
+      onPointerDown={(e) => {
+        // 编辑态：点在 textarea 上交给输入框，不让 onCanvasPointerDown 当成拖动/定位
+        if (subEditing && (e.target as HTMLElement).closest('.tl-sub-input')) {
+          e.stopPropagation();
+          return;
+        }
+      }}
       onDoubleClick={(e) => {
         e.stopPropagation();
         onDoubleClick();
@@ -349,6 +383,41 @@ const ClipView = ({
         <i className="tl-clip-link" title="已绑定：拖动时同组片段一起移动">
           <Link2 size={9} />
         </i>
+      ) : null}
+      {isSub && subEditing ? (
+        <textarea
+          className="tl-sub-input"
+          autoFocus
+          value={subDraft ?? ''}
+          placeholder="输入字幕…"
+          onFocus={(e) => {
+            // 全选但光标落末尾：新字幕直接覆盖，已有字幕可继续在末尾补字
+            const len = e.currentTarget.value.length;
+            e.currentTarget.setSelectionRange(0, len);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onChange={(e) => onSubDraft?.(e.target.value)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+          }}
+          onBlur={() => onSubCommit?.()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              onSubCancel?.();
+              return;
+            }
+            // 输入法组合中的 Enter 是「确认候选词」，不能提交
+            if (e.key === 'Enter' && !e.shiftKey && !composingRef.current) {
+              e.preventDefault();
+              onSubCommit?.();
+            }
+          }}
+        />
       ) : null}
       {/* 转场角标：叠化画成右侧渐隐（导出侧是真的 xfade，不只是给单段加 fade） */}
       {clip.transition && clip.transition.type !== 'none' ? (
@@ -434,10 +503,12 @@ export const StudioTimeline = () => {
   }, []);
 
   const [pxPerSec, setPxPerSec] = useState(PX_DEFAULT);
-  const [subEdit, setSubEdit] = useState<{ id: string; text: string } | null>(null);
+  /** 字幕就地编辑：id 定位片段，origin 用于 Esc 还原，text 是草稿 */
+  const [subEdit, setSubEdit] = useState<{ id: string; text: string; origin: string } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [pickLane, setPickLane] = useState(1);
   const [audioAssets, setAudioAssets] = useState<Asset[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
@@ -565,6 +636,16 @@ export const StudioTimeline = () => {
     }
     return map;
   }, [rows]);
+
+  /** 现有轨道画布的底部 y：新建轨的落点提示画在这里（目标行还不存在） */
+  const canvasBottom = useMemo(
+    () =>
+      rows.reduce(
+        (bottom, r) => Math.max(bottom, (rowTop.get(r.key) ?? 16) + r.height),
+        16,
+      ),
+    [rows, rowTop],
+  );
 
   const computeDrop = (e: DragEvent, payload: TimelineDragPayload) => {
     const canvas = canvasRef.current;
@@ -881,6 +962,15 @@ export const StudioTimeline = () => {
     const maxEnd = Math.max(
       ...[...origById.values()].map((c) => c.timelineStart + clipSpan(c)),
     );
+    // 跨轨落点判定用的行快照：拖动期间 rows 不因自身变化而跳动（拖的是已有片段，
+    // 目标 lane 由几何命中算出，不用 elementFromPoint —— 后者拖到空白区命中不到行）
+    const rowSnapshot: MoveRow[] = rows.map((r) => ({
+      track: r.track,
+      lane: r.lane,
+      height: r.height,
+      locked: r.locked,
+    }));
+    const canvasTop = canvasRef.current?.getBoundingClientRect().top ?? 0;
 
     const drag: DragState = {
       mode: 'move',
@@ -923,21 +1013,66 @@ export const StudioTimeline = () => {
       d.delta = delta;
       setSnapLine(snapped.snapAt);
 
-      // 单选且纵向跨到同类型轨：换算 dy
+      // 单选且纵向跨轨：几何命中（含空白区新建）+ 碰撞检测，绝不覆盖别的片段
       let laneDelta = 0;
       if ((d.clipIds?.length ?? 0) === 1) {
         const srcClip = d.origById?.get(d.clipId ?? '');
-        const target = rowAt(ev.clientX, ev.clientY);
-        if (srcClip && target && target.track === srcClip.track && target.lane !== d.origLane) {
-          const fromRow = canvasRef.current?.querySelector<HTMLElement>(
-            `[data-row-key="${srcClip.track}:${d.origLane}"]`,
+        if (srcClip) {
+          const requestedStart = round3(srcClip.timelineStart + delta);
+          // 排除自己与绑定搭档（纵向不联动，也不该被当成障碍物）
+          const partnerIds = new Set(
+            (d.clipIds ?? []).concat(
+              srcClip.bindGroup
+                ? clipsRef.current
+                    .filter((c) => c.bindGroup === srcClip.bindGroup && c.id !== srcClip.id)
+                    .map((c) => c.id)
+                : [],
+            ),
           );
-          const toRow = canvasRef.current?.querySelector<HTMLElement>(
-            `[data-row-key="${target.key}"]`,
+          const occupied = clipsRef.current
+            .filter(
+              (c) =>
+                c.track === srcClip.track &&
+                !partnerIds.has(c.id) &&
+                Math.abs(c.timelineStart - srcClip.timelineStart) > 1e-6,
+            )
+            .map((c) => ({
+              lane: c.lane ?? 0,
+              start: c.timelineStart,
+              end: c.timelineStart + clipSpan(c),
+            }));
+          const relY = Math.max(0, ev.clientY - canvasTop - 16);
+          const pick = resolveMoveLane(
+            rowSnapshot,
+            relY,
+            srcClip.track,
+            occupied,
+            requestedStart,
+            requestedStart + clipSpan(srcClip),
           );
-          if (fromRow && toRow) laneDelta = toRow.offsetTop - fromRow.offsetTop;
+          d.rejectReason = pick.rejected;
+          const targetLane = pick.rejected ? (d.origLane ?? 0) : pick.lane;
+          d.deltaLane = targetLane;
+          d.willCreate = !pick.rejected && pick.created;
+
+          // 视觉反馈：用与素材拖放同一套落点提示框
+          if (!pick.rejected) {
+            const fromTop = rowTop.get(`${srcClip.track}:${d.origLane}`) ?? 16;
+            const toTop = pick.created
+              ? canvasBottom
+              : (rowTop.get(`${srcClip.track}:${targetLane}`) ?? fromTop);
+            laneDelta = toTop - fromTop;
+            setDropHint({
+              t: requestedStart,
+              lane: targetLane,
+              track: srcClip.track,
+              span: clipSpan(srcClip),
+              created: pick.created,
+            });
+          } else {
+            setDropHint(null);
+          }
         }
-        d.deltaLane = target && target.track === srcClip?.track ? target.lane : (d.origLane ?? 0);
       }
       const shiftX = delta * pxRef.current;
       d.els?.forEach((n) => {
@@ -951,11 +1086,21 @@ export const StudioTimeline = () => {
       const d = dragRef.current;
       dragRef.current = null;
       setSnapLine(null);
+      setDropHint(null);
       d?.els?.forEach((n) => {
         n.classList.remove('dragging');
         n.style.transform = '';
       });
       if (!d || !d.moved) return;
+      if (d.rejectReason) {
+        const msg = {
+          'cross-type': '只能拖到同类型轨道（画面→画面、字幕→字幕、音频→音频）',
+          locked: '目标轨道已锁定，先解锁再拖',
+          limit: '轨道已达上限（最多 20 条）',
+        }[d.rejectReason];
+        toast.info(msg, { duration: 1800 });
+        return;
+      }
       const delta = d.delta ?? 0;
       if (Math.abs(delta) < 1 / fps / 2 && (d.deltaLane ?? d.origLane) === d.origLane) return;
       if ((d.clipIds?.length ?? 0) > 1) {
@@ -963,10 +1108,11 @@ export const StudioTimeline = () => {
       } else {
         const orig = d.origById?.get(d.clipId ?? '');
         if (!orig) return;
-        editor.moveClip(
+        editor.moveClipToLane(
           d.clipId ?? '',
           round3(orig.timelineStart + delta),
           d.deltaLane ?? d.origLane,
+          d.willCreate === true,
         );
       }
     };
@@ -1243,6 +1389,30 @@ export const StudioTimeline = () => {
     toast.success(`已插入到 A${pickLane + 1} · ${formatTimecode(curT, fps)}`, { duration: 1600 });
   };
 
+  /** 导入对话框选中的素材：按类型落到播放头所在位置的对应轨（与拖放插入同路径） */
+  const onImportedMedia = (media: ImportedMedia) => {
+    if (media.kind === 'audio') {
+      const created = editor.addAudio(
+        { name: media.name, url: media.url, durationSeconds: media.durationSeconds },
+        curT,
+        clamp(maxLane('audio') + 1, 0, 19),
+      );
+      if (created) editor.setSelection([created]);
+      return;
+    }
+    const created = editor.addVideo(
+      {
+        name: media.name,
+        url: media.url,
+        durationSeconds: media.durationSeconds,
+        shotId: null,
+      },
+      curT,
+      clamp(maxLane('video') + 1, 0, 19),
+    );
+    if (created) editor.setSelection([created]);
+  };
+
   const addSubtitleAt = (lane: number) => {
     setAddOpen(false);
     const created = editor.addSubtitle(curT, lane, '新字幕');
@@ -1251,7 +1421,17 @@ export const StudioTimeline = () => {
       return;
     }
     editor.setSelection([created]);
-    setSubEdit({ id: created, text: '新字幕' });
+    setSubEdit({ id: created, text: '新字幕', origin: '新字幕' });
+  };
+
+  /** 进入字幕就地编辑：草稿 = 当前文本，origin 记原文（Esc 可还原） */
+  const beginSubEdit = (clip: TimelineClip) => {
+    if (clip.locked) {
+      toast.info('该片段已锁定，先解锁再改字幕', { duration: 1600 });
+      return;
+    }
+    editor.setSelection([clip.id]);
+    setSubEdit({ id: clip.id, text: clip.text ?? '', origin: clip.text ?? '' });
   };
 
   const commitSubtitle = () => {
@@ -1259,6 +1439,10 @@ export const StudioTimeline = () => {
     const { id, text } = subEdit;
     setSubEdit(null);
     editor.editSubtitle(id, text.trim());
+  };
+
+  const cancelSubtitle = () => {
+    setSubEdit(null);
   };
 
   const commitTimecode = () => {
@@ -1856,6 +2040,18 @@ export const StudioTimeline = () => {
           <button
             type="button"
             className="icon-btn"
+            title="导入素材：本地文件 / 其他任务 / 复用资产"
+            disabled={!editor.ready}
+            onClick={() => {
+              setAddOpen(false);
+              setImportOpen(true);
+            }}
+          >
+            <Upload size={13} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
             title="画面轨首尾相接（排齐）"
             disabled={!editor.ready || clips.length === 0}
             onClick={() => editor.packVideo()}
@@ -2084,7 +2280,7 @@ export const StudioTimeline = () => {
                 className={`tl-drop${dropHint.created ? ' new' : ''}`}
                 style={{
                   left: `${dropHint.t * pxPerSec}px`,
-                  top: `${rowTop.get(`${dropHint.track}:${dropHint.lane}`) ?? 16}px`,
+                  top: `${dropHint.created ? canvasBottom : (rowTop.get(`${dropHint.track}:${dropHint.lane}`) ?? 16)}px`,
                   width: `${Math.max(6, dropHint.span * pxPerSec)}px`,
                   height: `${rowByKey.get(`${dropHint.track}:${dropHint.lane}`)?.height ?? ROW_HEIGHT_DEFAULT[dropHint.track]}px`,
                 }}
@@ -2133,11 +2329,18 @@ export const StudioTimeline = () => {
                       audioDetached={
                         c.track === 'video' ? Boolean(detachedAudioOf(c)) : undefined
                       }
+                      subEditing={c.track === 'subtitle' && subEdit?.id === c.id}
+                      subDraft={subEdit?.id === c.id ? subEdit.text : undefined}
+                      onSubDraft={(text) =>
+                        setSubEdit((p) => (p ? { ...p, text } : p))
+                      }
+                      onSubCommit={commitSubtitle}
+                      onSubCancel={cancelSubtitle}
                       label={label}
                       tip={tip}
                       onDoubleClick={() => {
                         if (c.track === 'subtitle') {
-                          setSubEdit({ id: c.id, text: c.text || '' });
+                          beginSubEdit(c);
                           return;
                         }
                         // 画面片段双击 = 打开该镜头的详细分镜编辑（主体/动作/运镜/景别/角色）
@@ -2363,6 +2566,14 @@ export const StudioTimeline = () => {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {importOpen ? (
+        <StudioImportDialog
+          projectId={data.projectId}
+          onPick={onImportedMedia}
+          onClose={() => setImportOpen(false)}
+        />
       ) : null}
     </section>
   );

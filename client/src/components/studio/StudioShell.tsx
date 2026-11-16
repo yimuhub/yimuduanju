@@ -39,6 +39,7 @@ import { StudioDock } from './StudioDock';
 import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
 import { NewWorkDialog, type NewWorkOpenOptions } from './NewWorkDialog';
+import { StudioFloatingChat } from './StudioFloatingChat';
 import { useStreamingChat } from './chat/useStreamingChat';
 import type { PendingAttachment } from './chat/ChatComposer';
 import { useStudioData, type StudioData } from './useStudioData';
@@ -89,6 +90,10 @@ export interface StudioContextValue {
   tlCollapsed: boolean;
   setTlCollapsed: (v: boolean) => void;
   toggleTlCollapsed: () => void;
+  /** 全功能编辑模式：中舞台对话区取消、时间线拉满、对话收进可拖拽桌宠 */
+  proEdit: boolean;
+  setProEdit: (v: boolean) => void;
+  toggleProEdit: () => void;
   /** 当前项目 id；为空表示「未进入项目」的工作台态 */
   projectId?: string;
   /** 当前选中的镜头下标（画布 / 时间线 / 预览 / 分镜 四处同步） */
@@ -164,6 +169,25 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const [railCollapsed, setRailCollapsed] = useState(() => readSidebarCollapsed(location.pathname));
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [tlCollapsed, setTlCollapsedState] = useState(readTlCollapsed);
+  const [proEdit, setProEditState] = useState(
+    () => {
+      try {
+        return localStorage.getItem('yimu.proEdit') === '1';
+      } catch {
+        return false;
+      }
+    },
+  );
+
+  const setProEdit = useCallback((v: boolean) => {
+    setProEditState(v);
+    try {
+      localStorage.setItem('yimu.proEdit', v ? '1' : '0');
+    } catch {
+      /* 忽略 */
+    }
+  }, []);
+  const toggleProEdit = useCallback(() => setProEdit(!proEdit), [proEdit, setProEdit]);
 
   const setTlCollapsed = useCallback((v: boolean) => {
     setTlCollapsedState(v);
@@ -482,10 +506,11 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         dockHidden ? 'dock-collapsed' : '',
         tlHidden ? 'tl-collapsed' : '',
         stageView === 'canvas' ? 'canvas-mode' : '',
+        proEdit ? 'pro-edit' : '',
       ]
         .filter(Boolean)
         .join(' '),
-    [railCollapsed, dockHidden, tlHidden, stageView],
+    [railCollapsed, dockHidden, tlHidden, stageView, proEdit],
   );
 
   const ctxValue = useMemo<StudioContextValue>(
@@ -495,6 +520,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       tlCollapsed,
       setTlCollapsed,
       toggleTlCollapsed,
+      proEdit,
+      setProEdit,
+      toggleProEdit,
       sel,
       setSel,
       curT,
@@ -522,6 +550,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       tlCollapsed,
       setTlCollapsed,
       toggleTlCollapsed,
+      proEdit,
+      setProEdit,
+      toggleProEdit,
       sel,
       setSel,
       curT,
@@ -619,6 +650,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           onClose={closeNewWork}
           onCreated={handleWorkCreated}
         />
+        {projectId && proEdit ? <StudioFloatingChat /> : null}
       </div>
     </StudioContext.Provider>
   );
