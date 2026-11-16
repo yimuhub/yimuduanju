@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   ParseUUIDPipe,
   Post,
@@ -29,6 +30,7 @@ export class TimelineController {
 
   /** 读取 EDL：未保存过则从镜头台账派生默认工程（只读） */
   @Get()
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
   async get(
     @Param('projectId', ParseUUIDPipe) projectId: string,
   ): Promise<TimelineDocument> {
@@ -46,6 +48,7 @@ export class TimelineController {
 
   /** 视频片段帧缩略图 sprite（懒生成 + 磁盘缓存） */
   @Get('thumbnails')
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
   async thumbnails(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Query('url') url?: string,
@@ -63,6 +66,7 @@ export class TimelineController {
 
   /** 音频片段波形 peaks（懒生成 + 磁盘缓存） */
   @Get('waveform')
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
   async waveform(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Query('url') url?: string,

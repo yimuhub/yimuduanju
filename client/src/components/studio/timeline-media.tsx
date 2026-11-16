@@ -68,7 +68,8 @@ export function useThumbnails(
           return r;
         })
         .catch(() => {
-          thumbCache.set(key, null);
+          // 失败不写缓存：虚拟化滚动会重新挂载片段，让它有机会再试一次。
+          // （曾经写成 set(key, null)，一次 304 就让缩略图永久消失。）
           return null;
         })
         .finally(() => {
@@ -114,7 +115,6 @@ export function useWaveform(
           return r;
         })
         .catch(() => {
-          waveCache.set(key, null);
           return null;
         })
         .finally(() => {
