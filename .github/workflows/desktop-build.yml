@@ -53,7 +53,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf rpm
+            librsvg2-dev patchelf rpm libxdo-dev libssl-dev libsecret-1-dev \
+            libfuse2 build-essential pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -117,8 +118,16 @@ jobs:
           '
 
       - name: 打包桌面客户端
-        run: npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }}
+        shell: bash
         working-directory: desktop
+        run: |
+          # Linux 只出 deb：AppImage/rpm 在 GitHub runner 上依赖 FUSE/rpmbuild，
+          # 容易在“打包”阶段整体失败；deb 是本项目 Linux 的正式安装包。
+          if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
+            npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles deb
+          else
+            npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }}
+          fi
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
