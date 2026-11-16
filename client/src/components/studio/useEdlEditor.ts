@@ -146,6 +146,11 @@ export interface EdlEditor {
   removeClip: (id: string) => void;
   /** 波纹删除：删除后同轨后续片段自动前移，闭合空隙 */
   rippleDelete: (ids: string[]) => void;
+  /**
+   * 剪映 Q/W 的波纹修剪：在 atSec 处裁掉左/右半段，并把同轨后续片段整体前移。
+   * 与 trimClip 的区别是「闭合空隙」，不是留下黑场。
+   */
+  rippleTrimAt: (id: string, edge: 'left' | 'right', atSec: number) => void;
   splitClip: (id: string, at: number) => string | null;
   splitAtPlayhead: (at: number, id?: string) => string | null;
   editSubtitle: (id: string, text: string) => void;
@@ -602,6 +607,51 @@ export function useEdlEditor(data: StudioData): EdlEditor {
   );
 
   /* ------------------------- 删除 / 分割 ------------------------- */
+
+  const rippleTrimAt = useCallback(
+    (id: string, edge: 'left' | 'right', atSec: number) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked || !Number.isFinite(atSec)) return;
+      const fpsNow = fpsRef.current;
+      const speed = src.speed > 0 ? src.speed : 1;
+      const span = clipSpan(src);
+      const srcEnd = src.timelineStart + span;
+      const removed = edge === 'left' ? atSec - src.timelineStart : srcEnd - atSec;
+      if (removed < MIN_SPAN) return;
+
+      let nextClip: TimelineClip;
+      let appliedRemoved = removed;
+      if (edge === 'left') {
+        const d = clamp(quantizeToFrame(removed, fpsNow), -src.inPoint / speed, span - MIN_SPAN);
+        appliedRemoved = d;
+        const newIn = round3(quantizeToFrame(Math.max(0, src.inPoint + d * speed), fpsNow));
+        // 剪映 Q 是波纹：片段起点留在原位，只把入点向右推，后续片段再整体前移。
+        const newStart = src.timelineStart;
+        if ((src.outPoint - newIn) / speed < MIN_SPAN) return;
+        nextClip = { ...src, inPoint: newIn, timelineStart: newStart };
+      } else {
+        const d = quantizeToFrame(atSec - srcEnd, fpsNow);
+        appliedRemoved = -d;
+        const newOut = round3(quantizeToFrame(src.outPoint + d * speed, fpsNow));
+        if ((newOut - src.inPoint) / speed < MIN_SPAN) return;
+        nextClip = { ...src, outPoint: newOut };
+      }
+
+      // 只前移同一条轨道行里「原片段之后」的片段，避免跨轨道误伤；
+      // 间距会被保留（移动同等 removed），不会把原本的空白吃掉。
+      const next = before.map((c) => {
+        if (c.id === id) return nextClip;
+        if (c.track !== src.track || (c.lane ?? 0) !== (src.lane ?? 0)) return c;
+        if (c.timelineStart >= srcEnd - 1e-6) {
+          return { ...c, timelineStart: round3(Math.max(0, c.timelineStart - appliedRemoved)) };
+        }
+        return c;
+      });
+      commit(next, edge === 'left' ? '波纹裁左' : '波纹裁右', before);
+    },
+    [commit],
+  );
 
   const removeClip = useCallback(
     (id: string) => {
@@ -1295,6 +1345,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     trimClip,
     removeClip,
     rippleDelete,
+    rippleTrimAt,
     splitClip,
     splitAtPlayhead,
     editSubtitle,

@@ -1477,7 +1477,8 @@ export const StudioTimeline = () => {
         editorRef.current.removeClip(c.id);
         continue;
       }
-      editorRef.current.trimClip(c.id, 'left', t - c.timelineStart);
+      // Q 是「波纹裁左」：从片段头删到播放头并闭合，不是留下黑场
+      editorRef.current.rippleTrimAt(c.id, 'left', t);
     }
   }, [clipsAtPlayhead]);
 
@@ -1498,7 +1499,8 @@ export const StudioTimeline = () => {
         editorRef.current.removeClip(c.id);
         continue;
       }
-      editorRef.current.trimClip(c.id, 'right', t - end);
+      // W 是「波纹裁右」：从播放头删到片段尾并闭合，后续片段前移
+      editorRef.current.rippleTrimAt(c.id, 'right', t);
     }
   }, [clipsAtPlayhead]);
 
