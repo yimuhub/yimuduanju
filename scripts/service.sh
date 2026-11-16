@@ -25,7 +25,8 @@ TARGET="gui/$(id -u)/$LABEL"
 LOG_DIR="$ROOT_DIR/logs"
 DB_NAME="${DB_NAME:-yimu}"
 PORT_SERVER="${SERVER_PORT:-3301}"
-CONCURRENCY="${JOB_WORKER_CONCURRENCY:-8}"
+# 并发交给应用自算（视频道 = 实际密钥车道数）；留空即不注入该环境变量
+CONCURRENCY="${JOB_WORKER_CONCURRENCY:-}"
 
 ACTION="${1:---status}"
 

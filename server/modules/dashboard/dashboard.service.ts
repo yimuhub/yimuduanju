@@ -222,7 +222,7 @@ export class DashboardService {
         concurrency: Math.max(
           1,
           Math.min(
-            64,
+            32,
             Number(process.env.JOB_WORKER_CONCURRENCY) ||
               Math.max(
                 4,

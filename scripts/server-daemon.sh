@@ -28,7 +28,10 @@ export SUDA_DATABASE_URL="${SUDA_DATABASE_URL:-postgres://localhost:5432/$DB_NAM
 export FORCE_AUTHN_INNERAPI_DOMAIN="${FORCE_AUTHN_INNERAPI_DOMAIN:-http://localhost:9999}"
 export NODE_ENV="${NODE_ENV:-development}"
 export SERVER_PORT="${SERVER_PORT:-3301}"
-export JOB_WORKER_CONCURRENCY="${JOB_WORKER_CONCURRENCY:-8}"
+# 不写死 JOB_WORKER_CONCURRENCY：进程并发由应用按「各类型并发上限之和」自算，
+# 其中视频道上限 = 实际可用密钥车道数（4 把 Key 就是 4 单并行）。
+# 旧值 8 会把这条路又压回去：4 条视频车道跑满时，图片/TTS 就没槽位了。
+# 需要人为限制时再显式 export JOB_WORKER_CONCURRENCY=... 覆盖。
 
 if [ ! -f "$ROOT_DIR/dist/server/main.js" ]; then
   echo "[server-daemon] 未找到 dist/server/main.js，先构建一次"

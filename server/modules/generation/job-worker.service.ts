@@ -306,7 +306,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       const envConcurrency = Number(process.env.JOB_WORKER_CONCURRENCY) || 0;
       const concurrency = Math.max(
         1,
-        Math.min(64, envConcurrency > 0 ? envConcurrency : Math.max(4, capSum)),
+        // 上限 32：capSum 是各类型上限之和，Key 很多时它会线性膨胀，
+        // 但本机 ffmpeg / 内存撑不住几十个任务同时转码
+        Math.min(32, envConcurrency > 0 ? envConcurrency : Math.max(4, capSum)),
       );
       this.workerConcurrency = concurrency;
       this.queue = new Queue('yimu-generation', { connection: redis });

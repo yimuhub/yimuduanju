@@ -185,7 +185,6 @@ if [ "$SERVER_ALREADY" = "0" ]; then
     FORCE_AUTHN_INNERAPI_DOMAIN="http://localhost:9999" \
     NODE_ENV=development \
     SERVER_PORT=$PORT_SERVER \
-    JOB_WORKER_CONCURRENCY="${JOB_WORKER_CONCURRENCY:-4}" \
     npx nest start >"$SERVER_LOG" 2>&1 &
   echo $! > "$LOG_DIR/server.pid"
   c_blue "    等待后端就绪..."

@@ -69,6 +69,26 @@ lostTaskRetries / pausedReason`，并回收该 job 残留的 `key_leases`。否�
 上一次的等待时长，第一次撞 503 就按「已等待 3000+ 分钟」直接判死 —— 表现为
 「点一下重试秒失败」。
 
+### 多密钥并发（一把 Key = 一条车道）
+视频并发上限**不写死**：`GenerationService.typeCap('video')` 由
+`ProviderKeyPoolService.videoLaneCapacity()` 在启动时与每 60s 刷新，
+等于「视频通道供应商下 enabled Key 的 concurrency 之和」（下限为环境变量基线，
+上限 32）。4 把 Key 就是 4 单并行；只有 1 把时不会被拉高（否则任务抢不到车道空转）。
+
+- 进程级 BullMQ 并发 = 各类型 cap 之和；`scripts/*.sh` **不得再写死
+  `JOB_WORKER_CONCURRENCY`**，否则新上限会被旧并发卡住。
+- 项目绑 Key 有两种语义（`projects.metadata.keyBindingMode`）：
+  `shared` 钉住优先、忙时可借用其他车道；`exclusive` 该 Key 只服务该项目，
+  别的项目租不到，本项目等这把。同一把 Key 被第二个项目设 exclusive 直接拒绝。
+- 新增任何「瞬时等待」状态字段时，记得同步 `retryJob` 的清理列表与排队页文案。
+
+### 导出命名
+成片文件名**必须等于项目名**：`shared/file-name.ts::projectExportFileName()` 是唯一
+真源（保留中文与全角标点、剔除路径分隔符与非法字符、按码点限长）。整片落
+`<项目名>.mp4`，逐镜落 `<项目名>-镜NN.mp4`，同名即覆盖并复用资产记录（不得再
+累积多条「成片-xxx」）。`GET /export/final.mp4` 用 RFC 5987 `filename*` 返回中文名。
+禁止再出现 `final_<uuid>.mp4` / `shot_<num>_<uuid>.mp4` 这类不可读文件名。
+
 ### 图库（public media library）
 视频通道（Agnes 官方）的首帧/尾帧/参考图**只接受公网 http(s) URL**，而全部产物落的是
 `/uploads/xxx.png`。任何「把本地路径直接交给厂商」的写法都会让该素材被静默丢弃
