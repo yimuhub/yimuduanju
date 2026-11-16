@@ -18,6 +18,7 @@ import {
 import { projects } from '@client/src/api';
 import type { GenerationProgress, ProjectProgressResponse, PipelineRecoverResult } from '@shared/api.interface';
 import { toast } from 'sonner';
+import { apiErrorMessage } from '@client/src/api/http';
 import { logger } from '@client/src/utils/logger';
 import { useVisibleInterval } from '@client/src/lib/hooks';
 
@@ -127,7 +128,7 @@ const ProjectFlowTab = () => {
       load();
     } catch (err) {
       logger.error('approve failed:', String(err));
-      toast.error(`确认失败：${(err as Error).message}`);
+      toast.error(`确认失败：${apiErrorMessage(err, '未知错误，请查看服务端日志')}`);
     } finally {
       setApproving(null);
     }

@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { approveProject } from '@client/src/api/projects';
+import { apiErrorMessage } from '@client/src/api/http';
 import { listChatSessions } from '@client/src/api/chat';
 import { listCharacters, listLocations, listProps } from '@client/src/api/bible';
 import type { ChatSession } from '@shared/api.interface';
@@ -363,7 +364,7 @@ export const StudioChat = () => {
       // 确认后服务端会创建新任务，稍后再刷一次即可看到「进行中」
       window.setTimeout(() => void data.reloadProgress(), 1500);
     } catch (err) {
-      toast.error(`确认失败：${(err as Error).message}`);
+      toast.error(`确认失败：${apiErrorMessage(err, '未知错误，请查看服务端日志')}`);
     } finally {
       setApprovingStage(null);
     }

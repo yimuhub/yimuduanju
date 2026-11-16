@@ -11,6 +11,7 @@ import {
 import { eq, desc, and } from 'drizzle-orm';
 import type { QcReport, QcIssue, QcRecommendation } from '@shared/api.interface';
 import { CTA_KEYWORDS } from '@shared/content-modes';
+import { collectLiveFailedJobs } from '@shared/qc-job-issues';
 import { estimateSpeechSeconds } from '@shared/text-metrics';
 import {
   ruleDeadTime,
@@ -360,8 +361,11 @@ export class QcService {
       }
     }
 
-    // 失败任务：每条失败任务一条 error issue（最多 10 条）
-    const failedJobs = jobRows.filter((j) => j.status === 'failed');
+    // 失败任务：只统计「仍未被重试成功取代」的失败。
+    // 历史坑：镜头 video 任务撞上游 503 失败、次日重试成功并写回 video_url，
+    // 但 failed 行还在 generation_jobs 里；旧口径把它当当前错误 → pass 永远 false
+    // → 成片确认门永久 400（重跑质检也救不回来，因为分数是另一维度算的）。
+    const failedJobs = collectLiveFailedJobs(jobRows);
     for (const j of failedJobs.slice(0, 10))
       pushIssue({
         severity: 'error',

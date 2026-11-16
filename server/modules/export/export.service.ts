@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Inject, Logger, NotFoundException } fr
 import { randomUUID, createHash } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, writeFile, unlink, stat, copyFile, rm } from 'fs/promises';
+import { mkdir, writeFile, unlink, stat, copyFile, rm, readFile } from 'fs/promises';
 import { join, resolve as resolvePath } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
@@ -115,37 +115,42 @@ export class ExportService {
     if (!(await isSafeExternalUrl(rawUrl))) {
       throw new BadRequestException('媒体地址被安全策略拦截（仅允许公网 http/https）');
     }
-    // Agnes CDN 双域名互为镜像，单域名偶发不可达时切换重试（与资产取流一致）
-    const candidates = [rawUrl];
-    if (rawUrl.includes('cos-platform-outputs.agnes-ai.cn')) {
-      candidates.push(rawUrl.replace('cos-platform-outputs.agnes-ai.cn', 'platform-outputs.agnes-ai.space'));
-    }
-    if (rawUrl.includes('platform-outputs.agnes-ai.space')) {
-      candidates.push(rawUrl.replace('platform-outputs.agnes-ai.space', 'cos-platform-outputs.agnes-ai.cn'));
-    }
-    let lastErr = '';
-    for (const target of [...new Set(candidates)]) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30_000);
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        const resp = await fetch(target, { signal: controller.signal, redirect: 'follow' });
-        if (!resp.ok) {
-          lastErr = `HTTP ${resp.status}`;
-          continue;
-        }
-        const mime = resp.headers.get('content-type') || 'application/octet-stream';
-        // eslint-disable-next-line no-await-in-loop
-        const buffer = Buffer.from(await resp.arrayBuffer());
-        if (buffer.length > 64) return { buffer, mime };
-        lastErr = '响应体过小';
-      } catch (e) {
-        lastErr = (e as Error).message;
-      } finally {
-        clearTimeout(timer);
+    // 旧实现：单次 fetch + 30s 总超时 + 整段 arrayBuffer。Agnes CDN 从本机取 1MB 常需 45s+，
+    // 于是浏览器端「合成并下载 MP4」在取片段时稳定 400（媒体源暂时不可达），而服务端合成
+    // 走 curl 却能成功。这里直接复用成片合成的下载管线：curl 60s 上限 + 双域名镜像切换
+    // + 4 次重试 + 本地 clips 缓存（与 assembleFinalVideo 共享缓存，第二次起秒回）。
+    const cacheDir = join(uploadDir(), projectId, 'clips');
+    const work = join(tmpdir(), `yimu-media-proxy-${randomUUID()}`);
+    await mkdir(work, { recursive: true });
+    const tmpFile = join(work, 'media.bin');
+    try {
+      const ok = await this.materializeMediaToFile(rawUrl, tmpFile, cacheDir);
+      if (!ok) {
+        throw new BadRequestException(
+          '媒体源暂时不可达：片段下载失败或超时（已切换镜像并重试），请稍后重试；也可直接用「服务端合成并归档」',
+        );
       }
+      const buffer = await readFile(tmpFile);
+      if (buffer.length < 64) {
+        throw new BadRequestException('媒体源返回内容异常（文件过小），请检查该片段是否已生成完成');
+      }
+      return { buffer, mime: this.inferMediaMime(rawUrl) };
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch(() => {});
     }
-    throw new BadRequestException(`媒体源暂时不可达（${lastErr || 'CDN 超时'}）`);
+  }
+
+  /** 媒体扩展名推断（代理/下载响应头用；不依赖上游 content-type） */
+  private inferMediaMime(url: string): string {
+    const path = url.split('?')[0].toLowerCase();
+    if (path.endsWith('.mp4')) return 'video/mp4';
+    if (path.endsWith('.m4a')) return 'audio/mp4';
+    if (path.endsWith('.mp3')) return 'audio/mpeg';
+    if (path.endsWith('.wav')) return 'audio/wav';
+    if (path.endsWith('.png')) return 'image/png';
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+    if (path.endsWith('.webp')) return 'image/webp';
+    return 'application/octet-stream';
   }
 
   async getStoryboard(projectId: string) {

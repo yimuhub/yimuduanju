@@ -86,6 +86,7 @@ import {
 import { fitTotalBudget, minimumReadableSeconds } from '@shared/shot-duration';
 // 完成态唯一口径：N 个镜头必须 N 个成片，不允许 some() 假完成
 import { computePipelineReadiness } from '@shared/pipeline-readiness';
+import { qcFailureReason } from '@shared/qc-gate';
 // 产物形态硬校验：视频字段拿到图片地址必须拒绝落库
 import { checkArtifact } from '@shared/artifact-kind';
 // 产物真实像素尺寸核对：请求侧已按项目画幅出图，这里验证供应商有没有照做
@@ -3333,13 +3334,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       job.projectId,
       'qc',
       report.pass
-        ? { pass: true, score: report.overallScore, issueCount: report.issues.length }
+        ? { pass: true, score: report.overallScore, issueCount: report.issues.length, reportId: report.id }
         : {
             pass: false,
             score: report.overallScore,
             issueCount: report.issues.length,
             reportId: report.id,
-            reason: '质检未通过：请补齐失败镜头后重新质检',
+            // 原因必须由 issue 统计推出：写死「请补齐失败镜头」会让字幕/景别类问题永远补不对
+            reason: qcFailureReason(report.overallScore, report.issues),
           },
     );
     await this.generationService.settleJobSuccess(job.id, {

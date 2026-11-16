@@ -25,6 +25,7 @@ import {
 import { projects } from '@client/src/api';
 import type { Project, ProjectProgressResponse, ProjectStatus } from '@shared/api.interface';
 import { toast } from 'sonner';
+import { apiErrorMessage } from '@client/src/api/http';
 import { logger } from '@client/src/utils/logger';
 import { useVisibleInterval } from '@client/src/lib/hooks';
 import { EpisodeScopeProvider } from './EpisodeContext';
@@ -119,7 +120,7 @@ const ProjectWorkspacePage = () => {
       toast.success('剧本已确认，正在物化分镜');
       load();
     } catch (err) {
-      toast.error(`确认失败：${(err as Error).message}`);
+      toast.error(`确认失败：${apiErrorMessage(err, '未知错误，请查看服务端日志')}`);
     } finally {
       setApproving(false);
     }

@@ -48,3 +48,19 @@ http.interceptors.request.use((config) => {
 
 export const axiosForBackend = http;
 export const getAxiosForBackend = () => http;
+
+/**
+ * 从任意异常里取出「能给用户看的那句话」。
+ * axios 的 err.message 永远是 "Request failed with status code 400"，把它直接弹到
+ * toast 上等于什么也没说 —— 后端给的中文原因在 response.data.message 里。
+ */
+export function apiErrorMessage(err: unknown, fallback = '请求失败，请稍后重试'): string {
+  const e = err as
+    | { response?: { data?: { message?: string | string[] } }; message?: string }
+    | null
+    | undefined;
+  const raw = e?.response?.data?.message;
+  const msg = Array.isArray(raw) ? raw.join('；') : raw;
+  if (typeof msg === 'string' && msg.trim()) return msg;
+  return e?.message || fallback;
+}

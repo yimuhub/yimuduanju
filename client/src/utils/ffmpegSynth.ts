@@ -22,7 +22,19 @@ async function fetchMediaBytes(url: string): Promise<Uint8Array> {
     if (m) headers['X-Suda-Csrf-Token'] = decodeURIComponent(m[1]);
   }
   const resp = await fetch(url, { headers, credentials: 'include' });
-  if (!resp.ok) throw new Error(`媒体下载失败（HTTP ${resp.status}）`);
+  if (!resp.ok) {
+    // 把后端给的原因带出来（如「媒体源暂时不可达：片段下载失败或超时」），
+    // 只报 "HTTP 400" 用户无法判断是网络、CDN 还是片段没生成完。
+    let detail = '';
+    try {
+      detail = (await resp.text()).slice(0, 200);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(
+      `媒体下载失败（HTTP ${resp.status}）${detail ? `：${detail}` : ''}`,
+    );
+  }
   return new Uint8Array(await resp.arrayBuffer());
 }
 

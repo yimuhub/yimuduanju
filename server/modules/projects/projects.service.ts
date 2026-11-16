@@ -2,8 +2,9 @@ import { Injectable, Inject, Logger, NotFoundException, BadRequestException } fr
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { eq, and, ilike, count, desc, sql, inArray } from 'drizzle-orm';
 import { computePipelineReadiness } from '@shared/pipeline-readiness';
+import { decideQcGate, qcFailureReason } from '@shared/qc-gate';
 
-import { projects, generationJobs, shots } from '@server/database/schema';
+import { projects, generationJobs, shots, qcReports } from '@server/database/schema';
 import { BudgetCapService } from '../generation/budget-cap.service';
 import { MemoryService } from '../memory/memory.service';
 import { StoryboardService } from '../storyboard/storyboard.service';
@@ -504,11 +505,72 @@ export class ProjectsService {
           `还有 ${readiness.missingVideos.length}/${readiness.total} 个镜头没有成片，不能确认成片；请到「任务」页重试失败任务`,
         );
       }
-      const qc = pipeline.qc as { pass?: boolean; score?: number; issueCount?: number } | undefined;
-      if (qc && qc.pass === false) {
-        throw new BadRequestException(
-          `质检未通过（${qc.score ?? 0} 分 / ${qc.issueCount ?? 0} 条问题），请修复后重新质检再确认成片`,
-        );
+      // 质检门（三档语义）：PASS(默认≥90) 直接放行；REVIEW(默认≥80) 属「需人工复核」，
+      // 由本次确认动作承担拍板责任，放行并写审计痕迹；低于复核线才硬拦。
+      // 旧实现只认 pass===true，而 REVIEW 带在 UI 上明确标着「需复核」——
+      // 88 分的成片永远无法确认，是这次「确认失败 400」的死锁根因。
+      const qcRow = await this.db
+        .select({
+          id: qcReports.id,
+          overallScore: qcReports.overallScore,
+          pass: qcReports.pass,
+          thresholdPass: qcReports.thresholdPass,
+          thresholdReview: qcReports.thresholdReview,
+          issues: qcReports.issues,
+        })
+        .from(qcReports)
+        .where(eq(qcReports.projectId, id))
+        .orderBy(desc(qcReports.createdAt))
+        .limit(1);
+      const latestQc = qcRow[0];
+      const qcMeta = pipeline.qc as
+        | { pass?: boolean; score?: number; issueCount?: number; reportId?: string }
+        | undefined;
+      const qcScore = latestQc?.overallScore ?? qcMeta?.score ?? 0;
+      const qcIssueList = (latestQc?.issues as unknown[] | undefined) ?? [];
+      const qcIssueCount = latestQc
+        ? qcIssueList.length
+        : (qcMeta?.issueCount ?? 0);
+      if ((latestQc?.pass === false) || (qcMeta && qcMeta.pass === false)) {
+        const thresholdPass = latestQc?.thresholdPass ?? 90;
+        const thresholdReview = latestQc?.thresholdReview ?? 80;
+        const gate = decideQcGate({
+          score: qcScore,
+          thresholdPass,
+          thresholdReview,
+          issueCount: qcIssueCount,
+        });
+        if (!gate.allow) {
+          throw new BadRequestException(gate.reason);
+        }
+        if (gate.override) {
+          // 复核带放行：记录谁在什么分数下拍板，留痕可追溯
+          pipeline.qcOverride = {
+            score: qcScore,
+            thresholdPass,
+            thresholdReview,
+            issueCount: qcIssueCount,
+            at: new Date().toISOString(),
+            by: userId,
+            note: '质检处于复核带，由人工确认成片',
+          };
+          this.logger.log(
+            `成片门以人工复核放行 ${id}：质检 ${qcScore} 分（PASS 线 ${thresholdPass}，复核线 ${thresholdReview}），${qcIssueCount} 条问题`,
+          );
+        }
+      }
+      // 元数据与最新报告对齐：手动重跑质检只插报告行（POST /qc），pipeline.qc 仍停在
+      // 上一次 qc 任务写的内容，展示与判定就会各说各话。确认时以报告为准同步一次。
+      if (latestQc) {
+        pipeline.qc = {
+          pass: latestQc.pass === true,
+          score: qcScore,
+          issueCount: qcIssueCount,
+          reportId: latestQc.id,
+          ...(latestQc.pass === true
+            ? {}
+            : { reason: qcFailureReason(qcScore, qcIssueList as { category?: string; severity?: string }[]) }),
+        };
       }
     }
     if (stage === 'script') {
