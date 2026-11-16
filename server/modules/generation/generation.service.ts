@@ -544,6 +544,43 @@ export class GenerationService {
     qc: envCapOr(process.env.JOB_CONCURRENCY_EDIT, 1),
   };
 
+  /**
+   * 运行时并发覆盖（一把 Key = 一条车道，车道数会变，静态常量跟不上）。
+   * ------------------------------------------------------------------
+   * 事故背景：video 道写死 2，用户明明放了 4 把 Key、界面上 4 条车道全绿，
+   * 实际同时只有 2 单在跑，另外 2 把 Key 永远闲着。车道数只有在运行时
+   * 查库才知道（Key 可增删、concurrency 会随成功率升档），所以这里留一个
+   * 可刷新层：worker 每 60s 按实际车道数写一次，基线只作为没有 Key 时的兜底。
+   * 上限 32 防止「Key 很多 → 一次认领几十个」把本地 ffmpeg/内存打满。
+   */
+  private static readonly TYPE_CAP_OVERRIDE = new Map<string, number>();
+
+  static setTypeCap(jobType: string, cap: number | null): void {
+    if (cap === null || !Number.isFinite(cap)) {
+      GenerationService.TYPE_CAP_OVERRIDE.delete(jobType);
+      return;
+    }
+    GenerationService.TYPE_CAP_OVERRIDE.set(
+      jobType,
+      Math.max(1, Math.min(32, Math.floor(cap))),
+    );
+  }
+
+  static typeCap(jobType: string): number {
+    const overridden = GenerationService.TYPE_CAP_OVERRIDE.get(jobType);
+    if (typeof overridden === 'number') return overridden;
+    return GenerationService.TYPE_CONCURRENCY[jobType] ?? 4;
+  }
+
+  /** 当前所有类型的 cap（worker 用它算进程级并发，避免新上限被旧并发卡住） */
+  static allTypeCaps(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const type of Object.keys(GenerationService.TYPE_CONCURRENCY)) {
+      out[type] = GenerationService.typeCap(type);
+    }
+    return out;
+  }
+
   async claimNextPendingJob(
     excludeIds: string[] = [],
     isBlocked?: (jobType: string, providerName: string | null) => boolean,
@@ -586,7 +623,7 @@ export class GenerationService {
       // W 退避感知：被上游限流冷却挡住的候选直接跳过（不认领-释放空转），
       // 队头慢任务不再饿死后面的快任务。
       if (isBlocked?.(cand.jobType, cand.providerName)) continue;
-      const cap = GenerationService.TYPE_CONCURRENCY[cand.jobType] ?? 4;
+      const cap = GenerationService.typeCap(cand.jobType);
       if ((used.get(cand.jobType) ?? 0) < cap) {
         pickedId = cand.id;
         used.set(cand.jobType, (used.get(cand.jobType) ?? 0) + 1);

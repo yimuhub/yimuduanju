@@ -194,15 +194,27 @@ export class QueueAdminService {
       .orderBy(asc(modelProviders.name), asc(providerApiKeys.createdAt));
 
     const pinned = await this.db
-      .select({ id: projects.id, title: projects.title, pinnedKeyId: projects.pinnedKeyId })
+      .select({
+        id: projects.id,
+        title: projects.title,
+        pinnedKeyId: projects.pinnedKeyId,
+        metadata: projects.metadata,
+      })
       .from(projects)
       .where(sql`${projects.pinnedKeyId} is not null`);
 
-    const pinnedByKey = new Map<string, { projectId: string; projectTitle: string }[]>();
+    const pinnedByKey = new Map<
+      string,
+      { projectId: string; projectTitle: string; mode: 'shared' | 'exclusive' }[]
+    >();
     for (const p of pinned) {
       if (!p.pinnedKeyId) continue;
+      const mode =
+        (p.metadata as { keyBindingMode?: string } | null)?.keyBindingMode === 'exclusive'
+          ? 'exclusive'
+          : 'shared';
       const list = pinnedByKey.get(p.pinnedKeyId) ?? [];
-      list.push({ projectId: p.id, projectTitle: p.title });
+      list.push({ projectId: p.id, projectTitle: p.title, mode });
       pinnedByKey.set(p.pinnedKeyId, list);
     }
 
@@ -251,41 +263,98 @@ export class QueueAdminService {
     return {
       groups: [...groupMap.values()].sort((a, b) => b.lanes.length - a.lanes.length),
       generatedAt: new Date(now).toISOString(),
+      // 当前生效的视频并发上限：随车道数自动伸缩（4 把 Key = 4 单并行）
+      videoConcurrency: GenerationService.typeCap('video'),
     };
   }
 
   /**
-   * 给项目钉一把 Key（或解钉）。钉住后该项目只领这一条车道，
-   * 多个项目同时开工时不会互相抢占并发额度。
+   * 给项目钉一把 Key（或解钉）。
+   * ------------------------------------------------------------------
+   * mode 决定「钉住」的语义：
+   *   - shared（默认）：钉住 = 优先偏好。车道忙/冷却时项目可以临时用别的车道，
+   *     保证产能优先；
+   *   - exclusive：钉住 = 独占。这把 Key 只服务该项目，其他项目（共享或独占）
+   *     都租不到它；本项目在这把忙时排队等待，不借别人的车道。
+   *
+   * 「一 Key 一项目」必须挡冲突：同一把 Key 被两个项目 exclusive，双方会互相
+   * 等对方释放，表现为项目永久停在「等密钥车道」。这里直接拒绝第二个独占。
    */
-  async pinProjectKey(projectId: string, keyId: string | null): Promise<PinProjectKeyResult> {
+  async pinProjectKey(
+    projectId: string,
+    keyId: string | null,
+    mode?: 'shared' | 'exclusive',
+  ): Promise<PinProjectKeyResult> {
     const [project] = await this.db
-      .select({ id: projects.id, title: projects.title })
+      .select({ id: projects.id, title: projects.title, metadata: projects.metadata })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
     if (!project) throw new NotFoundException(`项目 ${projectId} 不存在`);
 
+    const bindingMode: 'shared' | 'exclusive' =
+      keyId && mode === 'exclusive' ? 'exclusive' : 'shared';
+
     if (keyId) {
       const [key] = await this.db
-        .select({ id: providerApiKeys.id, label: providerApiKeys.label, enabled: providerApiKeys.enabled })
+        .select({
+          id: providerApiKeys.id,
+          label: providerApiKeys.label,
+          enabled: providerApiKeys.enabled,
+        })
         .from(providerApiKeys)
         .where(eq(providerApiKeys.id, keyId))
         .limit(1);
       if (!key) throw new NotFoundException(`Key ${keyId} 不存在`);
       if (!key.enabled) throw new BadRequestException(`Key「${key.label}」已停用，不能钉给项目`);
+
+      // 独占冲突：同一把 Key 已经独占给别的项目时，再独占会让双方互相等死
+      if (bindingMode === 'exclusive') {
+        const holders = await this.db
+          .select({ id: projects.id, title: projects.title })
+          .from(projects)
+          .where(
+            and(
+              eq(projects.pinnedKeyId, keyId),
+              sql`COALESCE(${projects.metadata} ->> 'keyBindingMode', 'shared') = 'exclusive'`,
+              sql`${projects.id} <> ${projectId}`,
+            ),
+          );
+        if (holders.length > 0) {
+          throw new BadRequestException(
+            `Key「${key.label}」已被项目「${holders[0].title}」独占，一个密钥只能绑一个独占项目；` +
+              `可改用共享绑定，或换一把 Key`,
+          );
+        }
+      }
     }
 
-    await this.db.update(projects).set({ pinnedKeyId: keyId }).where(eq(projects.id, projectId));
+    await this.db
+      .update(projects)
+      .set({
+        pinnedKeyId: keyId,
+        metadata: sql`jsonb_set(
+          COALESCE(${projects.metadata}, '{}'::jsonb),
+          '{keyBindingMode}',
+          to_jsonb(${bindingMode}::text),
+          true
+        )`,
+      })
+      .where(eq(projects.id, projectId));
     this.logger.log(
       keyId
-        ? `项目「${project.title}」钉住 Key ${keyId.slice(0, 8)}`
+        ? `项目「${project.title}」钉住 Key ${keyId.slice(0, 8)}（${bindingMode === 'exclusive' ? '独占' : '共享'}）`
         : `项目「${project.title}」解除 Key 钉定`,
     );
     return {
       projectId,
       pinnedKeyId: keyId,
-      message: keyId ? `已为「${project.title}」钉住该 Key` : `已解除「${project.title}」的 Key 钉定`,
+      mode: bindingMode,
+      message: keyId
+        ? bindingMode === 'exclusive'
+          ? `已让「${project.title}」独占该 Key：其他项目不会再占用它`
+          : `已为「${project.title}」钉住该 Key（车到忙时可临时借用其他车道）`
+        : `已解除「${project.title}」的 Key 钉定`,
     };
   }
 

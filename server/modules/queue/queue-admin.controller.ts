@@ -26,6 +26,14 @@ class PinProjectKeyDto {
   @IsOptional()
   @IsUUID()
   keyId?: string | null;
+
+  /**
+   * shared（默认）= 钉住只是优先偏好，车道忙时可临时借用别的；
+   * exclusive = 该 Key 只服务这个项目，别的项目租不到，Key 忙时本项目等待。
+   */
+  @IsOptional()
+  @IsIn(['shared', 'exclusive'])
+  mode?: 'shared' | 'exclusive';
 }
 
 /**
@@ -97,12 +105,12 @@ export class QueueAdminController {
     return this.queue.recalculateRoutes();
   }
 
-  /** 给项目钉一把 Key（项目间互不抢并发额度）；keyId=null 解钉 */
+  /** 给项目钉一把 Key（项目间互不抢并发额度）；keyId=null 解钉；mode=exclusive 独占 */
   @Post('projects/:id/pin-key')
   pinProjectKey(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: PinProjectKeyDto,
   ): Promise<PinProjectKeyResult> {
-    return this.queue.pinProjectKey(id, body.keyId ?? null);
+    return this.queue.pinProjectKey(id, body.keyId ?? null, body.mode);
   }
 }

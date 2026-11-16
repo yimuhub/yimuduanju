@@ -27,7 +27,16 @@ export type FederatedLeaseResult =
       providerName: string;
     }
   | { status: 'no_keys' }
-  | { status: 'busy' };
+  | {
+      status: 'busy';
+      /**
+       * all_busy = 所有车道都在途/冷却；
+       * exclusive_wait = 项目独占的那把 Key 正忙 —— 语义完全不同，
+       * 前者加 Key 能解决，后者是用户要求的「一把 Key 只服务一个项目」的代价，
+       * 排队页与任务错误文案必须能区分，否则用户会以为系统坏了。
+       */
+      reason?: 'all_busy' | 'exclusive_wait';
+    };
 
 /**
  * 供应商密钥池（migration 0023）。
@@ -59,6 +68,7 @@ export class ProviderKeyPoolService {
     jobId?: string | null,
     ttlMs = 30 * 60 * 1000,
     pinnedKeyId?: string | null,
+    projectId?: string | null,
   ): Promise<KeyLeaseResult> {
     // 先看这个供应商到底有没有 Key 行：没有则让调用方回落主 Key 列
     const total = await this.db
@@ -69,18 +79,28 @@ export class ProviderKeyPoolService {
 
     // 原子领 Key：子查询挑一条可用车道并 FOR UPDATE SKIP LOCKED，
     // 外层 UPDATE 直接把 in_flight + 1 —— 多进程并发下也不会超发。
+    //
+    // 「被别的项目独占」的车道一律不可见：项目 A 把 Key 设成 exclusive 后，
+    // 项目 B（无论共享还是独占）都不该再租到它，否则「一 Key 一项目」形同虚设。
+    // projectId 为空时不排除任何车道（系统级任务没有项目归属）。
     const rows = await this.db.execute(sql`
       UPDATE provider_api_keys
       SET in_flight = in_flight + 1, last_used_at = now()
       WHERE id = (
-        SELECT id FROM provider_api_keys
-        WHERE provider_id = ${providerId}
-          AND enabled = true
-          AND status <> 'invalid'
-          AND (cooldown_until IS NULL OR cooldown_until < now())
-          AND in_flight < GREATEST(concurrency, 1)
-          AND (${pinnedKeyId ?? null}::uuid IS NULL OR id = ${pinnedKeyId ?? null}::uuid)
-        ORDER BY in_flight ASC, priority DESC, last_used_at ASC NULLS FIRST
+        SELECT k.id FROM provider_api_keys k
+        WHERE k.provider_id = ${providerId}
+          AND k.enabled = true
+          AND k.status <> 'invalid'
+          AND (k.cooldown_until IS NULL OR k.cooldown_until < now())
+          AND k.in_flight < GREATEST(k.concurrency, 1)
+          AND (${pinnedKeyId ?? null}::uuid IS NULL OR k.id = ${pinnedKeyId ?? null}::uuid)
+          AND NOT EXISTS (
+            SELECT 1 FROM projects px
+            WHERE px.pinned_key_id = k.id
+              AND px.id <> ${projectId ?? null}::uuid
+              AND COALESCE(px.metadata ->> 'keyBindingMode', 'shared') = 'exclusive'
+          )
+        ORDER BY k.in_flight ASC, k.priority DESC, k.last_used_at ASC NULLS FIRST
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
@@ -282,6 +302,61 @@ export class ProviderKeyPoolService {
   }
 
   /**
+   * 视频「可用车道」盘点：一把 Key × 它的 concurrency = 一条（或几条）车道。
+   * ------------------------------------------------------------------
+   * 用途：视频类型并发上限不能再写死（旧值 2）。用户放 4 把 Key 就该能同时
+   * 排 4 单，否则多出来的 Key 纯闲置；反过来，只有 1 把 Key 时把上限拉到 8
+   * 只会让 7 单抢不到车道、回队列空转。所以上限 = 实际车道数（下限保留
+   * 环境变量/基线的语义，上限由调用方裁剪）。
+   *
+   * 只统计「视频通道供应商」下的 Key：图片/文本供应商的 Key 再多，也变不出一条
+   * 视频车道。判定用 video_model 非空即可覆盖 Agnes / 火山 / 通用中转。
+   */
+  async videoLaneCapacity(): Promise<{ lanes: number; slots: number; keys: number }> {
+    try {
+      const rows = (await this.db.execute(sql`
+        SELECT
+          count(*)::int AS keys,
+          count(DISTINCT k.provider_id)::int AS lanes,
+          coalesce(sum(GREATEST(k.concurrency, 1)), 0)::int AS slots
+        FROM provider_api_keys k
+        JOIN model_providers p ON p.id = k.provider_id
+        WHERE k.enabled = true
+          AND k.status <> 'invalid'
+          AND p.enabled = true
+          AND coalesce(p.video_model, '') <> ''
+      `)) as unknown as Array<{ keys: number; lanes: number; slots: number }>;
+      const row = rows[0];
+      return {
+        keys: Number(row?.keys ?? 0),
+        lanes: Number(row?.lanes ?? 0),
+        slots: Number(row?.slots ?? 0),
+      };
+    } catch (e) {
+      this.logger.warn(`盘点视频车道失败：${(e as Error).message}`);
+      return { keys: 0, lanes: 0, slots: 0 };
+    }
+  }
+
+  /**
+   * 项目的 Key 绑定模式（projects.metadata.keyBindingMode，缺省 shared）。
+   * shared = 钉住只是优先偏好，忙了可以临时用别的车道；
+   * exclusive = 该 Key 只服务这个项目，别的项目租不到，Key 忙时本项目等待。
+   */
+  async keyBindingModeOf(projectId?: string | null): Promise<'shared' | 'exclusive'> {
+    if (!projectId) return 'shared';
+    try {
+      const rows = (await this.db.execute(sql`
+        SELECT COALESCE(metadata ->> 'keyBindingMode', 'shared') AS mode
+        FROM projects WHERE id = ${projectId} LIMIT 1
+      `)) as unknown as Array<{ mode: string }>;
+      return rows[0]?.mode === 'exclusive' ? 'exclusive' : 'shared';
+    } catch {
+      return 'shared';
+    }
+  }
+
+  /**
    * 视频联邦池租约（只服务 Agnes 专用通道）。
    */
   async leaseForVideo(
@@ -345,14 +420,20 @@ export class ProviderKeyPoolService {
         UPDATE provider_api_keys
         SET in_flight = in_flight + 1, last_used_at = now()
         WHERE id = (
-          SELECT id FROM provider_api_keys
-          WHERE provider_id IN ${agnesProviderIds}
-            AND enabled = true
-            AND status <> 'invalid'
-            AND (cooldown_until IS NULL OR cooldown_until < now())
-            AND in_flight < GREATEST(concurrency, 1)
-            AND (${pinned}::uuid IS NULL OR id = ${pinned}::uuid)
-          ORDER BY in_flight ASC, priority DESC, last_used_at ASC NULLS FIRST
+          SELECT k.id FROM provider_api_keys k
+          WHERE k.provider_id IN ${agnesProviderIds}
+            AND k.enabled = true
+            AND k.status <> 'invalid'
+            AND (k.cooldown_until IS NULL OR k.cooldown_until < now())
+            AND k.in_flight < GREATEST(k.concurrency, 1)
+            AND (${pinned}::uuid IS NULL OR k.id = ${pinned}::uuid)
+            AND NOT EXISTS (
+              SELECT 1 FROM projects px
+              WHERE px.pinned_key_id = k.id
+                AND px.id <> ${projectId ?? null}::uuid
+                AND COALESCE(px.metadata ->> 'keyBindingMode', 'shared') = 'exclusive'
+            )
+          ORDER BY k.in_flight ASC, k.priority DESC, k.last_used_at ASC NULLS FIRST
           LIMIT 1
           FOR UPDATE SKIP LOCKED
         )
@@ -361,17 +442,26 @@ export class ProviderKeyPoolService {
       return (rows as unknown as Array<{ id: string; label: string; provider_id: string }>)[0];
     };
 
+    const bindingMode = await this.keyBindingModeOf(projectId);
     let row = await tryLease(pinnedKeyId);
-    if (!row && pinnedKeyId) {
+    if (!row && pinnedKeyId && bindingMode !== 'exclusive') {
       /*
-       * 钉 Key 是「优先偏好」，不是硬锁。旧实现把候选集合直接缩到这一把，
-       * 于是一旦它被 503 冷却，整个项目所有镜头全部 busy —— 用户看到的
-       * 「4 个账号实际只有 2 个在跑」就是这里：两个项目各自钉了一把 Key。
-       * 钉 Key 忙/冷却时回落到全部 Agnes 车道，既保留偏好又不牺牲产能。
+       * 钉 Key 是「优先偏好」，不是硬锁（仅限 shared 模式）。
+       * 旧实现把候选集合直接缩到这一把，于是一旦它被 503 冷却，整个项目
+       * 所有镜头全部 busy —— 用户看到的「4 个账号实际只有 2 个在跑」就是
+       * 这里：两个项目各自钉了一把 Key。
+       *
+       * exclusive 模式则**故意不回落**：用户要的就是「一个密钥只服务一个项目」，
+       * 这把忙就排队等，而不是偷偷借走别人的车道。
        */
       row = await tryLease(null);
     }
-    if (!row) return { status: 'busy' };
+    if (!row) {
+      return {
+        status: 'busy',
+        reason: pinnedKeyId && bindingMode === 'exclusive' ? 'exclusive_wait' : 'all_busy',
+      };
+    }
 
     const names = await this.db.execute(sql`
       SELECT name FROM model_providers WHERE id = ${row.provider_id} LIMIT 1
@@ -418,7 +508,16 @@ export class ProviderKeyPoolService {
       const row = (pinned as unknown as Array<{ key_provider: string | null; pinned: string | null }>)[0];
       if (row?.pinned && row.key_provider === providerId) pinnedKeyId = row.pinned;
     }
-    return this.lease(providerId, jobId, 30 * 60 * 1000, pinnedKeyId);
+    const ttl = 30 * 60 * 1000;
+    if (!pinnedKeyId) return this.lease(providerId, jobId, ttl, null, projectId);
+
+    const mode = await this.keyBindingModeOf(projectId);
+    const first = await this.lease(providerId, jobId, ttl, pinnedKeyId, projectId);
+    if (first.status === 'leased' || first.status === 'no_keys' || mode === 'exclusive') {
+      // exclusive：这把忙就等（不借别人的车道）；shared：继续往下回落
+      return first;
+    }
+    return this.lease(providerId, jobId, ttl, null, projectId);
   }
 
   /** 供应商当前车道状态（供队列页/设置页展示） */

@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
+import { createReadStream } from 'fs';
 import type { Response } from 'express';
 import { ExportService } from './export.service';
 import type {
@@ -64,6 +65,28 @@ export class ExportController {
     res.setHeader('Cache-Control', 'private, max-age=3600');
     res.setHeader('Content-Length', String(buffer.length));
     res.end(buffer);
+  }
+
+  /**
+   * 成片下载：文件名严格等于项目名（RFC 5987 的 filename* 带 UTF-8 中文）。
+   * 前端资产卡片走 fileUrl（末段已是项目名），这个端点用于「直接点链接下载 /
+   * 交付给外部」的场景，保证任何路径下拿到的都是「项目名.mp4」。
+   */
+  @Get('final.mp4')
+  async downloadFinal(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.exportService.getFinalVideoFile(projectId);
+    // ASCII 回退名给老浏览器；现代浏览器优先用 filename*（中文不被转义成 _）
+    const asciiFallback = file.fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '');
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Length', String(file.size));
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    createReadStream(file.absPath).pipe(res);
   }
 
   /** 字幕 SRT 文件下载 */

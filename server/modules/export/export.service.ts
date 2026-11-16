@@ -3,7 +3,7 @@ import { randomUUID, createHash } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { mkdir, writeFile, unlink, stat, copyFile, rm, readFile } from 'fs/promises';
-import { join, resolve as resolvePath } from 'path';
+import { join, resolve as resolvePath, basename } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import {
@@ -15,13 +15,14 @@ import {
   props,
   characters,
 } from '@server/database/schema';
-import { eq, desc, asc, and } from 'drizzle-orm';
+import { eq, desc, asc, and, sql } from 'drizzle-orm';
 // 修复（分层）：uploadDir 直接从工具模块导入。
 // 旧写法依赖 uploads.controller 里的再导出，而该再导出已删除
 // （它逼着导出服务在模块加载期拉起整条 Controller → Service → DI 依赖链）。
 import { uploadDir } from '../assets/upload-dir';
 import { isSafeExternalUrl, isSafeExternalUrlStatic } from '../../common/url-guard';
 import { videoSizeForAspect } from '@shared/aspect';
+import { projectExportFileName, sanitizeFileBase } from '@shared/file-name';
 import type {
   Asset,
   AssembleFinalVideoRequest,
@@ -61,6 +62,49 @@ export class ExportService {
       .limit(1);
     if (rows.length === 0) throw new NotFoundException('项目不存在');
     return rows[0];
+  }
+
+  /**
+   * 成片文件定位（供 /export/final.mp4 下载）。
+   * ------------------------------------------------------------------
+   * 文件名必须是项目名：用户在素材箱/浏览器里看到的就是「项目名.mp4」，
+   * 而不是 final_3e1a2b53.mp4。历史成片仍叫 final_xxx.mp4，这里按
+   * 「最新一条合成资产」定位真实文件，用它的 basename 做下载名 ——
+   * 不因为改名而找不到旧片。
+   */
+  async getFinalVideoFile(
+    projectId: string,
+  ): Promise<{ absPath: string; fileName: string; size: number }> {
+    const project = await this.requireProject(projectId);
+    const rows = await this.db
+      .select({ filePath: assets.filePath })
+      .from(assets)
+      .where(
+        and(
+          eq(assets.projectId, projectId),
+          eq(assets.assetType, 'video'),
+          sql`${assets.sourceId} like 'assemble-%'`,
+        ),
+      )
+      .orderBy(desc(assets.createdAt))
+      .limit(1);
+
+    const preferred = projectExportFileName(
+      project.title,
+      'mp4',
+      `project-${projectId.slice(0, 8)}`,
+    );
+    const candidates = [
+      rows[0]?.filePath,
+      join(uploadDir(), projectId, preferred),
+    ].filter((p): p is string => typeof p === 'string' && p.length > 0);
+
+    for (const absPath of candidates) {
+      if (!existsSync(absPath)) continue;
+      const info = await stat(absPath);
+      return { absPath, fileName: basename(absPath), size: info.size };
+    }
+    throw new BadRequestException('尚未合成成片：请先在导出页点击「开始合成」');
   }
 
   /**
@@ -1123,7 +1167,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         }
       }
 
-      const outName = `final_${randomUUID().slice(0, 8)}.mp4`;
+      // 文件名 = 项目名（用户明确要求：项目叫什么，导出的文件就叫什么）。
+      // 旧实现落 final_<uuid8>.mp4，下载下来一堆无意义文件名，认不出是哪个项目。
+      // 同名即覆盖：同一项目再合成一次还是这一个文件，不再累积 final_xxx 副本。
+      const outName = projectExportFileName(
+        project.title,
+        'mp4',
+        `project-${projectId.slice(0, 8)}`,
+      );
       const dir = join(uploadDir(), projectId);
       await mkdir(dir, { recursive: true });
       const outAbs = join(dir, outName);
@@ -1152,38 +1203,65 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const outStat = await stat(outAbs);
       const durationSeconds = Number(actualDuration.toFixed(1)) || declaredDuration || undefined;
       const fileUrl = `/uploads/${projectId}/${outName}`;
-      const rows = await this.db
-        .insert(assets)
-        .values({
-          projectId,
-          assetType: 'video',
-          name: `成片-${project.title}`.slice(0, 120),
-          fileUrl,
-          filePath: outAbs,
-          mimeType: 'video/mp4',
-          fileSize: outStat.size,
-          durationSeconds: durationSeconds !== undefined ? String(durationSeconds) : undefined,
-          sourceType: 'generated',
-          sourceId: `assemble-${randomUUID()}`,
-          generationPrompt:
-            `服务端拼接 ${downloaded} 条镜头成片（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}，` +
-            `${hasAnyVoice ? '含配音音轨混流' : '纯画面'}` +
-            `${burnedSubtitles ? `+硬字幕烧录(${subtitleStyle})` : hasSrt ? '+内嵌软字幕轨' : ''}` +
-            `${bgmApplied ? '+BGM混音(对白自动压低)' : ''}）`,
-          metadata: {
-            aigcGenerated: true,
-            hasAudio: hasAnyVoice,
-            hasSubtitles: hasSrt || burnedSubtitles,
-            burnedSubtitles,
-            subtitleStyle: burnedSubtitles ? subtitleStyle : undefined,
-            bgmApplied,
-            width: tw,
-            height: th,
-            aspectRatio: project.aspectRatio ?? '16:9',
-          } as any,
-          status: 'ready',
-        })
-        .returning();
+      const assetValues = {
+        projectId,
+        assetType: 'video',
+        // 展示名保留「成片-」前缀便于在资产库里区分角色；文件本名就是项目名
+        name: `成片-${project.title}`.slice(0, 120),
+        fileUrl,
+        filePath: outAbs,
+        mimeType: 'video/mp4',
+        fileSize: outStat.size,
+        durationSeconds: durationSeconds !== undefined ? String(durationSeconds) : undefined,
+        sourceType: 'generated',
+        sourceId: `assemble-${randomUUID()}`,
+        generationPrompt:
+          `服务端拼接 ${downloaded} 条镜头成片（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}，` +
+          `${hasAnyVoice ? '含配音音轨混流' : '纯画面'}` +
+          `${burnedSubtitles ? `+硬字幕烧录(${subtitleStyle})` : hasSrt ? '+内嵌软字幕轨' : ''}` +
+          `${bgmApplied ? '+BGM混音(对白自动压低)' : ''}）`,
+        metadata: {
+          aigcGenerated: true,
+          hasAudio: hasAnyVoice,
+          hasSubtitles: hasSrt || burnedSubtitles,
+          burnedSubtitles,
+          subtitleStyle: burnedSubtitles ? subtitleStyle : undefined,
+          bgmApplied,
+          width: tw,
+          height: th,
+          aspectRatio: project.aspectRatio ?? '16:9',
+          /** 导出文件名（= 项目名），供前端/交付链路直接取用 */
+          fileName: outName,
+        } as any,
+        status: 'ready',
+      };
+      /*
+       * 同一 fileUrl 视为同一份成片：更新而不是再插一条。
+       * 历史事故：反复点「开始合成」留下 4 条同名「成片-唐朝甜宠番外二」，
+       * 用户根本不知道确认哪一条。文件名既然固定成项目名，资产记录也必须一一对应。
+       */
+      const existing = await this.db
+        .select({ id: assets.id, version: assets.version })
+        .from(assets)
+        .where(
+          and(
+            eq(assets.projectId, projectId),
+            eq(assets.assetType, 'video'),
+            eq(assets.fileUrl, fileUrl),
+          ),
+        )
+        .limit(1);
+      const rows = existing[0]
+        ? await this.db
+            .update(assets)
+            .set({
+              ...assetValues,
+              version: (existing[0].version ?? 1) + 1,
+              updatedAt: new Date(),
+            })
+            .where(eq(assets.id, existing[0].id))
+            .returning()
+        : await this.db.insert(assets).values(assetValues).returning();
       this.logger.log(
         `成片合成完成 ${projectId}：${downloaded} 片 → ${fileUrl}（${outStat.size}B，` +
           `${burnedSubtitles ? '硬字幕' : hasSrt ? '软字幕' : '无字幕'}，${bgmApplied ? '含BGM' : '无BGM'}）`,
@@ -1354,7 +1432,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         }
 
         // 落盘 + 登记 video 资产（资产页按「逐镜」前缀聚合可见）
-        const outName = `shot_${String(shot.shotNumber).padStart(3, '0')}_${randomUUID().slice(0, 6)}.mp4`;
+        // 命名与整片一致：<项目名>-镜NN.mp4（同一镜头再导出直接覆盖，不再堆 shot_xxx_ab12cd.mp4）
+        const shotBase = sanitizeFileBase(
+          project.title,
+          `project-${projectId.slice(0, 8)}`,
+          48,
+        );
+        const outName = `${shotBase}-镜${String(shot.shotNumber).padStart(2, '0')}.mp4`;
         const outAbs = join(dir, outName);
         // eslint-disable-next-line no-await-in-loop
         const finalOk = await this.runFfmpeg(ffmpegBin, ['-y', '-i', normLocal, '-c', 'copy', ...aigcMeta, outAbs], work);
@@ -1364,35 +1448,51 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         // eslint-disable-next-line no-await-in-loop
         const dur = await this.probeSeconds(outAbs);
         const fileUrl = `/uploads/${projectId}/${outName}`;
+        // 同一镜头（sourceId=per-shot-<shotId>）视为同一份产物：更新而非再插一条
         // eslint-disable-next-line no-await-in-loop
-        await this.db
-          .insert(assets)
-          .values({
-            projectId,
-            assetType: 'video',
-            name: `逐镜-镜${shot.shotNumber}-${(shot.subject ?? '').slice(0, 60) || project.title}`.slice(0, 120),
-            fileUrl,
-            filePath: outAbs,
-            mimeType: 'video/mp4',
-            fileSize: outStat?.size,
-            durationSeconds: dur ? String(Math.round(dur * 10) / 10) : undefined,
-            sourceType: 'generated',
-            sourceId: `per-shot-${shot.id}`,
-            generationPrompt: `逐镜导出（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}${shotWarnings.length ? '，' + shotWarnings.join('；') : ''}）`,
-            metadata: {
-              aigcGenerated: true,
-              perShot: true,
-              shotId: shot.id,
-              shotNumber: shot.shotNumber,
-              width: tw,
-              height: th,
-            } as any,
-            status: 'ready',
-          })
-          .catch((e: Error) => {
-            this.logger.warn(`逐镜资产登记失败 ${shot.id}：${e.message}`);
-            shotWarnings.push('资产登记失败（文件已落盘）');
-          });
+        const sameShot = await this.db
+          .select({ id: assets.id, filePath: assets.filePath })
+          .from(assets)
+          .where(and(eq(assets.projectId, projectId), eq(assets.sourceId, `per-shot-${shot.id}`)))
+          .limit(1);
+        const perShotValues = {
+          projectId,
+          assetType: 'video',
+          name: `逐镜-镜${shot.shotNumber}-${(shot.subject ?? '').slice(0, 60) || project.title}`.slice(0, 120),
+          fileUrl,
+          filePath: outAbs,
+          mimeType: 'video/mp4',
+          fileSize: outStat?.size,
+          durationSeconds: dur ? String(Math.round(dur * 10) / 10) : undefined,
+          sourceType: 'generated',
+          sourceId: `per-shot-${shot.id}`,
+          generationPrompt: `逐镜导出（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}${shotWarnings.length ? '，' + shotWarnings.join('；') : ''}）`,
+          metadata: {
+            aigcGenerated: true,
+            perShot: true,
+            shotId: shot.id,
+            shotNumber: shot.shotNumber,
+            width: tw,
+            height: th,
+            fileName: outName,
+          } as any,
+          status: 'ready',
+        };
+        // eslint-disable-next-line no-await-in-loop
+        await (sameShot[0]
+          ? this.db
+              .update(assets)
+              .set({ ...perShotValues, updatedAt: new Date() })
+              .where(eq(assets.id, sameShot[0].id))
+          : this.db.insert(assets).values(perShotValues)
+        ).catch((e: Error) => {
+          this.logger.warn(`逐镜资产登记失败 ${shot.id}：${e.message}`);
+          shotWarnings.push('资产登记失败（文件已落盘）');
+        });
+        // 旧文件名（改名前的 shot_xxx 或上一次不同名的产物）不再被引用，顺手清掉
+        if (sameShot[0]?.filePath && sameShot[0].filePath !== outAbs) {
+          await unlink(sameShot[0].filePath).catch(() => undefined);
+        }
         warnings.push(...shotWarnings.map((w) => `镜头 ${shot.shotNumber}：${w}`));
         items.push({
           shotId: shot.id,

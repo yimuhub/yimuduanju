@@ -903,9 +903,20 @@ export interface KeyLane {
   cooldownUntil?: string;
   lastError?: string;
   lastUsedAt?: string;
-  /** 钉了这把 Key 的项目（项目间互不打扰） */
-  pinnedProjects: { projectId: string; projectTitle: string }[];
+  /** 钉了这把 Key 的项目（项目间互不打扰）；mode=exclusive 时该 Key 只服务它 */
+  pinnedProjects: {
+    projectId: string;
+    projectTitle: string;
+    mode?: KeyBindingMode;
+  }[];
 }
+
+/**
+ * 项目与 Key 的绑定模式：
+ * - shared：钉住是「优先偏好」——该车道忙/冷却时，项目可以临时用别的车道；
+ * - exclusive：独占——该 Key 只服务这一个项目，别的项目租不到；Key 忙时本项目等待。
+ */
+export type KeyBindingMode = 'shared' | 'exclusive';
 
 export interface KeyLaneGroup {
   providerId: string;
@@ -919,11 +930,14 @@ export interface KeyLaneGroup {
 export interface KeyLanesResponse {
   groups: KeyLaneGroup[];
   generatedAt: string;
+  /** 当前生效的视频并发上限（随可用车道数自动伸缩，旧实现写死 2） */
+  videoConcurrency?: number;
 }
 
 export interface PinProjectKeyResult {
   projectId: string;
   pinnedKeyId: string | null;
+  mode?: KeyBindingMode;
   message: string;
 }
 

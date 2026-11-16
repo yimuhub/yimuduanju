@@ -10,6 +10,7 @@ import {
 } from '@server/database/schema';
 import type { DashboardStats, CostSummary, OpsMetrics, ProjectListItem } from '@shared/api.interface';
 import { BudgetCapService } from '../generation/budget-cap.service';
+import { GenerationService } from '../generation/generation.service';
 
 /**
  * W4 网关收敛：数据库行 → ProjectListItem。
@@ -216,7 +217,19 @@ export class DashboardService {
         enabled: process.env.JOB_WORKER_ENABLED !== 'false',
         mode: 'bullmq-with-inline-fallback',
         intervalMs: Math.max(2000, Number(process.env.JOB_WORKER_INTERVAL_MS) || 10000),
-        concurrency: Math.max(1, Math.min(8, Number(process.env.JOB_WORKER_CONCURRENCY) || 2)),
+        // 与 onModuleInit 同一套算法：各类型 cap 之和（含随车道数伸缩的 video 道）。
+        // 旧实现按「环境变量 || 2」显示，4 把 Key 在跑 4 单时面板仍写 2，看着像没生效。
+        concurrency: Math.max(
+          1,
+          Math.min(
+            64,
+            Number(process.env.JOB_WORKER_CONCURRENCY) ||
+              Math.max(
+                4,
+                Object.values(GenerationService.allTypeCaps()).reduce((sum, n) => sum + n, 0),
+              ),
+          ),
+        ),
       },
     };
   }

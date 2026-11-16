@@ -66,6 +66,11 @@ export interface SynthOptions {
    * 不是真直方图匹配（wasm 内无 cv2），只拉齐一阶量，默认关闭（多一次转码，较慢）。
    */
   colorMatch?: boolean;
+  /**
+   * 下载文件名（含扩展名）。成片必须与项目同名，调用方传项目名；
+   * 不传才退回带时间戳的通用名，避免浏览器端合成与服务端命名两套规则。
+   */
+  fileName?: string;
 }
 
 /** 中间帧测光：返回平均亮度/饱和度（0-1），供 eq 校正 */
@@ -337,5 +342,9 @@ export async function synthesizeMp4(
     }
   }
   onProgress('done', 100, '合成完成');
-  return { blobUrl, fileName: `yimu-export-${Date.now()}.mp4` };
+  return {
+    blobUrl,
+    // 默认与项目同名（调用方传入）；没传才用时间戳兜底，避免覆盖上一次的浏览器缓存
+    fileName: opts.fileName?.trim() || `yimu-export-${Date.now()}.mp4`,
+  };
 }

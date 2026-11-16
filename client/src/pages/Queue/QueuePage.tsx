@@ -74,6 +74,9 @@ function statusMeta(item: QueueItem): { label: string; pill: string } {
   if (/上游视频队列已满|video_queue_full|等上游产能|队列满/.test(reason)) {
     return { label: '等上游产能', pill: 'pill-wait' };
   }
+  if (/独占的密钥车道/.test(reason)) {
+    return { label: '等独占车道', pill: 'pill-wait' };
+  }
   if (/密钥车道|冷却中|限流/.test(reason)) {
     return { label: '等密钥车道', pill: 'pill-wait' };
   }
@@ -245,14 +248,20 @@ export default function QueuePage() {
     [lanes],
   );
 
-  /** 某项目当前钉住的 Key（从车道反查，避免再多一个请求） */
-  const pinnedKeyOf = (projectId: string): string =>
-    allLanes.find((l) => l.pinnedProjects.some((p) => p.projectId === projectId))?.keyId ?? '';
-
-  const onPin = (projectId: string, keyId: string | null) =>
+  /** 某项目当前钉住的 Key 与绑定模式（从车道反查，避免再多一个请求） */
+  const pinnedOf = (
+    projectId: string,
+  ): { keyId: string; mode: 'shared' | 'exclusive' } | null => {
+    for (const lane of allLanes) {
+      const hit = lane.pinnedProjects.find((p) => p.projectId === projectId);
+      if (hit) return { keyId: lane.keyId, mode: hit.mode === 'exclusive' ? 'exclusive' : 'shared' };
+    }
+    return null;
+  };
+  const onPin = (projectId: string, keyId: string | null, mode?: 'shared' | 'exclusive') =>
     void run(
       `pin:${projectId}`,
-      () => queueApi.pinProjectKey(projectId, keyId),
+      () => queueApi.pinProjectKey(projectId, keyId, mode),
       keyId ? '已钉住该 Key' : '已解除 Key 钉定',
     );
 
@@ -357,12 +366,21 @@ export default function QueuePage() {
             <span className="text-[11px] text-muted-foreground">
               供应商排队是账号级的：同一账号多把 Key 共用一个队列，不同账号才真正并行
             </span>
-            <span className="ml-auto text-[11px] text-muted-foreground">
-              合计在途{' '}
-              <b className="font-medium text-foreground tabular-nums">
-                {lanes.groups.reduce((s, g) => s + g.totalInFlight, 0)}/
-                {lanes.groups.reduce((s, g) => s + g.totalConcurrency, 0)}
-              </b>
+            <span className="ml-auto flex items-center gap-3 text-[11px] text-muted-foreground">
+              <span>
+                视频并发上限{' '}
+                <b className="font-medium text-foreground tabular-nums">
+                  {lanes.videoConcurrency ?? '—'}
+                </b>
+                <span className="ml-1 text-[10px]">（随可用车道自动伸缩）</span>
+              </span>
+              <span>
+                合计在途{' '}
+                <b className="font-medium text-foreground tabular-nums">
+                  {lanes.groups.reduce((s, g) => s + g.totalInFlight, 0)}/
+                  {lanes.groups.reduce((s, g) => s + g.totalConcurrency, 0)}
+                </b>
+              </span>
             </span>
           </div>
 
@@ -411,7 +429,9 @@ export default function QueuePage() {
                     {lane.pinnedProjects.length > 0 && (
                       <span className="max-w-[18rem] truncate text-muted-foreground">
                         钉住：
-                        {lane.pinnedProjects.map((p) => p.projectTitle).join('、')}
+                        {lane.pinnedProjects
+                          .map((p) => `${p.projectTitle}${p.mode === 'exclusive' ? '（独占）' : ''}`)
+                          .join('、')}
                       </span>
                     )}
                     {lane.lastError && (
@@ -428,31 +448,58 @@ export default function QueuePage() {
             </div>
           ))}
 
-          {/* 项目钉 Key：钉住后该项目只走这一条车道 */}
+          {/* 项目钉 Key：一把 Key 可以「共享」或「独占」给一个项目 */}
           {data && data.projects.length > 0 && (
             <div className="space-y-1.5 border-t bg-muted/20 px-4 py-3">
               <div className="text-[11px] text-muted-foreground">
-                项目钉 Key：钉住后该项目只领这一条车道，多个项目同时开工时互不抢并发额度。
+                项目绑 Key：<b className="font-medium text-foreground">共享</b>
+                ＝钉住优先、车道忙时可临时借用其他车道；
+                <b className="font-medium text-foreground">独占</b>
+                ＝这把 Key 只服务本项目（其他项目租不到，忙时本项目排队等）。
+                一个项目也可以不钉，直接用全部车道并行。
               </div>
-              {data.projects.map((p) => (
-                <div key={p.projectId} className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="max-w-[18rem] truncate text-foreground">{p.projectTitle}</span>
-                  <select
-                    value={pinnedKeyOf(p.projectId)}
-                    disabled={busy === `pin:${p.projectId}`}
-                    onChange={(e) => onPin(p.projectId, e.target.value || null)}
-                    className="h-7 max-w-[20rem] rounded-md border bg-background px-1.5 text-[11px] text-foreground"
-                  >
-                    <option value="">不钉定（自动选最闲的车道）</option>
-                    {allLanes.map((l) => (
-                      <option key={l.keyId} value={l.keyId}>
-                        {l.providerName} · {l.label}（{l.inFlight}/{l.concurrency}）
-                      </option>
-                    ))}
-                  </select>
-                  {busy === `pin:${p.projectId}` && <Loader2 className="h-3 w-3 animate-spin" />}
-                </div>
-              ))}
+              {data.projects.map((p) => {
+                const pin = pinnedOf(p.projectId);
+                return (
+                  <div key={p.projectId} className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="max-w-[18rem] truncate text-foreground">{p.projectTitle}</span>
+                    <select
+                      value={pin?.keyId ?? ''}
+                      disabled={busy === `pin:${p.projectId}`}
+                      onChange={(e) => onPin(p.projectId, e.target.value || null, pin?.mode)}
+                      className="h-7 max-w-[20rem] rounded-md border bg-background px-1.5 text-[11px] text-foreground"
+                    >
+                      <option value="">不钉定（自动选最闲的车道，可多车道并行）</option>
+                      {allLanes.map((l) => {
+                        const takenByOther = l.pinnedProjects.find(
+                          (x) => x.mode === 'exclusive' && x.projectId !== p.projectId,
+                        );
+                        return (
+                          <option key={l.keyId} value={l.keyId}>
+                            {l.providerName} · {l.label}（{l.inFlight}/{l.concurrency}）
+                            {takenByOther ? ` · 已被「${takenByOther.projectTitle}」独占` : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <select
+                      value={pin?.mode ?? 'shared'}
+                      disabled={!pin || busy === `pin:${p.projectId}`}
+                      onChange={(e) =>
+                        pin
+                          ? onPin(p.projectId, pin.keyId, e.target.value as 'shared' | 'exclusive')
+                          : undefined
+                      }
+                      title={pin ? '绑定语义' : '先选一把 Key 才能设置独占'}
+                      className="h-7 rounded-md border bg-background px-1.5 text-[11px] text-foreground disabled:opacity-50"
+                    >
+                      <option value="shared">共享</option>
+                      <option value="exclusive">独占</option>
+                    </select>
+                    {busy === `pin:${p.projectId}` && <Loader2 className="h-3 w-3 animate-spin" />}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

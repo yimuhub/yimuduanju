@@ -51,10 +51,14 @@ export const setQueueGlobalPause = (paused: boolean) =>
 export const keyLanes = () =>
   axiosForBackend.get<KeyLanesResponse>('/api/queue/key-lanes').then((res) => res.data);
 
-/** 给项目钉一把 Key；keyId 传 null 表示解钉 */
-export const pinProjectKey = (projectId: string, keyId: string | null) =>
+/** 给项目钉一把 Key；keyId 传 null 表示解钉；mode=exclusive 表示该 Key 只服务此项目 */
+export const pinProjectKey = (
+  projectId: string,
+  keyId: string | null,
+  mode?: 'shared' | 'exclusive',
+) =>
   axiosForBackend
-    .post<PinProjectKeyResult>(`/api/queue/projects/${projectId}/pin-key`, { keyId })
+    .post<PinProjectKeyResult>(`/api/queue/projects/${projectId}/pin-key`, { keyId, mode })
     .then((res) => res.data);
 
 /** 重算排队任务的通道路由：改完「环节绑定」后点一下，老任务才会走新模型 */

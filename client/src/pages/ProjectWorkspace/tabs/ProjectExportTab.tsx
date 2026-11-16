@@ -33,9 +33,10 @@ import {
   Sparkles,
   Image as ImageIcon,
 } from 'lucide-react';
-import { exportApi, storyboard, templates as templatesApi, assets as assetsApi } from '@client/src/api';
+import { exportApi, projects, storyboard, templates as templatesApi, assets as assetsApi } from '@client/src/api';
 import type { Asset, PerShotExportResult, Shot } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
+import { projectExportFileName } from '@shared/file-name';
 import { toast } from 'sonner';
 // P1 性能：ffmpeg.wasm 只在点击合成时动态加载，不再进主包
 import type { SynthStatus } from '@client/src/utils/ffmpegSynth';
@@ -107,6 +108,15 @@ const ProjectExportTab = () => {
       .catch(() => setManifest(null));
   }, [id, shots.length]);
 
+  // 项目名：浏览器端合成的下载文件名要和服务端一致（项目叫什么，文件就叫什么）
+  useEffect(() => {
+    if (!id) return;
+    projects
+      .getProject(id)
+      .then((p) => setProjectTitle(p?.title ?? ''))
+      .catch(() => setProjectTitle(''));
+  }, [id]);
+
   const readiness = [
     { label: '有分镜数据', done: shots.length > 0 },
     { label: '全部镜头有视频', done: shots.length > 0 && withVideo === shots.length },
@@ -175,6 +185,8 @@ const ProjectExportTab = () => {
     }
   };
   const [synthName, setSynthName] = useState('yimu-export.mp4');
+  /** 项目名：浏览器端合成的下载文件名必须与项目同名（与服务端落盘规则一致） */
+  const [projectTitle, setProjectTitle] = useState('');
 
   // 逐镜导出（migration 0025）：每个有视频的镜头独立 MP4（画幅归一 + 该镜字幕烧录可选）
   const [perShotBusy, setPerShotBusy] = useState(false);
@@ -248,7 +260,13 @@ const ProjectExportTab = () => {
         setSynthStatus(status);
         setSynthProgress(progress);
         if (message) setSynthMessage(message);
-      }, { bgmUrl: bgmUrl ?? undefined, includeVoices, colorMatch });
+      }, {
+        bgmUrl: bgmUrl ?? undefined,
+        includeVoices,
+        colorMatch,
+        // 与项目同名：项目叫「唐朝甜宠番外二」，下载下来就是「唐朝甜宠番外二.mp4」
+        fileName: projectExportFileName(projectTitle, 'mp4', 'yimu-export'),
+      });
       setSynthUrl(blobUrl);
       setSynthName(fileName);
     } catch (e) {

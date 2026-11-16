@@ -283,6 +283,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     await this.recoverOrphanedRunning();
     // 密钥池自愈：按实际租约重算 in_flight，回收过期租约，冷却到期的 Key 回到 active
     await this.keyPool.recoverStaleLeases();
+    // 视频并发上限 = 实际密钥车道数（一把 Key 一条车道）。必须在建 Worker 之前算：
+    // 进程级 concurrency 一旦小于各类型 cap 之和，新上限再多也跑不满。
+    await this.refreshVideoLaneCap().catch((e: Error) =>
+      this.logger.warn(`初始化视频并发上限失败：${e.message}`),
+    );
     // Redis 可达 → BullMQ 队列模式；否则进程内串行降级（开发/单机同样可用）
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
     try {
@@ -293,11 +298,15 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       });
       await redis.ping();
       this.redis = redis;
-      // 密钥池（0023）后并发不再被 8 卡死：N 把 Key × 每把并发额度才是真实上限，
-      // 这里只做进程侧的硬顶（64），具体分配由 provider_api_keys.concurrency 控制。
+      // 密钥池（0023）后并发不再被 8 卡死：N 把 Key × 每把并发额度才是真实上限。
+      // 进程级并发 = 各类型 cap 之和（否则 video 上限提到 8、Worker 只有 4，
+      // 另外 4 条车道永远空转）；显式设了 JOB_WORKER_CONCURRENCY 则以它为准。
+      const caps = GenerationService.allTypeCaps();
+      const capSum = Object.values(caps).reduce((sum, n) => sum + n, 0);
+      const envConcurrency = Number(process.env.JOB_WORKER_CONCURRENCY) || 0;
       const concurrency = Math.max(
         1,
-        Math.min(64, Number(process.env.JOB_WORKER_CONCURRENCY) || 4),
+        Math.min(64, envConcurrency > 0 ? envConcurrency : Math.max(4, capSum)),
       );
       this.workerConcurrency = concurrency;
       this.queue = new Queue('yimu-generation', { connection: redis });
@@ -670,6 +679,41 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * 按真实密钥车道数刷新「视频并发上限」。
+   * ------------------------------------------------------------------
+   * 旧实现把 video 道写死 2（JOB_CONCURRENCY_VIDEO 默认值），后果是：
+   * 用户放 4 把 Key、界面 4 条车道全绿，实际同时只有 2 单在跑，
+   * 另外 2 把 Key 永远闲置——「我明明配了 4 个密钥，为什么只排 2 个」。
+   *
+   * 口径：cap = 可用车道数（enabled Key 的 concurrency 之和），并保留
+   * 「基线」（环境变量，没配就用 2）作为下限、32 作为上限。
+   * 只有 1 把 Key 时不会被拉高，避免大量任务抢不到车道回队列空转。
+   * Key 增删、concurrency 升档都会在 60s 内自动生效。
+   */
+  private async refreshVideoLaneCap(): Promise<number> {
+    const capacity = await this.keyPool.videoLaneCapacity();
+    const baseline = Math.max(
+      1,
+      Math.min(32, Number(process.env.JOB_CONCURRENCY_VIDEO) || 2),
+    );
+    const desired = capacity.slots > 0 ? Math.max(baseline, capacity.slots) : baseline;
+    const next = Math.max(1, Math.min(32, desired));
+    const prev = GenerationService.typeCap('video');
+    if (prev !== next) {
+      GenerationService.setTypeCap('video', next);
+      this.logger.log(
+        `视频并发上限 ${prev} → ${next}（视频车道：${capacity.keys} 把 Key / ${capacity.slots} 条并发额度）`,
+      );
+      if (this.worker && next > this.workerConcurrency) {
+        this.logger.warn(
+          `视频上限 ${next} 已超过进程并发 ${this.workerConcurrency}，新增车道需重启后端才能全部用上`,
+        );
+      }
+    }
+    return next;
+  }
+
   private async tick(): Promise<void> {
     if (this.running) {
       // 看门狗：某一轮真的被挂住（上游连接不返回、不设 timeout 的 fetch 等）时，
@@ -713,6 +757,10 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         this.lastKeyRecoverAt = nowMs;
         await this.keyPool.recoverStaleLeases().catch((e: Error) =>
           this.logger.warn(`密钥池自愈失败: ${e.message}`),
+        );
+        // 车道数变化（加 Key / 停用 / concurrency 升档）→ 同步视频并发上限
+        await this.refreshVideoLaneCap().catch((e: Error) =>
+          this.logger.warn(`刷新视频并发上限失败: ${e.message}`),
         );
       }
       // 临时公开首帧副本 TTL 兜底：任务被永久卡住/后端被 SIGKILL 时，
@@ -878,7 +926,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .from(generationJobs)
       .where(sql`${generationJobs.status} in ('running','queued')`)
       .groupBy(generationJobs.jobType);
-    const caps = GenerationService.TYPE_CONCURRENCY;
+    const caps = GenerationService.allTypeCaps();
     const fullTypes = active
       .filter((row) => (caps[row.jobType] ?? 4) <= row.count)
       .map((row) => row.jobType);
@@ -1984,7 +2032,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     let lastErr: Error | null = null;
     type VideoLease =
       | { status: 'leased'; keyId: string; label: string; providerName?: string }
-      | { status: 'busy' }
+      | { status: 'busy'; reason?: 'all_busy' | 'exclusive_wait' }
       | { status: 'no_keys' };
     /*
      * 联邦池只服务 Agnes 专用通道。
@@ -2033,7 +2081,14 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         // soft：这是「等上游产能」，不是任务本身的错，不能按失败次数把任务判死。
         // 优先项目保序：否则每轮撞 busy 都会被 nextval 挤到队尾，
         // 队列偶然放出空位时永远轮不到它。
-        await this.releaseTransient(job, '所有密钥车道均在途/冷却中', {
+        //
+        // 独占绑定要单独说清原因：用户主动要求「一 Key 一项目」，那把 Key 忙
+        // 时项目只能等 —— 这不是故障，文案不能说成「所有车道都在途」误导他去加 Key。
+        const busyText =
+          lease.reason === 'exclusive_wait'
+            ? '独占的密钥车道正忙（该项目只使用绑定给它的那把 Key）'
+            : '所有密钥车道均在途/冷却中';
+        await this.releaseTransient(job, busyText, {
           soft: true,
           keepPosition: this.isPriorityProject(job.projectId),
         });
