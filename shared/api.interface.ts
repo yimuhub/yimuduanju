@@ -968,6 +968,18 @@ export interface ProviderModelParams {
    * relay=image 数组（≥2 项，不足时首帧重复垫）。
    */
   agnesSchema?: 'official' | 'relay';
+  /**
+   * 视频通道（显式声明，优先级最高）。
+   * - agnes：Agnes 专用通道（POST /videos，mode/seconds/first_frame 方言，
+   *   参考图必须是公网 URL）。需要 Agnes 密钥与 agnes-video-* 模型。
+   * - generic：通用视频 API 通道（POST /video/generations，OpenAI 兼容）。
+   * - volcengine_ark：火山方舟（POST /contents/generations/tasks）。
+   * - auto（默认）：按 formatType / 端点 / 模型名自动识别。
+   *
+   * 为什么需要这个字段：Agnes 与通用通道字段方言不兼容，仅凭 formatType
+   * 推断时，"把官方端点配成 openai 格式" 会让网关按通用字段发请求 → 稳定 400。
+   */
+  videoChannel?: 'agnes' | 'generic' | 'volcengine_ark' | 'auto';
 }
 
 export interface ModelProvider {

@@ -625,15 +625,54 @@ export class GenerationService {
     // 修复（预算绕过）：createJob 落库前会过 budgetCap.assertAllowed()，
     // 手动重试同样会真实调用上游并产生花费，必须走同一道闸门。
     await this.budgetCap.assertAllowed();
+    /*
+     * 释放上一次执行残留的密钥租约。
+     * ---------------------------------------------------------------
+     * 进程被杀 / 建单过程中抛错时，key_leases 的 30 分钟 TTL 还没到，
+     * provider_api_keys.in_flight 就一直是 1。手动重试后所有车道都显示
+     * 「在途」，任务立刻以「所有密钥车道均在途/冷却中」退出 —— 与上面
+     * transientSince 一起构成「重试必失败」的另一半原因。
+     * 手动重试等价于声明「上一次执行已经结束」，租约必须回收。
+     */
+    await this.db
+      .execute(sql`
+        WITH gone AS (
+          DELETE FROM key_leases WHERE job_id = ${id} RETURNING key_id
+        ), dec AS (
+          SELECT key_id, count(*)::int AS n FROM gone GROUP BY key_id
+        )
+        UPDATE provider_api_keys p
+        SET in_flight = GREATEST(p.in_flight - d.n, 0)
+        FROM dec d
+        WHERE p.id = d.key_id
+      `)
+      .catch(() => undefined);
     const rows = await this.db
       .update(generationJobs)
       .set({
         status: 'pending',
         retryCount: job.retryCount + 1,
         errorMessage: null,
-        // 手动重试 = 用户已确认环境有变（如隧道恢复/配置已改）：
-        // 清掉「media URL 下载失败」的延迟门与计数，立即重投、重计 3 次额度。
-        inputData: sql`coalesce(${generationJobs.inputData}, '{}'::jsonb) - 'mediaUrlRetryAt' - 'mediaUrlRetries'`,
+        /*
+         * 手动重试 = 用户已确认环境有变（如隧道恢复/配置已改）：必须清掉**全部**
+         * 与「上一次等待」相关的状态，重计额度。
+         *
+         * 事故（2026-11-16 用户实证「一点重试就失败」）：
+         * 旧实现只清 mediaUrlRetryAt / mediaUrlRetries，却把 releaseTransient
+         * 写下的 `transientSince` 留在 input_data 里。软等待有 24h 预算，用的是
+         * 「now - transientSince」；老任务里这个时间戳是 3000 多分钟前，
+         * 于是重试后第一次撞到 503/车道冷却，预算立刻超限 → 直接判 failed
+         * （错误文案还写着「已等待约 3152 分钟」）。用户看到的就是「点一下
+         * 重试，秒失败」，而且重试多少次都一样。
+         *
+         * transientReleases / lostTaskRetries 同理：一个控制硬上限轮次，
+         * 一个控制 404 重建单次数，都是上一次执行的历史，不能跨手动重试继承。
+         * keepAlive / pausedReason 之类的软标记也一并清掉，避免重投后又被挂起。
+         */
+        inputData: sql`coalesce(${generationJobs.inputData}, '{}'::jsonb)
+          - 'mediaUrlRetryAt' - 'mediaUrlRetries'
+          - 'transientSince' - 'transientReleases' - 'lostTaskRetries'
+          - 'pausedReason' - 'lastTransientReason'`,
         // 修复（脏状态残留）：旧实现只重置 status / retryCount / errorMessage，
         // 却保留 progress、outputData、startedAt、completedAt、externalTaskId。后果：
         // 1) progress 仍是上次的 95，pollJob 一进演示分支立刻封顶，看不出真的重跑了；
@@ -646,6 +685,9 @@ export class GenerationService {
         startedAt: null,
         completedAt: null,
         externalTaskId: null,
+        // 旧租约已回收，绑定的 Key 也一并清掉，下一轮重新按池领（避免钉在
+        // 一把已 invalid/冷却的 Key 上，建单直接 401/403）
+        boundKeyId: null,
         updatedAt: new Date(),
       })
       .where(eq(generationJobs.id, id))

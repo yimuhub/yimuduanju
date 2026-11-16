@@ -37,6 +37,11 @@ import type {
 } from '@shared/api.interface';
 import { classifyModelId, MODEL_FIELD_GUIDE, MODEL_KIND_LABELS, type ModelKind } from '@shared/model-classify';
 import { FREE_AGNES_MODELS, isFreeAgnesModel } from '@shared/agnes';
+import {
+  resolveVideoChannel,
+  videoChannelHint,
+  videoChannelLabel,
+} from '@shared/video-channel';
 import { toast } from 'sonner';
 import { showConfirm } from '@client/src/components/ui/confirm';
 import { Switch } from '@client/src/components/ui/switch';
@@ -784,6 +789,40 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                         },
                       },
                       {
+                        label: '🧩 通用视频 API（OpenAI 兼容）',
+                        patch: {
+                          name: '通用视频 API',
+                          providerType: 'openai_proxy' as ProviderType,
+                          baseUrl: '',
+                          formatType: 'openai' as FormatType,
+                          textModel: '',
+                          imageModel: '',
+                          videoModel: '',
+                          capabilities: { text: false, image: false, video: true, tts: false },
+                          isDefault: false,
+                          // 显式声明通用通道：不参与 Agnes 联邦密钥池，不会被
+                          // 换成 Agnes 的端点与方言字段
+                          modelParams: { videoChannel: 'generic' as const },
+                        },
+                      },
+                      {
+                        label: '🎬 Agnes 专用视频通道',
+                        patch: {
+                          name: 'Agnes 官方 API',
+                          providerType: 'official' as ProviderType,
+                          baseUrl: 'https://apihub.agnes-ai.com/v1',
+                          formatType: 'agnes' as FormatType,
+                          textModel: '',
+                          imageModel: '',
+                          videoModel: 'agnes-video-2.5-flash',
+                          capabilities: { text: false, image: false, video: true, tts: false },
+                          isDefault: false,
+                          // Agnes 是独立通道：密钥到位才生效；参考图必须公网 URL，
+                          // 系统会先把本地图入图库再交给 Agnes
+                          modelParams: { videoChannel: 'agnes' as const },
+                        },
+                      },
+                      {
                         label: '🧪 免 Key 演练沙盒（Mock · 占位内容/不计费）',
                         patch: {
                           name: '本地免 Key 演练沙盒',
@@ -1163,6 +1202,69 @@ const ProviderSection = ({ providers, loading, onRefresh }: ProviderSectionProps
                     Agnes 测试通道：视频走官方双接口（720P/9:16），只接免费模型；暂无配音能力，配音任务会直接提示。
                   </p>
                 )}
+              </div>
+
+              {/*
+                视频通道：显式选项，不再靠 formatType 猜。
+                用户诉求原话：「Agnes 视频模型是一个单独的选项，而不是通用选项；
+                只有配置了 Agnes 的密钥、或接通这个模型以后，它才会起作用」。
+                自动识别会在这两种历史配法下出错：① 官方 Agnes 端点被配成 openai
+                格式；② 通用通道的供应商被联邦密钥池顺手租到 Agnes 的 Key。
+              */}
+              <div>
+                <label className="text-sm font-medium text-foreground">
+                  视频通道
+                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                    决定视频请求发往哪套接口方言
+                  </span>
+                </label>
+                <select
+                  value={formData.modelParams?.videoChannel ?? 'auto'}
+                  onChange={(e) =>
+                    setFormData((p) => ({
+                      ...p,
+                      modelParams: {
+                        ...(p.modelParams ?? {}),
+                        videoChannel: e.target.value as
+                          | 'agnes'
+                          | 'generic'
+                          | 'volcengine_ark'
+                          | 'auto',
+                      },
+                    }))
+                  }
+                  className="mt-2 h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="auto">自动识别（按格式 / 端点 / 模型名）</option>
+                  <option value="agnes">Agnes 专用（需 Agnes 密钥 + agnes-video-* 模型）</option>
+                  <option value="generic">通用视频 API（OpenAI 兼容 /video/generations）</option>
+                  <option value="volcengine_ark">火山方舟（/contents/generations/tasks）</option>
+                </select>
+                {(() => {
+                  const pref = formData.modelParams?.videoChannel ?? 'auto';
+                  const resolved = resolveVideoChannel({
+                    formatType: formData.formatType,
+                    baseUrl: formData.baseUrl,
+                    videoModel: formData.videoModel,
+                    modelParams: (formData.modelParams ?? {}) as Record<string, unknown>,
+                  });
+                  return (
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                      {videoChannelHint(pref)}
+                      {pref === 'auto' && (
+                        <span className="ml-1 text-foreground">
+                          当前将使用：{videoChannelLabel(resolved)}
+                        </span>
+                      )}
+                      {pref === 'agnes' && !(formData.videoModel ?? '').toLowerCase().startsWith('agnes') && (
+                        <span className="ml-1 text-amber-300">
+                          当前视频模型「{formData.videoModel || '未填'}」不是 agnes-video-*，
+                          建单会被拦下并提示切换通道。
+                        </span>
+                      )}
+                    </p>
+                  );
+                })()}
               </div>
 
               <div className="flex items-center justify-between rounded-xl border p-3">

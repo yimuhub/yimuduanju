@@ -39,6 +39,13 @@ import {
   normalizeAspect,
   videoSizeForAspect,
 } from '@shared/aspect';
+// 视频通道唯一判定源：Agnes 专用 / 通用 / 火山。网关、密钥池、设置页共用，
+// 任何地方都不许再自己写 includes('agnes') 之类的隐式推断。
+import {
+  normalizeFormatType,
+  resolveVideoChannel,
+  type VideoChannel,
+} from '@shared/video-channel';
 
 interface TextGenerateParams {
   prompt: string;
@@ -687,7 +694,7 @@ export class ModelGatewayService {
   ): Promise<{ taskId: string; status: string; frameNotSent?: string }> {
     const provider = await this.getProvider(providerName, 'video', keyId);
     const formatType = provider.formatType as FormatType;
-    if (formatType === 'mock') {
+    if (normalizeFormatType(provider.formatType) === 'mock') {
       const taskId = `mock-${randomUUID()}`;
       // 占位输出：优先用首帧合成本地 mp4（静音轨，ffmpeg 可直接拼接进成片）；
       // ffmpeg 不可用/无首帧时回退白模/首帧 URL（调用方按 references[1]/[0] 传入亦可）
@@ -763,6 +770,40 @@ export class ModelGatewayService {
     const baseUrl = this.normalizeBaseUrl(provider.baseUrl);
 
     /* ------------------------------------------------------------------
+     * 通道在这里一次判定，后面全部按 `channel` 分流。
+     * 不再用 `formatType === 'agnes' || declaredRelay` 这种隐式推断：
+     * 设置页可以把官方 Agnes 端点配成 openai 格式，那样网关会朝 /videos
+     * 隔壁的 /video/generations 发通用字段，Agnes 只认方言 → 稳定 400。
+     * ------------------------------------------------------------------ */
+    const channel: VideoChannel = resolveVideoChannel({
+      formatType: provider.formatType,
+      baseUrl: provider.baseUrl,
+      videoModel: provider.videoModel,
+      modelParams: (provider.modelParams ?? {}) as Record<string, unknown>,
+    });
+    /*
+     * Agnes 专用通道的前置校验：用户要求「只有配置了 Agnes 密钥、或接通这个
+     * 模型以后才起作用」。配了通道但没有可用密钥/模型时，要在建单前给出
+     * **指名道姓**的错误，而不是让它掉进通用分支报一个看不懂的 404/400。
+     */
+    if (channel === 'agnes') {
+      if (!apiKey) {
+        throw new BadRequestException(
+          `Agnes 视频通道未配置密钥（供应商「${provider.name}」）。` +
+            '请在设置中为该供应商填入 Agnes API Key，或把视频环节切换到通用通道。',
+        );
+      }
+      if (!/^agnes/i.test(model)) {
+        throw new BadRequestException(
+          `Agnes 视频通道需要 agnes-video-* 模型，当前供应商「${provider.name}」配置的是「${model}」。` +
+            'Agnes 与通用通道的字段方言不兼容，请把模型改为 agnes-video-2.5-flash，' +
+            '或在供应商里把视频通道切换为「通用」。',
+        );
+      }
+    }
+    this.logger.debug?.(`视频通道解析：${provider.name} → ${channel}`);
+
+    /* ------------------------------------------------------------------
      * 首帧/尾帧必须在出口处收敛成供应商真能拉到的形态。
      * 事故：Agnes 的 /videos 只接受 http(s)，本地 `/uploads/xxx.png` 被判成
      * 非公网素材**静默丢弃**，每一单都退化成 mode=text（纯文生视频）——
@@ -771,8 +812,14 @@ export class ModelGatewayService {
      * ------------------------------------------------------------------ */
     const frameFormat = ((provider.modelParams ?? {}) as { videoFrameFormat?: string })
       .videoFrameFormat;
+    // Agnes 通道恒为「只收公网 URL」：即使 modelParams 写了 data_url 也不内联，
+    // 否则会把一张几百 KB 的 base64 发过去换一个 400。
     const allowDataUrl =
-      frameFormat === 'data_url' ? true : frameFormat === 'url' ? false : formatType !== 'agnes';
+      frameFormat === 'data_url'
+        ? channel !== 'agnes'
+        : frameFormat === 'url'
+          ? false
+          : channel !== 'agnes';
     const firstFrame = await toProviderVideoFrame(params.imageUrl, { allowDataUrl });
     const lastFrame = await toProviderVideoFrame(params.lastFrameUrl, { allowDataUrl });
     let frameNotSent: string | undefined;
@@ -795,15 +842,39 @@ export class ModelGatewayService {
       });
     }
 
-    // R2V 直喂门控：默认关闭（capabilities.videoReference 未开启时 body 与旧版完全一致）；
-    // 本地相对路径与 data: URL 云端拉不到，直接丢弃并记日志，不伪装发送。
+    /*
+     * 参考素材直喂门控。
+     * ------------------------------------------------------------------
+     * 事故：refs[1] 这个位置（白模 / 本镜组合参考图）一直被
+     * `capabilities.videoReference` 挡在门外，日志里只留一句
+     * 「参考视频未发送（供应商未开启 videoReference）」，于是每一镜都只剩
+     * 首帧，跨镜角色一致性全靠运气。
+     *
+     * 语义澄清：这个字段历史上叫 referenceVideoUrl，但系统里存的其实是**图片**
+     * （白模/角色合成图）。Agnes 的 reference 模式只吃 images，通用通道的
+     * `reference_video` 才是真视频。因此：
+     *   - Agnes 通道：只要 URL 是公网 http(s) 就收，当作图片参考，不看
+     *     videoReference 开关（那个开关是给通用通道的 R2V 视频语义用的）。
+     *   - 通用 / 火山通道：保持原门控（videoReference + 公网），不擅自加字段，
+     *     否则会给不认识该字段的中转发一堆 400。
+     * 非公网 URL 一律不发：本地 /uploads 与 data: 云端拉不到，宁可不发也不
+     * 让厂商静默丢弃。
+     */
     const refUrl = (params.referenceVideoUrl ?? '').trim();
-    const canR2v = (provider.capabilities as { videoReference?: boolean } | undefined)?.videoReference === true;
-    const sendRef = canR2v && /^https?:\/\//i.test(refUrl);
-    if (refUrl && !sendRef) {
+    const refIsPublic = /^https?:\/\//i.test(refUrl);
+    const canR2v =
+      (provider.capabilities as { videoReference?: boolean } | undefined)?.videoReference === true;
+    const sendRefAsImage = channel === 'agnes' && refIsPublic;
+    const sendRefAsVideo = channel !== 'agnes' && canR2v && refIsPublic;
+    if (refUrl && !sendRefAsImage && !sendRefAsVideo) {
       this.logger.warn(
-        `参考视频未发送（${!canR2v ? '供应商未开启 videoReference' : '非公网 URL'}）：${refUrl.slice(0, 80)}`,
+        channel === 'agnes'
+          ? `Agnes 参考图未发送（非公网 URL）：${refUrl.slice(0, 80)}`
+          : `参考视频未发送（${!canR2v ? '供应商未开启 videoReference' : '非公网 URL'}）：${refUrl.slice(0, 80)}`,
       );
+    }
+    if (refUrl && sendRefAsImage) {
+      this.logger.log(`Agnes 参考图随首帧一同发送：${refUrl.slice(0, 80)}`);
     }
 
     let url: string;
@@ -812,19 +883,12 @@ export class ModelGatewayService {
     const vprefix = (provider.promptPrefix ?? '').trim();
     const withPrefix = (p: string) => (vprefix ? `${vprefix}\n${p}` : p);
 
-    // Agnes 专用通道：官方双接口，mode 按参考素材自动映射。
-    // W 智能路由：Agnes hub 被配成 openai 兼容格式时，文本/图片走标准端点
-    // 没问题，但视频端点字段是 Agnes 方言（mode/seconds/first_frame，拒绝
-    // duration/image_url）。按基址域名或视频模型名自动识别走专用通道。
-    // relay 方言（如「一幕·YIMU 官方API 聚合平台」指向本地中继）虽然 formatType
-    // 是 openai，但视频端点同样是 Agnes 方言（/videos + mode + first_frame），
-    // 且中继能吃 data URL 首帧。显式声明 agnesSchema='relay' 即走专用通道。
-    const declaredRelay =
-      ((provider.modelParams ?? {}) as { agnesSchema?: string }).agnesSchema === 'relay';
-    // 视频通道格式：formatType=agnes 或 declaredRelay 走专用双接口，
-    // 其余走通用 /video/generations。不硬编码域名——供应商自主选择格式。
-    const agnesLike = formatType === 'agnes' || declaredRelay;
-    if (agnesLike) {
+    /*
+     * Agnes 专用通道：官方双接口，mode 按参考素材自动映射。
+     * 走不走这里由统一的 resolveVideoChannel 决定（显式声明 > formatType
+     * > relay 方言 > 端点/模型名兜底），不再在网关里散落判定。
+     */
+    if (channel === 'agnes') {
       return this.createAgnesVideo(
         provider,
         {
@@ -832,13 +896,15 @@ export class ModelGatewayService {
           duration: effectiveDuration,
           imageUrl: firstFrame.url,
           lastFrameUrl: lastFrame.url,
+          // Agnes 把 refs[1] 当图片参考；通用门控不参与
+          referenceVideoUrl: sendRefAsImage ? refUrl : undefined,
         },
         withPrefix,
         frameNotSent,
       );
     }
 
-    if (formatType === 'volcengine_ark') {
+    if (channel === 'volcengine_ark') {
       // 火山方舟格式
       url = `${baseUrl}/contents/generations/tasks`;
       body = {
@@ -847,10 +913,10 @@ export class ModelGatewayService {
         duration: effectiveDuration,
         size: wantSize ?? '720p',
         ...(firstFrame.url ? { image_url: firstFrame.url } : {}),
-        ...(sendRef ? { reference_video_url: refUrl } : {}),
+        ...(sendRefAsVideo ? { reference_video_url: refUrl } : {}),
       };
     } else {
-      // OpenAI 兼容格式
+      // OpenAI 兼容格式（通用视频通道）：只发标准字段，绝不混入 Agnes 方言
       url = `${baseUrl}/video/generations`;
       body = {
         model,
@@ -858,7 +924,7 @@ export class ModelGatewayService {
         duration: effectiveDuration,
         size: wantSize ?? '1024x576',
         ...(firstFrame.url ? { image_url: firstFrame.url } : {}),
-        ...(sendRef ? { reference_video: refUrl } : {}),
+        ...(sendRefAsVideo ? { reference_video: refUrl } : {}),
       };
     }
 
@@ -869,7 +935,7 @@ export class ModelGatewayService {
     const payload = JSON.stringify(body);
     let response: Response;
     let finalUrl: string;
-    if (formatType === 'volcengine_ark') {
+    if (channel === 'volcengine_ark') {
       // 方舟基址固定为 .../api/v3，不做 /v1 回退
       finalUrl = url;
       response = await this.fetchWithTimeout(
@@ -930,7 +996,6 @@ export class ModelGatewayService {
     if (!model) {
       throw new BadRequestException('未配置视频模型');
     }
-    const isPublic = (u?: string) => !!u && /^https?:\/\//i.test(u);
     const base = this.normalizeBaseUrl(provider.baseUrl);
     const seconds = String(Math.max(4, Math.min(12, Math.round(params.duration ?? 8))));
     // mode 方言：官方 text/keyframe/reference；个别中转（如用户本地 relay）用
@@ -955,14 +1020,33 @@ export class ModelGatewayService {
     // 不区分这一点，走中继时首帧仍会被 isPublic 判掉、静默退化成纯文生视频。
     const isUsable = (u?: string) =>
       !!u && (/^https?:\/\//i.test(u) || (relaySchema && /^data:/i.test(u)));
-    if (isPublic(params.referenceVideoUrl) && !relaySchema) {
-      // 官方 agnes-video-2.5-flash 文档：reference 模式只吃 images(≤5)/audios(≤3)，
-      // 「videos is not supported」——传有效 videos 直接 HTTP 400，且不建任务。
-      // 系统里这个位置存的是白模/角色参考图（图片 URL），语义应走 images。
-      // relay 中继 magpie 有自己的方言，保留其原行为不动。
-      body.mode = modeReference;
-      body.images = [params.referenceVideoUrl];
-    } else if (isUsable(params.imageUrl) && isUsable(params.lastFrameUrl)) {
+
+    /*
+     * 参考素材合并（这是「跨镜换脸」的直接修复点）。
+     * ------------------------------------------------------------------
+     * 旧实现是一个排他 if/else 链：只要 refs[1]（白模/组合参考图）是公网 URL，
+     * 就 `mode=reference; images=[那一张]`，**首帧被整个丢掉**；反之只要首帧
+     * 在，refs[1] 又因为 capabilities.videoReference 未开启被网关拦掉。
+     * 两种配法都不可能「首帧 + 角色参考图」同时送到模型。
+     *
+     * 现在统一收集成 images 数组（官方 reference 模式上限 5 张）：
+     *   图1 = 首帧（构图与画面基准）
+     *   图2..= 角色/场景参考图、白模位
+     * 用 <Picture N> 占位符在提示词里逐一说明用途，模型才知道哪张是基准、
+     * 哪张是「这个人长这样」。
+     */
+    const images: string[] = [];
+    const addImage = (u?: string) => {
+      const v = (u ?? '').trim();
+      if (!isUsable(v) || images.includes(v)) return;
+      images.push(v);
+    };
+    addImage(params.imageUrl);
+    for (const r of params.referenceImages ?? []) addImage(r);
+    // refs[1]：字段名是历史包袱（referenceVideoUrl），实际是白模/组合参考图
+    addImage(params.referenceVideoUrl);
+
+    if (isUsable(params.imageUrl) && isUsable(params.lastFrameUrl)) {
       // 首帧+尾帧都在：keyframe 模式（连贯性最强，优先级最高）
       body.mode = modeKeyframe;
       if (relaySchema) {
@@ -973,14 +1057,13 @@ export class ModelGatewayService {
         body.first_frame = params.imageUrl;
         body.last_frame = params.lastFrameUrl;
       }
-    } else if (isUsable(params.imageUrl) || (params.referenceImages?.length ?? 0) > 0) {
-      // W 多图参考（官方 reference 模式，Flash 限 images≤5）：
-      // 首帧/角色定妆照/场景图多参 + prompt 用 <Picture N> 占位符注明用途。
-      const imgs = [...new Set([params.imageUrl, ...(params.referenceImages ?? [])].filter(isUsable))].slice(0, 5);
+    } else if (images.length > 0) {
+      // 多图参考（官方 reference 模式，Flash 限 images≤5）
+      const used = images.slice(0, 5);
       body.mode = modeReference;
-      body.images = imgs;
+      body.images = used;
       const roles = ['画面构图与首帧基准'];
-      for (let i = 1; i < imgs.length; i += 1) roles.push(`角色与场景一致性参考 ${i}`);
+      for (let i = 1; i < used.length; i += 1) roles.push(`角色与场景一致性参考 ${i}`);
       body.prompt = `${withPrefix(params.prompt)}\n${roles.map((r, i) => `以 <Picture ${i + 1}> 为${r}`).join('，')}。`;
     } else {
       body.mode = modeText;
@@ -1104,10 +1187,28 @@ export class ModelGatewayService {
 
     const formatType = provider.formatType as FormatType;
     const baseUrl = this.normalizeBaseUrl(provider.baseUrl);
+    /*
+     * 轮询必须走与建单同一个通道：formatType 可能是历史脏值（如 `volcano`），
+     * 只按它判断会把方舟任务拿到 /video/generations/{id} 去查 → 404。
+     * 这里复用同一个纯函数，建单/轮询不可能再分叉。
+     */
+    const channel = resolveVideoChannel({
+      formatType: provider.formatType,
+      baseUrl: provider.baseUrl,
+      videoModel: provider.videoModel,
+      modelParams: (provider.modelParams ?? {}) as Record<string, unknown>,
+    });
 
     let url: string;
-    if (formatType === 'volcengine_ark') {
+    if (channel === 'volcengine_ark') {
       url = `${baseUrl}/contents/generations/tasks/${taskId}`;
+    } else if (channel === 'agnes') {
+      // Agnes 的 externalTaskId 一定带 agnes: 前缀，走到这里说明数据被手改过；
+      // 显式报错，别去通用端点白白 404 三次再判失败。
+      return {
+        status: 'failed',
+        errorMessage: 'Agnes 任务 ID 缺少通道前缀，无法轮询（请重新提交该镜头）',
+      };
     } else {
       url = `${baseUrl}/video/generations/${taskId}`;
     }

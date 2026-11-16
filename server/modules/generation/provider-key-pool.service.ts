@@ -2,6 +2,8 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, eq, sql } from 'drizzle-orm';
 import { providerApiKeys } from '@server/database/billing.schema';
+import { modelProviders } from '@server/database/schema';
+import { resolveVideoChannel, type VideoChannel } from '@shared/video-channel';
 
 export type KeyLeaseResult =
   /** 成功领到一把 Key */
@@ -249,16 +251,63 @@ export class ProviderKeyPoolService {
    * 非 Agnes 通道（火山方舟 / mock / relay）不会进入候选集合，
    * 联邦池返回 no_keys 时调用方自然回落到原单供应商逻辑，行为不变。
    */
+  /**
+   * 供应商的视频通道（查不到返回 null）。
+   *
+   * 用途：联邦池只服务 Agnes 专用通道。旧实现只要库里存在任何「像 Agnes 的
+   * 供应商」，所有视频任务都会被联邦池捞去做 Agnes —— 用户明明把视频环节绑到
+   * 通用通道（火山/自建中转），实际请求却打到 Agnes，报错与所选配置完全对不上，
+   * 这正是用户说的「Agnes 变成了通用选项」。
+   */
+  async videoChannelOf(providerName?: string | null): Promise<VideoChannel | null> {
+    if (!providerName) return null;
+    const rows = await this.db
+      .select({
+        formatType: modelProviders.formatType,
+        baseUrl: modelProviders.baseUrl,
+        videoModel: modelProviders.videoModel,
+        modelParams: modelProviders.modelParams,
+      })
+      .from(modelProviders)
+      .where(eq(modelProviders.name, providerName))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return resolveVideoChannel({
+      formatType: row.formatType,
+      baseUrl: row.baseUrl,
+      videoModel: row.videoModel,
+      modelParams: (row.modelParams ?? {}) as Record<string, unknown>,
+    });
+  }
+
+  /**
+   * 视频联邦池租约（只服务 Agnes 专用通道）。
+   */
   async leaseForVideo(
     jobId?: string | null,
     projectId?: string | null,
   ): Promise<FederatedLeaseResult> {
-    // 用 SQL 子查询而不是把 id 数组当参数传，避开 drizzle / postgres-js
-    // 数组绑定的兼容坑；同时天然把异构供应商挡在外面。
+    /*
+     * 候选集合 = 「解析出来确实是 Agnes 通道」的供应商。
+     * 条件与 shared/video-channel.ts 的 resolveVideoChannel 一一对应：
+     *   - 显式声明 videoChannel=generic/volcengine_ark 的一律排除（用户手动纠偏优先）
+     *   - format_type=agnes / agnesSchema=relay / agnes 端点 / agnes-* 模型 命中任一即收
+     * 旧实现只写了「端点或模型像 Agnes」，于是「把 Agnes 端点配成 openai」的历史
+     * 数据能进池，而显式声明通用通道的供应商也可能被误收。
+     */
     const agnesProviderIds = sql`(
       SELECT id FROM model_providers
       WHERE enabled = true
-        AND (base_url ILIKE '%agnes-ai.com%' OR video_model ILIKE 'agnes-%')
+        AND COALESCE(model_params->>'videoChannel', 'auto') NOT IN
+            ('generic', 'openai', 'openai_compatible', 'volcengine_ark', 'volcano', 'ark')
+        AND (
+          format_type = 'agnes'
+          OR model_params->>'agnesSchema' = 'relay'
+          OR base_url ILIKE '%agnes-ai.com%'
+          OR video_model ILIKE 'agnes-%'
+          OR video_model ILIKE 'agnes/%'
+        )
     )`;
 
     // 项目钉 Key：只有当钉的 Key 也属于某个 Agnes 供应商时才生效。

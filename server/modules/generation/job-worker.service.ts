@@ -102,6 +102,8 @@ import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-pro
 import { uploadDir } from '../assets/upload-dir';
 import { releaseStagedFrames, stageFramesForJob, sweepExpiredStagedFrames } from './staged-media';
 import { ensureLibraryUrl, tunnelFallbackUrl } from './public-media-library';
+// 视频通道唯一判定源（与网关、密钥池共用，避免跨层口径漂移）
+import { resolveVideoChannel } from '@shared/video-channel';
 import {
   isHttpUrl,
   isPublicUrlReachable,
@@ -1984,6 +1986,17 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       | { status: 'leased'; keyId: string; label: string; providerName?: string }
       | { status: 'busy' }
       | { status: 'no_keys' };
+    /*
+     * 联邦池只服务 Agnes 专用通道。
+     * 用户要求「Agnes 是单独的选项，不是通用选项」：视频环节绑到通用通道
+     * （火山 / 自建 OpenAI 兼容）时，绝不能被联邦池悄悄换成 Agnes 的 Key ——
+     * 否则建单会用 Agnes 的 base_url 和方言字段，报错信息与用户所选配置
+     * 完全对不上。查不到供应商配置时保持旧行为（允许联邦）。
+     */
+    const targetChannel = await this.keyPool
+      .videoChannelOf(providerName)
+      .catch(() => null);
+    const federatedAllowed = targetChannel === null || targetChannel === 'agnes';
     for (let attempt = 0; attempt < MAX_KEY_TRIES; attempt += 1) {
       /*
        * 视频先用「联邦密钥池」：Agnes 任务可以领用任一 Agnes 供应商下的 Key。
@@ -1994,10 +2007,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
        */
       let lease: VideoLease | null = null;
       // eslint-disable-next-line no-await-in-loop
-      const federated = await this.keyPool.leaseForVideo(job.id, job.projectId).catch((e: Error) => {
-        this.logger.warn(`任务 ${job.id} 联邦密钥池异常，回落单供应商：${e.message}`);
-        return null;
-      });
+      const federated = federatedAllowed
+        ? await this.keyPool.leaseForVideo(job.id, job.projectId).catch((e: Error) => {
+            this.logger.warn(`任务 ${job.id} 联邦密钥池异常，回落单供应商：${e.message}`);
+            return null;
+          })
+        : null;
       if (federated && federated.status !== 'no_keys') {
         lease = federated;
       } else if (providerName) {
@@ -2300,8 +2315,8 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     ) {
       await this.generationService.settleJobFailure(
         job.id,
-        '首帧为本地路径，无公网 URL 可用（图片任务未回传 CDN 地址，且公网媒体基址未配置或不可达）；' +
-          '需配置 YIMU_PUBLIC_MEDIA_BASE/对象存储，或使用返回公网 URL 的图片供应商后重试',
+        '首帧为本地路径，且没能转成公网地址（图库上传失败、图片任务未回传 CDN 地址、且公网媒体基址未配置或不可达）；' +
+          'Agnes 通道只接受公网 http(s) 素材。请检查网络/图库（YIMU_MEDIA_UPLOAD_URL）或配置 YIMU_PUBLIC_MEDIA_BASE 后重试',
       );
       return;
     }
@@ -3259,10 +3274,18 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         .limit(1);
       const p = rows[0];
       if (!p) return false;
-      if (p.formatType === 'agnes') return true;
+      // 与网关共用同一份通道判定，避免「worker 认为是 Agnes、网关认为是通用」
+      // 这种跨层的口径漂移。
+      const channel = resolveVideoChannel({
+        formatType: p.formatType,
+        baseUrl: p.baseUrl,
+        videoModel: p.videoModel,
+        modelParams: (p.modelParams ?? {}) as Record<string, unknown>,
+      });
+      if (channel !== 'agnes') return false;
+      // relay 中继能吃 data URL，不受「必须公网」限制
       if (((p.modelParams ?? {}) as { agnesSchema?: string }).agnesSchema === 'relay') return false;
-      if (/agnes-ai\.com/i.test(p.baseUrl ?? '')) return true;
-      return /^agnes[-_.]/i.test(p.videoModel ?? '');
+      return true;
     } catch {
       return false;
     }
