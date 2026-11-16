@@ -13,8 +13,9 @@ import { mkdir, stat, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import {
+  agentEditOps,
   assets,
   projects,
   scenes,
@@ -24,6 +25,7 @@ import {
 } from '@server/database/schema';
 import { resolveTextStyle } from '@shared/api.interface';
 import { buildTransitionFilter, planTransitions } from './transition-plan';
+import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
 import type {
   Asset,
   ExportTimelineResult,
@@ -33,7 +35,12 @@ import type {
 } from '@shared/api.interface';
 import { uploadDir } from '../assets/upload-dir';
 import { ExportService } from '../export/export.service';
-import type { ExportTimelineDto, SaveTimelineDto, SaveTimelineClipDto } from './dto';
+import type {
+  AgentTimelineOpsDto,
+  ExportTimelineDto,
+  SaveTimelineDto,
+  SaveTimelineClipDto,
+} from './dto';
 
 const num = (v: unknown, fallback = 0): number => {
   const n = Number(v);
@@ -116,6 +123,7 @@ export class TimelineService {
       if (!s.videoUrl) continue;
       clips.push({
         id: `derived-v-${s.id}`,
+        clientKey: `derived-v-${s.id}`,
         projectId,
         track: 'video',
         sourceShotId: s.id,
@@ -138,6 +146,7 @@ export class TimelineService {
       if (s.voiceUrl) {
         clips.push({
           id: `derived-a-${s.id}`,
+          clientKey: `derived-a-${s.id}`,
           projectId,
           track: 'audio',
           sourceShotId: s.id,
@@ -161,6 +170,7 @@ export class TimelineService {
       if (sub) {
         clips.push({
           id: `derived-s-${s.id}`,
+          clientKey: `derived-s-${s.id}`,
           projectId,
           track: 'subtitle',
           sourceShotId: s.id,
@@ -188,6 +198,7 @@ export class TimelineService {
   private mapClip(row: typeof timelineClips.$inferSelect): TimelineClip {
     return {
       id: row.id,
+      clientKey: row.clientKey ?? row.id,
       projectId: row.projectId,
       track: row.track as TimelineClip['track'],
       sourceShotId: row.sourceShotId,
@@ -256,6 +267,7 @@ export class TimelineService {
       if (dto.clips.length > 0) {
         const values = dto.clips.map((c: SaveTimelineClipDto, i: number) => ({
           projectId,
+          clientKey: c.clientKey ?? null,
           track: c.track,
           sourceShotId: c.sourceShotId ?? null,
           sourceUrl: c.sourceUrl ?? null,
@@ -303,6 +315,99 @@ export class TimelineService {
       }
     });
     return this.getDocument(projectId);
+  }
+
+  /**
+   * 对话驱动的剪辑：校验版本 → 纯函数 dry-run → 单事务保存 → 写审计。
+   *
+   * 为什么不在客户端直接改完再 PUT：
+   *   · 模型给的 clientKey 可能过期，必须由服务端基于当前 EDL 解析；
+   *   · 一批动作要么全成、要么全不成；客户端分步写会留下半截状态；
+   *   · 审计要记录「基于哪个版本、改了什么」，便于回溯与幂等重试。
+   */
+  async applyAgentOps(
+    projectId: string,
+    dto: AgentTimelineOpsDto,
+  ): Promise<{
+    doc: TimelineDocument;
+    diffs: ReturnType<typeof applyTimelineOps>['diffs'];
+    auditId: string;
+    idempotent: boolean;
+  }> {
+    await this.requireProject(projectId);
+
+    // 幂等：同一批动作重发（网络重试 / 模型重试）直接返回已应用结果
+    if (dto.idempotencyKey) {
+      const hit = await this.db
+        .select()
+        .from(agentEditOps)
+        .where(
+          and(
+            eq(agentEditOps.projectId, projectId),
+            eq(agentEditOps.idempotencyKey, dto.idempotencyKey),
+          ),
+        )
+        .limit(1);
+      if (hit[0]) {
+        return {
+          doc: await this.getDocument(projectId),
+          diffs: (hit[0].diffs as ReturnType<typeof applyTimelineOps>['diffs']) ?? [],
+          auditId: hit[0].id,
+          idempotent: true,
+        };
+      }
+    }
+
+    const doc = await this.getDocument(projectId);
+    const current = doc.version ?? 0;
+    if (dto.baseVersion !== current) {
+      throw new ConflictException(
+        `时间线版本已变化（当前 v${current}，提案基于 v${dto.baseVersion}），请让 Agent 重新生成后再应用`,
+      );
+    }
+
+    // ops 来自模型输出：逐条校验，任何一条失败整批拒绝
+    const result = applyTimelineOps(doc, dto.ops as unknown as TimelineOp[]);
+    if (result.errors.length > 0) {
+      throw new BadRequestException(
+        result.errors.map((e) => `#${e.opIndex + 1} ${e.message}`).join('；'),
+      );
+    }
+
+    const saved = await this.saveDocument(projectId, {
+      fps: doc.fps,
+      width: doc.width,
+      height: doc.height,
+      clips: result.doc.clips.map((c) => ({
+        ...c,
+        clientKey: clipKey(c),
+      })) as unknown as SaveTimelineClipDto[],
+      tracks: (result.doc.tracks ?? []) as unknown as SaveTimelineDto['tracks'],
+      expectedVersion: current,
+    });
+
+    const audit = await this.db
+      .insert(agentEditOps)
+      .values({
+        projectId,
+        sessionId: dto.sessionId ?? null,
+        messageId: dto.messageId ?? null,
+        baseVersion: current,
+        resultVersion: saved.version ?? current + 1,
+        summary: dto.summary ?? null,
+        ops: dto.ops,
+        diffs: result.diffs,
+        status: 'applied',
+        idempotencyKey: dto.idempotencyKey ?? null,
+      })
+      .returning({ id: agentEditOps.id });
+
+    return {
+      doc: saved,
+      diffs: result.diffs,
+      auditId: audit[0]?.id ?? '',
+      idempotent: false,
+    };
   }
 
   /**
@@ -549,8 +654,18 @@ export class TimelineService {
     const height = dto.height ?? doc.height ?? 1920;
     // 尊重轨道静音 / 独奏：导出只渲染「听得到」的轨
     const audible = this.audibleClips(doc.clips, doc.tracks);
+    // 画面轨语义（缺省 sequence = 历史行为，保证老项目导出不变）
+    const metaOf = (c: TimelineClip) =>
+      (doc.tracks ?? []).find((t) => t.track === c.track && (t.lane ?? 0) === (c.lane ?? 0));
     const videoClips = audible
       .filter((c) => c.track === 'video' && c.sourceUrl)
+      .filter((c) => {
+        if (dto.videoLaneMode !== 'main') return true;
+        const meta = metaOf(c);
+        if (meta?.exportEnabled === false) return false;
+        if (meta?.role === 'alt' || meta?.role === 'overlay') return false;
+        return meta?.role === 'main' || (c.lane ?? 0) === 0;
+      })
       .sort((a, b) => a.timelineStart - b.timelineStart);
     if (videoClips.length === 0) {
       throw new BadRequestException('时间线没有可导出的视频片段：请先生成镜头视频');

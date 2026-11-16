@@ -858,6 +858,8 @@ export const timelineDocumentsTable = timelineDocuments;
 export const timelineClips = pgTable("timeline_clips", {
   id: uuid("id").primaryKey().defaultRandom(),
   projectId: uuid("project_id").notNull(),
+  /** 客户端稳定业务标识（0029）：保存重建 id 后仍能定位同一片段 */
+  clientKey: text("client_key"),
   track: varchar("track", { length: 20 }).notNull().default('video'),
   sourceShotId: uuid("source_shot_id"),
   sourceUrl: text("source_url"),
@@ -990,3 +992,30 @@ export const publicMedia = pgTable("public_media", {
   lastUsedAt: customTimestamptz("last_used_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 export const publicMediaTable = publicMedia;
+
+/**
+ * 0030 Agent 剪辑审计：一次 apply 一条，可追溯、可幂等。
+ * ops/diffs 只存动作与差异，不存整份快照（撤销由客户端快照栈负责）。
+ */
+export const agentEditOps = pgTable("agent_edit_ops", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull(),
+  sessionId: uuid("session_id"),
+  messageId: uuid("message_id"),
+  baseVersion: integer("base_version").notNull(),
+  resultVersion: integer("result_version").notNull(),
+  summary: text("summary"),
+  ops: jsonb("ops").notNull().default([]),
+  diffs: jsonb("diffs").notNull().default([]),
+  status: varchar("status", { length: 20 }).notNull().default('applied'),
+  idempotencyKey: text("idempotency_key"),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdBy: uuid("created_by"),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "agent_edit_ops_project_id_fkey",
+  }).onDelete("cascade"),
+]);
+export const agentEditOpsTable = agentEditOps;

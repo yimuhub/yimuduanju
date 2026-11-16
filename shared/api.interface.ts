@@ -1754,6 +1754,8 @@ export function resolveTextStyle(style?: TimelineTextStyle | null) {
 /** P3 EDL 片段（与生产 shots 解耦的剪辑决策表） */
 export interface TimelineClip {
   id: string;
+  /** 客户端生成的稳定业务标识：保存重建 id 后仍能定位同一片段（Agent/选中/内联编辑用） */
+  clientKey?: string;
   projectId: string;
   track: TimelineTrackKind;
   /** 来源镜头 id（外部导入素材为空） */
@@ -1810,6 +1812,12 @@ export interface TimelineTrackMeta {
   locked?: boolean;
   /** 轨道行高 px，缺省 26 */
   height?: number;
+  /** 同类型轨道内的显示顺序（缺省按 lane） */
+  order?: number;
+  /** 画面轨语义：main 主链 / alt 备选（默认不参与成片）/ overlay 叠加 */
+  role?: 'main' | 'alt' | 'overlay';
+  /** 该轨是否参与导出（缺省 true；画面 alt 轨缺省 false） */
+  exportEnabled?: boolean;
 }
 
 /** P3 剪辑工程文档 */
@@ -1876,6 +1884,8 @@ export interface ExportTimelineRequest {
   height?: number;
   /** 是否烧录字幕轨，默认 true */
   burnSubtitles?: boolean;
+  /** 画面轨处理：sequence=全部串行拼接（旧行为）；main=只取主链 */
+  videoLaneMode?: 'sequence' | 'main';
 }
 
 /**

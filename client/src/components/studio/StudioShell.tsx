@@ -40,6 +40,7 @@ import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
 import { NewWorkDialog, type NewWorkOpenOptions } from './NewWorkDialog';
 import { StudioFloatingChat } from './StudioFloatingChat';
+import { EdlProvider } from './EdlContext';
 import { useStreamingChat } from './chat/useStreamingChat';
 import type { PendingAttachment } from './chat/ChatComposer';
 import { useStudioData, type StudioData } from './useStudioData';
@@ -592,6 +593,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         className={appClass}
         style={dockW ? ({ '--dock-w': `${dockW}px` } as React.CSSProperties) : undefined}
       >
+        <EdlProvider data={data}>
         <button
           type="button"
           className="rail-toggle"
@@ -651,6 +653,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           onCreated={handleWorkCreated}
         />
         {projectId && proEdit ? <StudioFloatingChat /> : null}
+        </EdlProvider>
       </div>
     </StudioContext.Provider>
   );

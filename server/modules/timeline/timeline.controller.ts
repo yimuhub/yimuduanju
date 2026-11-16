@@ -13,7 +13,7 @@ import {
 import type { TimelineDocument } from '@shared/api.interface';
 import { TimelineMediaService } from './media-analysis.service';
 import { TimelineService } from './timeline.service';
-import { ExportTimelineDto, SaveTimelineDto } from './dto';
+import { AgentTimelineOpsDto, ExportTimelineDto, SaveTimelineDto } from './dto';
 
 const numOrUndef = (raw?: string): number | undefined => {
   if (raw == null || raw.trim() === '') return undefined;
@@ -44,6 +44,18 @@ export class TimelineController {
     @Body() body: SaveTimelineDto,
   ): Promise<TimelineDocument> {
     return this.timelineService.saveDocument(projectId, body);
+  }
+
+  /**
+   * 对话驱动的剪辑：一批动作，服务端事务应用 + 审计。
+   * 客户端先用同一份 shared/timeline-ops 做 dry-run 出 diff，再调这里落库。
+   */
+  @Post('agent-ops')
+  async agentOps(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: AgentTimelineOpsDto,
+  ) {
+    return this.timelineService.applyAgentOps(projectId, body);
   }
 
   /** 视频片段帧缩略图 sprite（懒生成 + 磁盘缓存） */

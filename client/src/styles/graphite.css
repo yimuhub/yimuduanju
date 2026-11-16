@@ -11771,3 +11771,76 @@ select.nw-input {
   background: rgba(0, 0, 0, 0.55);
   color: var(--warn, #f5a623);
 }
+
+/* ---- 对话剪辑确认卡（TimelineOpsCard） ---------------------------------- */
+.tl-ops-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 5%, #fff);
+}
+.tl-ops-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--foreground);
+  margin-bottom: 6px;
+}
+.tl-ops-h svg { color: var(--primary); flex: none; }
+.tl-ops-h b { font-weight: 600; }
+.tl-ops-h span { flex: 1; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-ops-h em { font-style: normal; font-size: 11px; color: var(--muted-foreground); }
+.tl-ops-stale {
+  font-size: 11px;
+  color: #b45309;
+  background: #fff7e6;
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+}
+.tl-ops-list { display: flex; flex-direction: column; gap: 4px; }
+.tl-ops-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--foreground);
+  line-height: 1.5;
+}
+.tl-ops-op {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--primary) 12%, #fff);
+  color: var(--primary);
+  font-size: 11px;
+}
+.tl-ops-before { color: var(--muted-foreground); text-decoration: line-through; }
+.tl-ops-arrow { color: var(--muted-foreground); }
+.tl-ops-after { font-weight: 500; }
+.tl-ops-note { font-style: normal; font-size: 11px; color: var(--muted-foreground); }
+.tl-ops-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fff1f0;
+  color: #b42318;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.tl-ops-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+.tl-ops-meta { font-size: 11px; color: var(--muted-foreground); }
+.tl-ops-apply { height: 28px; padding: 0 12px; font-size: 12px; }
+.tl-ops-apply:disabled { opacity: 0.55; cursor: not-allowed; }

@@ -12,6 +12,7 @@
  * 由调用方（useTimelineEditor）toast 报错并回滚乐观更新。
  */
 import { axiosForBackend } from '@client/src/api/http';
+import type { TimelineOp, TimelineOpDiff } from '@shared/timeline-ops';
 import type {
   Shot,
   ReorderShotsRequest,
@@ -53,6 +54,37 @@ export const getTimeline = (projectId: string) =>
 export const saveTimeline = (projectId: string, data: SaveTimelineRequest) =>
   axiosForBackend
     .put<TimelineDocument>(`/api/projects/${projectId}/timeline`, data)
+    .then((res) => res.data);
+
+/**
+ * 对话驱动剪辑：服务端事务应用一批动作（版本校验 + 审计 + 幂等）。
+ * 客户端先本地 dry-run 同款纯函数，再调这里落库。
+ */
+export interface AgentTimelineOpsRequest {
+  baseVersion: number;
+  ops: TimelineOp[];
+  summary?: string;
+  idempotencyKey?: string;
+  sessionId?: string;
+  messageId?: string;
+}
+
+export interface AgentTimelineOpsResponse {
+  doc: TimelineDocument;
+  diffs: TimelineOpDiff[];
+  auditId: string;
+  idempotent: boolean;
+}
+
+export const applyTimelineAgentOps = (
+  projectId: string,
+  data: AgentTimelineOpsRequest,
+) =>
+  axiosForBackend
+    .post<AgentTimelineOpsResponse>(
+      `/api/projects/${projectId}/timeline/agent-ops`,
+      data,
+    )
     .then((res) => res.data);
 
 /** P4：按 EDL 导出成片（预留） */

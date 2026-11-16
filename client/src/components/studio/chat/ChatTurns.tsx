@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@shared/api.interface';
 import { ChatText } from './ChatText';
+import { TimelineOpsCard } from '../TimelineOpsCard';
+import { stripAgentBlocks } from '@client/src/lib/timeline-agent-ops';
 import { ChatMessageBoundary } from './ChatMessageBoundary';
 
 const when = (iso: string) => {
@@ -68,9 +70,14 @@ export const ChatTurns = ({ msgs, busy, header, empty }: ChatTurnsProps) => {
                       <Loader2 className="spin" /> 正在思考…
                     </span>
                   ) : (
-                    <ChatText text={typeof m.content === 'string' ? m.content : ''} />
+                    <ChatText
+                      text={stripAgentBlocks(typeof m.content === 'string' ? m.content : '')}
+                    />
                   )}
                   {isLastAgent && m.content ? <span className="chat-cursor" /> : null}
+                  {m.role === 'agent' && m.content ? (
+                    <TimelineOpsCard content={m.content} messageId={m.id || `turn-${i}`} />
+                  ) : null}
                 </div>
               </div>
             </ChatMessageBoundary>

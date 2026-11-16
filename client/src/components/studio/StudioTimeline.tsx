@@ -63,7 +63,7 @@ import {
   shotLabel,
   type AudioRole,
 } from './model';
-import { useEdlEditor } from './useEdlEditor';
+import { useEdl } from './EdlContext';
 import {
   StudioImportDialog,
   type ImportedMedia,
@@ -469,7 +469,7 @@ export const StudioTimeline = () => {
   const shots = data.shots;
   const clips = useMemo(() => data.timeline?.clips ?? [], [data.timeline]);
   const collapsed = tlCollapsed;
-  const editor = useEdlEditor();
+  const editor = useEdl();
   const navigate = useNavigate();
 
   /**

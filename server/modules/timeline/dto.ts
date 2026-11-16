@@ -37,6 +37,12 @@ export class SaveTimelineClipDto {
   @IsUUID('all')
   id?: string;
 
+  /** 客户端稳定标识（保存重建 id 后仍可定位同一片段） */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  clientKey?: string;
+
   @IsIn(['video', 'audio', 'subtitle', 'overlay'])
   track!: TimelineTrackKind;
 
@@ -68,7 +74,7 @@ export class SaveTimelineClipDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(20)
+  @Max(19)
   lane?: number;
 
   @IsOptional()
@@ -127,7 +133,7 @@ export class TimelineTrackMetaDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(20)
+  @Max(19)
   lane!: number;
 
   @IsOptional()
@@ -219,4 +225,39 @@ export class ExportTimelineDto {
   @IsOptional()
   @IsBoolean()
   burnSubtitles?: boolean;
+
+  /** 画面轨处理：sequence=全部串行拼接（旧行为）；main=只取主链 */
+  @IsOptional()
+  @IsIn(['sequence', 'main'])
+  videoLaneMode?: 'sequence' | 'main';
+}
+
+/** POST /timeline/agent-ops：对话驱动的剪辑动作（结构由 shared/timeline-ops 校验） */
+export class AgentTimelineOpsDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  baseVersion!: number;
+
+  @IsArray()
+  @ArrayMaxSize(40)
+  ops!: Record<string, unknown>[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  summary?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  idempotencyKey?: string;
+
+  @IsOptional()
+  @IsUUID('all')
+  sessionId?: string;
+
+  @IsOptional()
+  @IsUUID('all')
+  messageId?: string;
 }

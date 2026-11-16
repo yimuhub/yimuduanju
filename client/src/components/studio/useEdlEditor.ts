@@ -21,11 +21,18 @@ import { toast } from 'sonner';
 import type {
   SaveTimelineRequest,
   TimelineClip,
+  TimelineDocument,
   TimelineTextStyle,
   TimelineTrackMeta,
 } from '@shared/api.interface';
-import { getTimeline, saveTimeline } from '@client/src/api/timeline';
-import { useStudio } from './StudioShell';
+import { applyTimelineAgentOps, getTimeline, saveTimeline } from '@client/src/api/timeline';
+import type { StudioData } from './useStudioData';
+import {
+  applyTimelineOps,
+  clipKey,
+  type TimelineOp,
+  type TimelineOpDiff,
+} from '@shared/timeline-ops';
 import { clipSpan, sameOrigin } from './model';
 import {
   clamp,
@@ -50,7 +57,27 @@ const localId = (prefix: string) =>
     ? `${prefix}-${crypto.randomUUID()}`
     : `${prefix}-${Date.now()}-${(localSeq += 1)}`;
 
+/** 新片段同时生成 id 与 clientKey：保存后 id 会变，clientKey 不变 */
+const newClipIdentity = (prefix: string): { id: string; clientKey: string } => {
+  const key = localId(prefix);
+  return { id: key, clientKey: key };
+};
+
+/** 保存后服务端重建 id：按 clientKey 把选中态映射到新 id，避免属性条「自己消失」 */
+const remapIds = (ids: string[], from: TimelineClip[], to: TimelineClip[]): string[] => {
+  const keyOfOld = new Map(from.map((c) => [c.id, clipKey(c)]));
+  const idOfNew = new Map(to.map((c) => [clipKey(c), c.id]));
+  return ids
+    .map((id) => {
+      const key = keyOfOld.get(id);
+      return key ? (idOfNew.get(key) ?? id) : id;
+    })
+    .filter((id, i, arr) => Boolean(id) && arr.indexOf(id) === i);
+};
+
 const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
+  // 稳定业务标识：服务端重建 id 后，前后端仍能指向同一片段
+  clientKey: c.clientKey ?? c.id,
   track: c.track,
   sourceShotId: c.sourceShotId ?? null,
   sourceUrl: c.sourceUrl ?? null,
@@ -183,12 +210,28 @@ export interface EdlEditor {
 
   /** 立即落库（导出前调用） */
   saveNow: () => Promise<boolean>;
+
+  /**
+   * 对话驱动的剪辑：先干跑校验，再交给服务端事务应用，入撤销栈。
+   * 以当前编辑器版本为准，片段靠 clientKey 解析（提案过期也能安全应用）。
+   */
+  applyAgentOps: (
+    ops: TimelineOp[],
+    summary: string,
+  ) => Promise<{ doc: TimelineDocument; diffs: TimelineOpDiff[]; auditId: string }>;
+
+  /** 只干跑：卡片在应用前展示 diff / 错误，不落库 */
+  previewAgentOps: (ops: TimelineOp[]) => {
+    diffs: TimelineOpDiff[];
+    errors: { opIndex: number; message: string }[];
+    durationDelta: number;
+  };
+
   /** 冲突后强制重新载入服务器版本（清空本地撤销栈） */
   reloadAfterConflict: () => Promise<void>;
 }
 
-export function useEdlEditor(): EdlEditor {
-  const { data } = useStudio();
+export function useEdlEditor(data: StudioData): EdlEditor {
   const doc = data.timeline;
   const clips = useMemo(() => doc?.clips ?? [], [doc]);
   const fps = doc?.fps && doc.fps > 0 ? doc.fps : 24;
@@ -284,6 +327,7 @@ export function useEdlEditor(): EdlEditor {
       }
       docRef.current = { ...saved };
       data.commitTimeline(saved);
+      setSelectedIds((prev) => remapIds(prev, target.clips, saved.clips));
       setDirty(false);
       setConflict(false);
       return true;
@@ -382,6 +426,66 @@ export function useEdlEditor(): EdlEditor {
     },
     [data, schedule, persistHistory],
   );
+
+  /**
+   * 对话剪辑落地：本地先干跑（错误立刻可见）→ 服务端事务应用 → 入撤销栈。
+   * 版本以当前编辑器为准：提案只是「意图」，片段靠 clientKey 解析，
+   * 用户在提案后又手动改过也能安全应用。
+   */
+  const applyAgentOps = useCallback(
+    async (
+      ops: TimelineOp[],
+      summary: string,
+    ): Promise<{ doc: TimelineDocument; diffs: TimelineOpDiff[]; auditId: string }> => {
+      if (!projectId) throw new Error('当前没有绑定项目');
+      if (!docRef.current) throw new Error('时间线尚未就绪');
+      const dry = applyTimelineOps(docRef.current, ops);
+      if (dry.errors.length > 0) {
+        throw new Error(dry.errors.map((e) => `#${e.opIndex + 1} ${e.message}`).join('；'));
+      }
+      if (pendingRef.current) {
+        const ok = await flush();
+        if (!ok) throw new Error('本地还有未保存的修改或版本冲突，请先处理后再应用');
+      }
+      if (!docRef.current) throw new Error('时间线尚未就绪');
+      const baseVersion = docRef.current.version ?? 0;
+      const tracksBefore = docRef.current.tracks ?? [];
+      const before = clipsRef.current;
+      const res = await applyTimelineAgentOps(projectId, {
+        baseVersion,
+        ops,
+        summary,
+        idempotencyKey: `agent-${localId('op')}`,
+      });
+      const nextDoc = { ...res.doc };
+      docRef.current = nextDoc;
+      data.commitTimeline(nextDoc);
+      undoStack.current.push({
+        label: `Agent 剪辑：${summary || '应用动作'}`,
+        before,
+        after: nextDoc.clips,
+        tracksBefore,
+        tracksAfter: nextDoc.tracks ?? [],
+      });
+      if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
+      redoStack.current = [];
+      setHistVer((v) => v + 1);
+      persistHistory();
+      setSelectedIds((prev) => remapIds(prev, before, nextDoc.clips));
+      setDirty(false);
+      setConflict(false);
+      return res;
+    },
+    [projectId, flush, data, persistHistory],
+  );
+
+  const previewAgentOps = useCallback((ops: TimelineOp[]) => {
+    if (!docRef.current) {
+      return { diffs: [], errors: [{ opIndex: 0, message: '时间线尚未就绪' }], durationDelta: 0 };
+    }
+    const dry = applyTimelineOps(docRef.current, ops);
+    return { diffs: dry.diffs, errors: dry.errors, durationDelta: dry.durationDelta };
+  }, []);
 
   const setSelection = useCallback((ids: string[]) => setSelectedIds([...new Set(ids)]), []);
 
@@ -560,7 +664,7 @@ export function useEdlEditor(): EdlEditor {
       const left: TimelineClip = { ...src, outPoint: cut };
       const right: TimelineClip = {
         ...src,
-        id: localId('local-split'),
+        ...newClipIdentity('local-split'),
         inPoint: cut,
         timelineStart: round3(cutAt),
         sortOrder: src.sortOrder + 1,
@@ -621,7 +725,7 @@ export function useEdlEditor(): EdlEditor {
       const duration = 3;
       const startAt = quantizeToFrame(Math.max(0, at), fpsRef.current);
       const clip: TimelineClip = {
-        id: localId('local-sub'),
+        ...newClipIdentity('local-sub'),
         projectId: projectId ?? '',
         track: 'subtitle',
         sourceShotId: null,
@@ -656,7 +760,7 @@ export function useEdlEditor(): EdlEditor {
       const duration =
         asset.durationSeconds && asset.durationSeconds > 0 ? asset.durationSeconds : 10;
       const clip: TimelineClip = {
-        id: localId('local-audio'),
+        ...newClipIdentity('local-audio'),
         projectId: projectId ?? '',
         track: 'audio',
         sourceShotId: null,
@@ -699,7 +803,7 @@ export function useEdlEditor(): EdlEditor {
           ? round3(asset.durationSeconds)
           : 5;
       const clip: TimelineClip = {
-        id: localId('local-video'),
+        ...newClipIdentity('local-video'),
         projectId: projectId ?? '',
         track: 'video',
         sourceShotId: asset.shotId ?? null,
@@ -746,7 +850,7 @@ export function useEdlEditor(): EdlEditor {
       const label = src.text?.trim() || '画面原声';
       const clip: TimelineClip = {
         ...src,
-        id: localId('local-audio'),
+        ...newClipIdentity('local-audio'),
         track: 'audio',
         lane,
         speed: 1,
@@ -1118,7 +1222,7 @@ export function useEdlEditor(): EdlEditor {
       };
       const created: TimelineClip[] = src.map((c, i) => ({
         ...c,
-        id: localId('local-paste'),
+        ...newClipIdentity('local-paste'),
         projectId: projectId ?? '',
         timelineStart: round3(Math.max(0, c.timelineStart - base + targetAt)),
         bindGroup: remap(c.bindGroup),
@@ -1198,6 +1302,8 @@ export function useEdlEditor(): EdlEditor {
     copySelection,
     cutSelection,
     pasteAt,
+    applyAgentOps,
+    previewAgentOps,
     saveNow: flush,
     reloadAfterConflict,
   };

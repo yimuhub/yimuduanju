@@ -9,6 +9,8 @@ import {
   shots,
 } from '@server/database/schema';
 import { ModelGatewayService } from '../generation/model-gateway.service';
+import { TimelineService } from '../timeline/timeline.service';
+import { describeTimelineForAgent } from '@shared/timeline-ops';
 import type {
   ChatMessage,
   ChatSession,
@@ -33,6 +35,24 @@ const TITLE_SYSTEM_PROMPT =
  * 项目会话中的助手若建议修改分镜数据，回复末尾用 ```yimu-action 围栏输出 JSON，
  * 前端作战室渲染确认卡，用户点「应用」才调真实 API。草稿会话（无项目）不注入。
  */
+/**
+ * 时间线动作协议：对话直接剪辑的执行契约。
+ * 模型只负责「提案」，真正落库由 /timeline/agent-ops 在事务里完成；
+ * 因此必须强调：只用给定 clientKey、必须带 baseVersion、不得自称已执行。
+ */
+const TIMELINE_ACTION_PROTOCOL = [
+  '# 时间线剪辑动作协议',
+  '当用户要求剪辑已产出的时间线（移动/修剪/分割/删除/字幕/变速/音量/建轨）时，',
+  '回复末尾追加 ```yimu-timeline 代码块，内容是一批可执行动作：',
+  '{"baseVersion":<当前版本号>,"summary":"一句话说明改了什么","ops":[{"op":"trim","target":{"clientKey":"..."},"edge":"right","deltaSec":-0.5}]}',
+  '可用 op：move(target,toStart,toLane?)、trim(target,edge,deltaSec)、split(target,atSec)、delete(targets[])、',
+  'subtitle(target?,text,atSec?,durationSec?,style?)、speed(target,value)、volume(target,value)、lock(target,locked)、',
+  'track(action,lane?,track,patch?)。',
+  '硬规则：target 只能使用上面清单里的 clientKey（不得编造、不得用 id）；一次最多 10 条；',
+  '删除/批量改动前先用一句话说明影响；不确定用户意图时先问，不要输出代码块；',
+  '不要声称已经改好——前端会展示 diff，用户点「应用」后才真正落库。',
+].join('\n');
+
 const PROJECT_ACTION_PROTOCOL = [
   '# 变更建议输出协议',
   '当对话明确建议修改某个分镜（提示词/对白/景别/运镜等）时，回复末尾追加 ```yimu-action 代码块：',
@@ -96,6 +116,7 @@ export class AssistantService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly modelGateway: ModelGatewayService,
+    private readonly timelineService: TimelineService,
   ) {}
 
   private mapSession(row: typeof chatSessions.$inferSelect): ChatSession {
@@ -136,6 +157,7 @@ export class AssistantService {
           projectId ? PROJECT_ACTION_PROTOCOL : '',
           await this.projectContext(projectId),
           shotsContext,
+          await this.timelineContext(projectId),
         ]
           .filter(Boolean)
           .join('\n'),
@@ -284,6 +306,20 @@ export class AssistantService {
     return this.mapSession(rows[0]);
   }
 
+  /**
+   * 时间线上下文 + 剪辑动作协议。EDL 走 TimelineService.getDocument，
+   * 未保存过工程的项目也能拿到「从镜头派生」的真实片段与 clientKey。
+   */
+  private async timelineContext(projectId?: string | null): Promise<string> {
+    if (!projectId) return '';
+    try {
+      const doc = await this.timelineService.getDocument(projectId);
+      return [describeTimelineForAgent(doc), TIMELINE_ACTION_PROTOCOL].join('\n\n');
+    } catch {
+      return TIMELINE_ACTION_PROTOCOL;
+    }
+  }
+
   private async projectContext(projectId?: string | null): Promise<string> {
     if (!projectId) return '';
     const rows = await this.db
@@ -429,6 +465,7 @@ export class AssistantService {
       // 确认卡协议只在项目会话生效（草稿会话没有可改对象，注入只会诱导编造 id）
       detail.session.projectId ? PROJECT_ACTION_PROTOCOL : '',
       await this.projectContext(detail.session.projectId),
+      await this.timelineContext(detail.session.projectId),
     ]
       .filter(Boolean)
       .join('\n');
