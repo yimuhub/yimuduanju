@@ -246,6 +246,7 @@ const ClipView = ({
   label,
   tip,
   onDoubleClick,
+  onEnterEdit,
   onDelete,
   rowHeight,
   audioDetached,
@@ -267,6 +268,8 @@ const ClipView = ({
   /** 该画面的原声已被分离成独立音频片段：波形压暗，提示「这里不再出声」 */
   audioDetached?: boolean;
   onDoubleClick: () => void;
+  /** 字幕单击进入编辑（双击仍进入，并可直接改字） */
+  onEnterEdit?: () => void;
   onDelete: () => void;
   /** 字幕就地编辑：编辑态由外部单一状态源控制 */
   subEditing?: boolean;
@@ -288,6 +291,8 @@ const ClipView = ({
   const ts = resolveTextStyle(clip.textStyle ?? null);
   // 输入法组合态：组合中的 Enter 是「确认候选词」，不能当提交（中文用户必踩）
   const composingRef = useRef(false);
+  /** 单击判定：记录按下坐标，位移超过 4px 视为拖动，不进入编辑 */
+  const downRef = useRef<{ x: number; y: number } | null>(null);
 
   const cls = [
     'clip',
@@ -316,11 +321,21 @@ const ClipView = ({
       aria-label={tip}
       title={subEditing ? undefined : tip}
       onPointerDown={(e) => {
+        if (isSub) downRef.current = { x: e.clientX, y: e.clientY };
         // 编辑态：点在 textarea 上交给输入框，不让 onCanvasPointerDown 当成拖动/定位
         if (subEditing && (e.target as HTMLElement).closest('.tl-sub-input')) {
           e.stopPropagation();
           return;
         }
+      }}
+      onPointerUp={(e) => {
+        const down = downRef.current;
+        downRef.current = null;
+        if (!isSub || subEditing || clip.locked || rowLocked || !onEnterEdit) return;
+        if (!down) return;
+        if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
+        if ((e.target as HTMLElement).closest('.tl-sub-input')) return;
+        onEnterEdit();
       }}
       onDoubleClick={(e) => {
         e.stopPropagation();
@@ -2369,6 +2384,9 @@ export const StudioTimeline = () => {
                       onSubCancel={cancelSubtitle}
                       label={label}
                       tip={tip}
+                      onEnterEdit={
+                        c.track === 'subtitle' ? () => beginSubEdit(c) : undefined
+                      }
                       onDoubleClick={() => {
                         if (c.track === 'subtitle') {
                           beginSubEdit(c);

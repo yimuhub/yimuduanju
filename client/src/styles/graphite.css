@@ -11968,3 +11968,18 @@ select.nw-input {
 .tl-hist-diff .note {
   color: var(--muted-foreground, #9ca3af);
 }
+
+/* 资产包导入 */
+.tl-import-packname {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.tl-import-primary {
+  border: 1px solid var(--primary, #ff403a) !important;
+  color: var(--primary, #ff403a) !important;
+  font-weight: 600;
+}

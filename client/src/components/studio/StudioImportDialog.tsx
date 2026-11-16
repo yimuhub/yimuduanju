@@ -5,7 +5,9 @@
  *   1. 本地电脑：复用 POST /projects/:id/uploads（≤25MB，白名单），上传即成为本项目资产；
  *   2. 其他任务/项目：listProjects + listAssets(projectId) 列出产物，选中即「引用」——
  *      不复制文件，直接用 fileUrl 落到时间线片段，这就是跨任务复用的语义；
- *   3. 资产包：当前仓库没有 zip 依赖与许可字段，本期不实现，明确给出「本地批量导入」替代路径。
+ *   3. 资产包（.yimupack / JSON 清单）：平台定义的素材包格式，一次导入一整套
+ *      （名称 + 公网/本地上传 URL + 类型 + 时长），逐条校验 URL 与类型，非法整包拒绝。
+ *      zip 压缩包不在浏览器解压范围，仍走「本地文件」多选。
  *
  * 组件只负责「选素材」，落到哪条轨/哪个时刻交回调用方（StudioTimeline）决定，
  * 与拖放插入走同一条 addVideo / addAudio 路径，不另起一套写入逻辑。
@@ -79,6 +81,9 @@ export const StudioImportDialog = ({
   const [loadingOther, setLoadingOther] = useState(false);
   const [keyword, setKeyword] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  /** 资产包：清单文件解析后的条目（含 URL/类型/时长） */
+  const [pack, setPack] = useState<{ name: string; items: ImportedMedia[] } | null>(null);
+  const packRef = useRef<HTMLInputElement>(null);
 
   // 打开时拉项目列表（给「其他任务」Tab 用）
   useEffect(() => {
@@ -167,6 +172,61 @@ export const StudioImportDialog = ({
     },
     [onPick, onClose, projectId],
   );
+
+  /**
+   * 读资产包清单（.yimupack / .json）：
+   * {"format":"yimu-pack","name":"…","items":[{"name":"…","url":"https://…","kind":"video","durationSeconds":6}]}
+   * 只接受 http(s) 或 /uploads/ 的 URL——避免把 javascript:/data: 之类塞进播放链路。
+   */
+  const onPackFile = useCallback(async (file: File | null) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as {
+        format?: unknown;
+        name?: unknown;
+        items?: unknown;
+      };
+      if (data.format && data.format !== 'yimu-pack') {
+        throw new Error('format 必须是 yimu-pack');
+      }
+      if (!Array.isArray(data.items) || data.items.length === 0) {
+        throw new Error('items 为空');
+      }
+      const items: ImportedMedia[] = data.items.map((raw) => {
+        const it = raw as {
+          name?: unknown;
+          url?: unknown;
+          kind?: unknown;
+          durationSeconds?: unknown;
+          sourceAssetId?: unknown;
+        };
+        const url = typeof it.url === 'string' ? it.url.trim() : '';
+        if (!/^(https?:\/\/|\/uploads\/)/.test(url)) throw new Error(`非法素材地址：${url || '空'}`);
+        const kind = it.kind === 'audio' || it.kind === 'image' ? it.kind : 'video';
+        if (it.kind && it.kind !== kind) throw new Error(`未知素材类型：${String(it.kind)}`);
+        return {
+          name: typeof it.name === 'string' && it.name.trim() ? it.name.trim() : '未命名素材',
+          url,
+          kind,
+          durationSeconds:
+            Number.isFinite(Number(it.durationSeconds)) && Number(it.durationSeconds) > 0
+              ? Number(it.durationSeconds)
+              : undefined,
+          sourceAssetId:
+            typeof it.sourceAssetId === 'string' ? it.sourceAssetId : undefined,
+        };
+      });
+      if (items.length > 200) throw new Error('单个资产包最多 200 条');
+      setPack({
+        name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : file.name,
+        items,
+      });
+    } catch (e) {
+      setPack(null);
+      toast.error(`资产包解析失败：${(e as Error).message}`);
+    }
+  }, []);
 
   const filteredOthers = useMemo(() => {
     const q = keyword.trim().toLowerCase();
@@ -290,17 +350,72 @@ export const StudioImportDialog = ({
 
         {tab === 'pack' ? (
           <div className="tl-import-body">
-            <div className="tl-import-pack">
-              <Package size={28} />
-              <b>资产包（zip）本期暂不支持</b>
-              <p>
-                当前还没有 zip 解析与素材许可字段。要用打包素材，请解压后用
-                <b>「本地文件」</b> 多选导入，效果等价。
-              </p>
-              <button type="button" onClick={() => setTab('local')}>
-                去本地文件导入
-              </button>
-            </div>
+            {pack ? (
+              <>
+                <div className="tl-import-row">
+                  <b className="tl-import-packname">{pack.name}</b>
+                  <span className="tl-import-note">{pack.items.length} 条素材</span>
+                </div>
+                <div className="tl-picker-list">
+                  {pack.items.map((it, i) => (
+                    <button
+                      key={`${it.url}-${i}`}
+                      type="button"
+                      onClick={() => {
+                        onPick(it);
+                        onClose();
+                      }}
+                    >
+                      <KindIcon kind={it.kind} />
+                      <span className="nm">{it.name}</span>
+                      <span className="du num">
+                        {it.durationSeconds
+                          ? `${it.durationSeconds.toFixed(1)}s`
+                          : kindLabel(it.kind)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="tl-import-row">
+                  <button
+                    type="button"
+                    className="tl-import-primary"
+                    onClick={() => {
+                      pack.items.forEach((it) => onPick(it));
+                      toast.success(`已插入 ${pack.items.length} 条资产包素材`);
+                      onClose();
+                    }}
+                  >
+                    全部插入时间线
+                  </button>
+                  <button type="button" onClick={() => setPack(null)}>
+                    换一个资产包
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="tl-import-pack">
+                <Package size={28} />
+                <b>导入资产包（.yimupack / JSON）</b>
+                <p>
+                  资产包是一份素材清单：名称 + 地址 + 类型 + 时长。导入后可逐条插入，也可一键全部插入。
+                  zip 压缩包请解压后用「本地文件」多选。
+                </p>
+                <button type="button" onClick={() => packRef.current?.click()}>
+                  选择资产包文件
+                </button>
+                <input
+                  ref={packRef}
+                  type="file"
+                  accept=".yimupack,.json,application/json"
+                  hidden
+                  onChange={(e) => {
+                    void onPackFile(e.target.files?.[0] ?? null);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+            )}
           </div>
         ) : null}
       </div>
