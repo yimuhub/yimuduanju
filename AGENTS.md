@@ -140,3 +140,18 @@ DRAFT → PARSING → PLANNING → BIBLE_READY → STORYBOARD_READY → ASSETS_G
 1. **同一数据源**：对话与面板共用同一套 API；前端禁止另存副本，落库后 refresh 收敛。
 2. **先读后写**：Agent 修改前先读上下文（分镜/剧本现状），不瞎改。
 3. **可追溯**：Agent 产出的结构化修改附 reason/证据引用，便于审查回溯。
+
+## 版本与提交（每次更新都必须执行）
+
+1. **升版本号**：`node scripts/bump-version.mjs <x.y.z>`，一次同步
+   `package.json` / `package-lock.json` / `desktop/src-tauri/tauri.conf.json`。
+   小改 `patch`、新功能 `minor`、破坏性变更 `major`，禁止同一版本号承载多次更新。
+2. **本地验证**：`npm run type:check && npm test`；动前端再加 `npm run build:client`。
+3. **提交**：`git commit -m "<type>(<scope>): <摘要> vX.Y.Z"`，正文列清改了什么、边界是什么。
+4. **推送 + 打标签**：
+   ```bash
+   git push origin HEAD
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+   GitHub 上的提交与 tag 即“版本记忆”，不推送视为未完成。
+5. **禁止 amend 已推送提交**；修正一律追加新提交并再次升版本号。
