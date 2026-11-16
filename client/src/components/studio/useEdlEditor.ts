@@ -26,7 +26,7 @@ import type {
 } from '@shared/api.interface';
 import { getTimeline, saveTimeline } from '@client/src/api/timeline';
 import { useStudio } from './StudioShell';
-import { clipSpan } from './model';
+import { clipSpan, sameOrigin } from './model';
 import {
   clamp,
   clampBoundMove,
@@ -34,6 +34,7 @@ import {
   ROW_HEIGHT_DEFAULT,
   round3,
 } from '@client/src/lib/timeline-frame';
+import { pickFreeLane } from '@client/src/lib/timeline-drop';
 import {
   HISTORY_LIMIT,
   loadHistory,
@@ -124,6 +125,24 @@ export interface EdlEditor {
     at: number,
     lane?: number,
   ) => string | null;
+  /** 落一个新画面片段（拖素材/镜头进时间线用）：落点已被占时由调用方先算好 lane */
+  addVideo: (
+    asset: {
+      name: string;
+      url: string;
+      durationSeconds?: number;
+      shotId?: string | null;
+    },
+    at: number,
+    lane?: number,
+  ) => string | null;
+  /**
+   * 音画分离：把画面片段自带的声音抽成同轨位置的独立音频片段，画面本身静音。
+   * 返回新音频片段 id；已经在分离状态/没有源媒体时返回 null。
+   */
+  detachAudio: (id: string) => string | null;
+  /** 音画合并：删掉分离出去的那条音频，画面恢复原声。返回被删的音频片段数 */
+  attachAudio: (id: string) => number;
   packVideo: () => void;
 
   /** 变速：同轨后续片段随长度变化整体平移 */
@@ -644,6 +663,110 @@ export function useEdlEditor(): EdlEditor {
     [commit, projectId],
   );
 
+  const addVideo = useCallback(
+    (
+      asset: {
+        name: string;
+        url: string;
+        durationSeconds?: number;
+        shotId?: string | null;
+      },
+      at: number,
+      lane = 0,
+    ): string | null => {
+      const before = clipsRef.current;
+      if (!docRef.current) return null;
+      const duration =
+        asset.durationSeconds && asset.durationSeconds > 0
+          ? round3(asset.durationSeconds)
+          : 5;
+      const clip: TimelineClip = {
+        id: localId('local-video'),
+        projectId: projectId ?? '',
+        track: 'video',
+        sourceShotId: asset.shotId ?? null,
+        sourceUrl: asset.url,
+        inPoint: 0,
+        outPoint: duration,
+        timelineStart: quantizeToFrame(Math.max(0, at), fpsRef.current),
+        lane,
+        speed: 1,
+        volume: 1,
+        transition: { type: 'none', duration: 0 },
+        text: asset.name.slice(0, 120),
+        locked: false,
+        sortOrder: before.length,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      commit([...before, clip], '拖入画面', before);
+      return clip.id;
+    },
+    [commit, projectId],
+  );
+
+  /**
+   * 音画分离 / 合并
+   * -------------------------------------------------------------
+   * 片段 id 每次落库都会重新生成，所以「这条音频是哪个画面抽出来的」不能靠 id 记，
+   * 只能靠 (sourceUrl, timelineStart, in/out) 这套业务特征对上——这也正是分离后的语义：
+   * 同一份源媒体、同一段时间，只是拆成两条可以各自移动/修剪的片段。
+   * 判重和合并都用 `sameOrigin()`，不要在这里另写一套比较。
+   */
+  const detachAudio = useCallback(
+    (id: string): string | null => {
+      const before = clipsRef.current;
+      if (!docRef.current) return null;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.track !== 'video' || !src.sourceUrl) return null;
+      const already = before.some((c) => c.track === 'audio' && sameOrigin(c, src, fpsRef.current));
+      if (already) return null;
+      const occupied = before
+        .filter((c) => c.track === 'audio')
+        .map((c) => ({ lane: c.lane ?? 0, start: c.timelineStart, end: c.timelineStart + clipSpan(c) }));
+      const { lane } = pickFreeLane(occupied, 0, src.timelineStart, src.timelineStart + clipSpan(src));
+      const label = src.text?.trim() || '画面原声';
+      const clip: TimelineClip = {
+        ...src,
+        id: localId('local-audio'),
+        track: 'audio',
+        lane,
+        speed: 1,
+        volume: 1,
+        transition: { type: 'none', duration: 0 },
+        // 分离出来的音频保留 sourceShotId，时间线上可以显示「♪ 镜号」而不是一串文件名
+        text: `♪ ${label}`.slice(0, 120),
+        locked: false,
+        bindGroup: null,
+        textStyle: null,
+        sortOrder: before.length,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      commit([...before, clip], '音画分离', before);
+      return clip.id;
+    },
+    [commit],
+  );
+
+  const attachAudio = useCallback(
+    (id: string): number => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.track !== 'video') return 0;
+      const victims = before.filter((c) => c.track === 'audio' && sameOrigin(c, src, fpsRef.current));
+      if (victims.length === 0) return 0;
+      const gone = new Set(victims.map((v) => v.id));
+      commit(
+        before.filter((c) => !gone.has(c.id)),
+        '音画合并',
+        before,
+      );
+      return victims.length;
+    },
+    [commit],
+  );
+
   const packVideo = useCallback(() => {
     const before = clipsRef.current;
     const videos = before
@@ -995,6 +1118,9 @@ export function useEdlEditor(): EdlEditor {
     editSubtitle,
     addSubtitle,
     addAudio,
+    addVideo,
+    detachAudio,
+    attachAudio,
     packVideo,
     setClipSpeed,
     setClipVolume,

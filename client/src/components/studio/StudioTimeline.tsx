@@ -17,11 +17,12 @@
  *   · Delete = 波纹删除；Shift+Delete = 删除留空隙；S = 分割；M = 标记
  *   · , / . = 前后一帧（Shift = 10 帧）；? = 快捷键面板
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   AlignJustify,
+  AudioLines,
   ChevronDown,
   ChevronUp,
   ClipboardPaste,
@@ -52,7 +53,7 @@ import {
   X,
 } from 'lucide-react';
 import { useStudio } from './StudioShell';
-import { clipSpan, shotLabel } from './model';
+import { clipSpan, sameOrigin, shotLabel } from './model';
 import { useEdlEditor } from './useEdlEditor';
 import { Filmstrip, useThumbnails, useWaveform, Waveform } from './timeline-media';
 import { exportTimeline } from '@client/src/api/timeline';
@@ -71,6 +72,16 @@ import {
   snapClipStart,
   snapPoint,
 } from '@client/src/lib/timeline-frame';
+import { laneFromY, pickFreeLane } from '@client/src/lib/timeline-drop';
+import {
+  clearTimelineDrag,
+  mediaOfDrag,
+  peekTimelineDrag,
+  readTimelineDrag,
+  startTimelineDrag,
+  trackOfDrag,
+  type TimelineDragPayload,
+} from '@client/src/lib/timeline-dnd';
 import { resolveTextStyle } from '@shared/api.interface';
 import type {
   Asset,
@@ -98,6 +109,16 @@ const TEXT_POSITIONS: { value: number; label: string }[] = [
 const PX_MIN = 6;
 const PX_MAX = 160;
 const PX_DEFAULT = 17;
+
+/**
+ * 缩放滑块的刻度映射：线性滑块在 6–160 px/s 上会把 90% 行程都花在高倍率，
+ * 低倍率（看整体节奏）几乎调不出来。用对数映射，100% 落在 PX_DEFAULT 附近手感最接近剪映。
+ */
+const ZOOM_LOG = Math.log(PX_MAX / PX_MIN);
+const clampR = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+const zoomToSlider = (px: number): number =>
+  Math.round((Math.log(clampR(px, PX_MIN, PX_MAX) / PX_MIN) / ZOOM_LOG) * 100);
+const sliderToZoom = (v: number): number => PX_MIN * Math.exp((clampR(v, 0, 100) / 100) * ZOOM_LOG);
 
 const LABEL_W = 148;
 
@@ -187,6 +208,7 @@ const ClipView = ({
   onDoubleClick,
   onDelete,
   rowHeight,
+  audioDetached,
 }: {
   clip: TimelineClip;
   pxPerSec: number;
@@ -197,6 +219,8 @@ const ClipView = ({
   projectId?: string;
   label: string;
   tip: string;
+  /** 该画面的原声已被分离成独立音频片段：波形压暗，提示「这里不再出声」 */
+  audioDetached?: boolean;
   onDoubleClick: () => void;
   onDelete: () => void;
 }) => {
@@ -216,6 +240,7 @@ const ClipView = ({
     clip.track === 'subtitle' ? 'v2' : isAudio ? 'a' : clip.sourceUrl ? 'v' : 'pending',
     selected ? 'on' : '',
     clip.locked || rowLocked ? 'locked' : '',
+    audioDetached ? 'audio-off' : '',
     thumb || wave ? 'has-media' : '',
   ]
     .filter(Boolean)
@@ -270,6 +295,11 @@ const ClipView = ({
             outPoint={clip.outPoint}
             pxPerSec={pxPerSec}
           />
+          {audioDetached ? (
+            <i className="tl-clip-mute" title="原声已分离成下面那条音频片段">
+              <VolumeX size={8} />
+            </i>
+          ) : null}
         </div>
       ) : null}
       <span
@@ -472,6 +502,93 @@ export const StudioTimeline = () => {
     [...clips, ...editor.tracks]
       .filter((c) => c.track === track)
       .reduce((m, c) => Math.max(m, c.lane ?? 0), 0);
+
+  /* ------------------------- 拖放：素材 → 时间线 -------------------------
+   * 剪映的核心手感：拖上去就落，落不下就自动开一条新轨。
+   * 这里只做「坐标 → 落点」的计算与提示，真正建片段交给 useEdlEditor。
+   * ------------------------------------------------------------------- */
+  const [dropHint, setDropHint] = useState<{
+    t: number;
+    lane: number;
+    track: RowTrack;
+    span: number;
+    created: boolean;
+  } | null>(null);
+
+  /** 每行在画布里的纵向偏移（标尺 16px 之后），用于画落点高亮 */
+  const rowTop = useMemo(() => {
+    const map = new Map<string, number>();
+    let acc = 16;
+    for (const r of rows) {
+      map.set(r.key, acc);
+      acc += r.height;
+    }
+    return map;
+  }, [rows]);
+
+  const computeDrop = (e: DragEvent, payload: TimelineDragPayload) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const track = trackOfDrag(payload);
+    const span = Math.max(
+      0.2,
+      payload.durationSeconds && payload.durationSeconds > 0 ? payload.durationSeconds : 5,
+    );
+    const t = quantizeToFrame(Math.max(0, (e.clientX - rect.left) / pxRef.current), fps);
+    // 减掉 16px 标尺，再按行高命中轨道；落在空白区时 laneFromY 会给「最大 lane + 1」
+    const wanted = laneFromY(rows, Math.max(0, e.clientY - rect.top - 16), track);
+    const occupied = clips
+      .filter((c) => c.track === track)
+      .map((c) => ({
+        lane: c.lane ?? 0,
+        start: c.timelineStart,
+        end: c.timelineStart + clipSpan(c),
+      }));
+    const pick = pickFreeLane(occupied, wanted, t, t + span);
+    return { t, lane: pick.lane, track, span, created: pick.created };
+  };
+
+  const onTracksDragOver = (e: DragEvent) => {
+    if (!peekTimelineDrag()) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const d = computeDrop(e, peekTimelineDrag() as TimelineDragPayload);
+    if (!d) return;
+    setDropHint((prev) =>
+      prev && prev.t === d.t && prev.lane === d.lane && prev.track === d.track ? prev : d,
+    );
+  };
+
+  const onTracksDrop = (e: DragEvent) => {
+    const payload = readTimelineDrag(e);
+    if (!payload) return;
+    e.preventDefault();
+    const d = computeDrop(e, payload);
+    setDropHint(null);
+    clearTimelineDrag();
+    if (!d) return;
+    const url = mediaOfDrag(payload);
+    if (!url) {
+      toast.error('这条素材还没有可用的画面/声音', {
+        description: payload.kind === 'shot' ? '先在前排生成该镜的成片或首帧' : '素材地址为空',
+      });
+      return;
+    }
+    const id =
+      d.track === 'audio'
+        ? editor.addAudio({ name: payload.name, url, durationSeconds: d.span }, d.t, d.lane)
+        : editor.addVideo(
+            { name: payload.name, url, durationSeconds: d.span, shotId: payload.shotId ?? null },
+            d.t,
+            d.lane,
+          );
+    if (!id) return;
+    editor.setSelection([id]);
+    toast.success(d.created ? `已新建轨道并放入「${payload.name}」` : `已放入「${payload.name}」`, {
+      duration: 1800,
+    });
+  };
 
   // 时间线总高度：按各行真实行高求和
   useEffect(() => {
@@ -1205,6 +1322,10 @@ export const StudioTimeline = () => {
 
   const selTextStyle = resolveTextStyle(selectedClip?.textStyle ?? null);
 
+  /** 该画面的原声是否已经被分离成了独立音频片段（判据见 model.sameOrigin） */
+  const detachedAudioOf = (clip: TimelineClip): TimelineClip | undefined =>
+    clips.find((c) => c.track === 'audio' && sameOrigin(c, clip, fps));
+
   const propsBar = selectedClip ? (
     <div className="tl-props">
       <span className="tl-props-tag">
@@ -1264,6 +1385,44 @@ export const StudioTimeline = () => {
           <option value="crossfade">叠化（预留）</option>
         </select>
       </label>
+      {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+        detachedAudioOf(selectedClip) ? (
+          <button
+            type="button"
+            className="tl-prop-btn on"
+            title="画面原声已经分离成独立音频片段：点这里删掉那条音频、画面恢复原声"
+            onClick={() => {
+              const n = editor.attachAudio(selectedClip.id);
+              toast.success(n > 0 ? '已合并原声' : '没有找到可合并的音频片段', {
+                duration: 1800,
+              });
+            }}
+          >
+            <AudioLines size={11} />
+            合并原声
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="tl-prop-btn"
+            title="音画分离：把这段画面的原声抽成独立的音频片段，可单独移动 / 修剪 / 调音量"
+            onClick={() => {
+              const id = editor.detachAudio(selectedClip.id);
+              if (!id) {
+                toast.info('该片段已经在分离状态，或没有可用的源媒体', { duration: 2000 });
+                return;
+              }
+              editor.setSelection([id]);
+              toast.success('已分离音轨：画面静音，原声变成下面那条音频', {
+                duration: 2400,
+              });
+            }}
+          >
+            <AudioLines size={11} />
+            分离音轨
+          </button>
+        )
+      ) : null}
       {selectedClip.track === 'video' && selectedClip.sourceShotId ? (
         <button
           type="button"
@@ -1611,6 +1770,18 @@ export const StudioTimeline = () => {
           >
             <Minus size={13} />
           </button>
+          <input
+            type="range"
+            className="tl-zoom-slider"
+            min={0}
+            max={100}
+            step={1}
+            value={zoomToSlider(pxPerSec)}
+            onChange={(e) => applyZoom(sliderToZoom(Number(e.target.value)))}
+            title="拖动调整时间线缩放（也可 ⌘+滚轮）"
+            aria-label="时间线缩放"
+            style={{ '--zoom-fill': `${zoomToSlider(pxPerSec)}%` } as Record<string, string>}
+          />
           <span className="tl-zoom-pct num">{Math.round((pxPerSec / PX_DEFAULT) * 100)}%</span>
           <button
             type="button"
@@ -1740,6 +1911,11 @@ export const StudioTimeline = () => {
             ref={canvasRef}
             style={{ width: `${canvasW}px` }}
             onPointerDown={onCanvasPointerDown}
+            onDragOver={onTracksDragOver}
+            onDragLeave={(e) => {
+              if (e.currentTarget === e.target) setDropHint(null);
+            }}
+            onDrop={onTracksDrop}
           >
             <div className="ruler" title="拖动定位播放头 · Shift+拖动框选">
               {ticks.map((t, i) => (
@@ -1764,6 +1940,23 @@ export const StudioTimeline = () => {
                 />
               ))}
             </div>
+
+            {dropHint ? (
+              <div
+                className={`tl-drop${dropHint.created ? ' new' : ''}`}
+                style={{
+                  left: `${dropHint.t * pxPerSec}px`,
+                  top: `${rowTop.get(`${dropHint.track}:${dropHint.lane}`) ?? 16}px`,
+                  width: `${Math.max(6, dropHint.span * pxPerSec)}px`,
+                  height: `${rowByKey.get(`${dropHint.track}:${dropHint.lane}`)?.height ?? ROW_HEIGHT_DEFAULT[dropHint.track]}px`,
+                }}
+              >
+                <span>
+                  {dropHint.created ? '新建轨道' : ''}
+                  {formatTimecode(dropHint.t, fps)}
+                </span>
+              </div>
+            ) : null}
 
             {rows.map((row) => (
               <div
@@ -1799,6 +1992,9 @@ export const StudioTimeline = () => {
                       selected={editor.selectedIds.includes(c.id)}
                       rowLocked={row.locked}
                       projectId={projectId}
+                      audioDetached={
+                        c.track === 'video' ? Boolean(detachedAudioOf(c)) : undefined
+                      }
                       label={label}
                       tip={tip}
                       onDoubleClick={() => {
@@ -1864,9 +2060,21 @@ export const StudioTimeline = () => {
               key={s.id}
               type="button"
               className={`tl-strip-i${i === sel ? ' on' : ''}`}
-              title={`${shotLabel(s.no)} ${s.sceneLabel} · ${s.tag} · ${s.dur.toFixed(1)}s · ${s.txt}（双击进分镜详情）`}
+              draggable
+              title={`${shotLabel(s.no)} ${s.sceneLabel} · ${s.tag} · ${s.dur.toFixed(1)}s · ${s.txt}（拖动可拖进时间线开新轨 · 双击进分镜详情）`}
               onClick={() => jumpToShot(i)}
               onDoubleClick={() => openShotDetail(s.id)}
+              onDragStart={(e) =>
+                startTimelineDrag(e, {
+                  kind: 'shot',
+                  name: `${shotLabel(s.no)} ${s.txt}`.slice(0, 40),
+                  durationSeconds: s.dur,
+                  shotId: s.id,
+                  videoUrl: s.videoUrl,
+                  frameUrl: s.frameUrl,
+                })
+              }
+              onDragEnd={() => clearTimelineDrag()}
             >
               <b>{shotLabel(s.no)}</b>
               <span className="num">{s.dur.toFixed(1)}s</span>

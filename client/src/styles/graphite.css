@@ -2576,10 +2576,89 @@
   background: var(--bg-inset);
   color: var(--fg);
 }
+/* 缩放滑块：＋/－ 保留，中间给一条可自由拖的滑轨（对数刻度，低倍率段也够用） */
+.tl-zoom-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 96px;
+  height: 16px;
+  margin: 0 2px;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.tl-zoom-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--brand, #e5484d) 0%,
+    var(--brand, #e5484d) var(--zoom-fill, 50%),
+    var(--line) var(--zoom-fill, 50%),
+    var(--line) 100%
+  );
+}
+.tl-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--fg, #ddd);
+  border: 1px solid var(--bg, #111);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.tl-zoom-slider:hover::-webkit-slider-thumb {
+  background: var(--brand, #e5484d);
+}
+.tl-zoom-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.tl-zoom-slider::-moz-range-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--brand, #e5484d);
+}
+.tl-zoom-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--fg);
+  border: 1px solid var(--bg);
+}
 .tl-canvas {
   position: relative;
   min-width: 100%;
   min-height: 100%;
+}
+/* 拖放落点提示：虚线框 = 放进现有轨，实线框 + 「新建轨道」= 会新开一条 */
+.tl-drop {
+  position: absolute;
+  z-index: 6;
+  border: 1px dashed var(--brand, #e5484d);
+  background: color-mix(in srgb, var(--brand, #e5484d) 14%, transparent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.tl-drop.new {
+  border-style: solid;
+  border-width: 1.5px;
+}
+.tl-drop > span {
+  position: absolute;
+  top: -13px;
+  left: 0;
+  padding: 0 4px;
+  border-radius: 3px 3px 0 0;
+  background: var(--brand, #e5484d);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  line-height: 13px;
+  white-space: nowrap;
 }
 .tl-tracks .ruler {
   cursor: ew-resize;
@@ -11236,4 +11315,24 @@ select.nw-input {
 }
 .clip.v .tl-film {
   bottom: 14px;
+}
+/* 音画分离后：画面片段的波形压暗 + 静音角标（声音已经在那条音频片段上了） */
+.clip.audio-off .tl-clip-wave {
+  opacity: 0.3;
+}
+.clip.audio-off .tl-clip-wave .tl-wave {
+  color: rgba(255, 255, 255, 0.4);
+}
+.tl-clip-mute {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--warn, #f5a623);
 }

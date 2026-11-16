@@ -23,6 +23,7 @@ import {
   ListFilter,
 } from 'lucide-react';
 import { assets } from '@client/src/api';
+import { clearTimelineDrag, startTimelineDrag } from '@client/src/lib/timeline-dnd';
 import type { Asset } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { MediaOrMissing } from '@client/src/components/MediaOrMissing';
@@ -193,8 +194,21 @@ const ProjectAssetsTab = () => {
               onClick={() => setSelected(a)}
               role="button"
               tabIndex={0}
+              draggable={Boolean(mediaSrc(a))}
+              onDragStart={(e) => {
+                const src = mediaSrc(a);
+                if (!src) return;
+                // 拖进底部时间线：视频/图片进画面轨，音频进音频轨；落点被占会自动开新轨
+                startTimelineDrag(e, {
+                  kind: isVideo(a) ? 'video' : isImage(a) ? 'image' : 'audio',
+                  url: src,
+                  name: a.name || typeLabel(a.assetType),
+                  durationSeconds: a.durationSeconds,
+                });
+              }}
+              onDragEnd={() => clearTimelineDrag()}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(a); } }}
-              title={`${a.name || '未命名资产'} · ${typeLabel(a.assetType)}`}
+              title={`${a.name || '未命名资产'} · ${typeLabel(a.assetType)}（可拖进底部时间线）`}
             >
               <div className="as-thumb">
                 {isImage(a) ? (

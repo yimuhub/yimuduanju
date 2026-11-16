@@ -42,6 +42,17 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 const iso = (d: unknown): string =>
   d instanceof Date ? d.toISOString() : typeof d === 'string' ? d : new Date().toISOString();
 
+/**
+ * 静帧素材（首帧/图片）也允许拖进画面轨：导出时用 `-loop 1` 铺成一段视频，
+ * 与真视频片段走同一条 concat 链，不需要在 EDL 里区分类型。
+ */
+const MEDIA_IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?)(\?|$)/i;
+/** 落盘临时文件的后缀：按源地址推断，ffmpeg 探测靠内容，但保留后缀更利于排错 */
+const mediaExt = (url: string): string => {
+  const m = /\.(png|jpe?g|webp|bmp|gif|tiff?|mp4|mov|m4v|webm|mkv)(?=\?|$)/i.exec(url);
+  return m ? `.${m[1].toLowerCase()}` : '.mp4';
+};
+
 /** 片段有效时长（时间线占位） */
 const clipSpan = (c: Pick<TimelineClip, 'inPoint' | 'outPoint' | 'speed'>) =>
   Math.max(0, (c.outPoint - c.inPoint) / (c.speed > 0 ? c.speed : 1));
@@ -564,10 +575,13 @@ export class TimelineService {
       let totalDur = 0;
       for (let i = 0; i < videoClips.length; i += 1) {
         const clip = videoClips[i];
-        const src = join(work, `v_src_${String(i).padStart(3, '0')}.mp4`);
+        const url = clip.sourceUrl as string;
+        // 静帧（拖进来的首帧/图片）按 span 循环成一段视频，和真视频走同一条 concat 链
+        const still = MEDIA_IMAGE_EXT.test(url);
+        const src = join(work, `v_src_${String(i).padStart(3, '0')}${mediaExt(url)}`);
         cleanup.push(src);
         // eslint-disable-next-line no-await-in-loop
-        const ok = await this.exportService.materializeMediaToFile(clip.sourceUrl as string, src, cacheDir);
+        const ok = await this.exportService.materializeMediaToFile(url, src, cacheDir);
         if (!ok) throw new BadRequestException(`片段 ${i + 1} 源媒体下载失败`);
         const span = Math.max(0.05, clip.outPoint - clip.inPoint);
         const speed = clip.speed > 0 ? clip.speed : 1;
@@ -596,8 +610,10 @@ export class TimelineService {
         // eslint-disable-next-line no-await-in-loop
         const segOk = await run([
           '-y',
-          '-ss', String(Math.max(0, clip.inPoint)),
-          '-i', src,
+          // 静帧没有时间轴概念：用 -loop 1 铺满 span；对图片用 -ss 会直接报错
+          ...(still
+            ? ['-loop', '1', '-i', src]
+            : ['-ss', String(Math.max(0, clip.inPoint)), '-i', src]),
           '-t', String(span),
           '-vf', vf,
           '-an',

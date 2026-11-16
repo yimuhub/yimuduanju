@@ -20,6 +20,22 @@ export const clipSpan = (c: Pick<TimelineClip, 'inPoint' | 'outPoint' | 'speed'>
 export const clipEnd = (c: Pick<TimelineClip, 'inPoint' | 'outPoint' | 'speed' | 'timelineStart'>) =>
   c.timelineStart + clipSpan(c);
 
+/**
+ * 两条片段是否同一份源媒体的同一段。
+ * 片段 id 每次落库都会由服务端重新生成，所以「这条音频是从那个画面分离出来的」
+ * 只能按 (sourceUrl, 时间线位置, 入出点) 这套业务特征判断——音画分离的判重与合并都靠它。
+ */
+export const sameOrigin = (
+  a: Pick<TimelineClip, 'sourceUrl' | 'timelineStart' | 'inPoint' | 'outPoint'>,
+  b: Pick<TimelineClip, 'sourceUrl' | 'timelineStart' | 'inPoint' | 'outPoint'>,
+  fps = 24,
+): boolean =>
+  !!a.sourceUrl &&
+  a.sourceUrl === b.sourceUrl &&
+  Math.abs(a.timelineStart - b.timelineStart) < 1 / (fps || 24) &&
+  Math.abs(a.inPoint - b.inPoint) < 1e-3 &&
+  Math.abs(a.outPoint - b.outPoint) < 1e-3;
+
 /** 镜头在生产链上的三种状态（设计稿 data-st 同名） */
 export type ShotState = 'done' | 'render' | 'pending';
 
