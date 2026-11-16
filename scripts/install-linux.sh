@@ -207,7 +207,7 @@ PSQL="$PG_BIN_HINT/psql"
 c_blue "启动 PostgreSQL 并设置开机自启..."
 if command -v systemctl >/dev/null 2>&1; then
   systemctl enable --now "$PG_SERVICE"
-  c_green "    PostgreSQL 已启动并设为开机自启（服务名：$PG_SERVICE）"
+  c_green "    PostgreSQL 已启动并设为开机自启（服务名：${PG_SERVICE}）"
 else
   c_yellow "    未找到 systemctl，已跳过开机自启设置；请手动启动 PostgreSQL 后再继续。"
 fi

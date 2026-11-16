@@ -9,7 +9,14 @@ import react from '@vitejs/plugin-react';
  * 本配置只做纯构建：React + Tailwind(postcss) + 别名 + 环境变量透传。
  * 输出 dist/client（emptyOutDir 清理陈旧分包）。
  */
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command }) => {
+  /**
+   * 后端端口：必须与 scripts/server-daemon.sh / scripts/gateway.js / server/main.ts
+   * 同源，否则前端 dev server 会把 /api 代理到一个没人监听的端口。
+   * 默认 3301：3000 端口常被桌面客户端或同机其它项目占用。
+   */
+  const BACKEND_PORT = process.env.SERVER_PORT || '3301';
+  return ({
   root: path.resolve(__dirname, 'client'),
   publicDir: path.resolve(__dirname, 'client/public'),
   plugins: [react()],
@@ -57,8 +64,9 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5174,
     proxy: {
-      '/api': 'http://localhost:3000',
-      '/uploads': 'http://localhost:3000',
+      '/api': `http://localhost:${BACKEND_PORT}`,
+      '/uploads': `http://localhost:${BACKEND_PORT}`,
     },
   },
-}));
+  });
+});

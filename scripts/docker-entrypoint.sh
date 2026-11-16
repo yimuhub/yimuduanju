@@ -15,7 +15,7 @@ node scripts/migrate.js || echo '[entrypoint] 警告：数据库迁移执行失�
 cd /app/dist && NODE_ENV=production node server/main.js &
 SERVER_PID=$!
 cd /app
-echo "[entrypoint] 后端已启动（pid=$SERVER_PID）"
+echo "[entrypoint] 后端已启动（pid=${SERVER_PID}）"
 
 # 3. 收到退出信号时，优雅关闭后端
 trap 'echo "[entrypoint] 收到退出信号，正在关闭后端…"; kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null' TERM INT

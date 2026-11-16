@@ -101,7 +101,7 @@ EOF
     sleep 1
   done
   if [ -n "${URL:-}" ]; then
-    echo "常驻隧道地址：$URL（已写入 .tunnel-url，后端自动跟随）"
+    echo "常驻隧道地址：${URL}（已写入 .tunnel-url，后端自动跟随）"
     echo "查看状态：launchctl print $LAUNCHD_TARGET | head -20"
   else
     echo "60s 内没拿到域名，看日志：tail -30 $ROOT_DIR/logs/tunnel-daemon.err.log"

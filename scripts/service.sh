@@ -24,7 +24,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 TARGET="gui/$(id -u)/$LABEL"
 LOG_DIR="$ROOT_DIR/logs"
 DB_NAME="${DB_NAME:-yimu}"
-PORT_SERVER="${SERVER_PORT:-3000}"
+PORT_SERVER="${SERVER_PORT:-3301}"
 CONCURRENCY="${JOB_WORKER_CONCURRENCY:-8}"
 
 ACTION="${1:---status}"
@@ -34,7 +34,7 @@ case "$ACTION" in
     if launchctl print "$TARGET" >/dev/null 2>&1; then
       launchctl print "$TARGET" 2>/dev/null | grep -E "state|pid|last exit code|program =" | head -8
     else
-      echo "未安装常驻服务（$LABEL）"
+      echo "未安装常驻服务（${LABEL}）"
     fi
     ;;
 

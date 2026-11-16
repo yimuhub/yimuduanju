@@ -27,7 +27,7 @@ DB_NAME_LOCAL="${DB_NAME:-yimu}"
 export SUDA_DATABASE_URL="${SUDA_DATABASE_URL:-postgres://localhost:5432/$DB_NAME_LOCAL?schema=$DB_NAME_LOCAL}"
 export FORCE_AUTHN_INNERAPI_DOMAIN="${FORCE_AUTHN_INNERAPI_DOMAIN:-http://localhost:9999}"
 export NODE_ENV="${NODE_ENV:-development}"
-export SERVER_PORT="${SERVER_PORT:-3000}"
+export SERVER_PORT="${SERVER_PORT:-3301}"
 export JOB_WORKER_CONCURRENCY="${JOB_WORKER_CONCURRENCY:-8}"
 
 if [ ! -f "$ROOT_DIR/dist/server/main.js" ]; then

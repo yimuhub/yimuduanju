@@ -66,7 +66,7 @@ case "$NODE_MAJOR" in
   ''|*[!0-9]*) NODE_MAJOR=0 ;;
 esac
 if [ "$NODE_MAJOR" -lt 22 ]; then
-  c_red "node 版本过低（当前 $NODE_VER），需要 >= 22。"
+  c_red "node 版本过低（当前 ${NODE_VER}），需要 >= 22。"
   c_red "请升级 Node.js（nvm install 22，或从 https://nodejs.org/ 下载），然后重新运行本脚本。"
   exit 1
 fi
