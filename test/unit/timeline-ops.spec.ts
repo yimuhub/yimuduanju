@@ -185,3 +185,82 @@ describe('timeline-ops: 安全边界', () => {
     expect(timelineDuration(doc)).toBe(12);
   });
 });
+
+describe('timeline-ops: 启用/停用与智能粗剪', () => {
+  it('enable 可停用片段，不影响其他片段', () => {
+    const doc = docOf([baseClip(), baseClip({ id: 'id-2', clientKey: 'ck-2', timelineStart: 2 })]);
+    const res = applyTimelineOps(doc, [
+      { op: 'enable', target: { clientKey: 'ck-1' }, enabled: false },
+    ]);
+    expect(res.errors).toHaveLength(0);
+    expect(res.doc.clips[0].enabled).toBe(false);
+    expect(res.doc.clips[1].enabled).toBeUndefined();
+    expect(res.diffs[0].after).toBe('已停用');
+  });
+
+  it('roughcut 只保留区间内容、按顺序无空隙重排，视频与音频同步', () => {
+    const doc = docOf([
+      baseClip({ id: 'v1', clientKey: 'v1', outPoint: 2, timelineStart: 0 }),
+      baseClip({ id: 'v2', clientKey: 'v2', inPoint: 2, outPoint: 4, timelineStart: 2 }),
+      baseClip({
+        id: 'a1',
+        clientKey: 'a1',
+        track: 'audio',
+        outPoint: 4,
+        timelineStart: 0,
+        sortOrder: 1,
+      }),
+    ]);
+    const res = applyTimelineOps(doc, [
+      {
+        op: 'roughcut',
+        ranges: [
+          { start: 0.5, end: 1.5, label: '钩子' },
+          { start: 3, end: 4, label: '落点' },
+        ],
+        targetDurationSec: 2,
+      },
+    ]);
+    expect(res.errors).toHaveLength(0);
+    const v = res.doc.clips.filter((c) => c.track === 'video');
+    const a = res.doc.clips.filter((c) => c.track === 'audio');
+    expect(v).toHaveLength(2);
+    expect(a).toHaveLength(2);
+    expect(v[0].timelineStart).toBe(0);
+    expect(v[0].inPoint).toBe(0.5);
+    expect(v[0].outPoint).toBe(1.5);
+    expect(v[1].timelineStart).toBe(1);
+    expect(v[1].inPoint).toBe(3);
+    expect(v[1].outPoint).toBe(4);
+    expect(a[0].timelineStart).toBe(0);
+    expect(a[1].timelineStart).toBe(1);
+    expect(timelineDuration(res.doc)).toBe(2);
+    expect(res.diffs[0].op).toBe('roughcut');
+  });
+
+  it('roughcut 遇到锁定片段整批拒绝，且不产生半截状态', () => {
+    const doc = docOf([
+      baseClip({ id: 'v1', clientKey: 'v1', outPoint: 4, locked: true }),
+    ]);
+    const res = applyTimelineOps(doc, [
+      { op: 'roughcut', ranges: [{ start: 1, end: 3 }] },
+    ]);
+    expect(res.errors.length).toBeGreaterThan(0);
+    expect(res.doc.clips).toHaveLength(1);
+    expect(res.doc.clips[0].outPoint).toBe(4);
+  });
+
+  it('roughcut 跳过已停用片段', () => {
+    const doc = docOf([
+      baseClip({ id: 'v1', clientKey: 'v1', outPoint: 2, enabled: false }),
+      baseClip({ id: 'v2', clientKey: 'v2', timelineStart: 2, inPoint: 2, outPoint: 4 }),
+    ]);
+    const res = applyTimelineOps(doc, [
+      { op: 'roughcut', ranges: [{ start: 0, end: 4 }] },
+    ]);
+    expect(res.errors).toHaveLength(0);
+    expect(res.doc.clips).toHaveLength(1);
+    expect(res.doc.clips[0].clientKey).not.toBe('v1');
+    expect(res.doc.clips[0].timelineStart).toBe(0);
+  });
+});

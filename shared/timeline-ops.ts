@@ -43,6 +43,18 @@ export type TimelineOp =
   | { op: 'speed'; target: ClipRef; value: number }
   | { op: 'volume'; target: ClipRef; value: number }
   | { op: 'lock'; target: ClipRef; locked: boolean }
+  | { op: 'enable'; target: ClipRef; enabled: boolean }
+  /**
+   * 粗剪：只保留给定的时间线区间，按顺序无空隙重排。
+   * 区间内所有轨道（画面/音频/字幕/叠加）一起切片，切点按源媒体入出点精确换算。
+   * 这是「自然语言 → 全文转写 → 选段 → 成片」的落库动作：一次可撤销、可审计。
+   */
+  | {
+      op: 'roughcut';
+      ranges: Array<{ start: number; end: number; label?: string }>;
+      /** 目标时长（秒），仅用于审计说明；实际以 ranges 总长为准 */
+      targetDurationSec?: number;
+    }
   | {
       op: 'track';
       action: 'create' | 'update';
@@ -83,6 +95,8 @@ export const TIMELINE_OP_NAMES = [
   'speed',
   'volume',
   'lock',
+  'enable',
+  'roughcut',
   'track',
 ] as const;
 
@@ -456,6 +470,103 @@ export function applyTimelineOps(
           const before = c.locked ? '已锁定' : '未锁定';
           c.locked = Boolean(op.locked);
           diffs.push({ opIndex: i, op: 'lock', target: clipKey(c), before, after: c.locked ? '已锁定' : '未锁定' });
+          return;
+        }
+        case 'enable': {
+          const c = resolveClip(next, op.target);
+          if (!c) return fail(i, '找不到目标片段');
+          const before = c.enabled === false ? '已停用' : '已启用';
+          c.enabled = Boolean(op.enabled);
+          diffs.push({
+            opIndex: i,
+            op: 'enable',
+            target: clipKey(c),
+            before,
+            after: c.enabled ? '已启用' : '已停用',
+          });
+          return;
+        }
+        case 'roughcut': {
+          const rawRanges = Array.isArray(op.ranges) ? op.ranges : [];
+          if (rawRanges.length === 0) return fail(i, '粗剪至少需要一个区间');
+          if (rawRanges.length > 50) return fail(i, '单次粗剪区间过多（最多 50 段）');
+          const clean = rawRanges
+            .map((r) => ({
+              start: round3(Math.max(0, num(r?.start, -1))),
+              end: round3(num(r?.end, -1)),
+              label: typeof r?.label === 'string' ? r.label.slice(0, 80) : undefined,
+            }))
+            .filter((r) => r.start >= 0 && r.end > r.start + MIN_SPAN && r.end - r.start <= 3600)
+            .sort((a, b) => a.start - b.start);
+          if (clean.length === 0) return fail(i, '区间无效：end 必须大于 start，且单段不超过 3600 秒');
+          // 重叠/首尾相接的区间合并，避免同一段素材被重复剪进成片
+          const merged: typeof clean = [];
+          for (const r of clean) {
+            const last = merged[merged.length - 1];
+            if (last && r.start <= last.end + 0.05) {
+              last.end = Math.max(last.end, r.end);
+              if (r.label) last.label = last.label ? `${last.label} / ${r.label}` : r.label;
+            } else merged.push({ ...r });
+          }
+          const lockedHit = next.clips.find((c) => {
+            if (c.locked) {
+              return merged.some((r) => c.timelineStart + clipSpan(c) > r.start + EPS && c.timelineStart < r.end - EPS);
+            }
+            return false;
+          });
+          if (lockedHit) return fail(i, `区间包含锁定片段 ${clipCode(next, lockedHit)}，请先解锁`);
+          const beforeClips = next.clips.length;
+          const beforeDur = timelineDuration(next);
+          const rebuilt: TimelineClip[] = [];
+          let cursor = 0;
+          let coveredClips = 0;
+          for (const r of merged) {
+            // 先收集该区间真正命中的片段，再以「最早出现的画面/声音」为区间起点。
+            // 否则模型给了一个比首句略早的时间码，成片开头会多出一段无声黑场。
+            const hits = next.clips
+              .filter((c) => c.enabled !== false)
+              .map((c) => {
+                const span = clipSpan(c);
+                const from = Math.max(c.timelineStart, r.start);
+                const to = Math.min(c.timelineStart + span, r.end);
+                return { c, from, to, span };
+              })
+              .filter((h) => h.to - h.from >= MIN_SPAN);
+            if (hits.length === 0) continue;
+            const rangeStart = Math.min(...hits.map((h) => h.from));
+            const rangeEnd = Math.max(...hits.map((h) => h.to));
+            for (const h of hits) {
+              const { c, from, to } = h;
+              const speed = c.speed > 0 ? c.speed : 1;
+              const newIn = round3(c.inPoint + (from - c.timelineStart) * speed);
+              const newOut = round3(newIn + (to - from) * speed);
+              if (newOut - newIn < MIN_SPAN) continue;
+              const key = newKey('roughcut');
+              rebuilt.push({
+                ...c,
+                id: key,
+                clientKey: key,
+                inPoint: newIn,
+                outPoint: newOut,
+                timelineStart: round3(cursor + (from - rangeStart)),
+                sortOrder: rebuilt.length,
+                updatedAt: new Date().toISOString(),
+              });
+              coveredClips += 1;
+            }
+            cursor = round3(cursor + (rangeEnd - rangeStart));
+          }
+          if (rebuilt.length === 0) return fail(i, '所选区间内没有可用片段');
+          // 保留未被选中的原片段？粗剪语义是「重建成片」，未选中的不进入结果。
+          next.clips = rebuilt;
+          diffs.push({
+            opIndex: i,
+            op: 'roughcut',
+            target: `${merged.length} 段区间`,
+            before: `${beforeClips} 个片段 / ${fmtSec(beforeDur)}`,
+            after: `${rebuilt.length} 个片段 / ${fmtSec(cursor)}（${coveredClips} 段切片）`,
+            note: `选段：${merged.map((r) => `${fmtSec(r.start)}–${fmtSec(r.end)}`).join('，')}`,
+          });
           return;
         }
         case 'track': {

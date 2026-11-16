@@ -259,6 +259,23 @@ export const StudioFloatingChat = () => {
             </select>
             <small>{autonomy === 'full' ? '直接执行' : autonomy === 'reduced' ? '低风险直执' : '先确认'}</small>
           </div>
+          <div className="pro-chat-quick" aria-label="深度剪辑快捷指令">
+            {[
+              '把当前时间线剪成 1 分钟宣传片：通读全部对白，选开场钩子、核心信息、情绪高点、结尾，直接给粗剪方案',
+              '通读全部素材，剪一个 30 秒高光版，不要只取开头',
+              '删掉所有空白和语气词，把节奏压紧',
+            ].map((q) => (
+              <button
+                key={q}
+                type="button"
+                disabled={chatBusy}
+                onClick={() => void sendChat(q)}
+                title={q}
+              >
+                {q.startsWith('把当前时间线') ? '1 分钟宣传片' : q.startsWith('通读全部素材') ? '30 秒高光' : '压紧节奏'}
+              </button>
+            ))}
+          </div>
           <div className="pro-chat-compose">
             <textarea
               value={draft}

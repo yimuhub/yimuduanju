@@ -32,4 +32,4 @@ export const readAgentAutonomy = (): AgentAutonomy => {
 
 /** 删除 / 分割会改变片段存在性，减少询问模式下仍要求确认。 */
 export const isDestructiveTimelineOp = (action: string): boolean =>
-  action === 'delete' || action === 'split';
+  action === 'delete' || action === 'split' || action === 'roughcut';

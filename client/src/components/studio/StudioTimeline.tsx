@@ -14,8 +14,9 @@
  *   · 标尺/空白拖动 = scrub；Shift + 空白拖动 = 框选
  *   · 片段拖动 = 移动；拖到同类型其它轨 = 换 lane；左右把手 = 修剪
  *   · Shift + 点击 = 加选；⌘A = 全选；⌘C / ⌘X / ⌘V = 复制 / 剪切 / 粘贴
- *   · Delete = 波纹删除；Shift+Delete = 删除留空隙；S = 分割；M = 标记
- *   · , / . = 前后一帧（Shift = 10 帧）；? = 快捷键面板
+ *   · Delete = 波纹删除；Shift+Delete = 删除留空隙；⌘B = 分割；Q/W = 删左/删右
+ *   · ←/→ = 前后一帧；↑/↓ = 上/下一剪辑点；Shift+Z = 适配时间线；? = 快捷键面板
+ *   · 全部键位与剪映专业版对齐，总表见 client/src/lib/jianying-shortcuts.ts
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -40,6 +41,7 @@ import {
   Magnet,
   Image as ImageIcon,
   Minus,
+  MousePointer2,
   Music2,
   Plus,
   PlusCircle,
@@ -107,6 +109,11 @@ import {
   type TimelineDragPayload,
 } from '@client/src/lib/timeline-dnd';
 import { resolveTextStyle } from '@shared/api.interface';
+import {
+  JIANYING_SHORTCUT_GROUPS,
+  shortcutStats,
+  type JianyingShortcut,
+} from '@client/src/lib/jianying-shortcuts';
 import type {
   Asset,
   TimelineClip,
@@ -571,6 +578,26 @@ export const StudioTimeline = () => {
     h: number;
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /** 剪映 A/B 工具模式：select=选择，split=点击即切 */
+  const [toolMode, setToolMode] = useState<'select' | 'split'>('select');
+  const toolModeRef = useRef(toolMode);
+  toolModeRef.current = toolMode;
+  /** S 预览轴开关：当前控制播放头参考线显隐（剪映预览轴的可视化等价） */
+  const [previewAxis, setPreviewAxis] = useState(true);
+  /** I/O 入出点区间（秒）；用于区域选择与导出前提示 */
+  const [markRange, setMarkRange] = useState<{ inSec: number | null; outSec: number | null }>({
+    inSec: null,
+    outSec: null,
+  });
+  const markRangeRef = useRef(markRange);
+  markRangeRef.current = markRange;
+  /** 属性剪贴板：Ctrl+Shift+C/V 复制/粘贴片段属性（速度/音量/转场/字幕样式） */
+  const attrClipboardRef = useRef<{
+    speed: number;
+    volume: number;
+    transition: TimelineClip['transition'];
+    textStyle: TimelineClip['textStyle'];
+  } | null>(null);
   // Agent 剪辑历史：审计表只读回放（谁在哪个版本改了什么，便于回溯）
   const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
   const [agentHistory, setAgentHistory] = useState<TimelineAgentOpRecord[]>([]);
@@ -1061,6 +1088,24 @@ export const StudioTimeline = () => {
     const handle = target.closest('.tl-handle') as HTMLElement | null;
     const clipEl = target.closest('[data-clip-id]') as HTMLElement | null;
 
+    // 剪映 B 分割模式：点击片段即在该点切开，不进入拖动
+    if (clipEl && toolModeRef.current === 'split' && !handle) {
+      e.preventDefault();
+      const id = clipEl.dataset.clipId ?? '';
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!id || !rect) return;
+      const t = quantizeToFrame(
+        clamp((e.clientX - rect.left) / pxRef.current, 0, totalRef.current),
+        fps,
+      );
+      const created = editorRef.current.splitClip(id, t);
+      if (created) {
+        editorRef.current.setSelection([created]);
+        setCurT(t);
+      }
+      return;
+    }
+
     if (handle && clipEl) {
       startTrim(e, clipEl, handle.dataset.edge === 'left' ? 'left' : 'right');
       return;
@@ -1406,6 +1451,208 @@ export const StudioTimeline = () => {
 
   /* ------------------------- 键盘 ------------------------- */
 
+  /* ------------------------- 剪映快捷键动作 ------------------------- */
+
+  const clipsAtPlayhead = useCallback((t: number) => {
+    return clipsRef.current.filter((c) => {
+      const end = c.timelineStart + clipSpan(c);
+      return c.enabled !== false && t > c.timelineStart + 1e-4 && t < end - 1e-4;
+    });
+  }, []);
+
+  /** Q：把选中片段（未选则播放头命中的片段）从播放头处向左裁掉 */
+  const deleteLeftOfPlayhead = useCallback(() => {
+    const t = curTRef.current;
+    let targets = clipsRef.current.filter((c) => selectedRef.current.includes(c.id));
+    if (targets.length === 0) targets = clipsAtPlayhead(t);
+    targets = targets.filter((c) => !c.locked);
+    if (targets.length === 0) {
+      toast.info('先把播放头放到要删除的片段内，或选中片段', { duration: 1600 });
+      return;
+    }
+    for (const c of targets) {
+      const end = c.timelineStart + clipSpan(c);
+      if (t <= c.timelineStart + 1e-4) continue;
+      if (t >= end - 1e-4) {
+        editorRef.current.removeClip(c.id);
+        continue;
+      }
+      editorRef.current.trimClip(c.id, 'left', t - c.timelineStart);
+    }
+  }, [clipsAtPlayhead]);
+
+  /** W：把选中片段（未选则播放头命中的片段）从播放头处向右裁掉 */
+  const deleteRightOfPlayhead = useCallback(() => {
+    const t = curTRef.current;
+    let targets = clipsRef.current.filter((c) => selectedRef.current.includes(c.id));
+    if (targets.length === 0) targets = clipsAtPlayhead(t);
+    targets = targets.filter((c) => !c.locked);
+    if (targets.length === 0) {
+      toast.info('先把播放头放到要删除的片段内，或选中片段', { duration: 1600 });
+      return;
+    }
+    for (const c of targets) {
+      const end = c.timelineStart + clipSpan(c);
+      if (t >= end - 1e-4) continue;
+      if (t <= c.timelineStart + 1e-4) {
+        editorRef.current.removeClip(c.id);
+        continue;
+      }
+      editorRef.current.trimClip(c.id, 'right', t - end);
+    }
+  }, [clipsAtPlayhead]);
+
+  const splitAllAtPlayhead = useCallback(() => {
+    const t = curTRef.current;
+    const ids = clipsAtPlayhead(t).filter((c) => !c.locked).map((c) => c.id);
+    if (ids.length === 0) {
+      toast.info('播放头处没有可分割的片段', { duration: 1600 });
+      return;
+    }
+    let last: string | null = null;
+    for (const id of ids) {
+      const created = editorRef.current.splitAtPlayhead(t, id);
+      if (created) last = created;
+    }
+    if (last) editorRef.current.setSelection([last]);
+    toast.success(`已批量分割 ${ids.length} 条轨道`, { duration: 1400 });
+  }, [clipsAtPlayhead]);
+
+  const jumpToCut = useCallback((dir: -1 | 1) => {
+    const t = curTRef.current;
+    const points = new Set<number>([0, totalRef.current]);
+    for (const c of clipsRef.current) {
+      points.add(round3(c.timelineStart));
+      points.add(round3(c.timelineStart + clipSpan(c)));
+    }
+    const list = [...points].sort((a, b) => a - b);
+    const hit = dir > 0
+      ? list.find((p) => p > t + 1e-4)
+      : [...list].reverse().find((p) => p < t - 1e-4);
+    if (hit != null) setCurT(quantizeToFrame(hit, fps));
+  }, [fps, setCurT]);
+
+  const selectByPlayhead = useCallback((side: 'left' | 'right') => {
+    const t = curTRef.current;
+    const ids = clipsRef.current
+      .filter((c) => (side === 'left'
+        ? c.timelineStart + clipSpan(c) <= t + 1e-4
+        : c.timelineStart >= t - 1e-4))
+      .map((c) => c.id);
+    editorRef.current.setSelection(ids);
+  }, []);
+
+  const toggleMuteSelection = useCallback(() => {
+    const ids = selectedRef.current;
+    if (ids.length === 0) {
+      toast.info('先选中要静音的片段', { duration: 1600 });
+      return;
+    }
+    const clips = clipsRef.current.filter((c) => ids.includes(c.id));
+    const allMuted = clips.every((c) => c.volume <= 0.001);
+    clips.forEach((c) => editorRef.current.setClipVolume(c.id, allMuted ? 1 : 0));
+    toast.success(allMuted ? '已恢复原音量' : '已静音选中片段', { duration: 1400 });
+  }, []);
+
+  const nudgeVolume = useCallback((delta: number) => {
+    const ids = selectedRef.current;
+    if (ids.length === 0) return;
+    for (const c of clipsRef.current.filter((x) => ids.includes(x.id))) {
+      editorRef.current.setClipVolume(c.id, clamp(c.volume + delta, 0, 1));
+    }
+  }, []);
+
+  const copyAttributes = useCallback(() => {
+    const c = clipsRef.current.find((x) => selectedRef.current.includes(x.id));
+    if (!c) {
+      toast.info('先选中一个片段再复制属性', { duration: 1600 });
+      return;
+    }
+    attrClipboardRef.current = {
+      speed: c.speed,
+      volume: c.volume,
+      transition: c.transition ?? null,
+      textStyle: c.textStyle ?? null,
+    };
+    toast.success('已复制片段属性（速度 / 音量 / 转场 / 字幕样式）', { duration: 1500 });
+  }, []);
+
+  const pasteAttributes = useCallback(() => {
+    const attr = attrClipboardRef.current;
+    if (!attr) {
+      toast.info('属性剪贴板为空，先按 Ctrl+Shift+C 复制', { duration: 1600 });
+      return;
+    }
+    const ids = selectedRef.current;
+    if (ids.length === 0) return;
+    for (const c of clipsRef.current.filter((x) => ids.includes(x.id))) {
+      if (Math.abs(c.speed - attr.speed) > 1e-3) editorRef.current.setClipSpeed(c.id, attr.speed);
+      if (Math.abs(c.volume - attr.volume) > 1e-3) editorRef.current.setClipVolume(c.id, attr.volume);
+      editorRef.current.setClipTransition(c.id, attr.transition);
+      if (c.track === 'subtitle' && attr.textStyle) {
+        editorRef.current.updateTextStyle(c.id, attr.textStyle);
+      }
+    }
+    toast.success(`已粘贴属性到 ${ids.length} 个片段`, { duration: 1500 });
+  }, []);
+
+  const toggleDetachAudio = useCallback(() => {
+    const ids = selectedRef.current;
+    if (ids.length === 0) {
+      toast.info('先选中一个带原声的画面片段', { duration: 1600 });
+      return;
+    }
+    let done = 0;
+    for (const c of clipsRef.current.filter((x) => ids.includes(x.id))) {
+      if (c.track !== 'video' || !c.sourceUrl) continue;
+      const detached = clipsRef.current.find(
+        (x) => x.track === 'audio' && sameOrigin(x, c, fps),
+      );
+      if (detached) {
+        editorRef.current.attachAudio(c.id);
+      } else {
+        editorRef.current.detachAudio(c.id);
+      }
+      done += 1;
+    }
+    toast.success(done > 0 ? `已切换 ${done} 个片段的音画分离状态` : '选中的片段没有可分离的原声', {
+      duration: 1600,
+    });
+  }, [fps]);
+
+  const toggleLinkSelection = useCallback(() => {
+    const ids = selectedRef.current;
+    if (ids.length === 0) {
+      toast.info('先选中片段', { duration: 1600 });
+      return;
+    }
+    const clips = clipsRef.current.filter((c) => ids.includes(c.id));
+    const linked = clips.some((c) => c.bindGroup);
+    if (linked) editorRef.current.unbindSelection();
+    else editorRef.current.bindSelection();
+    toast.success(linked ? '已解除音视频联动' : '已建立音视频联动（整组同动）', { duration: 1500 });
+  }, []);
+
+  const setRangePoint = useCallback((which: 'in' | 'out') => {
+    const t = round3(curTRef.current);
+    setMarkRange((prev) => {
+      if (which === 'in') {
+        const outSec = prev.outSec != null && prev.outSec <= t ? null : prev.outSec;
+        return { inSec: t, outSec };
+      }
+      const inSec = prev.inSec != null && prev.inSec >= t ? null : prev.inSec;
+      return { inSec, outSec: t };
+    });
+    toast.success(`${which === 'in' ? '入点' : '出点'}：${formatTimecode(t, fps)}`, { duration: 1400 });
+  }, [fps]);
+
+  const toggleSplitMode = useCallback((mode: 'select' | 'split') => {
+    setToolMode(mode);
+    toast.info(mode === 'split' ? '分割模式：点击片段即在该点切开（B）' : '选择模式（A）', {
+      duration: 1500,
+    });
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (collapsedRef.current) return;
@@ -1415,43 +1662,101 @@ export const StudioTimeline = () => {
       const mod = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
 
+      /* ---- 文件 / 视图 ---- */
+      if (mod && key === '/') {
+        e.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (mod && !e.shiftKey && !e.altKey && key === 's') {
+        e.preventDefault();
+        void editorRef.current.saveNow();
+        return;
+      }
+      if (mod && e.shiftKey && !e.altKey && key === 's') {
+        e.preventDefault();
+        toggleDetachAudio();
+        return;
+      }
+      if (mod && key === 'e') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('yimu:timeline-export'));
+        return;
+      }
+      if (mod && key === 'f') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('yimu:preview-fullscreen'));
+        return;
+      }
+      if (mod && key === 'n') {
+        e.preventDefault();
+        navigate('/create');
+        return;
+      }
+      if (mod && key === 'i') {
+        e.preventDefault();
+        setImportOpen(true);
+        return;
+      }
+      if (mod && key === 'r') {
+        e.preventDefault();
+        document.querySelector<HTMLSelectElement>('#tl-speed-select')?.focus();
+        toast.info('速度面板：在属性条选择 0.5×–4×，或输入自定义值', { duration: 1600 });
+        return;
+      }
+
+      /* ---- 撤销 / 剪贴板 / 分割 ---- */
       if (mod && key === 'z') {
         e.preventDefault();
         if (e.shiftKey) editorRef.current.redo();
         else editorRef.current.undo();
         return;
       }
-      if (mod && key === 's') {
+      if (mod && key === 'y') {
         e.preventDefault();
-        void editorRef.current.saveNow();
+        editorRef.current.redo();
         return;
       }
-      if (mod && key === 'c') {
+      if (mod && e.shiftKey && !e.altKey && key === 'c') {
+        e.preventDefault();
+        copyAttributes();
+        return;
+      }
+      if (mod && e.shiftKey && !e.altKey && key === 'v') {
+        e.preventDefault();
+        pasteAttributes();
+        return;
+      }
+      if (mod && !e.shiftKey && !e.altKey && key === 'c') {
         if (selectedRef.current.length === 0) return;
         e.preventDefault();
         editorRef.current.copySelection(selectedRef.current);
         return;
       }
-      if (mod && key === 'x') {
+      if (mod && !e.shiftKey && !e.altKey && key === 'x') {
         if (selectedRef.current.length === 0) return;
         e.preventDefault();
         editorRef.current.cutSelection(selectedRef.current);
         return;
       }
-      if (mod && key === 'v') {
+      if (mod && !e.shiftKey && !e.altKey && key === 'v') {
         e.preventDefault();
         const created = editorRef.current.pasteAt(curTRef.current);
         if (created.length) editorRef.current.setSelection(created);
         return;
       }
-      // 剪映快捷键：⌘/Ctrl+B 在播放头分割
-      if (mod && key === 'b') {
+      if (mod && e.shiftKey && !e.altKey && key === 'b') {
+        e.preventDefault();
+        splitAllAtPlayhead();
+        return;
+      }
+      if (mod && !e.shiftKey && !e.altKey && key === 'b') {
         e.preventDefault();
         const created = editorRef.current.splitAtPlayhead(curTRef.current, selectedRef.current[0]);
         if (created) editorRef.current.setSelection([created]);
         return;
       }
-      // 剪映快捷键：⌘/Ctrl+D 原位复制当前选中片段
+      // 兼容旧键位：⌘D 原位复制（不写入剪映总表，避免用户误以为剪映也是 D）
       if (mod && key === 'd') {
         if (selectedRef.current.length === 0) return;
         e.preventDefault();
@@ -1460,32 +1765,249 @@ export const StudioTimeline = () => {
         if (created.length) editorRef.current.setSelection(created);
         return;
       }
-      if (mod && key === 'y') {
-        e.preventDefault();
-        editorRef.current.redo();
-        return;
-      }
-      // 剪映式快捷入口：⌘/Ctrl+I 打开素材导入
-      if (mod && key === 'i') {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent('yimu:studio-import'));
-        return;
-      }
       if (mod && key === 'a') {
         e.preventDefault();
         editorRef.current.setSelection(clipsRef.current.map((c) => c.id));
         return;
       }
+      if (mod && e.shiftKey && !e.altKey && key === 'g') {
+        e.preventDefault();
+        editorRef.current.unbindSelection();
+        toast.success('已取消组合', { duration: 1400 });
+        return;
+      }
+      if (mod && !e.shiftKey && !e.altKey && key === 'g') {
+        e.preventDefault();
+        editorRef.current.bindSelection();
+        toast.success('已组合选中片段（整组同动）', { duration: 1400 });
+        return;
+      }
+      if (!e.shiftKey && e.altKey && key === 'g') {
+        e.preventDefault();
+        editorRef.current.bindSelection();
+        toast.info('本版复合片段以强绑定组实现：整组联动，暂不能作为单片段二次裁剪', {
+          duration: 2400,
+        });
+        return;
+      }
+      if (e.shiftKey && e.altKey && key === 'g') {
+        e.preventDefault();
+        editorRef.current.unbindSelection();
+        toast.success('已解除复合片段', { duration: 1400 });
+        return;
+      }
+      if (mod && key === '.') {
+        e.preventDefault();
+        nudgeVolume(0.05);
+        return;
+      }
+      if (mod && key === ',') {
+        e.preventDefault();
+        nudgeVolume(-0.05);
+        return;
+      }
+      if (mod && (key === '+' || key === '=')) {
+        e.preventDefault();
+        applyZoom(pxRef.current * 1.2, { t: curTRef.current, offset: 80 });
+        return;
+      }
+      if (mod && key === '-') {
+        e.preventDefault();
+        applyZoom(pxRef.current / 1.2, { t: curTRef.current, offset: 80 });
+        return;
+      }
+      if (mod && key === 'j') {
+        e.preventDefault();
+        editorRef.current.addMarker(curTRef.current);
+        toast.success(`已在 ${formatTimecode(curTRef.current, fps)} 踩点`, { duration: 1200 });
+        return;
+      }
+      if (mod && key === 'k') {
+        e.preventDefault();
+        toast.info('关键帧尚未接入：当前属性条只支持整段变速/音量，关键帧需要位置/缩放/透明度模型', {
+          duration: 2600,
+        });
+        return;
+      }
+      if (e.altKey && !e.shiftKey && key === 'k') {
+        e.preventDefault();
+        toast.info('关键帧面板尚未接入；不会用假面板占位', { duration: 2200 });
+        return;
+      }
       if (mod) return;
 
+      /* ---- 无修饰键 ---- */
+      if (e.altKey && !e.shiftKey && key === 'x') {
+        e.preventDefault();
+        setMarkRange({ inSec: null, outSec: null });
+        toast.info('已清除入出点', { duration: 1200 });
+        return;
+      }
+      if (e.shiftKey && key === 'x') {
+        e.preventDefault();
+        const r = markRangeRef.current;
+        if (r.inSec == null || r.outSec == null || r.outSec <= r.inSec) {
+          toast.info('先用 I / O 设入点和出点，再按 Shift+X 选择区域', { duration: 2000 });
+          return;
+        }
+        const ids = clipsRef.current
+          .filter((c) => c.timelineStart + clipSpan(c) > r.inSec! + 1e-4 && c.timelineStart < r.outSec! - 1e-4)
+          .map((c) => c.id);
+        editorRef.current.setSelection(ids);
+        toast.success(`已选择 ${ids.length} 个片段（${formatTimecode(r.inSec, fps)}–${formatTimecode(r.outSec, fps)}）`, {
+          duration: 1800,
+        });
+        return;
+      }
+      if (e.shiftKey && key === 'm') {
+        e.preventDefault();
+        toggleMuteSelection();
+        return;
+      }
+      if (e.shiftKey && key === 'z') {
+        e.preventDefault();
+        fitZoom();
+        return;
+      }
+      if (e.shiftKey && key === 'b') {
+        e.preventDefault();
+        toast.info('曲线变速尚未接入：当前速度属性为整段匀速；曲线需要速度关键帧模型', {
+          duration: 2400,
+        });
+        return;
+      }
       if (e.key === ' ') return;
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('yimu:toggle-shot-pool'));
+        return;
+      }
+      if (key === 'q') {
+        e.preventDefault();
+        deleteLeftOfPlayhead();
+        return;
+      }
+      if (key === 'w') {
+        e.preventDefault();
+        deleteRightOfPlayhead();
+        return;
+      }
+      if (key === 'a') {
+        e.preventDefault();
+        toggleSplitMode('select');
+        return;
+      }
+      if (key === 'b') {
+        e.preventDefault();
+        toggleSplitMode('split');
+        return;
+      }
+      if (key === 'v') {
+        e.preventDefault();
+        const ids = selectedRef.current;
+        if (ids.length === 0) return;
+        for (const c of clipsRef.current.filter((x) => ids.includes(x.id))) {
+          editorRef.current.setClipEnabled(c.id, c.enabled === false);
+        }
+        toast.success('已切换启用 / 停用', { duration: 1200 });
+        return;
+      }
+      if (key === 'n') {
+        e.preventDefault();
+        toggleSnap();
+        toast.info(snapOn ? '吸附已关闭' : '吸附已开启', { duration: 1200 });
+        return;
+      }
+      if (key === 'p') {
+        e.preventDefault();
+        toggleSnap();
+        toast.info('主轨磁吸与吸附共用同一策略，已切换', { duration: 1400 });
+        return;
+      }
       if (key === 's') {
         e.preventDefault();
-        const created = editorRef.current.splitAtPlayhead(
-          curTRef.current,
-          selectedRef.current[0],
-        );
-        if (created) editorRef.current.setSelection([created]);
+        setPreviewAxis((v) => !v);
+        toast.info('预览轴参考线已切换（剪映 S 为预览轴；分割请用 Ctrl+B）', { duration: 1800 });
+        return;
+      }
+      if (key === 'i') {
+        e.preventDefault();
+        setRangePoint('in');
+        return;
+      }
+      if (key === 'o') {
+        e.preventDefault();
+        setRangePoint('out');
+        return;
+      }
+      if (key === 'm') {
+        e.preventDefault();
+        editorRef.current.addMarker(curTRef.current);
+        return;
+      }
+      if (key === 'j') {
+        e.preventDefault();
+        setPlaying(false);
+        setCurT(quantizeToFrame(Math.max(0, curTRef.current - 0.5), fps));
+        toast.info('浏览器 video 不支持负速率；J 以 0.5s 回退近似倒放，K 暂停', { duration: 2000 });
+        return;
+      }
+      if (key === 'k') {
+        e.preventDefault();
+        setPlaying(false);
+        return;
+      }
+      if (key === 'l') {
+        e.preventDefault();
+        setPlaying(true);
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const n = e.shiftKey ? -10 : -1;
+        setCurT(quantizeToFrame(curTRef.current + n / fps, fps));
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const n = e.shiftKey ? 10 : 1;
+        setCurT(quantizeToFrame(curTRef.current + n / fps, fps));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        jumpToCut(-1);
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        jumpToCut(1);
+        return;
+      }
+      if (e.key === 'Home') {
+        e.preventDefault();
+        setCurT(0);
+        if (scrollRef.current) scrollRef.current.scrollLeft = 0;
+        return;
+      }
+      if (e.key === 'End') {
+        e.preventDefault();
+        setCurT(totalRef.current);
+        return;
+      }
+      if (e.key === '[') {
+        e.preventDefault();
+        selectByPlayhead('left');
+        return;
+      }
+      if (e.key === ']') {
+        e.preventDefault();
+        selectByPlayhead('right');
+        return;
+      }
+      if (key === '~') {
+        e.preventDefault();
+        toggleLinkSelection();
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1496,11 +2018,6 @@ export const StudioTimeline = () => {
         } else {
           editorRef.current.rippleDelete(selectedRef.current);
         }
-        return;
-      }
-      if (key === 'm') {
-        e.preventDefault();
-        editorRef.current.addMarker(curTRef.current);
         return;
       }
       if (e.key === ',') {
@@ -1524,11 +2041,37 @@ export const StudioTimeline = () => {
         editorRef.current.setSelection([]);
         setShortcutsOpen(false);
         setTcEdit(null);
+        setToolMode('select');
+        // Esc 退出的是一次「区间选择」，覆盖层必须消失；需要重新标记再按 I/O。
+        setMarkRange({ inSec: null, outSec: null });
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [fps, setCurT]);
+    // capture 阶段先处理时间线键位：避免 StudioShell 的 [ / ] 面板折叠抢走剪映选区键
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [
+    fps,
+    setCurT,
+    setPlaying,
+    navigate,
+    clipsAtPlayhead,
+    deleteLeftOfPlayhead,
+    deleteRightOfPlayhead,
+    splitAllAtPlayhead,
+    jumpToCut,
+    selectByPlayhead,
+    toggleMuteSelection,
+    nudgeVolume,
+    copyAttributes,
+    pasteAttributes,
+    toggleDetachAudio,
+    toggleLinkSelection,
+    setRangePoint,
+    toggleSplitMode,
+    toggleSnap,
+    snapOn,
+  ]);
+
 
   /* ------------------------- 其它 UI ------------------------- */
 
@@ -1685,6 +2228,13 @@ export const StudioTimeline = () => {
     }
   };
 
+  // 剪映 ⌘E：由快捷键层派发；runExport 定义后再挂监听，避免 TDZ 与重复闭包
+  useEffect(() => {
+    const onExport = () => void runExport();
+    window.addEventListener('yimu:timeline-export', onExport);
+    return () => window.removeEventListener('yimu:timeline-export', onExport);
+  });
+
   /* ------------------------- 收起态 ------------------------- */
 
   if (collapsed) {
@@ -1776,6 +2326,7 @@ export const StudioTimeline = () => {
         <Gauge size={11} />
         <span>速度</span>
         <select
+          id="tl-speed-select"
           value={selectedClip.speed}
           onChange={(e) => editor.setClipSpeed(selectedClip.id, Number(e.target.value))}
           disabled={selectedClip.locked}
@@ -2066,7 +2617,7 @@ export const StudioTimeline = () => {
 
   return (
     <section
-      className={`tl${focused ? ' tl-focus' : ''}`}
+      className={`tl${focused ? ' tl-focus' : ''}${toolMode === 'split' ? ' tl-tool-split' : ''}`}
       id="tl"
       onPointerDownCapture={() => setPreviewMode('timeline')}
       onPointerEnter={() => {
@@ -2143,10 +2694,28 @@ export const StudioTimeline = () => {
           >
             <Redo2 size={13} />
           </button>
+          <div className="tl-toolmode" role="group" aria-label="剪映工具模式">
+            <button
+              type="button"
+              className={`icon-btn${toolMode === 'select' ? ' on' : ''}`}
+              title="选择模式 (A)"
+              onClick={() => toggleSplitMode('select')}
+            >
+              <MousePointer2 size={13} />
+            </button>
+            <button
+              type="button"
+              className={`icon-btn${toolMode === 'split' ? ' on' : ''}`}
+              title="分割模式 (B)：点击片段即在该点切开"
+              onClick={() => toggleSplitMode('split')}
+            >
+              <Scissors size={13} />
+            </button>
+          </div>
           <button
             type="button"
             className={`icon-btn${snapOn ? ' on' : ''}`}
-            title={snapOn ? '磁吸吸附已开启，点击关闭（便于逐帧微调）' : '磁吸吸附已关闭，点击开启'}
+            title={snapOn ? '吸附已开启 (N)，点击关闭便于逐帧微调' : '吸附已关闭 (N)，点击开启'}
             onClick={toggleSnap}
           >
             <Magnet size={13} />
@@ -2163,7 +2732,7 @@ export const StudioTimeline = () => {
           <button
             type="button"
             className="icon-btn"
-            title="在播放头处分割 (S)"
+            title="在播放头处分割 ⌘B（剪映同键位）"
             disabled={!editor.ready || clips.length === 0}
             onClick={() => {
               const created = editor.splitAtPlayhead(curT, editor.selectedIds[0]);
@@ -2591,6 +3160,19 @@ export const StudioTimeline = () => {
               </div>
             ) : null}
 
+            {markRange.inSec != null && markRange.outSec != null && markRange.outSec > markRange.inSec ? (
+              <div
+                className="tl-range"
+                style={{
+                  left: `${markRange.inSec * pxPerSec}px`,
+                  width: `${(markRange.outSec - markRange.inSec) * pxPerSec}px`,
+                }}
+                title={`入点 ${formatTimecode(markRange.inSec, fps)} · 出点 ${formatTimecode(markRange.outSec, fps)}`}
+              >
+                <span>I {formatTimecode(markRange.inSec, fps)} · O {formatTimecode(markRange.outSec, fps)}</span>
+              </div>
+            ) : null}
+
             {snapLine != null ? (
               <div className="tl-snapline" style={{ left: `${snapLine * pxPerSec}px` }}>
                 <span>{formatTimecode(snapLine, fps)}</span>
@@ -2609,6 +3191,13 @@ export const StudioTimeline = () => {
               />
             ) : null}
 
+            {previewAxis ? (
+              <div
+                className="tl-preview-axis"
+                style={{ left: `${curT * pxPerSec}px` }}
+                title="预览轴（S 开关）"
+              />
+            ) : null}
             <div
               className="playhead"
               style={{ left: `${curT * pxPerSec}px`, opacity: playing ? 1 : 0.85 }}
@@ -2724,36 +3313,47 @@ export const StudioTimeline = () => {
                 <X size={14} />
               </button>
             </div>
-            <div className="tl-keys">
-              {[
-                ['S', '在播放头分割'],
-                ['Delete', '波纹删除（后续片段前移）'],
-                ['Shift+Delete', '删除并保留空隙'],
-                ['M', '在播放头添加标记'],
-                [', / .', '前后一帧（Shift 为 10 帧）'],
-                ['⌘/Ctrl+C', '复制选中片段'],
-                ['⌘/Ctrl+X', '剪切选中片段'],
-                ['⌘/Ctrl+V', '粘贴到播放头'],
-                ['⌘/Ctrl+A', '全选片段'],
-                ['⌘/Ctrl+B', '在播放头分割（同剪映）'],
-                ['⌘/Ctrl+D', '原位复制选中片段'],
-                ['⌘/Ctrl+I', '打开素材导入'],
-                ['⌘/Ctrl+Z', '撤销'],
-                ['⌘/Ctrl+Shift+Z / ⌘/Ctrl+Y', '重做'],
-                ['Shift+点击', '加选 / 减选片段'],
-                ['Shift+拖动空白', '框选片段'],
-                ['⌘/Ctrl+滚轮', '以指针为锚点缩放'],
-                ['空格', '播放 / 暂停'],
-                ['?', '打开 / 关闭本面板'],
-              ].map(([k, v]) => (
-                <div className="tl-key-row" key={k}>
-                  <kbd>{k}</kbd>
-                  <span>{v}</span>
+            <div className="tl-key-summary">
+              <span className="ok">{shortcutStats().ready} 项已接入</span>
+              <span className="partial">{shortcutStats().partial} 项近似</span>
+              <span className="todo">{shortcutStats().todo} 项待模型支持</span>
+              <em>共 {shortcutStats().total} 项 · 字母键在输入框内自动让路</em>
+            </div>
+            <div className="tl-keys tl-keys-groups">
+              {JIANYING_SHORTCUT_GROUPS.map((group) => (
+                <div className="tl-key-group" key={group.title}>
+                  <h4>{group.title}</h4>
+                  {group.items.map((item: JianyingShortcut) => (
+                    <div
+                      className={`tl-key-row status-${item.status}`}
+                      key={item.id}
+                      title={item.note ?? item.label}
+                    >
+                      <kbd>
+                        {item.macKeys ? (
+                          <>
+                            <span className="win">{item.keys}</span>
+                            <span className="mac">{item.macKeys}</span>
+                          </>
+                        ) : (
+                          item.keys
+                        )}
+                      </kbd>
+                      <span>{item.label}</span>
+                      {item.status !== 'ready' ? (
+                        <i className={`tl-key-status ${item.status}`}>
+                          {item.status === 'partial' ? '近似' : '待接入'}
+                        </i>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
             <p className="tl-modal-note">
-              片段属性（速度 / 音量 / 转场 / 锁定）在时间线上方属性条调整；轨道头可重命名、静音、独奏、锁定。
+              本条总表与剪映专业版桌面端对齐：A/B 工具、⌘B 分割、Q/W 左右删除、←/→ 帧步进、↑/↓ 剪辑点、Shift+Z 适配、N 吸附、I/O 入出点。
+              电影级关键帧（⌘K / Alt+K）与曲线变速（Shift+B）需要属性关键帧模型，本版不提供假面板；其余常用键位已接通。
+              片段属性（速度 / 音量 / 转场 / 锁定 / 启用）在时间线上方属性条调整；轨道头可重命名、静音、独奏、锁定。
             </p>
           </div>
         </div>

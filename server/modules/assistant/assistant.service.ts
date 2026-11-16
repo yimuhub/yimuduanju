@@ -11,6 +11,7 @@ import {
 import { ModelGatewayService } from '../generation/model-gateway.service';
 import { TimelineService } from '../timeline/timeline.service';
 import { describeTimelineForAgent } from '@shared/timeline-ops';
+import { buildTranscriptIndex, formatTranscriptForAgent } from '@shared/transcript-index';
 import type {
   ChatMessage,
   ChatSession,
@@ -51,10 +52,30 @@ const TIMELINE_ACTION_PROTOCOL = [
   '{"baseVersion":3,"summary":"第2镜剪短0.5秒并把字幕改成新台词","ops":[{"op":"trim","target":{"clientKey":"derived-v-s2"},"edge":"right","deltaSec":-0.5},{"op":"subtitle","target":{"clientKey":"derived-s-s2"},"text":"新台词"}]}',
   '可用 op：move(target,toStart,toLane?)、trim(target,edge,deltaSec)、split(target,atSec)、delete(targets[])、',
   'subtitle(target?,text,atSec?,durationSec?,style?)、speed(target,value)、volume(target,value)、lock(target,locked)、',
-  'track(action,lane?,track,patch?)。',
-  '硬规则：target 只能使用上面清单里的 clientKey（不得编造、不得用 id）；一次最多 10 条；',
+  'enable(target,enabled)、track(action,lane?,track,patch?)。',
+  '粗剪/从长素材剪出目标时长时，必须使用 roughcut 一次成型：',
+  '{"op":"roughcut","ranges":[{"start":12.4,"end":18.2,"label":"开场钩子"},{"start":42.0,"end":48.5,"label":"核心观点"}],"targetDurationSec":60}',
+  'roughcut 会把区间内画面/音频/字幕一起切片并按顺序无空隙重排；ranges 用成片时间线的秒（不是源文件秒）。',
+  '硬规则：target 只能使用上面清单里的 clientKey（不得编造、不得用 id）；一次最多 40 条；',
   '删除/批量改动前先用一句话说明影响；不确定用户意图时先问，不要输出代码块；',
   '不要声称已经改好——前端会展示 diff，用户点「应用」后才真正落库。',
+].join('\n');
+
+/**
+ * 深度剪辑协议：用户只给一句目标时长（例如「剪一个 1 分钟宣传片」）时，
+ * 模型必须通读全文转写索引，按语义选段，而不是截开头/中间。
+ */
+const DEEP_EDIT_PROTOCOL = [
+  '# 深度剪辑（一句话粗剪）工作流',
+  '当用户说「剪一个 N 秒/N 分钟的宣传片/预告/精华版/高光」或类似目标时长时，按下面顺序工作：',
+  '1. 先通读下面「全文转写索引」的全部句子；索引时间码是成片毫秒，不得跳过中后段。',
+  '2. 先在回复里用 2–4 句说明你读到的内容结构（开场/冲突/转折/结论），再给选段理由；',
+  '3. 按语义重要性选 3–12 个区间，合并成一次 roughcut；总时长控制在目标 ±10%；',
+  '4. 选段要覆盖开场钩子、核心信息、情绪高点、结尾落点；禁止只取开头或中间一段；',
+  '5. 不要把相邻区间剪碎；同一句话不要重复剪进两次；区间端点尽量落在句子边界；',
+  '6. 如果全文总时长不足目标，明确说明「素材不足」，roughcut 保留全片，不要硬凑；',
+  '7. 输出一个 ```yimu-timeline 代码块，baseVersion 用当前版本，summary 写「目标 60s → 实际 58.5s，选段依据…」。',
+  '8. 索引为空时不要瞎编时间码：提示用户先补字幕/对白或接入 ASR。',
 ].join('\n');
 
 const PROJECT_ACTION_PROTOCOL = [
@@ -318,9 +339,26 @@ export class AssistantService {
     if (!projectId) return '';
     try {
       const doc = await this.timelineService.getDocument(projectId);
-      return [describeTimelineForAgent(doc), TIMELINE_ACTION_PROTOCOL].join('\n\n');
+      // 全文转写索引：字幕片段优先，缺字幕时用镜头对白补；时间码是「成片时间线毫秒」。
+      // 30 分钟素材也能一次读完：超过 24000 字符时才做均匀抽样，并在索引尾部明确标注。
+      const shotRows = await this.db
+        .select({
+          id: shots.id,
+          dialogue: shots.dialogue,
+          subtitleText: shots.subtitleText,
+        })
+        .from(shots)
+        .where(eq(shots.projectId, projectId));
+      const index = buildTranscriptIndex(doc, shotRows);
+      const transcript = formatTranscriptForAgent(index, 22000, 900);
+      return [
+        describeTimelineForAgent(doc, 60),
+        DEEP_EDIT_PROTOCOL,
+        transcript,
+        TIMELINE_ACTION_PROTOCOL,
+      ].join('\n\n');
     } catch {
-      return TIMELINE_ACTION_PROTOCOL;
+      return [DEEP_EDIT_PROTOCOL, TIMELINE_ACTION_PROTOCOL].join('\n\n');
     }
   }
 

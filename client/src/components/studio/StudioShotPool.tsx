@@ -5,7 +5,7 @@
  * 素材库：直接读项目资产表，按来源折叠成文件夹，可预览、拖入时间线、删除。
  * 导入入口与时间线共用 StudioImportDialog：本地 / 其他任务 / 资产包（含剪映）。
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LayoutGrid, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteShot } from '@client/src/api/storyboard';
@@ -27,6 +27,13 @@ export const StudioShotPool = () => {
   const { data, projectId, sel, setSel, setCurT, setPlaying, setPreviewMode } = useStudio();
   const [filter, setFilter] = useState<Filter>('all');
   const [tab, setTab] = useState<Tab>('shots');
+  // 剪映 Tab：切换素材面板显隐；不销毁组件，回来时保留筛选与 Tab
+  const [shown, setShown] = useState(true);
+  useEffect(() => {
+    const toggle = () => setShown((v) => !v);
+    window.addEventListener('yimu:toggle-shot-pool', toggle);
+    return () => window.removeEventListener('yimu:toggle-shot-pool', toggle);
+  }, []);
 
   const shots = data.shots;
   const total = useMemo(
@@ -68,7 +75,7 @@ export const StudioShotPool = () => {
   const openImport = () => window.dispatchEvent(new CustomEvent('yimu:studio-import'));
 
   return (
-    <aside className="shot-pool">
+    <aside className={`shot-pool${shown ? '' : ' shot-pool-off'}`} aria-hidden={!shown}>
       <div className="sp-head">
         <div className="sp-head-top">
           <div className="sp-title">

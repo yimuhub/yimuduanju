@@ -885,6 +885,8 @@ export const timelineClips = pgTable("timeline_clips", {
    */
   textStyle: jsonb("text_style"),
   locked: boolean("locked").notNull().default(false),
+  /** 片段启用状态：false = 时间线保留但不参与预览/导出（剪映 V 键） */
+  enabled: boolean("enabled").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   createdBy: userProfile("_created_by"),

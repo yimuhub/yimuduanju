@@ -93,6 +93,7 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   bindGroup: c.bindGroup ?? null,
   textStyle: c.textStyle ?? null,
   locked: c.locked,
+  enabled: c.enabled !== false,
   sortOrder: c.sortOrder,
 });
 
@@ -179,6 +180,8 @@ export interface EdlEditor {
   setClipVolume: (id: string, volume: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
   setClipLocked: (id: string, locked: boolean) => void;
+  /** 启用/停用片段（剪映 V）：保留在时间线，但预览与导出跳过 */
+  setClipEnabled: (id: string, enabled: boolean) => void;
 
   /** 绑定：把选中片段绑成一组，此后拖动任一片段整组一起走 */
   bindSelection: () => void;
@@ -981,6 +984,21 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const setClipEnabled = useCallback(
+    (id: string, enabled: boolean) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src) return;
+      if ((src.enabled !== false) === enabled) return;
+      commit(
+        before.map((c) => (c.id === id ? { ...c, enabled } : c)),
+        enabled ? '启用片段' : '停用片段',
+        before,
+      );
+    },
+    [commit],
+  );
+
   /* ------------------------- 绑定 / 字幕样式 ------------------------- */
 
   const bindSelection = useCallback(() => {
@@ -1290,6 +1308,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     setClipVolume,
     setClipTransition,
     setClipLocked,
+    setClipEnabled,
     bindSelection,
     unbindSelection,
     updateTextStyle,

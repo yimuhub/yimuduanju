@@ -127,6 +127,8 @@ const OP_LABEL: Record<string, string> = {
   speed: '变速',
   volume: '音量',
   lock: '锁定',
+  enable: '启用/停用',
+  roughcut: '智能粗剪',
   track: '轨道',
 };
 

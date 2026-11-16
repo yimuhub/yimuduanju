@@ -67,6 +67,18 @@ export const StudioPreview = () => {
   const [canvasOn, setCanvasOn] = useState(false);
   const [proxyBroken, setProxyBroken] = useState(false);
 
+  // 剪映 ⌘F：全屏预览 / 退出全屏（由时间线快捷键层派发，避免两处各绑一套 DOM 查询）
+  useEffect(() => {
+    const onFullscreen = () => {
+      const el = pvRef.current;
+      if (!el) return;
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void el.requestFullscreen?.();
+    };
+    window.addEventListener('yimu:preview-fullscreen', onFullscreen);
+    return () => window.removeEventListener('yimu:preview-fullscreen', onFullscreen);
+  }, []);
+
   const shots = data.shots;
   const shot = shots[sel];
 
@@ -92,7 +104,7 @@ export const StudioPreview = () => {
   // ---------- 跟随 EDL：当前播放头覆盖的片段 ----------
   const tlClips = data.timeline?.clips ?? [];
   const videoClips = useMemo(
-    () => tlClips.filter((c) => c.track === 'video' && c.sourceUrl),
+    () => tlClips.filter((c) => c.track === 'video' && c.sourceUrl && c.enabled !== false),
     [tlClips],
   );
   const tlMode = previewMode === 'timeline' && videoClips.length > 0;
@@ -114,6 +126,7 @@ export const StudioPreview = () => {
             (c) =>
               c.track === 'audio' &&
               c.sourceUrl &&
+              c.enabled !== false &&
               curT >= c.timelineStart &&
               curT < c.timelineStart + clipSpan(c),
           )
@@ -128,6 +141,7 @@ export const StudioPreview = () => {
             .filter(
               (c) =>
                 c.track === 'subtitle' &&
+                c.enabled !== false &&
                 (c.text ?? '').trim() &&
                 curT >= c.timelineStart &&
                 curT < c.timelineStart + clipSpan(c),

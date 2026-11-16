@@ -143,6 +143,7 @@ export class TimelineService {
         // 同一镜头的画面 / 对白 / 字幕天然是绑定的：默认联动，用户可手动解绑
         bindGroup: `shot:${s.id}`,
         locked: false,
+        enabled: true,
         sortOrder: sort++,
         createdAt: now,
         updatedAt: now,
@@ -218,6 +219,7 @@ export class TimelineService {
       textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
       bindGroup: row.bindGroup,
       locked: row.locked,
+      enabled: row.enabled !== false,
       sortOrder: row.sortOrder,
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),
@@ -286,6 +288,7 @@ export class TimelineService {
           bindGroup: c.bindGroup ?? null,
           textStyle: c.textStyle ?? null,
           locked: c.locked ?? false,
+          enabled: c.enabled ?? true,
           sortOrder: c.sortOrder ?? i,
           updatedAt: now,
         }));
@@ -441,13 +444,15 @@ export class TimelineService {
     clips: TimelineClip[],
     tracks?: TimelineTrackMeta[],
   ): TimelineClip[] {
-    if (!tracks || tracks.length === 0) return clips;
+    // 先剔除「停用片段」：停用只影响成片，不影响时间线上继续保留与恢复
+    const enabled = clips.filter((c) => c.enabled !== false);
+    if (!tracks || tracks.length === 0) return enabled;
     const meta = new Map(tracks.map((t) => [`${t.track}:${t.lane ?? 0}`, t]));
     const hasSolo = tracks.some((t) => t.solo);
     if (hasSolo) {
-      return clips.filter((c) => meta.get(`${c.track}:${c.lane ?? 0}`)?.solo === true);
+      return enabled.filter((c) => meta.get(`${c.track}:${c.lane ?? 0}`)?.solo === true);
     }
-    return clips.filter((c) => meta.get(`${c.track}:${c.lane ?? 0}`)?.muted !== true);
+    return enabled.filter((c) => meta.get(`${c.track}:${c.lane ?? 0}`)?.muted !== true);
   }
 
   /** 字幕轨 → SRT（时间线坐标，供软字幕封装） */

@@ -118,6 +118,11 @@ export class SaveTimelineClipDto {
   @IsBoolean()
   locked?: boolean;
 
+  /** 片段启用状态；缺省 true（旧客户端保存不会误停用） */
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

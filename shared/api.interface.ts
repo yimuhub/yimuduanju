@@ -1796,6 +1796,8 @@ export interface TimelineClip {
   speed: number;
   /** 音量 0–1（音频轨），默认 1 */
   volume: number;
+  /** 片段启用状态（剪映 V 键）：false = 不参与预览与导出，但仍保留在时间线上 */
+  enabled?: boolean;
   /** 与下一片段间的转场 */
   transition?: { type: 'none' | 'crossfade' | 'fade'; duration: number } | null;
   /** 字幕文本（字幕轨） */
