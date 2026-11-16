@@ -87,7 +87,7 @@ export const StudioImportDialog = ({
 
   // 打开时拉项目列表（给「其他任务」Tab 用）
   useEffect(() => {
-    listProjects({ pageSize: 200 })
+    listProjects({ pageSize: 100 })
       .then((res) => {
         const list = res?.items ?? [];
         setProjects(list.filter((p) => p.id !== projectId));
@@ -102,7 +102,7 @@ export const StudioImportDialog = ({
     if (!pid) return;
     setLoadingOther(true);
     Promise.all([
-      listAssets({ projectId: pid, pageSize: 200 }),
+      listAssets({ projectId: pid, pageSize: 100 }),
     ])
       .then(([res]) => {
         const usable = (res?.items ?? []).filter((a) => {

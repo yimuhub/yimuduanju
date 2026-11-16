@@ -485,6 +485,7 @@ export const StudioTimeline = () => {
     setTlCollapsed,
     toggleTlCollapsed,
     setDockTab,
+    setPreviewMode,
   } = useStudio();
   const shots = data.shots;
   const clips = useMemo(() => data.timeline?.clips ?? [], [data.timeline]);
@@ -572,13 +573,16 @@ export const StudioTimeline = () => {
     const undo = () => editor.undo();
     const redo = () => editor.redo();
     const keys = () => setShortcutsOpen(true);
+    const importMedia = () => setImportOpen(true);
     window.addEventListener('yimu:timeline-undo', undo);
     window.addEventListener('yimu:timeline-redo', redo);
     window.addEventListener('yimu:timeline-shortcuts', keys);
+    window.addEventListener('yimu:studio-import', importMedia);
     return () => {
       window.removeEventListener('yimu:timeline-undo', undo);
       window.removeEventListener('yimu:timeline-redo', redo);
       window.removeEventListener('yimu:timeline-shortcuts', keys);
+      window.removeEventListener('yimu:studio-import', importMedia);
     };
   }, [editor]);
 
@@ -740,6 +744,7 @@ export const StudioTimeline = () => {
     const payload = readTimelineDrag(e);
     if (!payload) return;
     e.preventDefault();
+    setPreviewMode('timeline');
     const d = computeDrop(e, payload);
     setDropHint(null);
     clearTimelineDrag();
@@ -761,6 +766,8 @@ export const StudioTimeline = () => {
           );
     if (!id) return;
     editor.setSelection([id]);
+    // 落点即定位：拖进来的素材立刻成为预览里的当前画面
+    setCurT(d.t);
     toast.success(d.created ? `已新建轨道并放入「${payload.name}」` : `已放入「${payload.name}」`, {
       duration: 1800,
     });
@@ -1937,6 +1944,7 @@ export const StudioTimeline = () => {
     <section
       className={`tl${focused ? ' tl-focus' : ''}`}
       id="tl"
+      onPointerDownCapture={() => setPreviewMode('timeline')}
       onPointerEnter={() => {
         // 仅用于 hover 视觉，不再作为快捷键开关
       }}

@@ -11,10 +11,15 @@ import { useStudio } from './StudioShell';
 import { APP_VERSION } from '@client/src/lib/version';
 
 export const StudioProTopBar = () => {
-  const { data, projectId } = useStudio();
+  const { data, projectId, setProEdit } = useStudio();
   const navigate = useNavigate();
 
   const fire = (name: string) => window.dispatchEvent(new CustomEvent(name));
+  /** 离开剪辑工作台去别的页面前先退出全功能编辑，否则编辑壳会把目标页挡住 */
+  const go = (path: string) => {
+    setProEdit(false);
+    navigate(path);
+  };
 
   return (
     <div className="pro-topbar">
@@ -56,7 +61,7 @@ export const StudioProTopBar = () => {
           type="button"
           className="pro-btn"
           title="打开分镜页，对照镜头与时间线"
-          onClick={() => projectId && navigate(`/project/${projectId}/storyboard`)}
+          onClick={() => projectId && go(`/project/${projectId}/storyboard`)}
         >
           <Share2 size={13} />
           对比
@@ -65,7 +70,7 @@ export const StudioProTopBar = () => {
           type="button"
           className="pro-btn primary"
           title="打开导出页，导出当前时间线成片"
-          onClick={() => projectId && navigate(`/project/${projectId}/export`)}
+          onClick={() => projectId && go(`/project/${projectId}/export`)}
         >
           导出成片
         </button>

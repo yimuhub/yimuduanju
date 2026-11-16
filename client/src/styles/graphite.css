@@ -259,6 +259,29 @@
   padding: 10px 12px 8px;
   border-bottom: 1px solid var(--line);
 }
+.shot-pool .sp-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shot-pool .sp-import {
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: var(--fg-2);
+  font-size: 10px;
+  background: transparent;
+  white-space: nowrap;
+}
+.shot-pool .sp-import:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+}
 .shot-pool .sp-title {
   display: flex;
   align-items: baseline;

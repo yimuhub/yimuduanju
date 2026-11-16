@@ -106,6 +106,9 @@ export interface StudioContextValue {
   setCurT: (t: number) => void;
   playing: boolean;
   setPlaying: (v: boolean) => void;
+  /** 中央预览的来源：timeline=只渲染时间轴；shot=镜头池点选后的单镜预览 */
+  previewMode: 'timeline' | 'shot';
+  setPreviewMode: (m: 'timeline' | 'shot') => void;
   stageView: StageView;
   setStageView: (v: StageView) => void;
   /** 当前项目会话（落库，刷新/切页可恢复） */
@@ -171,6 +174,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const [railCollapsed, setRailCollapsed] = useState(() => readSidebarCollapsed(location.pathname));
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [tlCollapsed, setTlCollapsedState] = useState(readTlCollapsed);
+  const [previewMode, setPreviewMode] = useState<'timeline' | 'shot'>('timeline');
   const [proEdit, setProEditState] = useState(
     () => {
       try {
@@ -531,6 +535,8 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   // 播放头移动 → 通过 EDL 视频片段反查镜头（片段被移动后仍能跟随）
   useEffect(() => {
     if (shots.length === 0) return;
+    // 镜头池点选是「单镜预览」：不要用播放头反查覆盖用户刚点的镜头
+    if (previewMode === 'shot') return;
     const video = (data.timeline?.clips ?? []).filter((c) => c.track === 'video');
     let idx = -1;
     if (video.length > 0) {
@@ -547,7 +553,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     }
     if (idx < 0) idx = shotIndexAt(shots, curT);
     setSelRaw((prev) => (prev === idx ? prev : idx));
-  }, [curT, shots, data.timeline]);
+  }, [curT, shots, data.timeline, previewMode]);
 
   // 无项目时产出坞不渲染；同时释放它占的网格列，否则舞台会被挤成窄条、右侧留大片空白
   // 全功能编辑：右侧产出坞整体收起，坞里的预览改由中舞台全屏承载
@@ -585,6 +591,8 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setCurT,
       playing,
       setPlaying,
+      previewMode,
+      setPreviewMode,
       stageView,
       setStageView,
       chatMsgs,
@@ -613,6 +621,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setSel,
       curT,
       playing,
+      previewMode,
       stageView,
       setStageView,
       chatMsgs,

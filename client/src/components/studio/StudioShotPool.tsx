@@ -10,8 +10,10 @@
  * 常驻侧栏，宽度可拖拽（见 StudioShell 的 .pro-pool），职责与产出坞不同。
  */
 import { useMemo, useState } from 'react';
+import { Upload } from 'lucide-react';
 import { useStudio } from './StudioShell';
-import { stateShort } from './model';
+import { stateShort, shotLabel } from './model';
+import { clearTimelineDrag, startTimelineDrag } from '@client/src/lib/timeline-dnd';
 
 type Filter = 'all' | 'done' | 'render';
 
@@ -22,7 +24,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 export const StudioShotPool = () => {
-  const { data, sel, setSel, setCurT, setPlaying } = useStudio();
+  const { data, sel, setSel, setCurT, setPlaying, setPreviewMode } = useStudio();
   const [filter, setFilter] = useState<Filter>('all');
 
   const shots = data.shots;
@@ -39,18 +41,33 @@ export const StudioShotPool = () => {
     const shot = shots[index];
     if (!shot) return;
     setPlaying(false);
+    setPreviewMode('shot');
     setSel(index);
     setCurT(shot.start + 0.05);
   };
 
+  /** 导入入口与时间线共用同一个对话框：三类来源都落到时间线，不另建一套写入 */
+  const openImport = () => window.dispatchEvent(new CustomEvent('yimu:studio-import'));
+
   return (
     <aside className="shot-pool">
       <div className="sp-head">
-        <div className="sp-title">
-          <h3>镜头池</h3>
-          <small className="num">
-            {shots.length} 镜 · {total.toFixed(1)}s
-          </small>
+        <div className="sp-head-top">
+          <div className="sp-title">
+            <h3>镜头池</h3>
+            <small className="num">
+              {shots.length} 镜 · {total.toFixed(1)}s
+            </small>
+          </div>
+          <button
+            type="button"
+            className="sp-import"
+            title="导入电脑文件、其他项目生成的视频，或资产包"
+            onClick={openImport}
+          >
+            <Upload size={12} />
+            导入
+          </button>
         </div>
         <div className="sp-filters">
           {FILTERS.map((f) => (
@@ -78,8 +95,20 @@ export const StudioShotPool = () => {
                 key={shot.id}
                 type="button"
                 className={`sp-item${active ? ' on' : ''}`}
+                draggable
                 onClick={() => pick(index)}
-                title={`${shot.sceneLabel} · ${shot.tag} · ${shot.txt}`}
+                onDragStart={(e) =>
+                  startTimelineDrag(e, {
+                    kind: 'shot',
+                    name: `${shotLabel(shot.no)} ${shot.txt}`.slice(0, 40),
+                    durationSeconds: shot.dur,
+                    shotId: shot.id,
+                    videoUrl: shot.videoUrl,
+                    frameUrl: shot.frameUrl,
+                  })
+                }
+                onDragEnd={() => clearTimelineDrag()}
+                title={`${shot.sceneLabel} · ${shot.tag} · ${shot.txt}（拖动到时间线可直接落轨，空白处自动开新轨）`}
               >
                 <span className="sp-thumb" data-scene={shot.sceneLabel}>
                   {shot.frameUrl ? <img src={shot.frameUrl} alt="" loading="lazy" /> : null}
@@ -102,7 +131,7 @@ export const StudioShotPool = () => {
       </div>
 
       <div className="sp-foot">
-        <span>点击镜头，定位预览与时间线</span>
+        <span>点击预览单镜 · 拖动到时间线落轨</span>
       </div>
     </aside>
   );

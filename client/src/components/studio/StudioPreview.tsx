@@ -34,7 +34,7 @@ const readPreviewH = (): number => {
 };
 
 export const StudioPreview = () => {
-  const { data, sel, setSel, curT, playing, setPlaying, projectId, proEdit } = useStudio();
+  const { data, sel, setSel, curT, playing, setPlaying, projectId, proEdit, previewMode } = useStudio();
   const [charNames, setCharNames] = useState<Record<string, string>>({});
   const [propByCode, setPropByCode] = useState<Record<string, Prop>>({});
   const [ratio, setRatio] = useState<Ratio>('9:16');
@@ -75,7 +75,7 @@ export const StudioPreview = () => {
     () => tlClips.filter((c) => c.track === 'video' && c.sourceUrl),
     [tlClips],
   );
-  const tlMode = videoClips.length > 0;
+  const tlMode = previewMode === 'timeline' && videoClips.length > 0;
 
   const activeVideo = useMemo(() => {
     if (!tlMode) return null;
@@ -275,8 +275,8 @@ export const StudioPreview = () => {
         <div className={`dsub${proEdit ? ' pro' : ''}`}>
           {proEdit ? (
             <div className="pv-pro-label">
-              <b>时间线合成预览</b>
-              <span>只渲染时间线内容</span>
+              <b>{tlMode ? '时间线合成预览' : '镜头预览'}</b>
+              <span>{tlMode ? '只渲染时间线内容' : '来自镜头池 · 点击时间线切回合成'}</span>
             </div>
           ) : null}
           <div className="seg">
