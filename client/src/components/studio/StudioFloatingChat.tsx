@@ -32,6 +32,32 @@ interface Pos {
   y: number;
 }
 
+const ORB_SIZE = 46;
+const WIN_W = 380;
+
+/**
+ * 小球/浮窗都挂在右下角（right:24 / bottom:76）再用 translate 位移。
+ * 这里把「视觉上必须完整留在视口内」换算成 translate 的合法区间：
+ * 关闭时只保证 46px 小球可见，打开时保证 380×560 的浮窗可见。
+ */
+const clampPos = (p: Pos, open: boolean): Pos => {
+  if (typeof window === 'undefined') return p;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const width = open ? Math.min(WIN_W, w - 16) : ORB_SIZE;
+  const height = open ? Math.min(560, h - 110) : ORB_SIZE;
+  const baseLeft = w - 24 - width;
+  const baseTop = h - 76 - height;
+  const minX = 8 - baseLeft;
+  const minY = 8 - baseTop;
+  const maxX = 16; // (w-8-width) - baseLeft
+  const maxY = 68; // (h-8-height) - baseTop
+  return {
+    x: Math.min(Math.max(maxX, minX), Math.max(minX, Math.min(maxX, p.x))),
+    y: Math.min(Math.max(maxY, minY), Math.max(minY, Math.min(maxY, p.y))),
+  };
+};
+
 const readPos = (): Pos => {
   try {
     const raw = localStorage.getItem(POS_KEY);
@@ -54,6 +80,8 @@ export const StudioFloatingChat = () => {
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(
     null,
   );
+  /** 拖拽结束后抑制一次 click，避免「拖完顺手打开/关闭」 */
+  const suppressClickRef = useRef(false);
   /** 已投到桌面的悬浮小窗（Document PiP） */
   const petWinRef = useRef<Window | null>(null);
 
@@ -76,7 +104,9 @@ export const StudioFloatingChat = () => {
   const onGripDown = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       dragRef.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y, moved: false };
+      suppressClickRef.current = false;
       const move = (ev: PointerEvent) => {
         const d = dragRef.current;
         if (!d) return;
@@ -84,23 +114,33 @@ export const StudioFloatingChat = () => {
         const dy = ev.clientY - d.sy;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
         if (!d.moved) return;
-        // 夹在视口内：球 44px、窗 340px，都不允许拖出屏幕
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        const nx = Math.min(w - 60, Math.max(-w + 380, d.ox + dx));
-        const ny = Math.min(h - 60, Math.max(-h + 120, d.oy + dy));
-        setPos({ x: nx, y: ny });
+        suppressClickRef.current = true;
+        setPos(clampPos({ x: d.ox + dx, y: d.oy + dy }, open));
       };
       const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
         dragRef.current = null;
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
     },
-    [pos],
+    [pos, open],
   );
+
+  /** 打开/收起时把浮窗也夹回屏幕内，避免从边角展开后跑出可视区 */
+  const setChatOpen = useCallback((next: boolean) => {
+    setOpen(next);
+    setPos((p) => clampPos(p, next));
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setPos((p) => clampPos(p, open));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [open]);
 
   /**
    * 把 logo 投成系统级置顶小窗：Document PiP 窗口本身可被用户拖到屏幕任意位置，
@@ -189,7 +229,7 @@ export const StudioFloatingChat = () => {
             >
               <MonitorUp size={14} />
             </button>
-            <button type="button" title="收起" onClick={() => setOpen(false)}>
+            <button type="button" title="收起" onClick={() => setChatOpen(false)}>
               <X size={14} />
             </button>
           </div>
@@ -240,11 +280,16 @@ export const StudioFloatingChat = () => {
       ) : (
         <button
           type="button"
-          className="pro-chat-orb"
-          title="展开 AI 剪辑助手（拖动可换位置）"
+          className={`pro-chat-orb${chatBusy ? ' is-active' : ''}`}
+          title="AI 剪辑助手：可在整个屏幕任意拖动；点击继续对话"
+          aria-label="AI 剪辑助手，可拖动"
+          onPointerDown={onGripDown}
           onClick={() => {
-            if (dragRef.current?.moved) return;
-            setOpen(true);
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false;
+              return;
+            }
+            setChatOpen(true);
           }}
         >
           <MessageCircle size={20} />

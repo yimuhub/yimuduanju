@@ -26,6 +26,17 @@ export class PreviewProxyService {
 
   constructor(private readonly exportService: ExportService) {}
 
+  /** 只查缓存，不触发下载/转码；用于路由判断“有缓存就发、没有就先回退” */
+  async cachedProxy(projectId: string, src: string): Promise<string | null> {
+    const raw = src.trim();
+    if (!raw || !VIDEO_EXT.test(raw.split('#')[0])) return null;
+    const hash = this.hashOf(raw);
+    const dir = this.cacheDir(projectId);
+    const out = join(dir, `${hash}.mp4`);
+    const size = await stat(out).then((s) => s.size).catch(() => 0);
+    return size >= 1024 ? out : null;
+  }
+
   /**
    * 返回可播放的本地代理绝对路径；不是视频或转码失败返回 null（前端回退原片）。
    * projectId 只用于隔离缓存目录，不参与源地址解析。
@@ -35,8 +46,8 @@ export class PreviewProxyService {
     if (!raw || !VIDEO_EXT.test(raw.split('#')[0])) return null;
 
     // 本地 /uploads、资产代理、远程 URL 都参与哈希；同一源只转一次
-    const hash = createHash('sha1').update(raw).digest('hex').slice(0, 24);
-    const dir = resolve(process.cwd(), 'data', 'preview-proxy', projectId);
+    const hash = this.hashOf(raw);
+    const dir = this.cacheDir(projectId);
     const out = join(dir, `${hash}.mp4`);
     const existing = await stat(out).then((s) => s.size).catch(() => 0);
     if (existing >= 1024) return out;
@@ -47,6 +58,14 @@ export class PreviewProxyService {
     const task = this.build(raw, dir, out).finally(() => this.inflight.delete(hash));
     this.inflight.set(hash, task);
     return task;
+  }
+
+  private hashOf(src: string): string {
+    return createHash('sha1').update(src).digest('hex').slice(0, 24);
+  }
+
+  private cacheDir(projectId: string): string {
+    return resolve(process.cwd(), 'data', 'preview-proxy', projectId);
   }
 
   private async build(src: string, dir: string, out: string): Promise<string | null> {

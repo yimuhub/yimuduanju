@@ -13570,3 +13570,76 @@ select.nw-input {
   .cover-editor-grid { grid-template-columns: 1fr; }
   .cover-canvas-wrap { max-width: 300px; }
 }
+
+/* ---------- 神剪时间线：左右纵向滚动联动 + 单轨行高拖拽 ---------- */
+/* 左侧轨道头与右侧画布是两条独立的滚动容器；JS 同步 scrollTop，视觉上始终对齐。 */
+.tl-labels {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.tl-labels::-webkit-scrollbar {
+  display: none;
+}
+.tl-labels .tl-lb {
+  position: relative;
+}
+/* 每个轨道头底部的细横条：上下拖动即可单独改这条轨的行高 */
+.tl-lb-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+  z-index: 4;
+  touch-action: none;
+}
+.tl-lb-resize::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 42px;
+  height: 2px;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  background: var(--line-2);
+  opacity: 0.32;
+  transition: opacity 120ms var(--ease), background 120ms var(--ease);
+}
+.tl-lb-resize:hover::after,
+.tl-lb-resize:focus-visible::after {
+  opacity: 1;
+  background: var(--brand, var(--accent));
+}
+.tl-lb-resize:focus-visible {
+  outline: none;
+}
+
+/* ---------- 神剪浮动球：全屏任意拖拽、活动态 ---------- */
+.pro-chat-orb {
+  touch-action: none;
+  user-select: none;
+}
+.pro-chat-orb.is-active {
+  border-color: #7cc98a;
+  box-shadow: 0 0 0 2px rgba(124, 201, 138, 0.18), 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+.pro-chat-orb.is-active::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid rgba(124, 201, 138, 0.4);
+  animation: proChatPulse 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes proChatPulse {
+  0%, 100% { transform: scale(0.96); opacity: 0.45; }
+  50% { transform: scale(1.06); opacity: 0.9; }
+}

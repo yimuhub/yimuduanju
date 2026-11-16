@@ -151,15 +151,18 @@ export const StudioPreview = () => {
   /** 原始时间线/镜头地址；图片仍直接走原图，视频在流畅档走 540p 代理 */
   const previewVideoUrl = tlMode ? activeVideo?.sourceUrl : shot?.videoUrl;
   const previewIsStill = Boolean(tlMode && isImageUrl(previewVideoUrl));
-  // 只为真正的本地素材开代理：/uploads 复制+转码是毫秒级；
-  // 远程 Agnes 源先直接播放，避免代理下载慢导致画面一直黑屏。
+  // 流畅档优先使用服务端 540p 代理。
+  // 本地素材首次无缓存时服务端 302 回原片并后台转码；远程素材无缓存时
+  // 立即 404，<video> onError 会回退原片，绝不会卡在代理下载上一直黑屏。
   const fastProxyEligible =
     Boolean(previewVideoUrl) &&
     !previewIsStill &&
     previewQuality === 'fast' &&
     tlMode &&
     Boolean(projectId) &&
-    Boolean(previewVideoUrl?.startsWith('/uploads/'));
+    (previewVideoUrl?.startsWith('/uploads/') ||
+      previewVideoUrl?.startsWith('/api/assets/') ||
+      /^https?:\/\//i.test(previewVideoUrl ?? ''));
   const fastProxyUrl =
     fastProxyEligible && previewVideoUrl && projectId
       ? previewProxyUrl(projectId, previewVideoUrl)

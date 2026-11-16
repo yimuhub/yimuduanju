@@ -580,7 +580,9 @@ export const StudioTimeline = () => {
   const [viewport, setViewport] = useState({ start: 0, end: Number.POSITIVE_INFINITY });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const labelsRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const scrollSyncRef = useRef(false);
   const dragRef = useRef<DragState | null>(null);
   const pxRef = useRef(pxPerSec);
   pxRef.current = pxPerSec;
@@ -849,6 +851,68 @@ export const StudioTimeline = () => {
       app.style.removeProperty('--tl-h');
     };
   }, [rows, collapsed, editor.selectedIds.length]);
+
+  /* 左侧轨道头与右侧时间画布共用同一纵向滚动位置：滚任一侧，另一侧跟随 */
+  useEffect(() => {
+    const tracks = scrollRef.current;
+    const labels = labelsRef.current;
+    if (!tracks || !labels) return undefined;
+    const sync = (from: HTMLDivElement, to: HTMLDivElement) => {
+      if (scrollSyncRef.current) return;
+      if (Math.abs(to.scrollTop - from.scrollTop) < 1) return;
+      scrollSyncRef.current = true;
+      to.scrollTop = from.scrollTop;
+      requestAnimationFrame(() => {
+        scrollSyncRef.current = false;
+      });
+    };
+    const onTracksScroll = () => sync(tracks, labels);
+    const onLabelsScroll = () => sync(labels, tracks);
+    tracks.addEventListener('scroll', onTracksScroll, { passive: true });
+    labels.addEventListener('scroll', onLabelsScroll, { passive: true });
+    return () => {
+      tracks.removeEventListener('scroll', onTracksScroll);
+      labels.removeEventListener('scroll', onLabelsScroll);
+    };
+  }, []);
+
+  /**
+   * 手动调整单轨行高：拖左侧轨道头底部的细横条。
+   * 拖动期间只改本地 EDL（useEdlEditor 会把连续变更合并成一次落库），
+   * 松手后统一保存；左右两侧都用同一个 height，滚动位置不漂移。
+   */
+  const startRowResize = useCallback(
+    (e: React.PointerEvent, track: RowTrack, lane: number, startHeight: number) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const y0 = e.clientY;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let latest = Math.round(clamp(startHeight, ROW_HEIGHT_MIN, ROW_HEIGHT_MAX));
+      const move = (ev: PointerEvent) => {
+        latest = Math.round(clamp(startHeight + ev.clientY - y0, ROW_HEIGHT_MIN, ROW_HEIGHT_MAX));
+        // 16ms 合并一次，避免 pointermove 每像素触发整棵时间线重排
+        if (timer) return;
+        timer = setTimeout(() => {
+          timer = null;
+          editorRef.current.updateTrack(track, lane, { height: latest });
+        }, 16);
+      };
+      const up = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        editorRef.current.updateTrack(track, lane, { height: latest });
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    },
+    [],
+  );
 
   /* ------------------------- 刻度 / 缩放 ------------------------- */
 
@@ -2310,7 +2374,11 @@ export const StudioTimeline = () => {
       {propsBar}
 
       <div className="tl-main">
-        <div className="tl-labels" style={{ flex: `0 0 ${LABEL_W}px`, width: `${LABEL_W}px` }}>
+        <div
+          className="tl-labels"
+          ref={labelsRef}
+          style={{ flex: `0 0 ${LABEL_W}px`, width: `${LABEL_W}px` }}
+        >
           <div className="tl-lb-spacer" />
           {rows.map((r) => (
             <div
@@ -2319,6 +2387,13 @@ export const StudioTimeline = () => {
               style={{ height: `${r.height}px` }}
               title={`${r.code} ${r.name}`}
             >
+              <button
+                type="button"
+                className="tl-lb-resize"
+                title="上下拖动调整本轨行高（22–180px）"
+                aria-label={`调整${r.name}行高`}
+                onPointerDown={(e) => startRowResize(e, r.track, r.lane, r.height)}
+              />
               <span className="sw" style={{ background: r.color }} />
               <b>{r.code}</b>
               {renamingRow === r.key ? (

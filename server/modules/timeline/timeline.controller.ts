@@ -53,14 +53,27 @@ export class TimelineController {
     @Res() res: Response,
   ): Promise<void> {
     if (!src?.trim()) throw new BadRequestException('src 不能为空');
-    const file = await this.previewProxy.ensureProxy(projectId, src);
-    if (!file) {
-      res.status(404).end();
+    const raw = src.trim();
+    const isLocal = raw.startsWith('/uploads/') || raw.startsWith('/api/assets/');
+    const isRemote = /^https?:\/\//i.test(raw);
+    if (!isLocal && !isRemote) throw new BadRequestException('src 只支持本地素材或公网 http(s)');
+    const file = await this.previewProxy.cachedProxy(projectId, raw);
+    if (file) {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.sendFile(file);
       return;
     }
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Cache-Control', 'private, max-age=86400');
-    res.sendFile(file);
+    // 没有缓存时不阻塞播放：本地素材 302 回原片（同时后台转码），
+    // 远程素材立即 404 让前端 <video> 的 onError 回退原片，避免一直黑屏。
+    void this.previewProxy.ensureProxy(projectId, raw).catch(() => undefined);
+    if (isLocal) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(302, raw);
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).end();
   }
 
   /** 整体保存 EDL（事务替换 + 乐观锁） */
