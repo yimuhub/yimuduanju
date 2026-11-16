@@ -123,11 +123,25 @@ jobs:
         run: |
           # Linux 只出 deb：AppImage/rpm 在 GitHub runner 上依赖 FUSE/rpmbuild，
           # 容易在“打包”阶段整体失败；deb 是本项目 Linux 的正式安装包。
+          # macOS 只出 .app，DMG 由下一步 hdiutil 生成，绕开 Tauri 的 Finder AppleEvent 超时。
           if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
             npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles deb
+          elif [ "${{ matrix.os }}" = "macos-15" ] || [ "${{ matrix.os }}" = "macos-15-intel" ]; then
+            npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles app
           else
             npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }}
           fi
+
+      - name: 生成 macOS DMG（hdiutil，绕开 Finder AppleEvent）
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          APP="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/YIMU.app"
+          OUT="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          mkdir -p "$OUT"
+          hdiutil create -ov -srcfolder "$APP" -format UDZO "$OUT/YIMU_${VER}_${{ matrix.label }}.dmg"
+          hdiutil verify "$OUT/YIMU_${VER}_${{ matrix.label }}.dmg"
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
