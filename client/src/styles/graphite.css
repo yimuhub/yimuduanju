@@ -3088,6 +3088,73 @@ button.tl-tc:hover {
   border-color: var(--brand-line, rgba(229, 72, 77, 0.5));
   color: var(--brand);
 }
+.tl-prop-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 属性条分区竖线：字幕样式那组控件与通用控件之间 */
+.tl-prop-sep {
+  flex: 0 0 1px;
+  align-self: stretch;
+  margin: 6px 2px;
+  background: var(--line);
+}
+/* 滑杆类属性：字号 / 描边 / 不透明度 */
+.tl-prop-range input[type='range'] {
+  width: 68px;
+  height: 14px;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+.tl-prop-val {
+  min-width: 30px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-2);
+  text-align: right;
+}
+.tl-prop input[type='color'] {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.tl-prop input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.tl-prop input[type='color']::-webkit-color-swatch {
+  border: 0;
+  border-radius: 2px;
+}
+
+/* 轨道头的「新增 / 删除轨道」按钮：默认淡，hover 才显眼 */
+.tl-lb-btns .tl-lb-add,
+.tl-lb-btns .tl-lb-del {
+  opacity: 0.5;
+}
+.tl-lb-btns .tl-lb-add:hover,
+.tl-lb-btns .tl-lb-del:hover {
+  opacity: 1;
+}
+
+/* 片段上的「已绑定」角标 */
+.tl-clip-link {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.42);
+  color: var(--info, #6aa8ff);
+  pointer-events: none;
+}
 
 .tl-modal-mask {
   position: fixed;
@@ -3839,6 +3906,8 @@ button.tl-tc:hover {
 }
 .pv-frame {
   position: relative;
+  /* 尺寸容器：字幕字号用 cqh（容器高度 1%）表达，与后端「按画幅高度百分比」同一语义 */
+  container-type: size;
   height: min(44vh, 360px);
   aspect-ratio: 9/16;
   background: var(--bg-inset);
@@ -3905,22 +3974,20 @@ button.tl-tc:hover {
 }
 .pv-subtitle {
   position: absolute;
-  left: 7%;
-  right: 7%;
-  bottom: 8%;
+  inset: 0;
   z-index: 3;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: center;
   pointer-events: none;
-  font-size: 13px;
-  line-height: 1.45;
-  font-weight: 600;
-  color: #fff;
-  text-shadow:
-    0 1px 4px rgba(0, 0, 0, 0.92),
-    0 0 2px rgba(0, 0, 0, 0.9);
+  line-height: 1.38;
+}
+/* 每条字幕按自己的样式定位：top 是归一化 y，水平靠左右 padding 收窄到 maxWidth */
+.pv-sub-item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 4px;
 }
 .pv-gap {
   position: absolute;

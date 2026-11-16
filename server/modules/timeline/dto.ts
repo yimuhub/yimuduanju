@@ -8,6 +8,7 @@ import {
   IsIn,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -16,7 +17,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import type { TimelineTrackKind } from '@shared/api.interface';
+import type { TimelineTextStyle, TimelineTrackKind } from '@shared/api.interface';
 
 /** 片段转场（与下一片段之间）；Phase 4 导出暂按硬切渲染，EDL 先存决策 */
 export class ClipTransitionDto {
@@ -92,6 +93,20 @@ export class SaveTimelineClipDto {
   @IsOptional()
   @IsString()
   text?: string | null;
+
+  /** 绑定组 id（同组一起平移）；null / 空 = 解绑 */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  bindGroup?: string | null;
+
+  /**
+   * 字幕样式。只校验「是个对象」—— 内部字段都可选且都有默认值，
+   * 逐个加装饰器会让 DTO 膨胀几十行，收益为零（前端已经用 resolveTextStyle 兜底）。
+   */
+  @IsOptional()
+  @IsObject()
+  textStyle?: TimelineTextStyle | null;
 
   @IsOptional()
   @IsBoolean()

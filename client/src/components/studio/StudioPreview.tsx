@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clapperboard } from 'lucide-react';
+import { resolveTextStyle } from '@shared/api.interface';
 import { useStudio } from './StudioShell';
 import { clipSpan, shotLabel, stateShort, toTimecode } from './model';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
@@ -109,7 +110,7 @@ export const StudioPreview = () => {
                 curT < c.timelineStart + clipSpan(c),
             )
             .sort((a, b) => (a.lane ?? 0) - (b.lane ?? 0))
-            .map((c) => (c.text ?? '').trim())
+            .map((c) => ({ text: (c.text ?? '').trim(), style: c.textStyle ?? null }))
         : [],
     [tlMode, tlClips, curT],
   );
@@ -359,9 +360,38 @@ export const StudioPreview = () => {
             ) : null}
             {subtitles.length > 0 ? (
               <div className="pv-subtitle">
-                {subtitles.map((t, i) => (
-                  <div key={i}>{t}</div>
-                ))}
+                {subtitles.map((t, i) => {
+                  const st = resolveTextStyle(t.style);
+                  const side = ((1 - Math.min(1, Math.max(0.1, st.maxWidth))) / 2) * 100;
+                  return (
+                    <div
+                      key={i}
+                      className="pv-sub-item"
+                      style={{
+                        top: `${Math.min(1, Math.max(0, st.y)) * 100}%`,
+                        paddingLeft: `${side}%`,
+                        paddingRight: `${side}%`,
+                        textAlign: st.align,
+                        // cqh = 预览框高度的 1%：与后端「字号按画幅高度百分比」同一套语义，
+                        // 所以 9:16 / 16:9 下看到的比例和烧进成片的一致
+                        fontSize: `${st.fontSize}cqh`,
+                        color: st.color,
+                        fontWeight: st.bold ? 700 : 400,
+                        fontStyle: st.italic ? 'italic' : undefined,
+                        WebkitTextStrokeWidth: `${st.strokeWidth * st.fontSize}cqh`,
+                        WebkitTextStrokeColor: st.strokeColor,
+                        background:
+                          st.bgColor && st.bgOpacity > 0
+                            ? `color-mix(in srgb, ${st.bgColor} ${Math.round(st.bgOpacity * 100)}%, transparent)`
+                            : undefined,
+                        paddingTop: st.bgColor ? '0.12em' : undefined,
+                        paddingBottom: st.bgColor ? '0.12em' : undefined,
+                      }}
+                    >
+                      {t.text}
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
             <div className="pv-safe" />

@@ -873,6 +873,15 @@ export const timelineClips = pgTable("timeline_clips", {
    */
   transition: jsonb("transition"),
   text: text("text"),
+  /** 绑定组 id：同组片段一起平移（画面 ↔ 对白 / 配乐 / 字幕），空 = 未绑定 */
+  bindGroup: text("bind_group"),
+  /**
+   * @type { fontFamily?: string, fontSize?: number, color?: string, bold?: boolean,
+   *         italic?: boolean, strokeColor?: string, strokeWidth?: number,
+   *         bgColor?: string, bgOpacity?: number, align?: 'left'|'center'|'right',
+   *         x?: number, y?: number, maxWidth?: number } | null
+   */
+  textStyle: jsonb("text_style"),
   locked: boolean("locked").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),

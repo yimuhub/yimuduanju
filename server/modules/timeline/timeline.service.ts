@@ -22,6 +22,7 @@ import {
   timelineClips,
   timelineDocuments,
 } from '@server/database/schema';
+import { resolveTextStyle } from '@shared/api.interface';
 import type {
   Asset,
   ExportTimelineResult,
@@ -115,6 +116,8 @@ export class TimelineService {
         volume: 1,
         transition: { type: 'none', duration: 0 },
         text: null,
+        // 同一镜头的画面 / 对白 / 字幕天然是绑定的：默认联动，用户可手动解绑
+        bindGroup: `shot:${s.id}`,
         locked: false,
         sortOrder: sort++,
         createdAt: now,
@@ -135,6 +138,7 @@ export class TimelineService {
           volume: 1,
           transition: { type: 'none', duration: 0 },
           text: null,
+          bindGroup: `shot:${s.id}`,
           locked: false,
           sortOrder: sort++,
           createdAt: now,
@@ -157,6 +161,7 @@ export class TimelineService {
           volume: 1,
           transition: { type: 'none', duration: 0 },
           text: sub,
+          bindGroup: `shot:${s.id}`,
           locked: false,
           sortOrder: sort++,
           createdAt: now,
@@ -183,6 +188,8 @@ export class TimelineService {
       volume: num(row.volume, 1),
       transition: (row.transition as TimelineClip['transition']) ?? null,
       text: row.text,
+      textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
+      bindGroup: row.bindGroup,
       locked: row.locked,
       sortOrder: row.sortOrder,
       createdAt: iso(row.createdAt),
@@ -248,6 +255,8 @@ export class TimelineService {
           volume: String(c.volume ?? 1),
           transition: c.transition ?? null,
           text: c.text ?? null,
+          bindGroup: c.bindGroup ?? null,
+          textStyle: c.textStyle ?? null,
           locked: c.locked ?? false,
           sortOrder: c.sortOrder ?? i,
           updatedAt: now,
@@ -326,6 +335,10 @@ export class TimelineService {
    * 字幕轨 → ASS（样式内嵌）。
    * 烧录不再用 subtitles 滤镜的 force_style：那需要多层转义逗号，spawn 传参时
    * 极易解析失败；ASS 自带 Style，滤镜只需 `ass=file.ass`。
+   *
+   * 每个字幕片段可以有自己的字体 / 字号 / 颜色 / 描边 / 位置（TimelineTextStyle），
+   * 所以按「样式指纹」生成多条 Style 复用，事件只引用名字。位置用 \an5 + \pos
+   * 精确落在用户选的那一点上（Alignment 只有 9 个档，满足不了自由摆放）。
    */
   private buildAss(clips: TimelineClip[], width: number, height: number): string {
     const fmt = (sec: number) => {
@@ -336,25 +349,69 @@ export class TimelineService {
         2,
       )}.${p(cs % 100, 2)}`;
     };
-    const font =
-      process.platform === 'darwin'
-        ? 'Arial Unicode MS'
-        : process.platform === 'win32'
-          ? 'Microsoft YaHei'
-          : 'Noto Sans CJK SC';
-    const fontSize = Math.max(16, Math.round(height * 0.03));
-    const marginV = Math.max(24, Math.round(height * 0.07));
     const subs = clips
       .filter((c) => c.track === 'subtitle' && c.text && c.text.trim())
       .sort((a, b) => a.timelineStart - b.timelineStart);
+
+    const styles: string[] = [];
+    const styleIndex = new Map<string, string>();
+
+    const styleFor = (clip: TimelineClip): string => {
+      const st = resolveTextStyle(clip.textStyle);
+      const font = this.assFont(st.fontFamily);
+      const fontSize = Math.max(
+        12,
+        Math.round((height * Math.min(40, Math.max(1, st.fontSize))) / 100),
+      );
+      const outline = Math.max(0, Math.min(12, Math.round(st.strokeWidth * fontSize)));
+      const boxed = Boolean(st.bgColor && st.bgOpacity > 0);
+      const key = [
+        font,
+        fontSize,
+        st.color,
+        st.bold ? 1 : 0,
+        st.italic ? 1 : 0,
+        st.strokeColor,
+        outline,
+        boxed ? st.bgColor : '',
+        boxed ? st.bgOpacity : 0,
+        st.align,
+      ].join('|');
+      const hit = styleIndex.get(key);
+      if (hit) return hit;
+      const name = `S${styleIndex.size}`;
+      // BorderStyle 4 = 背景框（opaque box），1 = 描边+阴影
+      const borderStyle = boxed ? 4 : 1;
+      const backAlpha = boxed
+        ? Math.round((1 - Math.min(1, Math.max(0, st.bgOpacity))) * 255)
+        : 0;
+      const backColour = boxed
+        ? this.assColor(st.bgColor, backAlpha)
+        : '&H00000000';
+      const alignNum = st.align === 'left' ? 1 : st.align === 'right' ? 3 : 2;
+      styles.push(
+        `Style: ${name},${font},${fontSize},${this.assColor(st.color)},` +
+          `${this.assColor(st.strokeColor)},${backColour},` +
+          `${st.bold ? -1 : 0},${st.italic ? -1 : 0},${borderStyle},${outline},0,` +
+          `${alignNum},24,24,${Math.max(12, Math.round(height * 0.04))},1`,
+      );
+      styleIndex.set(key, name);
+      return name;
+    };
+
     const events = subs.map((c) => {
+      const st = resolveTextStyle(c.textStyle);
       const end = c.timelineStart + clipSpan(c);
       const text = (c.text ?? '')
         .trim()
         .replace(/\r?\n/g, '\\N')
         .replace(/[{}]/g, '');
-      return `Dialogue: 0,${fmt(c.timelineStart)},${fmt(end)},Default,,0,0,0,,${text}`;
+      const px = Math.round(Math.min(1, Math.max(0, st.x)) * width);
+      const py = Math.round(Math.min(1, Math.max(0, st.y)) * height);
+      const tag = `{\\an5\\pos(${px},${py})}`;
+      return `Dialogue: 0,${fmt(c.timelineStart)},${fmt(end)},${styleFor(c)},,0,0,0,,${tag}${text}`;
     });
+
     return [
       '[Script Info]',
       'ScriptType: v4.00+',
@@ -364,13 +421,44 @@ export class TimelineService {
       '',
       '[V4+ Styles]',
       'Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-      `Style: Default,${font},${fontSize},&H00FFFFFF,&H80000000,&H00000000,0,0,1,2,0,2,24,24,${marginV},1`,
+      ...styles,
       '',
       '[Events]',
       'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
       ...events,
       '',
     ].join('\n');
+  }
+
+  /** #RRGGBB → ASS 的 &HAABBGGRR（注意 ASS 是 BGR 顺序，alpha 0=不透明） */
+  private assColor(hex: string | undefined, alpha = 0): string {
+    const m = /^#?([0-9a-f]{6})$/i.exec((hex ?? '').trim());
+    if (!m) return '&H00FFFFFF';
+    const r = m[1].slice(0, 2);
+    const g = m[1].slice(2, 4);
+    const b = m[1].slice(4, 6);
+    const a = Math.max(0, Math.min(255, Math.round(alpha)))
+      .toString(16)
+      .padStart(2, '0');
+    return `&H${a}${b}${g}${r}`.toUpperCase();
+  }
+
+  /** 前端字体键 → 各平台实际字体族（libass 按名字找，找不到会静默回退） */
+  private assFont(key: string): string {
+    const mac = process.platform === 'darwin';
+    const win = process.platform === 'win32';
+    switch (key) {
+      case 'pingfang':
+        return mac ? 'PingFang SC' : win ? 'Microsoft YaHei' : 'Noto Sans CJK SC';
+      case 'songti':
+        return mac ? 'Songti SC' : win ? 'SimSun' : 'Noto Serif CJK SC';
+      case 'kaiti':
+        return mac ? 'Kaiti SC' : win ? 'KaiTi' : 'Noto Serif CJK SC';
+      case 'mono':
+        return mac ? 'Menlo' : win ? 'Consolas' : 'DejaVu Sans Mono';
+      default:
+        return mac ? 'Arial Unicode MS' : win ? 'Microsoft YaHei' : 'Noto Sans CJK SC';
+    }
   }
 
   /** 烧录用字体目录：libass 在 macOS 上读不到系统保留字体，指定可读目录兜底 */

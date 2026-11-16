@@ -21,12 +21,19 @@ import { toast } from 'sonner';
 import type {
   SaveTimelineRequest,
   TimelineClip,
+  TimelineTextStyle,
   TimelineTrackMeta,
 } from '@shared/api.interface';
 import { getTimeline, saveTimeline } from '@client/src/api/timeline';
 import { useStudio } from './StudioShell';
 import { clipSpan } from './model';
-import { clamp, quantizeToFrame, round3 } from '@client/src/lib/timeline-frame';
+import {
+  clamp,
+  clampBoundMove,
+  quantizeToFrame,
+  ROW_HEIGHT_DEFAULT,
+  round3,
+} from '@client/src/lib/timeline-frame';
 import {
   HISTORY_LIMIT,
   loadHistory,
@@ -121,6 +128,20 @@ export interface EdlEditor {
   setClipVolume: (id: string, volume: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
   setClipLocked: (id: string, locked: boolean) => void;
+
+  /** 绑定：把选中片段绑成一组，此后拖动任一片段整组一起走 */
+  bindSelection: () => void;
+  /** 解绑：清空选中片段的绑定组 */
+  unbindSelection: () => void;
+  /** 字幕样式：只写用户改过的键 */
+  updateTextStyle: (id: string, patch: Partial<TimelineTextStyle>) => void;
+  /** 字幕文本 */
+  setClipText: (id: string, text: string) => void;
+
+  /** 新建同类型轨道（返回新 lane，失败返回 null） */
+  addTrack: (track: TimelineTrackMeta['track']) => number | null;
+  /** 删除空轨道（该 lane 上还有片段则拒绝并返回原因） */
+  removeTrack: (track: TimelineTrackMeta['track'], lane: number) => string | null;
 
   /** 轨道属性：重命名 / 静音 / 独奏 / 锁定 / 行高 */
   updateTrack: (
@@ -333,33 +354,69 @@ export function useEdlEditor(): EdlEditor {
 
   /* ------------------------- 移动 / 修剪 ------------------------- */
 
+  /** 同绑定组、可一起移动的搭档（不含自己） */
+  const boundPartners = useCallback((clip: TimelineClip, all: TimelineClip[]): TimelineClip[] => {
+    const group = clip.bindGroup;
+    if (!group) return [];
+    return all.filter((c) => c.id !== clip.id && c.bindGroup === group && !c.locked);
+  }, []);
+
   const moveClip = useCallback(
     (id: string, timelineStart: number, lane?: number) => {
       const before = clipsRef.current;
       const src = before.find((c) => c.id === id);
       if (!src || src.locked) return;
-      const nextStart = quantizeToFrame(Math.max(0, timelineStart), fpsRef.current);
+      const fpsNow = fpsRef.current;
+      let nextStart = quantizeToFrame(Math.max(0, timelineStart), fpsNow);
       const nextLane = lane != null && lane >= 0 ? Math.round(lane) : (src.lane ?? 0);
       if (Math.abs(nextStart - src.timelineStart) < 1e-6 && nextLane === (src.lane ?? 0)) return;
-      const next = before.map((c) =>
-        c.id === id ? { ...c, timelineStart: nextStart, lane: nextLane } : c,
-      );
-      commit(next, nextLane === (src.lane ?? 0) ? '移动片段' : '移动到其它轨', before);
+
+      // 绑定联动：整组一起平移。向左推时先卡住「最早的那个搭档」，
+      // 否则会出现「主角停在 0、对白跑到 -3s」这种脏数据。
+      const partners = boundPartners(src, before);
+      if (partners.length > 0) {
+        nextStart = quantizeToFrame(
+          clampBoundMove(
+            src.timelineStart,
+            nextStart,
+            partners.map((c) => c.timelineStart),
+          ),
+          fpsNow,
+        );
+      }
+      const delta = nextStart - src.timelineStart;
+      const partnerIds = new Set(partners.map((c) => c.id));
+      const next = before.map((c) => {
+        if (c.id === id) return { ...c, timelineStart: nextStart, lane: nextLane };
+        if (partnerIds.has(c.id)) {
+          return { ...c, timelineStart: round3(Math.max(0, c.timelineStart + delta)) };
+        }
+        return c;
+      });
+      const base = nextLane === (src.lane ?? 0) ? '移动片段' : '移动到其它轨';
+      commit(next, partners.length > 0 ? `${base}（联动 ${partners.length + 1} 个）` : base, before);
     },
-    [commit],
+    [boundPartners, commit],
   );
 
   const moveClips = useCallback(
     (ids: string[], deltaSec: number) => {
       const before = clipsRef.current;
-      const set = new Set(ids);
-      const movables = before.filter((c) => set.has(c.id) && !c.locked);
+      // 选中集合自动扩展到「选中片段的全部绑定搭档」：绑了就该一起走
+      const picked = new Set(ids);
+      const groups = new Set(
+        before.filter((c) => picked.has(c.id) && c.bindGroup).map((c) => c.bindGroup as string),
+      );
+      for (const c of before) {
+        if (c.bindGroup && groups.has(c.bindGroup)) picked.add(c.id);
+      }
+      const movables = before.filter((c) => picked.has(c.id) && !c.locked);
       if (movables.length === 0) return;
       const minStart = Math.min(...movables.map((c) => c.timelineStart));
       const applied = quantizeToFrame(Math.max(deltaSec, -minStart), fpsRef.current);
       if (Math.abs(applied) < 1e-6) return;
       const next = before.map((c) =>
-        set.has(c.id) && !c.locked
+        picked.has(c.id) && !c.locked
           ? { ...c, timelineStart: round3(Math.max(0, c.timelineStart + applied)) }
           : c,
       );
@@ -676,6 +733,64 @@ export function useEdlEditor(): EdlEditor {
     [commit],
   );
 
+  /* ------------------------- 绑定 / 字幕样式 ------------------------- */
+
+  const bindSelection = useCallback(() => {
+    const before = clipsRef.current;
+    const picked = before.filter((c) => selectedIds.includes(c.id) && !c.locked);
+    if (picked.length < 2) return;
+    const group = `bg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = new Set(picked.map((c) => c.id));
+    commit(
+      before.map((c) => (ids.has(c.id) ? { ...c, bindGroup: group } : c)),
+      `绑定 ${picked.length} 个片段`,
+      before,
+    );
+  }, [commit, selectedIds]);
+
+  const unbindSelection = useCallback(() => {
+    const before = clipsRef.current;
+    const ids = new Set(selectedIds);
+    const targets = before.filter((c) => ids.has(c.id) && c.bindGroup);
+    if (targets.length === 0) return;
+    const hit = new Set(targets.map((c) => c.id));
+    commit(
+      before.map((c) => (hit.has(c.id) ? { ...c, bindGroup: null } : c)),
+      `解绑 ${targets.length} 个片段`,
+      before,
+    );
+  }, [commit, selectedIds]);
+
+  /** 字幕样式：只写用户改过的键，未改的继续继承默认 */
+  const updateTextStyle = useCallback(
+    (id: string, patch: Partial<TimelineTextStyle>) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src) return;
+      const merged: TimelineTextStyle = { ...(src.textStyle ?? {}), ...patch };
+      commit(
+        before.map((c) => (c.id === id ? { ...c, textStyle: merged } : c)),
+        '调整字幕样式',
+        before,
+      );
+    },
+    [commit],
+  );
+
+  const setClipText = useCallback(
+    (id: string, text: string) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || (src.text ?? '') === text) return;
+      commit(
+        before.map((c) => (c.id === id ? { ...c, text } : c)),
+        '修改字幕文本',
+        before,
+      );
+    },
+    [commit],
+  );
+
   /* ------------------------- 轨道属性 ------------------------- */
 
   const updateTrack = useCallback(
@@ -699,6 +814,46 @@ export function useEdlEditor(): EdlEditor {
       docRef.current = nextDoc;
       data.commitTimeline(nextDoc);
       schedule();
+    },
+    [data, schedule],
+  );
+
+  /* ------------------------- 轨道增删 ------------------------- */
+
+  const addTrack = useCallback(
+    (track: TimelineTrackMeta['track']): number | null => {
+      if (!docRef.current) return null;
+      const trackClips = clipsRef.current.filter((c) => c.track === track);
+      const meta = docRef.current.tracks ?? [];
+      const lane =
+        Math.max(
+          -1,
+          ...trackClips.map((c) => c.lane ?? 0),
+          ...meta.filter((t) => t.track === track).map((t) => t.lane ?? 0),
+        ) + 1;
+      if (lane > 19) return null;
+      updateTrack(track, lane, { height: ROW_HEIGHT_DEFAULT[track] });
+      return lane;
+    },
+    [updateTrack],
+  );
+
+  const removeTrack = useCallback(
+    (track: TimelineTrackMeta['track'], lane: number): string | null => {
+      if (!docRef.current) return '时间线尚未就绪';
+      const used = clipsRef.current.filter(
+        (c) => c.track === track && (c.lane ?? 0) === lane,
+      ).length;
+      if (used > 0) return `该轨道上还有 ${used} 个片段，先清空再删除`;
+      if ((docRef.current.tracks ?? []).length === 0 && lane === 0) return '这是唯一的基础轨道，不能删除';
+      const nextTracks = (docRef.current.tracks ?? []).filter(
+        (t) => !(t.track === track && (t.lane ?? 0) === lane),
+      );
+      const nextDoc = { ...docRef.current, tracks: nextTracks };
+      docRef.current = nextDoc;
+      data.commitTimeline(nextDoc);
+      schedule();
+      return null;
     },
     [data, schedule],
   );
@@ -830,6 +985,12 @@ export function useEdlEditor(): EdlEditor {
     setClipVolume,
     setClipTransition,
     setClipLocked,
+    bindSelection,
+    unbindSelection,
+    updateTextStyle,
+    setClipText,
+    addTrack,
+    removeTrack,
     updateTrack,
     addMarker,
     removeMarker,

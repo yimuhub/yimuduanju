@@ -259,3 +259,40 @@ export function isTrackLocked(
 ): boolean {
   return metas.some((m) => m.track === track && (m.lane ?? 0) === lane && m.locked === true);
 }
+
+/**
+ * 轨道默认行高。
+ * 视频轨要容得下帧缩略图（剪映同类工具普遍 56–80px），音频轨要看得清波形，
+ * 字幕轨只有一行字，给 30px 就够。行高可被用户拖动改写，这里只是初值。
+ */
+export const ROW_HEIGHT_DEFAULT: Record<'video' | 'audio' | 'subtitle' | 'overlay', number> = {
+  video: 62,
+  audio: 46,
+  subtitle: 30,
+  overlay: 46,
+};
+
+export const ROW_HEIGHT_MIN = 22;
+export const ROW_HEIGHT_MAX = 180;
+
+/**
+ * 绑定联动时的边界夹紧。
+ * 拖动锚点片段，同组搭档跟着平移同样的 delta；但如果往左拖会把某个搭档推到
+ * 负数（时间线没有负时间），就把锚点停在「最早搭档刚好到 0」的位置，
+ * 而不是让搭档被 Math.max(0, …) 各自截断 —— 后者会把整组的相对间距压坏。
+ *
+ * @param anchorStart  锚点片段当前起点
+ * @param desiredStart 期望的新起点
+ * @param partnerStarts 同组搭档的当前起点（不含锚点自己）
+ */
+export function clampBoundMove(
+  anchorStart: number,
+  desiredStart: number,
+  partnerStarts: number[],
+): number {
+  const delta = desiredStart - anchorStart;
+  if (delta >= 0 || partnerStarts.length === 0) return desiredStart;
+  const minPartner = Math.min(...partnerStarts);
+  if (minPartner + delta >= 0) return desiredStart;
+  return anchorStart - minPartner;
+}

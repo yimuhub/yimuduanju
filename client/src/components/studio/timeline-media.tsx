@@ -133,11 +133,13 @@ export function useWaveform(
   return data;
 }
 
-const TILE_DISPLAY_W = 52;
-
 /**
  * 视频片段帧带：等宽格子铺满片段，每格取片段区间内的一个时间点。
- * 格子数按宽度自适应并封顶 60，避免长片段渲染上千个节点。
+ *
+ * 格子宽度按「行高 × 单格宽高比」算出来 —— 这样 9:16 竖屏素材在 62px 行高里
+ * 就是 62px 宽的方图，16:9 就是 110px 宽，且上下不留黑边。
+ * 早先写死 52px 的后果是：行高只有 26px 时缩略图被裁成一条细线，看着像没做。
+ * 格子数按宽度自适应并封顶 80，避免长片段渲染上千个节点。
  */
 export const Filmstrip = ({
   thumb,
@@ -145,17 +147,20 @@ export const Filmstrip = ({
   inPoint,
   outPoint,
   pxPerSec,
+  rowHeight = 44,
 }: {
   thumb: TimelineThumbnails | null;
   span: number;
   inPoint: number;
   outPoint: number;
   pxPerSec: number;
+  rowHeight?: number;
 }): ReactNode => {
   if (!thumb || thumb.tileWidth <= 0 || thumb.tileHeight <= 0) return null;
   const width = Math.max(6, span * pxPerSec);
-  const count = clamp(Math.ceil(width / TILE_DISPLAY_W), 1, 60);
-  const tileH = (TILE_DISPLAY_W * thumb.tileHeight) / thumb.tileWidth;
+  const aspect = thumb.tileWidth / thumb.tileHeight;
+  const tileW = clamp(Math.round(rowHeight * aspect), 14, 240);
+  const count = clamp(Math.ceil(width / tileW), 1, 80);
   const duration = Math.max(0.001, outPoint - inPoint);
   const cells: ReactNode[] = [];
   for (let i = 0; i < count; i += 1) {
@@ -167,12 +172,12 @@ export const Filmstrip = ({
       <i
         key={i}
         style={{
-          width: `${TILE_DISPLAY_W}px`,
+          width: `${tileW}px`,
           height: '100%',
           flex: '0 0 auto',
           backgroundImage: `url("${thumb.spriteUrl}")`,
-          backgroundSize: `${thumb.columns * TILE_DISPLAY_W}px ${thumb.rows * tileH}px`,
-          backgroundPosition: `-${col * TILE_DISPLAY_W}px -${row * tileH}px`,
+          backgroundSize: `${thumb.columns * tileW}px ${thumb.rows * rowHeight}px`,
+          backgroundPosition: `-${col * tileW}px -${row * rowHeight}px`,
           backgroundRepeat: 'no-repeat',
         }}
       />,

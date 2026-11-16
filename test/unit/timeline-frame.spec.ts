@@ -5,6 +5,7 @@
  * 这些是「显示帧、编辑也落帧」和「磁吸对齐」的正确性底线，改之前先过这里。
  */
 import {
+  clampBoundMove,
   collectSnapTargets,
   formatTimecode,
   isTrackAudible,
@@ -12,6 +13,7 @@ import {
   parseTimecode,
   quantizeToFrame,
   resamplePeaks,
+  ROW_HEIGHT_DEFAULT,
   slicePeaks,
   snapClipStart,
   snapPoint,
@@ -165,5 +167,49 @@ describe('轨道静音 / 独奏 / 锁定', () => {
   it('锁定轨识别', () => {
     expect(isTrackLocked('video', 0, [{ track: 'video', lane: 0, locked: true }])).toBe(true);
     expect(isTrackLocked('video', 1, [{ track: 'video', lane: 0, locked: true }])).toBe(false);
+  });
+});
+
+describe('clampBoundMove · 绑定联动的边界', () => {
+  it('向右拖不受限，原样返回', () => {
+    expect(clampBoundMove(4, 7, [10, 12])).toBe(7);
+  });
+
+  it('向左拖但搭档都还在地面上，原样返回', () => {
+    // 锚点 4 → 2，delta=-2；最早搭档 10 → 8 仍 >= 0
+    expect(clampBoundMove(4, 2, [10, 12])).toBe(2);
+  });
+
+  it('会把最早搭档推成负数时，停在「刚好到 0」的位置', () => {
+    // 锚点 4 → 0（delta=-4）；最早搭档 3 → -1，所以最多拖到 锚点1（搭档 3→0）
+    expect(clampBoundMove(4, 0, [3, 9])).toBe(1);
+  });
+
+  it('搭档起点即 0 时锚点不能动', () => {
+    expect(clampBoundMove(6, 1, [0])).toBe(6);
+  });
+
+  it('没有搭档时等价于直接赋值（未绑定不影响拖动）', () => {
+    expect(clampBoundMove(5, 0, [])).toBe(0);
+  });
+
+  it('搭档间距被完整保留：夹紧后整组偏移量一致', () => {
+    const anchor = 10;
+    const partners = [4, 16];
+    const next = clampBoundMove(anchor, 0, partners);
+    const delta = next - anchor;
+    expect(partners.map((p) => p + delta)).toEqual([0, 12]);
+  });
+});
+
+describe('ROW_HEIGHT_DEFAULT · 轨道行高', () => {
+  it('视频轨要放得下缩略图，行高明显大于字幕轨', () => {
+    expect(ROW_HEIGHT_DEFAULT.video).toBeGreaterThanOrEqual(56);
+    expect(ROW_HEIGHT_DEFAULT.video).toBeGreaterThan(ROW_HEIGHT_DEFAULT.subtitle);
+  });
+
+  it('音频轨介于视频与字幕之间，波形才看得清', () => {
+    expect(ROW_HEIGHT_DEFAULT.audio).toBeGreaterThan(ROW_HEIGHT_DEFAULT.subtitle);
+    expect(ROW_HEIGHT_DEFAULT.audio).toBeLessThan(ROW_HEIGHT_DEFAULT.video);
   });
 });

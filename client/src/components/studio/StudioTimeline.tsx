@@ -31,6 +31,8 @@ import {
   Gauge,
   Keyboard,
   Layers,
+  Link2,
+  Link2Off,
   Lock,
   Magnet,
   Minus,
@@ -60,17 +62,42 @@ import {
   formatTimecode,
   parseTimecode,
   quantizeToFrame,
+  ROW_HEIGHT_DEFAULT,
+  ROW_HEIGHT_MAX,
+  ROW_HEIGHT_MIN,
   round3,
   SNAP_PX,
   snapClipStart,
   snapPoint,
 } from '@client/src/lib/timeline-frame';
-import type { Asset, TimelineClip, TimelineTrackMeta } from '@shared/api.interface';
+import { resolveTextStyle } from '@shared/api.interface';
+import type {
+  Asset,
+  TimelineClip,
+  TimelineTextStyle,
+  TimelineTrackMeta,
+} from '@shared/api.interface';
+
+/** 字幕可选字体。value 是稳定键（落库用），label 是界面显示名 */
+const TEXT_FONTS: { value: string; label: string }[] = [
+  { value: 'source-han-sans', label: '思源黑体' },
+  { value: 'pingfang', label: '苹方' },
+  { value: 'songti', label: '宋体' },
+  { value: 'kaiti', label: '楷体' },
+  { value: 'mono', label: '等宽' },
+];
+
+/** 字幕纵向位置预设（归一化 y） */
+const TEXT_POSITIONS: { value: number; label: string }[] = [
+  { value: 0.12, label: '顶部' },
+  { value: 0.5, label: '居中' },
+  { value: 0.86, label: '底部' },
+];
 
 const PX_MIN = 6;
 const PX_MAX = 160;
 const PX_DEFAULT = 17;
-const ROW_H = 26;
+
 const LABEL_W = 148;
 
 type RowTrack = TimelineClip['track'];
@@ -121,7 +148,7 @@ const makeRow = (track: RowTrack, lane: number, meta?: TimelineTrackMeta): Row =
     muted: meta?.muted === true,
     solo: meta?.solo === true,
     locked: meta?.locked === true,
-    height: clamp(meta?.height ?? ROW_H, 20, 96),
+    height: clamp(meta?.height ?? ROW_HEIGHT_DEFAULT[track], ROW_HEIGHT_MIN, ROW_HEIGHT_MAX),
   };
 };
 
@@ -158,9 +185,12 @@ const ClipView = ({
   tip,
   onDoubleClick,
   onDelete,
+  rowHeight,
 }: {
   clip: TimelineClip;
   pxPerSec: number;
+  /** 行高：缩略图按它算格子尺寸，行高变大图才不会被裁成一条线 */
+  rowHeight: number;
   selected: boolean;
   rowLocked: boolean;
   projectId?: string;
@@ -174,6 +204,8 @@ const ClipView = ({
   const isAudio = clip.track === 'audio';
   const thumb = useThumbnails(projectId, isVideo ? clip.sourceUrl : null);
   const wave = useWaveform(projectId, isAudio ? clip.sourceUrl : null);
+  const isSub = clip.track === 'subtitle';
+  const ts = resolveTextStyle(clip.textStyle ?? null);
 
   const cls = [
     'clip',
@@ -213,6 +245,7 @@ const ClipView = ({
           inPoint={clip.inPoint}
           outPoint={clip.outPoint}
           pxPerSec={pxPerSec}
+          rowHeight={rowHeight}
         />
       ) : null}
       {isAudio ? (
@@ -224,7 +257,25 @@ const ClipView = ({
           pxPerSec={pxPerSec}
         />
       ) : null}
-      <span className="tl-clip-label">{label.slice(0, 26)}</span>
+      <span
+        className="tl-clip-label"
+        style={
+          isSub
+            ? {
+                color: ts.color,
+                fontWeight: ts.bold ? 700 : 400,
+                fontStyle: ts.italic ? 'italic' : undefined,
+              }
+            : undefined
+        }
+      >
+        {label.slice(0, 26)}
+      </span>
+      {clip.bindGroup ? (
+        <i className="tl-clip-link" title="已绑定：拖动时同组片段一起移动">
+          <Link2 size={9} />
+        </i>
+      ) : null}
       <i className="tl-handle l" data-edge="left" title="修剪入点" />
       <i className="tl-handle r" data-edge="right" title="修剪出点" />
       <button
@@ -259,6 +310,7 @@ export const StudioTimeline = () => {
     tlCollapsed,
     setTlCollapsed,
     toggleTlCollapsed,
+    setDockTab,
   } = useStudio();
   const shots = data.shots;
   const clips = useMemo(() => data.timeline?.clips ?? [], [data.timeline]);
@@ -401,7 +453,7 @@ export const StudioTimeline = () => {
     }
     const rowsH = rows.reduce((sum, r) => sum + r.height, 0);
     const propsH = editor.selectedIds.length > 0 ? 30 : 0;
-    const h = clamp(32 + 16 + rowsH + propsH + 8 + 62, 236, 620);
+    const h = clamp(32 + 18 + rowsH + propsH + 8 + 66, 300, 780);
     app.style.setProperty('--tl-h', `${h}px`);
     return () => {
       app.style.removeProperty('--tl-h');
@@ -1122,6 +1174,8 @@ export const StudioTimeline = () => {
     : undefined;
   const multi = editor.selectedIds.length > 1;
 
+  const selTextStyle = resolveTextStyle(selectedClip?.textStyle ?? null);
+
   const propsBar = selectedClip ? (
     <div className="tl-props">
       <span className="tl-props-tag">
@@ -1190,6 +1244,112 @@ export const StudioTimeline = () => {
         {selectedClip.locked ? <Lock size={11} /> : <Unlock size={11} />}
         {selectedClip.locked ? '已锁定' : '锁定'}
       </button>
+      <button
+        type="button"
+        className={`tl-prop-btn${selectedClip.bindGroup ? ' on' : ''}`}
+        disabled={!multi && !selectedClip.bindGroup}
+        onClick={() =>
+          selectedClip.bindGroup ? editor.unbindSelection() : editor.bindSelection()
+        }
+        title={
+          selectedClip.bindGroup
+            ? '解绑：拖动时不再带着同组片段一起走'
+            : '绑定：选中画面 + 对白 / 配乐 / 字幕，拖一个全组跟着动'
+        }
+      >
+        {selectedClip.bindGroup ? <Link2Off size={11} /> : <Link2 size={11} />}
+        {selectedClip.bindGroup ? '解绑' : '绑定'}
+      </button>
+      {selectedClip.track === 'subtitle' ? (
+        <>
+          <span className="tl-prop-sep" />
+          <label className="tl-prop">
+            <Type size={11} />
+            <span>字体</span>
+            <select
+              value={selTextStyle.fontFamily}
+              onChange={(e) =>
+                editor.updateTextStyle(selectedClip.id, { fontFamily: e.target.value })
+              }
+              disabled={selectedClip.locked}
+            >
+              {TEXT_FONTS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="tl-prop tl-prop-range">
+            <span>字号</span>
+            <input
+              type="range"
+              min={2.4}
+              max={12}
+              step={0.2}
+              value={selTextStyle.fontSize}
+              onChange={(e) =>
+                editor.updateTextStyle(selectedClip.id, { fontSize: Number(e.target.value) })
+              }
+              disabled={selectedClip.locked}
+            />
+            <b className="tl-prop-val">{selTextStyle.fontSize.toFixed(1)}%</b>
+          </label>
+          <label className="tl-prop">
+            <span>颜色</span>
+            <input
+              type="color"
+              value={selTextStyle.color}
+              onChange={(e) => editor.updateTextStyle(selectedClip.id, { color: e.target.value })}
+              disabled={selectedClip.locked}
+            />
+          </label>
+          <label className="tl-prop tl-prop-range">
+            <span>描边</span>
+            <input
+              type="range"
+              min={0}
+              max={0.3}
+              step={0.01}
+              value={selTextStyle.strokeWidth}
+              onChange={(e) =>
+                editor.updateTextStyle(selectedClip.id, { strokeWidth: Number(e.target.value) })
+              }
+              disabled={selectedClip.locked}
+            />
+          </label>
+          <label className="tl-prop tl-prop-range">
+            <span>不透明度</span>
+            <input
+              type="range"
+              min={0.2}
+              max={1}
+              step={0.05}
+              value={selTextStyle.bgOpacity}
+              onChange={(e) =>
+                editor.updateTextStyle(selectedClip.id, { bgOpacity: Number(e.target.value) })
+              }
+              disabled={selectedClip.locked}
+            />
+          </label>
+          <label className="tl-prop">
+            <span>位置</span>
+            <select
+              value={selTextStyle.y}
+              onChange={(e) =>
+                editor.updateTextStyle(selectedClip.id, { y: Number(e.target.value) })
+              }
+              disabled={selectedClip.locked}
+            >
+              {TEXT_POSITIONS.map((p) => (
+                <option key={p.label} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      ) : null}
       <span className="sp" />
       <span className="tl-props-hint">
         {multi ? '多选：拖动整体移动 · ⌘C 复制' : '拖动移动 · 把手修剪 · Delete 波纹删除'}
@@ -1507,6 +1667,28 @@ export const StudioTimeline = () => {
                 >
                   {r.locked ? <Lock size={9} /> : <Unlock size={9} />}
                 </button>
+                <button
+                  type="button"
+                  className="tl-lb-add"
+                  title="在同类型下新增一条轨道"
+                  onClick={() => {
+                    const lane = editor.addTrack(r.track);
+                    if (lane == null) toast.info('同类型轨道已达上限（20 条）', { duration: 1600 });
+                  }}
+                >
+                  <Plus size={9} />
+                </button>
+                <button
+                  type="button"
+                  className="tl-lb-del"
+                  title="删除这条轨道（需先清空其上的片段）"
+                  onClick={() => {
+                    const err = editor.removeTrack(r.track, r.lane);
+                    if (err) toast.error(err, { duration: 2200 });
+                  }}
+                >
+                  <Minus size={9} />
+                </button>
               </span>
             </div>
           ))}
@@ -1564,7 +1746,7 @@ export const StudioTimeline = () => {
                         : `♪ ${c.text || '音频'}`;
                   const tip =
                     c.track === 'video'
-                      ? `${shot ? `#${shot.no} ${shot.txt}` : '画面片段'}（拖动移动 / 拖到其它画面轨 / 拖把手修剪）`
+                      ? `${shot ? `#${shot.no} ${shot.txt}` : '画面片段'}（双击编辑分镜 / 拖动移动 / 拖到其它画面轨 / 拖把手修剪）`
                       : c.track === 'subtitle'
                         ? '字幕：双击改字 / 拖动移位 / 拖到其它字幕轨重叠 / × 删除'
                         : `音频：${c.text || '未命名'}（拖动移位 / 拖到其它音轨重叠 / × 删除）`;
@@ -1573,13 +1755,23 @@ export const StudioTimeline = () => {
                       key={c.id}
                       clip={c}
                       pxPerSec={pxPerSec}
+                      rowHeight={row.height}
                       selected={editor.selectedIds.includes(c.id)}
                       rowLocked={row.locked}
                       projectId={projectId}
                       label={label}
                       tip={tip}
                       onDoubleClick={() => {
-                        if (c.track === 'subtitle') setSubEdit({ id: c.id, text: c.text || '' });
+                        if (c.track === 'subtitle') {
+                          setSubEdit({ id: c.id, text: c.text || '' });
+                          return;
+                        }
+                        // 画面片段双击 = 打开该镜头的详细分镜编辑（主体/动作/运镜/景别/角色）
+                        if (c.track === 'video' && c.sourceShotId) {
+                          const idx = shots.findIndex((sh) => sh.id === c.sourceShotId);
+                          if (idx >= 0) setSel(idx);
+                          setDockTab('board');
+                        }
                       }}
                       onDelete={() => editor.removeClip(c.id)}
                     />

@@ -1685,6 +1685,72 @@ export interface SplitShotResult {
 /** P3 EDL 轨道类型 */
 export type TimelineTrackKind = 'video' | 'audio' | 'subtitle' | 'overlay';
 
+/**
+ * 字幕样式。坐标为 0–1 归一化（相对画幅），字号按画幅短边比例换算，
+ * 这样 9:16 与 16:9 同一套样式都能用；只存用户改过的字段，其余继承默认。
+ */
+export interface TimelineTextStyle {
+  /** 字体族名（后端烧字幕时会做可用性回退） */
+  fontFamily?: string;
+  /** 字号：相对画幅高度的百分比（1–40），不是绝对像素 */
+  fontSize?: number;
+  /** 文字颜色 #RRGGBB */
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  /** 描边颜色与宽度（相对字号的比例，0 = 无描边） */
+  strokeColor?: string;
+  strokeWidth?: number;
+  /** 背景色与不透明度（bgColor 为空 = 无背景块） */
+  bgColor?: string;
+  bgOpacity?: number;
+  align?: 'left' | 'center' | 'right';
+  /** 归一化位置（默认 0.5 / 0.86 底部居中） */
+  x?: number;
+  y?: number;
+  /** 归一化最大行宽（默认 0.86） */
+  maxWidth?: number;
+}
+
+/** 字号 / 位置 / 描边等的出厂默认值，前端与后端烧录共用同一份 */
+export const DEFAULT_TEXT_STYLE: Required<
+  Pick<
+    TimelineTextStyle,
+    | 'fontFamily'
+    | 'fontSize'
+    | 'color'
+    | 'bold'
+    | 'italic'
+    | 'strokeColor'
+    | 'strokeWidth'
+    | 'bgColor'
+    | 'bgOpacity'
+    | 'align'
+    | 'x'
+    | 'y'
+    | 'maxWidth'
+  >
+> = {
+  fontFamily: 'source-han-sans',
+  fontSize: 5.2,
+  color: '#FFFFFF',
+  bold: true,
+  italic: false,
+  strokeColor: '#000000',
+  strokeWidth: 0.08,
+  bgColor: '',
+  bgOpacity: 0.45,
+  align: 'center',
+  x: 0.5,
+  y: 0.86,
+  maxWidth: 0.86,
+};
+
+/** 把可能残缺的样式补成完整样式 */
+export function resolveTextStyle(style?: TimelineTextStyle | null) {
+  return { ...DEFAULT_TEXT_STYLE, ...(style ?? {}) };
+}
+
 /** P3 EDL 片段（与生产 shots 解耦的剪辑决策表） */
 export interface TimelineClip {
   id: string;
@@ -1713,6 +1779,16 @@ export interface TimelineClip {
   transition?: { type: 'none' | 'crossfade' | 'fade'; duration: number } | null;
   /** 字幕文本（字幕轨） */
   text?: string | null;
+  /**
+   * 字幕样式（字幕轨）。缺省走项目默认样式。
+   * 只存「偏离默认」的字段，未填即继承，这样换主题时旧字幕不会全员打架。
+   */
+  textStyle?: TimelineTextStyle | null;
+  /**
+   * 绑定组：同组片段一起平移（画面 ↔ 对白 / 配乐 / 字幕）。
+   * 空 = 未绑定。解绑即置空；一个片段只属于一个组。
+   */
+  bindGroup?: string | null;
   locked: boolean;
   sortOrder: number;
   createdAt: string;
