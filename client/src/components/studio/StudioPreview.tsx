@@ -34,7 +34,7 @@ const readPreviewH = (): number => {
 };
 
 export const StudioPreview = () => {
-  const { data, sel, setSel, curT, playing, setPlaying, projectId, proEdit, previewMode } = useStudio();
+  const { data, sel, setSel, curT, playing, setPlaying, projectId, proEdit, previewMode, previewVolume, previewMuted, originalAudio } = useStudio();
   const [charNames, setCharNames] = useState<Record<string, string>>({});
   const [propByCode, setPropByCode] = useState<Record<string, Prop>>({});
   const [ratio, setRatio] = useState<Ratio>('9:16');
@@ -150,6 +150,8 @@ export const StudioPreview = () => {
             return Math.min(inP + Math.max(0, curT - (shot?.start ?? 0)), Math.max(inP, outP));
           })();
       v.playbackRate = tlMode && activeVideo ? speed : 1;
+      v.volume = previewVolume;
+      v.muted = previewMuted || !originalAudio;
       if (playing) {
         if (v.paused) v.play().catch(() => {});
         if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.12) {
@@ -192,7 +194,8 @@ export const StudioPreview = () => {
         Math.max(clip.inPoint, clip.outPoint),
       );
       a.playbackRate = rate;
-      a.volume = Math.max(0, Math.min(1, clip.volume));
+      a.volume = Math.max(0, Math.min(1, clip.volume)) * previewVolume;
+      a.muted = previewMuted;
       if (playing) {
         if (a.paused) a.play().catch(() => {});
         if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.12) a.currentTime = t;
@@ -201,7 +204,7 @@ export const StudioPreview = () => {
         if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.05) a.currentTime = t;
       }
     }
-  }, [curT, playing, shot, videoBroken, tlMode, activeVideo, activeAudio]);
+  }, [curT, playing, shot, videoBroken, tlMode, activeVideo, activeAudio, previewVolume, previewMuted, originalAudio]);
 
   // ---------- 上/下区拖拽分割 ----------
   const onSplitStart = useCallback(

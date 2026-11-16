@@ -17,12 +17,13 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { FileVideo, FolderOpen, Image, Loader2, Music2, Package, Search, Upload } from 'lucide-react';
 import {
-  listAssets,
+  listByProject,
   mediaUrl,
   uploadLocalFile,
 } from '@client/src/api/assets';
 import { listProjects } from '@client/src/api/projects';
 import type { Asset, ProjectListItem } from '@shared/api.interface';
+import { importJianyingPackage } from '@client/src/lib/jianying-import';
 
 /** 交给时间线的素材描述（与 timeline-dnd 的载荷同构） */
 export interface ImportedMedia {
@@ -31,6 +32,15 @@ export interface ImportedMedia {
   kind: 'video' | 'image' | 'audio';
   durationSeconds?: number;
   sourceAssetId?: string;
+  /** 来源项目：与当前项目不同时，时间线会复制一条资产记录进本项目素材库 */
+  sourceProjectId?: string;
+  sourceProjectName?: string;
+  /** 原始 fileUrl（复制资产时优先用它，避免只能引用源资产代理地址） */
+  fileUrl?: string;
+  thumbnailUrl?: string;
+  mimeType?: string;
+  /** 导入来源分组：imported=其他任务，pack=资产包，jianying=剪映草稿包 */
+  sourceType?: 'imported' | 'pack' | 'jianying';
 }
 
 type Tab = 'local' | 'other' | 'pack';
@@ -42,7 +52,10 @@ const kindOf = (a: Asset): ImportedMedia['kind'] => {
   return 'video';
 };
 
-const toImported = (a: Asset): ImportedMedia | null => {
+const toImported = (
+  a: Asset,
+  source?: { projectId?: string; projectName?: string; sourceType?: ImportedMedia['sourceType'] },
+): ImportedMedia | null => {
   const url = mediaUrl(a);
   if (!url) return null;
   return {
@@ -51,6 +64,12 @@ const toImported = (a: Asset): ImportedMedia | null => {
     kind: kindOf(a),
     durationSeconds: a.durationSeconds || undefined,
     sourceAssetId: a.id,
+    sourceProjectId: source?.projectId,
+    sourceProjectName: source?.projectName,
+    fileUrl: a.fileUrl,
+    thumbnailUrl: a.thumbnailUrl,
+    mimeType: a.mimeType,
+    sourceType: source?.sourceType,
   };
 };
 
@@ -83,6 +102,7 @@ export const StudioImportDialog = ({
   const fileRef = useRef<HTMLInputElement>(null);
   /** 资产包：清单文件解析后的条目（含 URL/类型/时长） */
   const [pack, setPack] = useState<{ name: string; items: ImportedMedia[] } | null>(null);
+  const [importingPack, setImportingPack] = useState(false);
   const packRef = useRef<HTMLInputElement>(null);
 
   // 打开时拉项目列表（给「其他任务」Tab 用）
@@ -101,11 +121,9 @@ export const StudioImportDialog = ({
     setOtherAssets([]);
     if (!pid) return;
     setLoadingOther(true);
-    Promise.all([
-      listAssets({ projectId: pid, pageSize: 100 }),
-    ])
-      .then(([res]) => {
-        const usable = (res?.items ?? []).filter((a) => {
+    listByProject(pid)
+      .then((rows) => {
+        const usable = (rows ?? []).filter((a) => {
           const t = (a.assetType || '').toLowerCase();
           return (
             (t === 'video' || t === 'image' || t === 'audio' || t === 'start_frame' || t === 'voice' || t === 'music' || t === 'sfx') &&
@@ -156,6 +174,9 @@ export const StudioImportDialog = ({
               kind,
               durationSeconds,
               sourceAssetId: res.asset?.id,
+              sourceProjectId: projectId,
+              sourceProjectName: '当前项目',
+              sourceType: 'imported',
             });
             ok += 1;
           }
@@ -186,7 +207,20 @@ export const StudioImportDialog = ({
         format?: unknown;
         name?: unknown;
         items?: unknown;
+        materials?: unknown;
+        tracks?: unknown;
       };
+      // 剪映明文 draft_content.json：不走 yimu-pack 清单，直接提取材料进素材库
+      if (data.materials || data.tracks) {
+        if (!projectId) throw new Error('缺少项目 ID');
+        setImportingPack(true);
+        const res = await importJianyingPackage(file, projectId);
+        toast.success(`已从剪映草稿提取 ${res.imported} 条素材到项目素材库`, { duration: 2200 });
+        res.warnings.forEach((w) => toast.info(w, { duration: 3000 }));
+        window.dispatchEvent(new CustomEvent('yimu:assets-changed'));
+        onClose();
+        return;
+      }
       if (data.format && data.format !== 'yimu-pack') {
         throw new Error('format 必须是 yimu-pack');
       }
@@ -215,6 +249,7 @@ export const StudioImportDialog = ({
               : undefined,
           sourceAssetId:
             typeof it.sourceAssetId === 'string' ? it.sourceAssetId : undefined,
+          sourceType: 'pack' as const,
         };
       });
       if (items.length > 200) throw new Error('单个资产包最多 200 条');
@@ -225,8 +260,34 @@ export const StudioImportDialog = ({
     } catch (e) {
       setPack(null);
       toast.error(`资产包解析失败：${(e as Error).message}`);
+    } finally {
+      setImportingPack(false);
     }
-  }, []);
+  }, [onClose, projectId]);
+
+  /** 剪映草稿包 / 普通素材 zip：解压后在浏览器侧提取媒体并上传进项目素材库 */
+  const onZipFile = useCallback(async (file: File | null) => {
+    if (!file) return;
+    if (!projectId) {
+      toast.error('缺少项目 ID，无法导入');
+      return;
+    }
+    setImportingPack(true);
+    try {
+      const res = await importJianyingPackage(file, projectId);
+      toast.success(
+        `已导入 ${res.imported} 条素材（${res.sourceType === 'jianying' ? '剪映草稿包' : '资产包'}）到项目素材库`,
+        { duration: 2400 },
+      );
+      res.warnings.forEach((w) => toast.info(w, { duration: 3200 }));
+      window.dispatchEvent(new CustomEvent('yimu:assets-changed'));
+      onClose();
+    } catch (e) {
+      toast.error(`导入失败：${(e as Error).message}`, { duration: 4200 });
+    } finally {
+      setImportingPack(false);
+    }
+  }, [onClose, projectId]);
 
   const filteredOthers = useMemo(() => {
     const q = keyword.trim().toLowerCase();
@@ -330,7 +391,12 @@ export const StudioImportDialog = ({
                 <div className="empty">这个任务还没有可复用的视频 / 图片 / 音频</div>
               ) : (
                 filteredOthers.map((a) => {
-                  const media = toImported(a);
+                  const media = toImported(a, {
+                    projectId: otherProject,
+                    projectName:
+                      projects.find((p) => p.id === otherProject)?.title || '其他任务',
+                    sourceType: 'imported',
+                  });
                   if (!media) return null;
                   return (
                     <button key={a.id} type="button" onClick={() => { onPick(media); onClose(); }}>
@@ -344,7 +410,7 @@ export const StudioImportDialog = ({
                 })
               )}
             </div>
-            <p className="tl-import-note">引用素材不会复制文件：删除源任务资产可能影响这里的片段。</p>
+            <p className="tl-import-note">选中后会复制一条资产记录进本项目素材库（按「其他任务导入」归档），删除源项目不影响当前项目。</p>
           </div>
         ) : null}
 
@@ -396,21 +462,23 @@ export const StudioImportDialog = ({
             ) : (
               <div className="tl-import-pack">
                 <Package size={28} />
-                <b>导入资产包（.yimupack / JSON）</b>
+                <b>导入资产包 / 剪映草稿包</b>
                 <p>
-                  资产包是一份素材清单：名称 + 地址 + 类型 + 时长。导入后可逐条插入，也可一键全部插入。
-                  zip 压缩包请解压后用「本地文件」多选。
+                  支持平台 .yimupack 清单、剪映 5.9 及以下明文草稿（zip 内含 draft_content.json）。
+                  剪映 6.0+ 加密草稿浏览器无法解密，会明确提示；普通 zip 素材包会按媒体文件全部导入。
                 </p>
-                <button type="button" onClick={() => packRef.current?.click()}>
-                  选择资产包文件
+                <button type="button" disabled={importingPack} onClick={() => packRef.current?.click()}>
+                  {importingPack ? '正在导入素材…' : '选择资产包 / 剪映草稿包'}
                 </button>
                 <input
                   ref={packRef}
                   type="file"
-                  accept=".yimupack,.json,application/json"
+                  accept=".yimupack,.json,.zip,application/json,application/zip"
                   hidden
                   onChange={(e) => {
-                    void onPackFile(e.target.files?.[0] ?? null);
+                    const file = e.target.files?.[0] ?? null;
+                    if (file && /\.zip$/i.test(file.name)) void onZipFile(file);
+                    else void onPackFile(file);
                     e.target.value = '';
                   }}
                 />

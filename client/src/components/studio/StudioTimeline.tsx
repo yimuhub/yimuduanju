@@ -75,7 +75,7 @@ import {
   listTimelineAgentOps,
   type TimelineAgentOpRecord,
 } from '@client/src/api/timeline';
-import { listProjectAssets, mediaUrl } from '@client/src/api/assets';
+import { createAsset, listProjectAssets, mediaUrl } from '@client/src/api/assets';
 import {
   clamp,
   collectSnapTargets,
@@ -492,6 +492,24 @@ export const StudioTimeline = () => {
   const collapsed = tlCollapsed;
   const editor = useEdl();
   const navigate = useNavigate();
+  const [snapOn, setSnapOn] = useState(() => {
+    try {
+      return localStorage.getItem('yimu.tlSnap') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleSnap = () => {
+    setSnapOn((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('yimu.tlSnap', next ? '1' : '0');
+      } catch {
+        /* 忽略 */
+      }
+      return next;
+    });
+  };
 
   /**
    * 打开某一镜的「详细分镜编辑」（右坞分镜 Tab 的全屏聚焦编辑器）。
@@ -567,8 +585,21 @@ export const StudioTimeline = () => {
   const selectedRef = useRef(editor.selectedIds);
   selectedRef.current = editor.selectedIds;
   const fps = editor.fps;
+  /** 磁吸总开关：关掉后拖动完全按像素走，适合做几帧的微调 */
+  const snapStart = useCallback(
+    (
+      raw: number,
+      span: number,
+      targets: Parameters<typeof snapClipStart>[2],
+      threshold: number,
+    ) =>
+      snapOn
+        ? snapClipStart(raw, span, targets, threshold, fps)
+        : { start: raw, snapAt: null },
+    [snapOn, fps],
+  );
 
-  // 全功能编辑顶栏的撤销/重做/快捷键入口委托到这里：EDL 撤销栈只有一份
+  // 全功能编辑顶栏的撤销/重做/快捷键/导入入口委托到这里：EDL 撤销栈只有一份
   useEffect(() => {
     const undo = () => editor.undo();
     const redo = () => editor.redo();
@@ -585,6 +616,20 @@ export const StudioTimeline = () => {
       window.removeEventListener('yimu:studio-import', importMedia);
     };
   }, [editor]);
+
+  // 镜头池删除镜头：时间线同步清掉引用该镜的片段，避免留下点不开的孤儿片段
+  useEffect(() => {
+    const onShotDeleted = (e: Event) => {
+      const shotId = (e as CustomEvent<{ shotId?: string }>).detail?.shotId;
+      if (!shotId) return;
+      const ids = clips.filter((c) => c.sourceShotId === shotId).map((c) => c.id);
+      if (ids.length === 0) return;
+      editor.rippleDelete(ids);
+      toast.info(`已清理时间线中 ${ids.length} 个关联片段`);
+    };
+    window.addEventListener('yimu:shot-deleted', onShotDeleted);
+    return () => window.removeEventListener('yimu:shot-deleted', onShotDeleted);
+  }, [clips, editor]);
 
   const shotMap = useMemo(() => new Map(shots.map((s) => [s.id, s])), [shots]);
   const selShot = shots[sel];
@@ -701,7 +746,7 @@ export const StudioTimeline = () => {
     );
     // 与拖动片段用同一套磁吸：落点也贴着播放头/片段边缘，避免「差两像素没对齐」
     const rawT = Math.max(0, (e.clientX - rect.left) / pxRef.current);
-    const snap = snapClipStart(
+    const snap = snapStart(
       rawT,
       span,
       collectSnapTargets({
@@ -713,7 +758,6 @@ export const StudioTimeline = () => {
         markers: editor.markers,
       }),
       SNAP_PX / pxRef.current,
-      fps,
     );
     const t = quantizeToFrame(Math.max(0, snap.start), fps);
     // 减掉 16px 标尺，再按行高命中轨道；落在空白区时 laneFromY 会给「最大 lane + 1」
@@ -1047,12 +1091,11 @@ export const StudioTimeline = () => {
       if (!d.moved) return;
 
       const wanted = Math.max(0, (d.anchorStart ?? 0) + dx / pxRef.current);
-      const snapped = snapClipStart(
+      const snapped = snapStart(
         wanted,
         d.totalSpan ?? 0,
         snapTargetsFor(d.clipIds ?? []),
         SNAP_PX / pxRef.current,
-        fps,
       );
       let delta = snapped.start - (d.anchorStart ?? 0);
       if ((d.anchorStart ?? 0) + delta < 0) delta = -(d.anchorStart ?? 0);
@@ -1436,7 +1479,38 @@ export const StudioTimeline = () => {
   };
 
   /** 导入对话框选中的素材：按类型落到播放头所在位置的对应轨（与拖放插入同路径） */
+  /** 把外部来源复制成本项目资产记录：删源项目不影响本项目，素材库形成「导入」文件夹 */
+  const ensureProjectAsset = (media: ImportedMedia) => {
+    if (!data.projectId) return;
+    if (media.sourceProjectId === data.projectId) {
+      window.dispatchEvent(new CustomEvent('yimu:assets-changed'));
+      return;
+    }
+    // 本地文件上传时已经建过资产；跨任务/资产包才需要补一条
+    if (media.sourceAssetId && media.sourceProjectId === data.projectId) return;
+    const assetType =
+      media.kind === 'audio' ? 'audio' : media.kind === 'image' ? 'image' : 'video';
+    const rawName = media.name || '未命名素材';
+    const name = media.sourceProjectName && media.sourceProjectName !== '当前项目'
+      ? `[${media.sourceProjectName}] ${rawName}`.slice(0, 200)
+      : rawName.slice(0, 200);
+    void createAsset({
+      projectId: data.projectId,
+      assetType,
+      name,
+      fileUrl: media.fileUrl || media.url,
+      thumbnailUrl: media.thumbnailUrl,
+      durationSeconds: media.durationSeconds,
+      mimeType: media.mimeType,
+      sourceType: media.sourceType || 'imported',
+      sourceId: media.sourceAssetId,
+    })
+      .then(() => window.dispatchEvent(new CustomEvent('yimu:assets-changed')))
+      .catch(() => undefined);
+  };
+
   const onImportedMedia = (media: ImportedMedia) => {
+    ensureProjectAsset(media);
     if (media.kind === 'audio') {
       const created = editor.addAudio(
         { name: media.name, url: media.url, durationSeconds: media.durationSeconds },
@@ -2018,6 +2092,14 @@ export const StudioTimeline = () => {
             onClick={() => editor.redo()}
           >
             <Redo2 size={13} />
+          </button>
+          <button
+            type="button"
+            className={`icon-btn${snapOn ? ' on' : ''}`}
+            title={snapOn ? '磁吸吸附已开启，点击关闭（便于逐帧微调）' : '磁吸吸附已关闭，点击开启'}
+            onClick={toggleSnap}
+          >
+            <Magnet size={13} />
           </button>
           <span className="tl-sep" />
           <button

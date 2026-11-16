@@ -109,6 +109,15 @@ export interface StudioContextValue {
   /** 中央预览的来源：timeline=只渲染时间轴；shot=镜头池点选后的单镜预览 */
   previewMode: 'timeline' | 'shot';
   setPreviewMode: (m: 'timeline' | 'shot') => void;
+  /** 预览主音量 0–1（播放条音量滑杆） */
+  previewVolume: number;
+  setPreviewVolume: (v: number) => void;
+  /** 预览静音（不改变时间线片段自身音量） */
+  previewMuted: boolean;
+  setPreviewMuted: (v: boolean) => void;
+  /** 原声开关：关闭后预览画面只有配音/音轨，不听源视频原声 */
+  originalAudio: boolean;
+  setOriginalAudio: (v: boolean) => void;
   stageView: StageView;
   setStageView: (v: StageView) => void;
   /** 当前项目会话（落库，刷新/切页可恢复） */
@@ -175,6 +184,25 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [tlCollapsed, setTlCollapsedState] = useState(readTlCollapsed);
   const [previewMode, setPreviewMode] = useState<'timeline' | 'shot'>('timeline');
+  const [previewVolume, setPreviewVolumeState] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem('yimu.previewVolume'));
+      return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [previewMuted, setPreviewMuted] = useState(false);
+  const [originalAudio, setOriginalAudio] = useState(true);
+  const setPreviewVolume = useCallback((v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    setPreviewVolumeState(clamped);
+    try {
+      localStorage.setItem('yimu.previewVolume', String(clamped));
+    } catch {
+      /* 忽略 */
+    }
+  }, []);
   const [proEdit, setProEditState] = useState(
     () => {
       try {
@@ -504,8 +532,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   // 播放：requestAnimationFrame 驱动，40fps 提交播放头（兼顾平滑与渲染成本）。
   // 旧实现 100ms 轮询会让画面最多落后播放头 0.3s，精剪时对不准口型。
   useEffect(() => {
-    if (!playing || timelineTotal <= 0) return undefined;
-    const total = timelineTotal;
+    const shot = previewMode === 'shot' ? data.shots[sel] : undefined;
+    const total = shot ? shot.start + shot.dur : timelineTotal;
+    if (!playing || total <= 0) return undefined;
     const stepSec = 1 / 40;
     let last = performance.now();
     let acc = 0;
@@ -521,7 +550,8 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           const next = t + step;
           if (next >= total) {
             window.setTimeout(() => setPlaying(false), 0);
-            return 0;
+            // 单镜预览停在镜尾；时间轴播放保持原来的循环行为
+            return shot ? total : 0;
           }
           return next;
         });
@@ -530,7 +560,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, timelineTotal, setPlaying]);
+  }, [playing, timelineTotal, previewMode, sel, data.shots, setPlaying]);
 
   // 播放头移动 → 通过 EDL 视频片段反查镜头（片段被移动后仍能跟随）
   useEffect(() => {
@@ -593,6 +623,12 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setPlaying,
       previewMode,
       setPreviewMode,
+      previewVolume,
+      setPreviewVolume,
+      previewMuted,
+      setPreviewMuted,
+      originalAudio,
+      setOriginalAudio,
       stageView,
       setStageView,
       chatMsgs,
@@ -622,6 +658,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       curT,
       playing,
       previewMode,
+      previewVolume,
+      previewMuted,
+      originalAudio,
       stageView,
       setStageView,
       chatMsgs,
