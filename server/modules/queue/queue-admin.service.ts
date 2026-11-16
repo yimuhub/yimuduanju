@@ -353,7 +353,7 @@ export class QueueAdminService {
       message: keyId
         ? bindingMode === 'exclusive'
           ? `已让「${project.title}」独占该 Key：其他项目不会再占用它`
-          : `已为「${project.title}」钉住该 Key（车到忙时可临时借用其他车道）`
+          : `已为「${project.title}」钉住该 Key（车道忙时可临时借用其他车道）`
         : `已解除「${project.title}」的 Key 钉定`,
     };
   }
