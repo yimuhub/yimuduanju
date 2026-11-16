@@ -36,6 +36,42 @@ export const sameOrigin = (
   Math.abs(a.inPoint - b.inPoint) < 1e-3 &&
   Math.abs(a.outPoint - b.outPoint) < 1e-3;
 
+/**
+ * 音频角色：波形分色的依据
+ * ------------------------------------------------------------------
+ * 时间线的音频 lane 是有业务语义的——A1 对白（人声）、A2 配乐、A3 音效
+ * （见 useEdlEditor 顶部约定）。三个角色混在一屏同色，剪的时候根本分不清
+ * 哪条是台词、哪条是 BGM，所以波形必须按角色分色，而不是所有音频一个绿。
+ *
+ * 角色由 lane 决定而不是新增字段：lane 就是角色，用户换角色＝把片段挪到那条轨，
+ * 这样数据里不会出现「说自己是配乐却躺在对白轨」的矛盾状态。
+ */
+export type AudioRole = 'voice' | 'music' | 'sfx';
+
+export const AUDIO_ROLE_LABEL: Record<AudioRole, string> = {
+  voice: '人声',
+  music: '配乐',
+  sfx: '音效',
+};
+
+/** 角色 → 约定 lane（换角色就是换到这条轨） */
+export const AUDIO_ROLE_LANE: Record<AudioRole, number> = {
+  voice: 0,
+  music: 1,
+  sfx: 2,
+};
+
+/** 只有音频片段有角色；画面/字幕/叠加返回 null（它们不是「人声/配乐」） */
+export const audioRoleOf = (
+  clip: Pick<TimelineClip, 'track' | 'lane'>,
+): AudioRole | null => {
+  if (clip.track !== 'audio') return null;
+  const lane = clip.lane ?? 0;
+  if (lane <= 0) return 'voice';
+  if (lane === 1) return 'music';
+  return 'sfx';
+};
+
 /** 镜头在生产链上的三种状态（设计稿 data-st 同名） */
 export type ShotState = 'done' | 'render' | 'pending';
 

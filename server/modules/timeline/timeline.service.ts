@@ -23,6 +23,7 @@ import {
   timelineDocuments,
 } from '@server/database/schema';
 import { resolveTextStyle } from '@shared/api.interface';
+import { buildTransitionFilter, planTransitions } from './transition-plan';
 import type {
   Asset,
   ExportTimelineResult,
@@ -571,8 +572,17 @@ export class TimelineService {
       this.exportService.runFfmpeg(bin, args, work);
     try {
       // 1) 视频片段：统一分辨率/帧率/像素格式（concat 前的必要条件）
+      //
+      // 叠化必须在渲染前就定好每段要渲染多长：叠化出场的段要多渲染 d 秒尾巴
+      // （源文件出点之后的 handle，不够时 tpad 克隆末帧），否则 xfade 没有素材可混。
+      // 规则与「叠化不缩短成片总时长」的约束都在 transition-plan 里，单测覆盖。
+      const plan = planTransitions(
+        videoClips.map((c) => ({
+          span: Math.max(0.05, c.outPoint - c.inPoint) / (c.speed > 0 ? c.speed : 1),
+          transition: c.transition ?? null,
+        })),
+      );
       const segments: string[] = [];
-      let totalDur = 0;
       for (let i = 0; i < videoClips.length; i += 1) {
         const clip = videoClips[i];
         const url = clip.sourceUrl as string;
@@ -583,9 +593,11 @@ export class TimelineService {
         // eslint-disable-next-line no-await-in-loop
         const ok = await this.exportService.materializeMediaToFile(url, src, cacheDir);
         if (!ok) throw new BadRequestException(`片段 ${i + 1} 源媒体下载失败`);
-        const span = Math.max(0.05, clip.outPoint - clip.inPoint);
         const speed = clip.speed > 0 ? clip.speed : 1;
-        const outSpan = span / speed;
+        const visibleSpan = Math.max(0.05, clip.outPoint - clip.inPoint) / speed;
+        const outSpan = plan.renderSpan[i];
+        /** 叠化尾巴（可能为 0）：渲染时长减去该段实际占用的时间线时长 */
+        const tail = round3(outSpan - visibleSpan);
         const fadeD =
           clip.transition?.type === 'fade'
             ? Math.min(0.5, Math.max(0.1, clip.transition.duration || 0.4))
@@ -606,6 +618,9 @@ export class TimelineService {
           `fps=${fps}`,
           ...(Math.abs(speed - 1) > 1e-3 ? [`setpts=PTS/${speed}`] : []),
           ...fadeFilters,
+          // 叠化尾巴：源素材够长时是真实画面（handle），不够长时克隆末帧补足，
+          // 保证 xfade 的 offset+duration 一定落在这一段之内，否则 ffmpeg 直接报错
+          ...(tail > 0 ? [`tpad=stop_mode=clone:stop_duration=${tail.toFixed(3)}`] : []),
         ].join(',');
         // eslint-disable-next-line no-await-in-loop
         const segOk = await run([
@@ -614,7 +629,7 @@ export class TimelineService {
           ...(still
             ? ['-loop', '1', '-i', src]
             : ['-ss', String(Math.max(0, clip.inPoint)), '-i', src]),
-          '-t', String(span),
+          '-t', String(outSpan),
           '-vf', vf,
           '-an',
           '-c:v', 'libx264',
@@ -625,23 +640,44 @@ export class TimelineService {
         ]);
         if (!segOk) throw new BadRequestException(`片段 ${i + 1} 渲染失败（源媒体可能损坏）`);
         segments.push(seg);
-        totalDur += span / speed;
       }
-      totalDur = round3(totalDur);
+      const totalDur = plan.total;
 
-      const listPath = join(work, 'list.txt');
-      cleanup.push(listPath);
-      await writeFile(
-        listPath,
-        segments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'),
-        'utf8',
-      );
       const concatPath = join(work, 'concat.mp4');
       cleanup.push(concatPath);
-      const concatOk = await run([
-        '-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', concatPath,
-      ]);
-      if (!concatOk) throw new BadRequestException('片段拼接失败（编码不一致）');
+      if (plan.hasCrossfade) {
+        // 有叠化：不能走 concat 协议的 `-c copy`（它只会首尾相接，做不出同时可见）。
+        // 改成一条 filter 链，硬切用 concat 滤镜、叠化用 xfade，串在同一张图里，
+        // 这样时间戳连续、混切也不会错位。代价是全片重编码一次（与烧字幕同量级）。
+        const filter = buildTransitionFilter(plan, fps);
+        const inputs = segments.flatMap((p) => ['-i', p]);
+        const xfadeOk = await run([
+          '-y',
+          ...inputs,
+          '-filter_complex', filter,
+          '-map', '[vout]',
+          '-an',
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-preset', 'veryfast',
+          '-crf', '20',
+          '-t', String(totalDur),
+          concatPath,
+        ]);
+        if (!xfadeOk) throw new BadRequestException('叠化渲染失败（转场计算与素材不匹配）');
+      } else {
+        const listPath = join(work, 'list.txt');
+        cleanup.push(listPath);
+        await writeFile(
+          listPath,
+          segments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'),
+          'utf8',
+        );
+        const concatOk = await run([
+          '-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', concatPath,
+        ]);
+        if (!concatOk) throw new BadRequestException('片段拼接失败（编码不一致）');
+      }
 
       // 2) 音频轨：trim + 音量 + 延迟到 timelineStart，多轨 amix
       let audioPath: string | null = null;

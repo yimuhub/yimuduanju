@@ -4,6 +4,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Grid3X3,
   List,
+  GripVertical,
   Sparkles,
   Play,
   RefreshCw,
@@ -25,7 +26,7 @@ import {
   Check,
   ChevronDown as ChevronDownSmall,
 } from 'lucide-react';
-import { storyboard, assets, projects, bible, episodes as episodesApi } from '@client/src/api';
+import { storyboard, assets, projects, bible, episodes as episodesApi, timeline as timelineApi } from '@client/src/api';
 import { useEpisodeScope } from '../EpisodeContext';
 import type { Shot, Scene, Segment, Asset, Character, BlockedVideoSummary } from '@shared/api.interface';
 import type { ProjectDiagnosis } from '@shared/artifact-state';
@@ -98,6 +99,10 @@ const ProjectStoryboardTab = () => {
   const [selectedScene, setSelectedScene] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 网格卡片拖拽排序：被拖的镜头 + 当前悬停的落点（落点只在视觉上提示，松手才落库）
+  const [dragShotId, setDragShotId] = useState<string | null>(null);
+  const [dropShotId, setDropShotId] = useState<string | null>(null);
+  const [reordering, setReordering] = useState(false);
   // 全屏聚焦编辑器：解决卡片内/右栏编辑空间太小的问题
   const [focusShotId, setFocusShotId] = useState<string | null>(null);
   const [batching, setBatching] = useState(false);
@@ -615,6 +620,40 @@ const ProjectStoryboardTab = () => {
     }
   };
 
+  /**
+   * 网格卡片拖拽排序
+   * -------------------------------------------------------------
+   * 关键点：**必须提交全量顺序**，不能只交被筛出来的一批。
+   * 服务端 reorderShots 的语义是「给定 id 按数组顺序排前面，其余保持原序」，
+   * 按场筛选时只交子集会把这几镜全部提到片头（静默改变成片顺序）。
+   * 所以这里在完整的 shots 列表上做插入，再把全部 id 交上去。
+   */
+  const handleReorderShots = async (fromId: string, toId: string) => {
+    if (!id || fromId === toId || reordering) return;
+    const list = [...shots].sort((a, b) => a.shotNumber - b.shotNumber);
+    const from = list.findIndex((s) => s.id === fromId);
+    const to = list.findIndex((s) => s.id === toId);
+    if (from < 0 || to < 0) return;
+    const next = [...list];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    const before = shots;
+    // 乐观更新：拖完立刻看到新位置，失败再回滚
+    setShots(next.map((s, i) => ({ ...s, shotNumber: i + 1 })));
+    setReordering(true);
+    try {
+      const saved = await timelineApi.reorderShots(id, next.map((s) => s.id));
+      setShots([...saved].sort((a, b) => a.shotNumber - b.shotNumber));
+      toast.success('顺序已保存', { duration: 1400 });
+    } catch (err) {
+      logger.error('Reorder shots failed:', String(err));
+      setShots(before);
+      toast.error('调整顺序失败');
+    } finally {
+      setReordering(false);
+    }
+  };
+
   const handleDelete = async (shotId: string) => {
     if (!id) return;
     if (!await showConfirm('确定删除这个分镜吗？')) return;
@@ -885,9 +924,40 @@ const ProjectStoryboardTab = () => {
               <div
                 key={shot.id}
                 id={`shot-card-${shot.id}`}
+                // 拖拽排序：整卡可拖，松手落到目标卡的位置上（不是交换，是插入）
+                draggable={!reordering}
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  // Firefox 必须写数据，否则 dragstart 之后不会触发 dragover
+                  e.dataTransfer.setData('text/plain', shot.id);
+                  setDragShotId(shot.id);
+                  setDropShotId(null);
+                }}
+                onDragOver={(e) => {
+                  if (!dragShotId || dragShotId === shot.id) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dropShotId !== shot.id) setDropShotId(shot.id);
+                }}
+                onDragLeave={() => {
+                  if (dropShotId === shot.id) setDropShotId(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const from = dragShotId || e.dataTransfer.getData('text/plain');
+                  setDragShotId(null);
+                  setDropShotId(null);
+                  if (from && from !== shot.id) void handleReorderShots(from, shot.id);
+                }}
+                onDragEnd={() => {
+                  setDragShotId(null);
+                  setDropShotId(null);
+                }}
                 className={`overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md ${
                   searchParams.get('shot') === shot.id ? 'ring-2 ring-primary/50' : ''
-                }`}
+                } ${dragShotId === shot.id ? 'opacity-40' : ''} ${
+                  dropShotId === shot.id ? 'ring-2 ring-primary ring-offset-2' : ''
+                } ${reordering ? 'cursor-wait' : 'cursor-grab active:cursor-grabbing'}`}
               >
                 {/* Thumbnail：点击放大（Lightbox）；无图时点击展开详情 */}
                 <div
@@ -922,7 +992,11 @@ const ProjectStoryboardTab = () => {
                       <Lock className="h-3 w-3" />
                     </div>
                   )}
-                  <div className="absolute left-2 top-2 rounded-md bg-black/50 px-1.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+                  <div
+                    className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-black/50 px-1.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm"
+                    title="按住卡片拖动可调整镜头顺序（松手即保存）"
+                  >
+                    <GripVertical className="h-3 w-3 opacity-60" />
                     #{shot.shotNumber}
                   </div>
                   {shot.mock && (

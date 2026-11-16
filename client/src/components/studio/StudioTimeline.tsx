@@ -53,7 +53,15 @@ import {
   X,
 } from 'lucide-react';
 import { useStudio } from './StudioShell';
-import { clipSpan, sameOrigin, shotLabel } from './model';
+import {
+  AUDIO_ROLE_LABEL,
+  AUDIO_ROLE_LANE,
+  audioRoleOf,
+  clipSpan,
+  sameOrigin,
+  shotLabel,
+  type AudioRole,
+} from './model';
 import { useEdlEditor } from './useEdlEditor';
 import { Filmstrip, useThumbnails, useWaveform, Waveform } from './timeline-media';
 import { exportTimeline } from '@client/src/api/timeline';
@@ -124,6 +132,16 @@ const LABEL_W = 148;
 
 type RowTrack = TimelineClip['track'];
 
+/**
+ * 音频三角色的配色（轨道色标 / 片段底色 / 波形色共用一套）。
+ * 人声偏绿、配乐偏蓝、音效偏琥珀：色相差得够远，缩到 17px/s 也能一眼分出来。
+ */
+const AUDIO_ROLE_COLOR: Record<AudioRole, string> = {
+  voice: '#3E6B4C',
+  music: '#3A4A7A',
+  sfx: '#6B5330',
+};
+
 interface Row {
   key: string;
   track: RowTrack;
@@ -153,7 +171,10 @@ const makeRow = (track: RowTrack, lane: number, meta?: TimelineTrackMeta): Row =
   } else if (track === 'audio') {
     code = `A${lane + 1}`;
     baseTitle = audioLaneTitle(lane);
-    color = '#3E6B4C';
+    // 轨道色与片段波形色必须同源（audioRoleOf），否则同一角色出现两种颜色
+    const role = audioRoleOf({ track: 'audio', lane });
+    color =
+      role === 'music' ? AUDIO_ROLE_COLOR.music : role === 'sfx' ? AUDIO_ROLE_COLOR.sfx : AUDIO_ROLE_COLOR.voice;
   } else if (track === 'video') {
     code = `V${lane + 1}`;
     baseTitle = lane === 0 ? '画面' : `画面${lane + 1}`;
@@ -233,11 +254,14 @@ const ClipView = ({
     isAudio || isVideo ? clip.sourceUrl : null,
   );
   const isSub = clip.track === 'subtitle';
+  const role = audioRoleOf(clip);
   const ts = resolveTextStyle(clip.textStyle ?? null);
 
   const cls = [
     'clip',
     clip.track === 'subtitle' ? 'v2' : isAudio ? 'a' : clip.sourceUrl ? 'v' : 'pending',
+    // 音频按角色分色：人声 / 配乐 / 音效 各自的底色与波形色
+    role ? `role-${role}` : '',
     selected ? 'on' : '',
     clip.locked || rowLocked ? 'locked' : '',
     audioDetached ? 'audio-off' : '',
@@ -314,12 +338,28 @@ const ClipView = ({
             : undefined
         }
       >
+        {role ? (
+          <b className={`tl-role-tag ${role}`} title={`音轨角色：${AUDIO_ROLE_LABEL[role]}`}>
+            {AUDIO_ROLE_LABEL[role]}
+          </b>
+        ) : null}
         {label.slice(0, 26)}
       </span>
       {clip.bindGroup ? (
         <i className="tl-clip-link" title="已绑定：拖动时同组片段一起移动">
           <Link2 size={9} />
         </i>
+      ) : null}
+      {/* 转场角标：叠化画成右侧渐隐（导出侧是真的 xfade，不只是给单段加 fade） */}
+      {clip.transition && clip.transition.type !== 'none' ? (
+        <i
+          className={`tl-clip-xf ${clip.transition.type}`}
+          title={
+            clip.transition.type === 'crossfade'
+              ? `叠化 ${Number(clip.transition.duration ?? 0).toFixed(1)}s：与下一段交叉混合`
+              : `淡入淡出 ${Number(clip.transition.duration ?? 0).toFixed(1)}s`
+          }
+        />
       ) : null}
       <i className="tl-handle l" data-edge="left" title="修剪入点" />
       <i className="tl-handle r" data-edge="right" title="修剪出点" />
@@ -1331,10 +1371,25 @@ export const StudioTimeline = () => {
     return e >= viewport.start - 2 && s <= viewport.end + 2;
   };
 
-  const selectedClip = clips.find((c) => c.id === editor.selectedIds[0]);  const selectedRow = selectedClip
+  const selectedClip = clips.find((c) => c.id === editor.selectedIds[0]);
+  const selectedRow = selectedClip
     ? rowByKey.get(`${selectedClip.track}:${selectedClip.lane ?? 0}`)
     : undefined;
   const multi = editor.selectedIds.length > 1;
+
+  /**
+   * 叠化必须落在「这一段的末尾 + 下一段的开头」上，最后一镜没有下一段，
+   * 导出时会退化成硬切。提前在属性条上说清楚，比导完发现没效果强。
+   */
+  const selectedClipEnd = selectedClip ? selectedClip.timelineStart + clipSpan(selectedClip) : 0;
+  const hasNextVideoClip = selectedClip
+    ? clips.some(
+        (c) =>
+          c.track === 'video' &&
+          c.id !== selectedClip.id &&
+          c.timelineStart >= selectedClipEnd - 0.06,
+      )
+    : false;
 
   const selTextStyle = resolveTextStyle(selectedClip?.textStyle ?? null);
 
@@ -1365,23 +1420,56 @@ export const StudioTimeline = () => {
         </select>
       </label>
       {selectedClip.track === 'audio' ? (
-        <label className="tl-prop">
-          {selectedClip.volume > 0 ? <Volume2 size={11} /> : <VolumeX size={11} />}
-          <span>音量</span>
-          <select
-            value={Math.round(selectedClip.volume * 100)}
-            onChange={(e) =>
-              editor.setClipVolume(selectedClip.id, Number(e.target.value) / 100)
-            }
-            disabled={selectedClip.locked}
-          >
-            {[0, 25, 50, 75, 100].map((v) => (
-              <option key={v} value={v}>
-                {v}%
-              </option>
-            ))}
-          </select>
-        </label>
+        <>
+          <label className="tl-prop" title="角色决定轨道（A1 人声 / A2 配乐 / A3 音效）与波形配色">
+            <span>角色</span>
+            <select
+              value={audioRoleOf(selectedClip) ?? 'voice'}
+              disabled={selectedClip.locked}
+              onChange={(e) => {
+                const role = e.target.value as AudioRole;
+                const lane = AUDIO_ROLE_LANE[role];
+                if (lane === (selectedClip.lane ?? 0)) return;
+                const busy = clips.some(
+                  (c) =>
+                    c.track === 'audio' &&
+                    c.id !== selectedClip.id &&
+                    (c.lane ?? 0) === lane &&
+                    c.timelineStart < selectedClip.timelineStart + clipSpan(selectedClip) - 1e-3 &&
+                    c.timelineStart + clipSpan(c) > selectedClip.timelineStart + 1e-3,
+                );
+                if (busy) {
+                  toast.error(`A${lane + 1}（${AUDIO_ROLE_LABEL[role]}）在这段时间已有片段`, {
+                    duration: 2200,
+                  });
+                  return;
+                }
+                editor.moveClip(selectedClip.id, selectedClip.timelineStart, lane);
+              }}
+            >
+              <option value="voice">人声</option>
+              <option value="music">配乐</option>
+              <option value="sfx">音效</option>
+            </select>
+          </label>
+          <label className="tl-prop">
+            {selectedClip.volume > 0 ? <Volume2 size={11} /> : <VolumeX size={11} />}
+            <span>音量</span>
+            <select
+              value={Math.round(selectedClip.volume * 100)}
+              onChange={(e) =>
+                editor.setClipVolume(selectedClip.id, Number(e.target.value) / 100)
+              }
+              disabled={selectedClip.locked}
+            >
+              {[0, 25, 50, 75, 100].map((v) => (
+                <option key={v} value={v}>
+                  {v}%
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
       ) : null}
       <label className="tl-prop">
         <Magnet size={11} />
@@ -1398,9 +1486,43 @@ export const StudioTimeline = () => {
         >
           <option value="none">硬切</option>
           <option value="fade">淡入淡出</option>
-          <option value="crossfade">叠化（预留）</option>
+          <option value="crossfade">叠化</option>
         </select>
       </label>
+      {selectedClip.track === 'video' &&
+      (selectedClip.transition?.type === 'crossfade' || selectedClip.transition?.type === 'fade') ? (
+        <label
+          className="tl-prop"
+          title={
+            selectedClip.transition?.type === 'crossfade' && !hasNextVideoClip
+              ? '叠化需要下一段画面：这条是最后一镜，导出时会退化成硬切'
+              : '转场时长（叠化上手调，会吃掉相邻两段的尾巴，不改变成片总时长）'
+          }
+        >
+          <span>时长</span>
+          <input
+            type="number"
+            className="tl-prop-num"
+            min={0.1}
+            max={selectedClip.transition?.type === 'crossfade' ? 3 : 0.5}
+            step={0.1}
+            value={Number(selectedClip.transition?.duration ?? 0.4)}
+            disabled={selectedClip.locked}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (!Number.isFinite(v)) return;
+              editor.setClipTransition(selectedClip.id, {
+                type: (selectedClip.transition?.type ?? 'fade') as 'crossfade' | 'fade',
+                duration: Math.min(3, Math.max(0.1, v)),
+              });
+            }}
+          />
+          <span className="tl-prop-val">s</span>
+          {selectedClip.transition?.type === 'crossfade' && !hasNextVideoClip ? (
+            <span className="tl-prop-warn">无下一段</span>
+          ) : null}
+        </label>
+      ) : null}
       {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
         detachedAudioOf(selectedClip) ? (
           <button
