@@ -8,18 +8,21 @@
  * 缓存策略：
  *   · sprite / peaks 以「媒体地址 + 参数」哈希命名，命中直接返回 JSON；
  *   · 同一组参数并发请求用 in-flight Map 去重，避免重复抽帧；
- *   · 生成失败不写缓存，下次请求会重试。
+ *   · 生成失败不写缓存，下次请求会重试；
+ *   · 命中即 touch（刷新 mtime = 最后访问时间），再按 TTL + 总量上限惰性淘汰，
+ *     见 timeline-cache.ts。缓存目录是可再生的中间产物，不清会按项目无限累积。
  */
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, readFile, stat, writeFile } from 'fs/promises';
+import { mkdir, readFile, stat, utimes, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { TimelineThumbnails, TimelineWaveform } from '@shared/api.interface';
 import { uploadDir } from '../assets/upload-dir';
 import { ExportService } from '../export/export.service';
+import { envPositiveInt, sweepTimelineCaches } from './timeline-cache';
 
 const THUMB_TILE_W = 168;
 const THUMB_MAX_FRAMES = 240;
@@ -28,16 +31,80 @@ const WAVE_POINTS = 1000;
 const WAVE_RATE = 8000;
 const SRC_MAX_BYTES = 512 * 1024 * 1024;
 
+/** 缓存保留天数（最后一次被访问之后）；0 = 不按时间淘汰 */
+const CACHE_TTL_DAYS = 14;
+/** 两个缓存目录合计占用上限（MB）；0 = 不限量 */
+const CACHE_MAX_MB = 2048;
+/** 扫描间隔（分钟）：惰性触发，同一次进程内不会更频繁；0 = 关闭自动清理 */
+const CACHE_SCAN_MIN = 30;
+/** 这段时间内碰过的文件不删（正在读 / 刚生成还没被前端消费） */
+const CACHE_PROTECT_MS = 10 * 60 * 1000;
+const MB = 1024 * 1024;
+
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 @Injectable()
-export class TimelineMediaService {
+export class TimelineMediaService implements OnModuleInit {
   private readonly logger = new Logger(TimelineMediaService.name);
   /** 同一份媒体 + 同一组参数的并发请求合并成一次生成 */
   private readonly inflight = new Map<string, Promise<unknown>>();
+  /** 上次扫描缓存的时间戳（毫秒）；0 表示本次进程还没扫过 */
+  private lastSweepAt = 0;
+  /** 正在扫描时不再叠加，避免并发请求各扫一遍 */
+  private sweeping = false;
 
   constructor(private readonly exportService: ExportService) {}
+
+  /** 启动时扫一次：把上次进程遗留的过期缓存清掉 */
+  onModuleInit(): void {
+    this.maybeSweepCaches();
+  }
+
+  /**
+   * 惰性缓存淘汰：由每次 thumbnails / waveform 请求顺带触发，
+   * 但被 CACHE_SCAN_MIN 节流。整体 fire-and-forget —— 清理失败绝不能影响
+   * 用户当前的剪辑请求（最多下次再扫），所以这里吞掉一切异常。
+   */
+  private maybeSweepCaches(): void {
+    const scanMin = envPositiveInt('YIMU_TIMELINE_CACHE_SCAN_MIN', CACHE_SCAN_MIN);
+    if (scanMin <= 0) return;
+    const now = Date.now();
+    if (this.sweeping || now - this.lastSweepAt < scanMin * 60_000) return;
+    this.sweeping = true;
+    this.lastSweepAt = now;
+    const ttlDays = envPositiveInt('YIMU_TIMELINE_CACHE_TTL_DAYS', CACHE_TTL_DAYS);
+    const maxMb = envPositiveInt('YIMU_TIMELINE_CACHE_MAX_MB', CACHE_MAX_MB);
+    void sweepTimelineCaches(uploadDir(), {
+      now,
+      ttlMs: ttlDays * 86_400_000,
+      maxBytes: maxMb * MB,
+      protectMs: CACHE_PROTECT_MS,
+    })
+      .then((r) => {
+        if (r.removed > 0) {
+          this.logger.log(
+            `时间线缓存清理：删除 ${r.removed}/${r.scanned} 个文件，` +
+              `释放 ${(r.freedBytes / MB).toFixed(1)}MB，保留 ${(r.keptBytes / MB).toFixed(1)}MB`,
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        this.logger.warn(`时间线缓存清理失败（不影响当前请求）：${(e as Error)?.message ?? e}`);
+      })
+      .finally(() => {
+        this.sweeping = false;
+      });
+  }
+
+  /**
+   * 标记「最后一次访问」。用 mtime 承载最后访问时间：
+   * atime 在 relatime 挂载下最多一天才更新一次，拿来做过期判定会误删热数据。
+   */
+  private async touch(...paths: string[]): Promise<void> {
+    const now = new Date();
+    await Promise.all(paths.map((p) => utimes(p, now, now).catch(() => undefined)));
+  }
 
   private cacheDir(projectId: string): string {
     return join(uploadDir(), projectId, 'timeline-cache');
@@ -66,7 +133,11 @@ export class TimelineMediaService {
     const ext = (trimmed.split('?')[0].match(/\.[a-z0-9]{2,5}$/i)?.[0] ?? '.mp4').toLowerCase();
     const dest = join(dir, `${this.hash(trimmed)}${ext}`);
     const size = await stat(dest).then((s) => s.size).catch(() => 0);
-    if (size > 1024) return dest;
+    if (size > 1024) {
+      // 命中已下载的副本：刷新最后访问时间，避免被淘汰扫走
+      await this.touch(dest);
+      return dest;
+    }
     const ok = await this.exportService.materializeMediaToFile(
       trimmed,
       dest,
@@ -144,6 +215,7 @@ export class TimelineMediaService {
   ): Promise<TimelineThumbnails> {
     const interval = clamp(intervalIn ?? 1, 0.5, 10);
     const tileWidth = clamp(Math.round(tileWidthIn ?? THUMB_TILE_W), 96, 320);
+    this.maybeSweepCaches();
     const key = this.hash(`${url}|${interval}|${tileWidth}`);
     const cache = this.cacheDir(projectId);
     await mkdir(cache, { recursive: true });
@@ -152,7 +224,11 @@ export class TimelineMediaService {
     const metaPath = join(cache, `thumb-${key}.json`);
 
     const cached = await this.readJson<TimelineThumbnails>(metaPath);
-    if (cached && existsSync(spritePath)) return cached;
+    if (cached && existsSync(spritePath)) {
+      // 命中：刷新 sprite 与元数据的最后访问时间
+      await this.touch(spritePath, metaPath);
+      return cached;
+    }
 
     const tag = `thumb:${key}`;
     const running = this.inflight.get(tag);
@@ -234,13 +310,17 @@ export class TimelineMediaService {
    */
   async waveform(projectId: string, url: string, pointsIn?: number): Promise<TimelineWaveform> {
     const points = clamp(Math.round(pointsIn ?? WAVE_POINTS), 200, 4000);
+    this.maybeSweepCaches();
     const key = this.hash(`${url}|${points}`);
     const cache = this.cacheDir(projectId);
     await mkdir(cache, { recursive: true });
     const jsonPath = join(cache, `wave-${key}.json`);
 
     const cached = await this.readJson<TimelineWaveform>(jsonPath);
-    if (cached) return cached;
+    if (cached) {
+      await this.touch(jsonPath);
+      return cached;
+    }
 
     const tag = `wave:${key}`;
     const running = this.inflight.get(tag);
