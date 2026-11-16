@@ -198,12 +198,14 @@ const ProjectExportTab = () => {
   };
   // 时间线精剪导出：读底部时间线的 EDL，与「按镜头顺序」合成完全独立，两条端口并存。
   const [tlExporting, setTlExporting] = useState(false);
+  // 画面轨导出策略：多画面轨（V2/V3）默认只导主链，避免把备选镜头串成一段
+  const [laneMode, setLaneMode] = useState<'sequence' | 'main'>('main');
   const [tlAsset, setTlAsset] = useState<Asset | null>(null);
   const handleTimelineExport = async () => {
     if (!id || tlExporting) return;
     setTlExporting(true);
     try {
-      const data = await exportTimelineEdl(id, { burnSubtitles: true });
+      const data = await exportTimelineEdl(id, { burnSubtitles: true, videoLaneMode: laneMode });
       setTlAsset(data.asset);
       toast.success(
         `时间线精剪成片已生成：${data.clips} 段 · ${data.durationSeconds.toFixed(1)}s，已归档到「项目资产」`,
@@ -556,6 +558,15 @@ const ProjectExportTab = () => {
                 <span>用底部时间线的剪辑结果：片段顺序 / 裁剪 / 变速 / 音轨 / 字幕轨，尊重轨道静音与独奏</span>
               </div>
             </div>
+            <select
+              className="ex-opt-select"
+              value={laneMode}
+              onChange={(e) => setLaneMode(e.target.value === 'sequence' ? 'sequence' : 'main')}
+              title="画面轨策略：只导主链（推荐）/ 全部串行拼接（V2 备选镜头会被拼进成片）"
+            >
+              <option value="main">画面：只导主链</option>
+              <option value="sequence">画面：全部串行</option>
+            </select>
             <button
               type="button"
               className="ex-btn ex-btn-quiet"
