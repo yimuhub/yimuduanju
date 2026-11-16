@@ -146,10 +146,15 @@ const importBlob = async (
   durationSeconds: number | undefined,
   sourceType: 'jianying' | 'pack',
 ): Promise<boolean> => {
-  const res = await uploadLocalFile(projectId, blob, safeName(`[剪映] ${name}`, '剪映素材'), durationSeconds);
+  const displayName = safeName(`[剪映] ${name}`, '剪映素材');
+  // HTTP header 只能安全承载 ASCII；中文原名放 header 会被浏览器按 latin1 丢弃成 "[]"。
+  // 先传 ASCII 临时名，再用 PATCH 把展示名改回中文。
+  const ext = name.split('.').pop()?.replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin';
+  const headerName = `jianying-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const res = await uploadLocalFile(projectId, blob, headerName, durationSeconds);
   if (!res.asset?.id) return false;
   try {
-    await updateAsset(res.asset.id, { sourceType });
+    await updateAsset(res.asset.id, { sourceType, name: displayName });
   } catch {
     /* 资产已落库；来源标签失败不影响可用性 */
   }

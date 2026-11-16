@@ -19,6 +19,7 @@ import { FileVideo, FolderOpen, Image, Loader2, Music2, Package, Search, Upload 
 import {
   listByProject,
   mediaUrl,
+  updateAsset,
   uploadLocalFile,
 } from '@client/src/api/assets';
 import { listProjects } from '@client/src/api/projects';
@@ -160,7 +161,14 @@ export const StudioImportDialog = ({
             setTimeout(() => finish(undefined), 2000);
           });
           URL.revokeObjectURL(probe.src);
-          const res = await uploadLocalFile(projectId, file, file.name, durationSeconds);
+          // 浏览器 HTTP header 携带中文会被按 latin1 丢掉（资产名变成 "[]"），
+          // 用 ASCII 临时名上传，落库后再 PATCH 回真实文件名。
+          const ext = file.name.split('.').pop()?.replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin';
+          const headerName = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const res = await uploadLocalFile(projectId, file, headerName, durationSeconds);
+          if (res.asset?.id) {
+            await updateAsset(res.asset.id, { name: file.name.slice(0, 80) }).catch(() => undefined);
+          }
           const kind: ImportedMedia['kind'] = file.type.startsWith('audio/')
             ? 'audio'
             : file.type.startsWith('image/')
