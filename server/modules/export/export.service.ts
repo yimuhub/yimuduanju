@@ -887,12 +887,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
     // 2. 本地 /uploads/ 相对路径（防目录穿越）
     if (trimmed.startsWith('/uploads/')) {
-      const rel = trimmed.replace(/^\/uploads\/+/, '');
+      // 时间线图片会带 ?as=image 运行标记，落盘前必须剥掉查询串，否则 existsSync 必失败
+      const rel = trimmed.replace(/^\/uploads\/+/, '').split('?')[0].split('#')[0];
       const baseDir = resolvePath(uploadDir());
       const abs = resolvePath(baseDir, rel);
       if (!abs.startsWith(baseDir) || !existsSync(abs)) return false;
       await copyFile(abs, dest);
       return true;
+    }
+    // 2.5 资产代理 /api/assets/:id/content（图片/GIF 拖进时间线后可能走这条）
+    const proxy = /^\/api\/assets\/([0-9a-f-]{16,})\/content(?:\?|$)/i.exec(trimmed);
+    if (proxy) {
+      const rows = await this.db
+        .select({ fileUrl: assets.fileUrl })
+        .from(assets)
+        .where(eq(assets.id, proxy[1]))
+        .limit(1);
+      const fileUrl = rows[0]?.fileUrl;
+      if (fileUrl) {
+        // 递归复用上面的本地 /uploads 与公网 http(s) 分支
+        return this.materializeMediaToFile(fileUrl, dest, cacheDir);
+      }
+      return false;
     }
     // 3. 公网 http(s) URL（带缓存与 SSRF 防护）
     if (cacheDir) {

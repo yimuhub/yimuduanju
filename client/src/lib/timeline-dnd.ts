@@ -74,6 +74,12 @@ export const trackOfDrag = (p: TimelineDragPayload): 'video' | 'audio' =>
 
 /** 载荷 → 可用的媒体地址（镜头优先成片，没有就退回首帧静图） */
 export const mediaOfDrag = (p: TimelineDragPayload): string | undefined => {
-  if (p.kind === 'shot') return p.videoUrl || p.frameUrl || p.url;
-  return p.url;
+  const raw = p.kind === 'shot' ? p.videoUrl || p.frameUrl || p.url : p.url;
+  if (!raw) return undefined;
+  // 图片经 /api/assets/:id/content 代理后没有扩展名，前端/导出都无法判断静帧。
+  // 统一在 URL 上带 as=image（无副作用的查询参数），时间线、预览、ffmpeg 三处共用这一约定。
+  if (p.kind === 'image' && !/\.(png|jpe?g|webp|gif|bmp|avif|tiff?)(?:[?#]|$)/i.test(raw)) {
+    return `${raw}${raw.includes('?') ? '&' : '?'}as=image`;
+  }
+  return raw;
 };

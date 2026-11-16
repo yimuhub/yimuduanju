@@ -17,7 +17,7 @@ import type { Asset } from '@shared/api.interface';
 import { useStudio } from './StudioShell';
 import { clearTimelineDrag, startTimelineDrag } from '@client/src/lib/timeline-dnd';
 
-type FolderKey = 'local' | 'imported' | 'jianying' | 'pack';
+type FolderKey = string;
 
 const FOLDER_LABEL: Record<FolderKey, string> = {
   local: '本项目生成',
@@ -35,10 +35,19 @@ const kindOf = (a: Asset): MediaKind => {
 
 const folderOf = (a: Asset): FolderKey => {
   if (a.sourceType === 'jianying') return 'jianying';
-  if (a.sourceType === 'imported') return 'imported';
   if (a.sourceType === 'pack') return 'pack';
+  if (a.sourceType === 'imported') {
+    // 导入时资产名带「[项目名] 」前缀：按来源项目自动分文件夹，避免所有外部素材混成一堆
+    const project = /^\[([^\]]+)\]/.exec(a.name || '')?.[1];
+    return project ? `imported:${project}` : 'imported';
+  }
   return 'local';
 };
+
+const folderLabel = (key: FolderKey): string =>
+  key.startsWith('imported:')
+    ? `其他任务 · ${key.slice('imported:'.length)}`
+    : FOLDER_LABEL[key as keyof typeof FOLDER_LABEL] ?? '其他素材';
 
 const KindIcon = ({ kind }: { kind: MediaKind }) => {
   if (kind === 'audio') return <Music2 size={11} />;
@@ -86,11 +95,22 @@ export const StudioAssetLibrary = () => {
   }, [assets, keyword]);
 
   const folders = useMemo(() => {
-    const map: Record<FolderKey, Asset[]> = { local: [], imported: [], jianying: [], pack: [] };
-    for (const a of filtered) map[folderOf(a)].push(a);
-    return (Object.keys(FOLDER_LABEL) as FolderKey[])
-      .map((key) => ({ key, label: FOLDER_LABEL[key], items: map[key] }))
-      .filter((f) => f.items.length > 0);
+    const map = new Map<FolderKey, Asset[]>();
+    for (const a of filtered) {
+      const key = folderOf(a);
+      const list = map.get(key);
+      if (list) list.push(a);
+      else map.set(key, [a]);
+    }
+    const baseOrder = ['local', 'jianying', 'pack', 'imported'];
+    return [...map.entries()]
+      .map(([key, items]) => ({ key, label: folderLabel(key), items }))
+      .sort((a, b) => {
+        const ai = baseOrder.indexOf(a.key);
+        const bi = baseOrder.indexOf(b.key);
+        if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+        return a.label.localeCompare(b.label, 'zh-CN');
+      });
   }, [filtered]);
 
   const remove = async (a: Asset) => {

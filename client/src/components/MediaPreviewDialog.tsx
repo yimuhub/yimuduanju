@@ -4,6 +4,7 @@
  */
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import type { ReactNode } from 'react';
 import { X, Download } from 'lucide-react';
 
 export type MediaKind = 'video' | 'image' | 'audio';
@@ -13,9 +14,11 @@ interface MediaPreviewDialogProps {
   kind: MediaKind;
   title?: string;
   onClose: () => void;
+  /** 底部操作区（导入确认等）。不传时保持原来的纯预览行为 */
+  footer?: ReactNode;
 }
 
-const MediaPreviewDialog = ({ url, kind, title, onClose }: MediaPreviewDialogProps) => {
+const MediaPreviewDialog = ({ url, kind, title, onClose, footer }: MediaPreviewDialogProps) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -28,7 +31,7 @@ const MediaPreviewDialog = ({ url, kind, title, onClose }: MediaPreviewDialogPro
   // 嵌在里面的 fixed 遮罩会被裁切，且盖不过底部 IDE 状态栏。
   return createPortal(
     <div
-      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 p-4"
+      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/80 p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -62,7 +65,7 @@ const MediaPreviewDialog = ({ url, kind, title, onClose }: MediaPreviewDialogPro
             </button>
           </div>
         </div>
-        <div className="flex min-h-[240px] items-center justify-center overflow-auto bg-black/90 p-3">
+        <div className="flex min-h-[240px] flex-1 items-center justify-center overflow-auto bg-black/90 p-3">
           {kind === 'video' ? (
             <video
               src={url}
@@ -77,6 +80,11 @@ const MediaPreviewDialog = ({ url, kind, title, onClose }: MediaPreviewDialogPro
             <img src={url} alt={title || '图片预览'} className="max-h-[72vh] max-w-full object-contain" />
           )}
         </div>
+        {footer ? (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body,

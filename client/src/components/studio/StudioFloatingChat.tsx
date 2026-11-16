@@ -5,9 +5,8 @@
  *   · 小球默认停在项目列表右上角，鼠标拖动可放到屏幕任意位置（位置存 localStorage，刷新不丢）；
  *   · 点小球展开一个轻量对话窗，复用 StudioShell context 里的 chatMsgs / sendChat
  *     —— 与常规对话是同一个会话、同一条网关，消息不分裂；
- *   · 对话里 Agent 对时间线的剪辑：当前网关没有 function calling，
- *     所以「说一句话就自动改片」做不到；做成「结构化剪辑指令」——用户描述后，
- *     在对话窗里给出可复制的操作清单，交用户在时间线上手动执行（诚实降级，见方案 §6.3）。
+ *   · 对话里 Agent 对时间线的剪辑：Agent 返回结构化 ops，TimelineOpsCard 在浮窗里
+ *     给出 diff 预览，点「应用」才落库，可撤销；不是只给文字建议。
  *
  * 桌面悬浮：Chromium 116+ 支持 Document Picture-in-Picture 时，可把小球投成
  * 系统级置顶小窗（可拖到屏幕任意位置），点它回到主窗口继续对话；
@@ -17,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Grip, MessageCircle, MonitorUp, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
+import { ChatTurns } from './chat/ChatTurns';
 
 /** Document Picture-in-Picture（Chromium 专有，TS lib 尚未收录） */
 type DocPip = {
@@ -52,7 +52,6 @@ export const StudioFloatingChat = () => {
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(
     null,
   );
-  const listRef = useRef<HTMLDivElement>(null);
   /** 已投到桌面的悬浮小窗（Document PiP） */
   const petWinRef = useRef<Window | null>(null);
 
@@ -63,10 +62,6 @@ export const StudioFloatingChat = () => {
       /* 忽略 */
     }
   }, [pos]);
-
-  useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [chatMsgs.length, open]);
 
   const onGripDown = useCallback(
     (e: React.PointerEvent) => {
@@ -188,18 +183,17 @@ export const StudioFloatingChat = () => {
               <X size={14} />
             </button>
           </div>
-          <div className="pro-chat-list" ref={listRef}>
-            {chatMsgs.length === 0 ? (
-              <div className="empty">继续和 AI 对话。它了解这个项目的镜头与素材。</div>
-            ) : (
-              chatMsgs.slice(-40).map((m, i) => (
-                <div key={m.id ?? i} className={`pro-chat-msg ${m.role}`}>
-                  <span className="who">{m.role === 'user' ? '你' : 'AI'}</span>
-                  <span className="txt">{m.content}</span>
+          <div className="pro-chat-thread">
+            <ChatTurns
+              msgs={chatMsgs}
+              busy={chatBusy}
+              empty={
+                <div className="pro-chat-empty">
+                  继续和 AI 对话。它可以读取项目镜头/素材，也能直接给你时间线剪辑提案；
+                  点「应用」才会落库，⌘Z 可整体撤销。
                 </div>
-              ))
-            )}
-            {chatBusy ? <div className="pro-chat-busy">AI 正在回复…</div> : null}
+              }
+            />
           </div>
           <div className="pro-chat-compose">
             <textarea
@@ -211,7 +205,7 @@ export const StudioFloatingChat = () => {
                   submit();
                 }
               }}
-              placeholder="问一句，或说要怎么改…"
+              placeholder="例：删掉空白片段 / 每段加 0.3 秒淡入 / 压到 30 秒…"
               rows={2}
             />
             <button type="button" onClick={submit} disabled={chatBusy || !draft.trim()}>

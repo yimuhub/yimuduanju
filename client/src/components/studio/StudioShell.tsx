@@ -118,6 +118,9 @@ export interface StudioContextValue {
   /** 原声开关：关闭后预览画面只有配音/音轨，不听源视频原声 */
   originalAudio: boolean;
   setOriginalAudio: (v: boolean) => void;
+  /** 预览清晰度：original=原画；fast=流畅（540p 画布合成 + 元数据预载） */
+  previewQuality: 'original' | 'fast';
+  setPreviewQuality: (v: 'original' | 'fast') => void;
   stageView: StageView;
   setStageView: (v: StageView) => void;
   /** 当前项目会话（落库，刷新/切页可恢复） */
@@ -194,6 +197,21 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   });
   const [previewMuted, setPreviewMuted] = useState(false);
   const [originalAudio, setOriginalAudio] = useState(true);
+  const [previewQuality, setPreviewQualityState] = useState<'original' | 'fast'>(() => {
+    try {
+      return localStorage.getItem('yimu.previewQuality') === 'fast' ? 'fast' : 'original';
+    } catch {
+      return 'original';
+    }
+  });
+  const setPreviewQuality = useCallback((v: 'original' | 'fast') => {
+    setPreviewQualityState(v);
+    try {
+      localStorage.setItem('yimu.previewQuality', v);
+    } catch {
+      /* 隐私模式忽略 */
+    }
+  }, []);
   const setPreviewVolume = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
     setPreviewVolumeState(clamped);
@@ -221,9 +239,9 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const [proTlH, setProTlH] = useState(() => {
     try {
       const n = Number(localStorage.getItem('yimu.proTlH'));
-      return Number.isFinite(n) && n >= 180 ? Math.min(n, Math.round(window.innerHeight * 0.62)) : 304;
+      return Number.isFinite(n) && n >= 180 ? Math.min(n, Math.round(window.innerHeight * 0.62)) : 260;
     } catch {
-      return 304;
+      return 260;
     }
   });
   const [poolW, setPoolW] = useState(() => {
@@ -629,6 +647,8 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setPreviewMuted,
       originalAudio,
       setOriginalAudio,
+      previewQuality,
+      setPreviewQuality,
       stageView,
       setStageView,
       chatMsgs,
@@ -661,6 +681,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       previewVolume,
       previewMuted,
       originalAudio,
+      previewQuality,
       stageView,
       setStageView,
       chatMsgs,
@@ -802,7 +823,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
               window.addEventListener('pointermove', move);
               window.addEventListener('pointerup', up);
             }}
-            onDoubleClick={() => setProTlH(304)}
+            onDoubleClick={() => setProTlH(260)}
           >
             <span className="pro-split-grip"><i /><i /><i /></span>
           </div>

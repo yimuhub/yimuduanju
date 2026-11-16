@@ -54,10 +54,14 @@ const iso = (d: unknown): string =>
  * 静帧素材（首帧/图片）也允许拖进画面轨：导出时用 `-loop 1` 铺成一段视频，
  * 与真视频片段走同一条 concat 链，不需要在 EDL 里区分类型。
  */
-const MEDIA_IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?)(\?|$)/i;
+const MEDIA_IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?)(\?|$)|[?&]as=image(?:&|$)/i;
 /** 落盘临时文件的后缀：按源地址推断，ffmpeg 探测靠内容，但保留后缀更利于排错 */
 const mediaExt = (url: string): string => {
-  const m = /\.(png|jpe?g|webp|bmp|gif|tiff?|mp4|mov|m4v|webm|mkv)(?=\?|$)/i.exec(url);
+  // 图片资产经 /api/assets/:id/content?as=image 代理时没有扩展名，靠标记补成 .png；
+  // ffmpeg -loop 1 的输入若被当成 .mp4 会直接渲染失败。
+  if (/[?&]as=image(?:&|$)|(?:\.gif)(?:\?|$)/i.test(url)) return '.png';
+  const clean = url.split('?')[0].split('#')[0];
+  const m = /\.(png|jpe?g|webp|bmp|gif|tiff?|mp4|mov|m4v|webm|mkv)$/i.exec(clean);
   return m ? `.${m[1].toLowerCase()}` : '.mp4';
 };
 

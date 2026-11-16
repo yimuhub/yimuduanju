@@ -38,6 +38,7 @@ import {
   Link2Off,
   Lock,
   Magnet,
+  Image as ImageIcon,
   Minus,
   Music2,
   Plus,
@@ -65,17 +66,17 @@ import {
   type AudioRole,
 } from './model';
 import { useEdl } from './EdlContext';
-import {
-  StudioImportDialog,
-  type ImportedMedia,
-} from './StudioImportDialog';
-import { Filmstrip, useThumbnails, useWaveform, Waveform } from './timeline-media';
+import { StudioImportDialog } from './StudioImportDialog';
+import { StudioCoverDialog } from './StudioCoverDialog';
+import { StudioTooltipLayer } from './StudioTooltipLayer';
+import { Filmstrip, StillFrame, useThumbnails, useWaveform, Waveform } from './timeline-media';
 import {
   exportTimeline,
   listTimelineAgentOps,
   type TimelineAgentOpRecord,
 } from '@client/src/api/timeline';
-import { createAsset, listProjectAssets, mediaUrl } from '@client/src/api/assets';
+import { listProjectAssets, mediaUrl } from '@client/src/api/assets';
+import { isImageUrl } from '@client/src/lib/media-kind';
 import {
   clamp,
   collectSnapTargets,
@@ -281,10 +282,12 @@ const ClipView = ({
   const span = clipSpan(clip);
   const isVideo = clip.track === 'video';
   const isAudio = clip.track === 'audio';
-  const thumb = useThumbnails(projectId, isVideo ? clip.sourceUrl : null);
+  /** 画面轨里的静态图 / GIF：不抽帧、不取波形，直接渲染原图 */
+  const isStill = isVideo && isImageUrl(clip.sourceUrl);
+  const thumb = useThumbnails(projectId, isVideo && !isStill ? clip.sourceUrl : null);
   const wave = useWaveform(
     projectId,
-    isAudio || isVideo ? clip.sourceUrl : null,
+    isAudio || (isVideo && !isStill) ? clip.sourceUrl : null,
   );
   const isSub = clip.track === 'subtitle';
   const role = audioRoleOf(clip);
@@ -302,7 +305,7 @@ const ClipView = ({
     selected ? 'on' : '',
     clip.locked || rowLocked ? 'locked' : '',
     audioDetached ? 'audio-off' : '',
-    thumb || wave ? 'has-media' : '',
+    thumb || wave || isStill ? 'has-media' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -345,7 +348,9 @@ const ClipView = ({
         if (e.key === 'Enter' || e.key === ' ') e.preventDefault();
       }}
     >
-      {isVideo ? (
+      {isStill && clip.sourceUrl ? (
+        <StillFrame url={clip.sourceUrl} span={span} pxPerSec={pxPerSec} />
+      ) : isVideo ? (
         <Filmstrip
           thumb={thumb}
           span={span}
@@ -364,7 +369,7 @@ const ClipView = ({
           pxPerSec={pxPerSec}
         />
       ) : null}
-      {isVideo && wave ? (
+      {isVideo && !isStill && wave ? (
         <div className="tl-clip-wave" aria-hidden>
           <Waveform
             wave={wave}
@@ -492,6 +497,12 @@ export const StudioTimeline = () => {
   const collapsed = tlCollapsed;
   const editor = useEdl();
   const navigate = useNavigate();
+  const [coverOpen, setCoverOpen] = useState(false);
+  useEffect(() => {
+    const open = () => setCoverOpen(true);
+    window.addEventListener('yimu:open-cover', open);
+    return () => window.removeEventListener('yimu:open-cover', open);
+  }, []);
   const [snapOn, setSnapOn] = useState(() => {
     try {
       return localStorage.getItem('yimu.tlSnap') !== '0';
@@ -1478,59 +1489,13 @@ export const StudioTimeline = () => {
     toast.success(`已插入到 A${pickLane + 1} · ${formatTimecode(curT, fps)}`, { duration: 1600 });
   };
 
-  /** 导入对话框选中的素材：按类型落到播放头所在位置的对应轨（与拖放插入同路径） */
-  /** 把外部来源复制成本项目资产记录：删源项目不影响本项目，素材库形成「导入」文件夹 */
-  const ensureProjectAsset = (media: ImportedMedia) => {
-    if (!data.projectId) return;
-    if (media.sourceProjectId === data.projectId) {
-      window.dispatchEvent(new CustomEvent('yimu:assets-changed'));
-      return;
-    }
-    // 本地文件上传时已经建过资产；跨任务/资产包才需要补一条
-    if (media.sourceAssetId && media.sourceProjectId === data.projectId) return;
-    const assetType =
-      media.kind === 'audio' ? 'audio' : media.kind === 'image' ? 'image' : 'video';
-    const rawName = media.name || '未命名素材';
-    const name = media.sourceProjectName && media.sourceProjectName !== '当前项目'
-      ? `[${media.sourceProjectName}] ${rawName}`.slice(0, 200)
-      : rawName.slice(0, 200);
-    void createAsset({
-      projectId: data.projectId,
-      assetType,
-      name,
-      fileUrl: media.fileUrl || media.url,
-      thumbnailUrl: media.thumbnailUrl,
-      durationSeconds: media.durationSeconds,
-      mimeType: media.mimeType,
-      sourceType: media.sourceType || 'imported',
-      sourceId: media.sourceAssetId,
-    })
-      .then(() => window.dispatchEvent(new CustomEvent('yimu:assets-changed')))
-      .catch(() => undefined);
-  };
-
-  const onImportedMedia = (media: ImportedMedia) => {
-    ensureProjectAsset(media);
-    if (media.kind === 'audio') {
-      const created = editor.addAudio(
-        { name: media.name, url: media.url, durationSeconds: media.durationSeconds },
-        curT,
-        clamp(maxLane('audio') + 1, 0, 19),
-      );
-      if (created) editor.setSelection([created]);
-      return;
-    }
-    const created = editor.addVideo(
-      {
-        name: media.name,
-        url: media.url,
-        durationSeconds: media.durationSeconds,
-        shotId: null,
-      },
-      curT,
-      clamp(maxLane('video') + 1, 0, 19),
-    );
-    if (created) editor.setSelection([created]);
+  /**
+   * 导入对话框只负责把素材写进项目资产库；不落时间线。
+   * 落轨统一由用户从右侧素材库拖拽完成（与剪映素材→时间线的心智一致）。
+   * 资产库组件监听 yimu:assets-changed 自动刷新。
+   */
+  const onImportedAssets = () => {
+    window.dispatchEvent(new CustomEvent('yimu:assets-changed'));
   };
 
   const addSubtitleAt = (lane: number) => {
@@ -2100,6 +2065,14 @@ export const StudioTimeline = () => {
             onClick={toggleSnap}
           >
             <Magnet size={13} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="设置项目封面（从项目图片资产中选一张）"
+            onClick={() => setCoverOpen(true)}
+          >
+            <ImageIcon size={13} />
           </button>
           <span className="tl-sep" />
           <button
@@ -2779,10 +2752,17 @@ export const StudioTimeline = () => {
       {importOpen ? (
         <StudioImportDialog
           projectId={data.projectId}
-          onPick={onImportedMedia}
+          onImported={onImportedAssets}
           onClose={() => setImportOpen(false)}
         />
       ) : null}
+      {coverOpen && data.projectId ? (
+        <StudioCoverDialog
+          projectId={data.projectId}
+          onClose={() => setCoverOpen(false)}
+        />
+      ) : null}
+      <StudioTooltipLayer />
     </section>
   );
 };

@@ -34,7 +34,22 @@ const readPreviewH = (): number => {
 };
 
 export const StudioPreview = () => {
-  const { data, sel, setSel, curT, playing, setPlaying, projectId, proEdit, previewMode, previewVolume, previewMuted, originalAudio } = useStudio();
+  const {
+    data,
+    sel,
+    setSel,
+    curT,
+    playing,
+    setPlaying,
+    projectId,
+    proEdit,
+    previewMode,
+    previewVolume,
+    previewMuted,
+    originalAudio,
+    previewQuality,
+    setPreviewQuality,
+  } = useStudio();
   const [charNames, setCharNames] = useState<Record<string, string>>({});
   const [propByCode, setPropByCode] = useState<Record<string, Prop>>({});
   const [ratio, setRatio] = useState<Ratio>('9:16');
@@ -46,6 +61,8 @@ export const StudioPreview = () => {
   const pvRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasOn, setCanvasOn] = useState(false);
 
   const shots = data.shots;
   const shot = shots[sel];
@@ -81,8 +98,8 @@ export const StudioPreview = () => {
     if (!tlMode) return null;
     const hit = videoClips
       .filter((c) => curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c))
-      .sort((a, b) => a.timelineStart - b.timelineStart)
-      .pop();
+      // 主画面永远优先（lane 0）；只有主轨空白时才回退到叠加轨，避免 V3 素材把主画面顶掉
+      .sort((a, b) => (a.lane ?? 0) - (b.lane ?? 0))[0];
     return hit ?? null;
   }, [tlMode, videoClips, curT]);
 
@@ -246,6 +263,50 @@ export const StudioPreview = () => {
     }
   }, []);
 
+  /** 预览当前媒体：时间线片段优先，否则镜头成片；图片/GIF 走静态图分支 */
+  const previewVideoUrl = tlMode ? activeVideo?.sourceUrl : shot?.videoUrl;
+  const previewIsStill = Boolean(tlMode && isImageUrl(previewVideoUrl));
+
+  /**
+   * 流畅预览：把当前视频帧画到 640px 长的画布上再铺满画面。
+   * 解码仍在后台，但合成/缩放/全屏放大都走低分辨率画布，
+   * 弱机或 4K 素材拖动播放头时更跟手；原画模式还是直接显示 <video>。
+   */
+  useEffect(() => {
+    setCanvasOn(false);
+    if (previewQuality !== 'fast' || !tlMode || previewIsStill) return undefined;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!video || !canvas || !ctx) return undefined;
+    let raf = 0;
+    let alive = true;
+    const draw = () => {
+      if (!alive) return;
+      if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+        const w = Math.min(640, video.videoWidth);
+        const h = Math.max(2, Math.round((w * video.videoHeight) / video.videoWidth));
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+        try {
+          ctx.drawImage(video, 0, 0, w, h);
+          setCanvasOn(true);
+        } catch {
+          /* 跨域/首帧未就绪：保留 <video> 原画兜底 */
+        }
+      }
+      raf = window.requestAnimationFrame(draw);
+    };
+    draw();
+    return () => {
+      alive = false;
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [previewQuality, tlMode, previewIsStill, previewVideoUrl]);
+
+
   if (!shot) {
     return (
       <div className="dp-empty">
@@ -261,8 +322,10 @@ export const StudioPreview = () => {
   const clipDur = tlMode && activeVideo ? clipSpan(activeVideo) : shot.dur;
   const displayShot = activeShot ?? shot;
   const scene = data.scenes.find((s) => s.id === displayShot.sceneId);
-  const videoUrl = tlMode ? activeVideo?.sourceUrl : shot.videoUrl;
-  const showVideo = Boolean(videoUrl) && !videoBroken;
+  const videoUrl = previewVideoUrl;
+  const activeIsStill = previewIsStill;
+  const showVideo = Boolean(videoUrl) && !videoBroken && !activeIsStill;
+  const showStill = Boolean(videoUrl) && !videoBroken && activeIsStill;
 
   const step = (delta: number) => {
     if (shots.length === 0) return;
@@ -279,7 +342,7 @@ export const StudioPreview = () => {
           {proEdit ? (
             <div className="pv-pro-label">
               <b>{tlMode ? '时间线合成预览' : '镜头预览'}</b>
-              <span>{tlMode ? '只渲染时间线内容' : '来自镜头池 · 点击时间线切回合成'}</span>
+              <span>{tlMode ? (activeIsStill ? '时间线图片 / GIF 合成' : '只渲染时间线内容') : '来自镜头池 · 点击时间线切回合成'}</span>
             </div>
           ) : null}
           <div className="seg">
@@ -297,6 +360,24 @@ export const StudioPreview = () => {
           <div className="spacer" />
           {proEdit ? (
             <>
+              <div className="pv-quality" role="group" aria-label="预览清晰度">
+                <button
+                  type="button"
+                  className={previewQuality === 'fast' ? 'on' : ''}
+                  title="流畅预览：低分辨率画布合成，拖动播放头更跟手"
+                  onClick={() => setPreviewQuality('fast')}
+                >
+                  流畅
+                </button>
+                <button
+                  type="button"
+                  className={previewQuality === 'original' ? 'on' : ''}
+                  title="原画预览：按素材原始分辨率显示，适合看细节/对字幕"
+                  onClick={() => setPreviewQuality('original')}
+                >
+                  原画
+                </button>
+              </div>
               <button
                 type="button"
                 className={`pro-mini${safeOn ? ' on' : ''}`}
@@ -329,7 +410,22 @@ export const StudioPreview = () => {
 
         <div className="pv-stage">
           <div className="pv-frame" data-ratio={ratio} data-tag={shot.tag} data-st={shot.st}>
-            {showVideo ? (
+            {showStill ? (
+              <img
+                src={videoUrl}
+                alt={(activeVideo?.text || activeVideo?.sourceUrl || '').slice(0, 40)}
+                onError={() => setVideoBroken(true)}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  background: '#000',
+                }}
+              />
+            ) : showVideo ? (
+              <>
               <video
                 ref={videoRef}
                 src={videoUrl}
@@ -344,8 +440,15 @@ export const StudioPreview = () => {
                   height: '100%',
                   objectFit: 'contain',
                   background: '#000',
+                  opacity: canvasOn ? 0 : 1,
                 }}
               />
+              <canvas
+                ref={canvasRef}
+                className="pv-fast"
+                style={{ display: canvasOn ? 'block' : 'none' }}
+              />
+              </>
             ) : tlMode ? (
               <div className="pv-gap">
                 <span>时间线空隙</span>
@@ -596,4 +699,5 @@ export const StudioPreview = () => {
       ) : null}
     </div>
   );
-};
+};import { isImageUrl } from '@client/src/lib/media-kind';
+

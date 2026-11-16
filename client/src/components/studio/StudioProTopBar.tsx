@@ -6,7 +6,7 @@
  * 不在这里另存一份状态，避免两套历史。
  */
 import { useNavigate } from 'react-router-dom';
-import { HelpCircle, Redo2, Share2, Undo2 } from 'lucide-react';
+import { HelpCircle, ImageIcon, Redo2, Share2, Undo2 } from 'lucide-react';
 import { useStudio } from './StudioShell';
 import { APP_VERSION } from '@client/src/lib/version';
 
@@ -65,6 +65,15 @@ export const StudioProTopBar = () => {
         >
           <Share2 size={13} />
           对比
+        </button>
+        <button
+          type="button"
+          className="pro-btn"
+          title="设置项目封面（从项目图片素材里选一张，不进入时间线）"
+          onClick={() => fire('yimu:open-cover')}
+        >
+          <ImageIcon size={13} />
+          封面
         </button>
         <button
           type="button"

@@ -42,6 +42,8 @@ const TITLE_SYSTEM_PROMPT =
  */
 const TIMELINE_ACTION_PROTOCOL = [
   '# 时间线剪辑动作协议',
+  '优先级：只要请求涉及「时间线 / 成片 / 剪辑 / 压缩 / 删空白 / 拼接 / 字幕时间」，',
+  '必须只输出 ```yimu-timeline 代码块，禁止改用 yimu-action 或 update_shot（改镜头 duration 不等于剪时间线）。',
   '当用户要求剪辑已产出的时间线（移动/修剪/分割/删除/字幕/变速/音量/建轨）时，',
   '回复末尾追加 ```yimu-timeline 代码块，内容是一批可执行动作：',
   '{"baseVersion":<当前版本号>,"summary":"一句话说明改了什么","ops":[{"op":"trim","target":{"clientKey":"..."},"edge":"right","deltaSec":-0.5}]}',
@@ -156,10 +158,10 @@ export class AssistantService {
         prompt: message,
         systemPrompt: [
           SYSTEM_PROMPT,
+          await this.timelineContext(projectId),
           projectId ? PROJECT_ACTION_PROTOCOL : '',
           await this.projectContext(projectId),
           shotsContext,
-          await this.timelineContext(projectId),
         ]
           .filter(Boolean)
           .join('\n'),

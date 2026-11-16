@@ -190,6 +190,28 @@ export const Filmstrip = ({
   );
 };
 
+
+/**
+ * 画面轨静态图 / GIF 片段：直接渲染原图。
+ * GIF 交给浏览器原生播放（保留动画），普通图片铺满片段宽度；
+ * 这是时间线显示渲染图片的唯一入口，禁止再把它当视频去抽帧。
+ */
+export const StillFrame = ({
+  url,
+  span,
+  pxPerSec,
+}: {
+  url: string;
+  span: number;
+  pxPerSec: number;
+}): ReactNode => {
+  const width = Math.max(8, span * pxPerSec);
+  return (
+    <div className="tl-still" aria-hidden style={{ width: `${width}px` }}>
+      <img src={url} alt="" loading="lazy" draggable={false} />
+    </div>
+  );
+};
 /**
  * 音频波形：上下对称的填充折线，viewBox 横向拉伸到片段宽度。
  * peaks 由 slicePeaks 按片段区间切好，点数按 2px 一柱计算。
