@@ -1719,6 +1719,23 @@ export interface TimelineClip {
   updatedAt: string;
 }
 
+/** 轨道元信息：用户在时间线轨道头设置的持久属性（随 EDL 一起保存） */
+export interface TimelineTrackMeta {
+  track: TimelineTrackKind;
+  /** 同类型轨道内分层下标 */
+  lane: number;
+  /** 自定义名称（空则用默认 V1/A1/S1） */
+  name?: string;
+  /** 静音（导出与预览跳过该轨） */
+  muted?: boolean;
+  /** 独奏（只播该轨，优先于静音） */
+  solo?: boolean;
+  /** 锁定（禁止编辑该轨片段） */
+  locked?: boolean;
+  /** 轨道行高 px，缺省 26 */
+  height?: number;
+}
+
 /** P3 剪辑工程文档 */
 export interface TimelineDocument {
   projectId: string;
@@ -1726,6 +1743,10 @@ export interface TimelineDocument {
   width: number;
   height: number;
   clips: TimelineClip[];
+  /** 乐观锁版本号：每次保存成功后递增，用于并发编辑保护 */
+  version?: number;
+  /** 轨道元信息（名称 / 静音 / 独奏 / 锁定 / 行高） */
+  tracks?: TimelineTrackMeta[];
   updatedAt?: string;
 }
 
@@ -1737,6 +1758,40 @@ export interface SaveTimelineRequest {
   clips: Array<
     Omit<TimelineClip, 'id' | 'projectId' | 'createdAt' | 'updatedAt'> & { id?: string }
   >;
+  /** 期望的当前版本号；与库内不一致返回 409（并发编辑保护） */
+  expectedVersion?: number;
+  /** 轨道元信息 */
+  tracks?: TimelineTrackMeta[];
+}
+
+/** 时间线帧缩略图 sprite：抽帧拼成一张网格图，前端按网格切片显示 */
+export interface TimelineThumbnails {
+  /** 可直接用作 CSS background-image 的地址 */
+  spriteUrl: string;
+  /** 网格列数 */
+  columns: number;
+  /** 网格行数 */
+  rows: number;
+  /** 单格宽度 px */
+  tileWidth: number;
+  /** 单格高度 px */
+  tileHeight: number;
+  /** 相邻两帧的时间间隔（秒） */
+  interval: number;
+  /** 有效帧数 */
+  count: number;
+  /** 源媒体时长（秒） */
+  duration: number;
+}
+
+/** 时间线音频波形：自研 peaks，前端按片段宽度重采样绘制 */
+export interface TimelineWaveform {
+  /** 归一化峰值 0–1，固定点数 */
+  peaks: number[];
+  /** 源媒体时长（秒） */
+  duration: number;
+  /** 采样点数 = peaks.length */
+  points: number;
 }
 
 /** P4 按 EDL 导出 */

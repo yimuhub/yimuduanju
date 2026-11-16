@@ -834,6 +834,13 @@ export const timelineDocuments = pgTable("timeline_documents", {
   fps: integer("fps").notNull().default(24),
   width: integer("width").notNull().default(1080),
   height: integer("height").notNull().default(1920),
+  /** 乐观锁版本号：每次整体保存 +1，PUT 携带 expectedVersion 不一致即 409 */
+  version: integer("version").notNull().default(0),
+  /**
+   * 轨道元信息：重命名 / 静音 / 独奏 / 锁定 / 轨道高度
+   * @type { Array<{ track: string; lane: number; name: string; muted: boolean; solo: boolean; locked: boolean; height: number }> | null }
+   */
+  tracks: jsonb("tracks"),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   createdBy: userProfile("_created_by"),
   updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),

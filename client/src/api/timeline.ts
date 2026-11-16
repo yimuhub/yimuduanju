@@ -21,6 +21,8 @@ import type {
   SaveTimelineRequest,
   ExportTimelineRequest,
   ExportTimelineResult,
+  TimelineThumbnails,
+  TimelineWaveform,
 } from '@shared/api.interface';
 
 /** P2：按数组顺序重排镜头（服务端重编 sortOrder/shotNumber），返回全量镜头 */
@@ -57,4 +59,25 @@ export const saveTimeline = (projectId: string, data: SaveTimelineRequest) =>
 export const exportTimeline = (projectId: string, data: ExportTimelineRequest = {}) =>
   axiosForBackend
     .post<ExportTimelineResult>(`/api/projects/${projectId}/timeline/export`, data)
+    .then((res) => res.data);
+
+/** 视频片段帧缩略图 sprite（服务端抽帧 + 缓存，返回切片元数据） */
+export const getThumbnails = (
+  projectId: string,
+  url: string,
+  interval = 1,
+  tileWidth = 168,
+) =>
+  axiosForBackend
+    .get<TimelineThumbnails>(`/api/projects/${projectId}/timeline/thumbnails`, {
+      params: { url, interval, tileWidth },
+    })
+    .then((res) => res.data);
+
+/** 音频片段波形 peaks（服务端解码 + 缓存，固定点数由前端重采样） */
+export const getWaveform = (projectId: string, url: string, points = 1000) =>
+  axiosForBackend
+    .get<TimelineWaveform>(`/api/projects/${projectId}/timeline/waveform`, {
+      params: { url, points },
+    })
     .then((res) => res.data);

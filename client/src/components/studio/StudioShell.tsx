@@ -407,25 +407,35 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     return () => window.removeEventListener('keydown', onKey);
   }, [canvasApi, stepShot, setStageView, stageView, toggleTlCollapsed]);
 
-  // 播放：按真实经过时间推进播放头（时间戳差值，避免 setInterval 漂移）
+  // 播放：requestAnimationFrame 驱动，40fps 提交播放头（兼顾平滑与渲染成本）。
+  // 旧实现 100ms 轮询会让画面最多落后播放头 0.3s，精剪时对不准口型。
   useEffect(() => {
     if (!playing || timelineTotal <= 0) return undefined;
     const total = timelineTotal;
+    const stepSec = 1 / 40;
     let last = performance.now();
-    const timer = setInterval(() => {
-      const now = performance.now();
-      const dt = (now - last) / 1000;
+    let acc = 0;
+    let raf = 0;
+    const tick = (now: number) => {
+      const dt = Math.min(0.25, (now - last) / 1000);
       last = now;
-      setCurT((t) => {
-        const next = t + dt;
-        if (next >= total) {
-          setPlaying(false);
-          return 0;
-        }
-        return next;
-      });
-    }, 100);
-    return () => clearInterval(timer);
+      acc += dt;
+      if (acc >= stepSec) {
+        const step = acc;
+        acc = 0;
+        setCurT((t) => {
+          const next = t + step;
+          if (next >= total) {
+            window.setTimeout(() => setPlaying(false), 0);
+            return 0;
+          }
+          return next;
+        });
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [playing, timelineTotal, setPlaying]);
 
   // 播放头移动 → 通过 EDL 视频片段反查镜头（片段被移动后仍能跟随）

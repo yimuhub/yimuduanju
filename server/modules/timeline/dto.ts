@@ -12,6 +12,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -103,6 +104,42 @@ export class SaveTimelineClipDto {
   sortOrder?: number;
 }
 
+/** 轨道元信息（名称 / 静音 / 独奏 / 锁定 / 行高），随 EDL 一起保存 */
+export class TimelineTrackMetaDto {
+  @IsIn(['video', 'audio', 'subtitle', 'overlay'])
+  track!: TimelineTrackKind;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(20)
+  lane!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  name?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  muted?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  solo?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  locked?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(18)
+  @Max(120)
+  height?: number;
+}
+
 /** PUT /timeline：整体替换该项目 EDL（事务写入） */
 export class SaveTimelineDto {
   @IsOptional()
@@ -131,6 +168,21 @@ export class SaveTimelineDto {
   @ValidateNested({ each: true })
   @Type(() => SaveTimelineClipDto)
   clips!: SaveTimelineClipDto[];
+
+  /** 期望的当前版本号：与库内不一致返回 409，避免并发编辑互相覆盖 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedVersion?: number;
+
+  /** 轨道元信息（名称 / 静音 / 独奏 / 锁定 / 行高） */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => TimelineTrackMetaDto)
+  tracks?: TimelineTrackMetaDto[];
 }
 
 /** POST /timeline/export：按 EDL 合成成片 */

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -26,6 +27,7 @@ import type {
   ExportTimelineResult,
   TimelineClip,
   TimelineDocument,
+  TimelineTrackMeta,
 } from '@shared/api.interface';
 import { uploadDir } from '../assets/upload-dir';
 import { ExportService } from '../export/export.service';
@@ -208,6 +210,8 @@ export class TimelineService {
       width: doc.width,
       height: doc.height,
       clips: clipRows.map((r) => this.mapClip(r)),
+      version: doc.version ?? 0,
+      tracks: (doc.tracks as TimelineDocument['tracks']) ?? [],
       updatedAt: iso(doc.updatedAt),
     };
   }
@@ -251,20 +255,50 @@ export class TimelineService {
         await tx.insert(timelineClips).values(values);
       }
       const existing = await tx
-        .select({ projectId: timelineDocuments.projectId })
+        .select({ projectId: timelineDocuments.projectId, version: timelineDocuments.version })
         .from(timelineDocuments)
         .where(eq(timelineDocuments.projectId, projectId))
         .limit(1);
+      const tracks = dto.tracks ?? null;
       if (existing.length === 0) {
-        await tx.insert(timelineDocuments).values({ projectId, fps, width, height });
+        // 首次保存：库内还没有文档，若客户端声称基于旧版本（>0）则视为冲突
+        if (dto.expectedVersion != null && dto.expectedVersion > 0) {
+          throw new ConflictException('时间线已在别处更新，请刷新后重试');
+        }
+        await tx
+          .insert(timelineDocuments)
+          .values({ projectId, fps, width, height, tracks, version: 1 });
       } else {
+        const current = existing[0].version ?? 0;
+        if (dto.expectedVersion != null && dto.expectedVersion !== current) {
+          throw new ConflictException(
+            `时间线已在别处更新（当前版本 ${current}，你基于 ${dto.expectedVersion}），请刷新后再改`,
+          );
+        }
         await tx
           .update(timelineDocuments)
-          .set({ fps, width, height, updatedAt: now })
+          .set({ fps, width, height, tracks, version: current + 1, updatedAt: now })
           .where(eq(timelineDocuments.projectId, projectId));
       }
     });
     return this.getDocument(projectId);
+  }
+
+  /**
+   * 轨道静音 / 独奏过滤：solo 优先（只保留 solo 轨），其次剔除 muted 轨。
+   * tracks 为空（未设置过轨道属性）时原样返回，保证旧项目导出行为不变。
+   */
+  private audibleClips(
+    clips: TimelineClip[],
+    tracks?: TimelineTrackMeta[],
+  ): TimelineClip[] {
+    if (!tracks || tracks.length === 0) return clips;
+    const meta = new Map(tracks.map((t) => [`${t.track}:${t.lane ?? 0}`, t]));
+    const hasSolo = tracks.some((t) => t.solo);
+    if (hasSolo) {
+      return clips.filter((c) => meta.get(`${c.track}:${c.lane ?? 0}`)?.solo === true);
+    }
+    return clips.filter((c) => meta.get(`${c.track}:${c.lane ?? 0}`)?.muted !== true);
   }
 
   /** 字幕轨 → SRT（时间线坐标，供软字幕封装） */
@@ -413,16 +447,18 @@ export class TimelineService {
     const fps = doc.fps > 0 ? doc.fps : 24;
     const width = dto.width ?? doc.width ?? 1080;
     const height = dto.height ?? doc.height ?? 1920;
-    const videoClips = doc.clips
+    // 尊重轨道静音 / 独奏：导出只渲染「听得到」的轨
+    const audible = this.audibleClips(doc.clips, doc.tracks);
+    const videoClips = audible
       .filter((c) => c.track === 'video' && c.sourceUrl)
       .sort((a, b) => a.timelineStart - b.timelineStart);
     if (videoClips.length === 0) {
       throw new BadRequestException('时间线没有可导出的视频片段：请先生成镜头视频');
     }
-    const audioClips = doc.clips
+    const audioClips = audible
       .filter((c) => c.track === 'audio' && c.sourceUrl)
       .sort((a, b) => a.timelineStart - b.timelineStart);
-    const srt = this.buildSrt(doc.clips);
+    const srt = this.buildSrt(audible);
     const burn = dto.burnSubtitles !== false && Boolean(srt.trim());
 
     const ffmpeg = this.exportService.resolveFfmpegBin();
@@ -447,6 +483,18 @@ export class TimelineService {
         if (!ok) throw new BadRequestException(`片段 ${i + 1} 源媒体下载失败`);
         const span = Math.max(0.05, clip.outPoint - clip.inPoint);
         const speed = clip.speed > 0 ? clip.speed : 1;
+        const outSpan = span / speed;
+        const fadeD =
+          clip.transition?.type === 'fade'
+            ? Math.min(0.5, Math.max(0.1, clip.transition.duration || 0.4))
+            : 0;
+        const fadeFilters =
+          fadeD > 0
+            ? [
+                `fade=t=in:st=0:d=${fadeD}`,
+                `fade=t=out:st=${Math.max(0, outSpan - fadeD).toFixed(3)}:d=${fadeD}`,
+              ]
+            : [];
         const seg = join(work, `v_seg_${String(i).padStart(3, '0')}.mp4`);
         cleanup.push(seg);
         const vf = [
@@ -455,6 +503,7 @@ export class TimelineService {
           'setsar=1',
           `fps=${fps}`,
           ...(Math.abs(speed - 1) > 1e-3 ? [`setpts=PTS/${speed}`] : []),
+          ...fadeFilters,
         ].join(',');
         // eslint-disable-next-line no-await-in-loop
         const segOk = await run([
@@ -548,7 +597,7 @@ export class TimelineService {
       if (burn && burnBin) {
         const assPath = join(work, 'subs.ass');
         cleanup.push(assPath);
-        await writeFile(assPath, this.buildAss(doc.clips, width, height), 'utf8');
+        await writeFile(assPath, this.buildAss(audible, width, height), 'utf8');
         const fdir = this.fontDir();
         const vf = `ass=filename=subs.ass${fdir ? `:fontsdir=${fdir}` : ''}`;
         const audioIn = audioPath ? ['-i', audioPath] : [];

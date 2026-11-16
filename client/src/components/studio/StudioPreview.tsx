@@ -149,7 +149,7 @@ export const StudioPreview = () => {
       v.playbackRate = tlMode && activeVideo ? speed : 1;
       if (playing) {
         if (v.paused) v.play().catch(() => {});
-        if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.3) {
+        if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.12) {
           v.currentTime = videoT;
         }
       } else {
@@ -167,7 +167,7 @@ export const StudioPreview = () => {
         const localT = Math.max(0, curT - shot.start);
         if (playing) {
           if (a.paused) a.play().catch(() => {});
-          if (a.readyState >= 1 && Math.abs(a.currentTime - localT) > 0.3) {
+          if (a.readyState >= 1 && Math.abs(a.currentTime - localT) > 0.12) {
             a.currentTime = localT;
           }
         } else {
@@ -192,7 +192,7 @@ export const StudioPreview = () => {
       a.volume = Math.max(0, Math.min(1, clip.volume));
       if (playing) {
         if (a.paused) a.play().catch(() => {});
-        if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.3) a.currentTime = t;
+        if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.12) a.currentTime = t;
       } else {
         if (!a.paused) a.pause();
         if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.05) a.currentTime = t;

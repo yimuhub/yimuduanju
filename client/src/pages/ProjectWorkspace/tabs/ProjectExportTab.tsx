@@ -31,9 +31,11 @@ import {
   Clock3,
   Film,
   Sparkles,
+  Scissors,
   Image as ImageIcon,
 } from 'lucide-react';
 import { exportApi, projects, storyboard, templates as templatesApi, assets as assetsApi } from '@client/src/api';
+import { exportTimeline as exportTimelineEdl } from '@client/src/api/timeline';
 import type { Asset, PerShotExportResult, Shot } from '@shared/api.interface';
 import { logger } from '@client/src/utils/logger';
 import { projectExportFileName } from '@shared/file-name';
@@ -194,6 +196,30 @@ const ProjectExportTab = () => {
       setAssembling(false);
     }
   };
+  // 时间线精剪导出：读底部时间线的 EDL，与「按镜头顺序」合成完全独立，两条端口并存。
+  const [tlExporting, setTlExporting] = useState(false);
+  const [tlAsset, setTlAsset] = useState<Asset | null>(null);
+  const handleTimelineExport = async () => {
+    if (!id || tlExporting) return;
+    setTlExporting(true);
+    try {
+      const data = await exportTimelineEdl(id, { burnSubtitles: true });
+      setTlAsset(data.asset);
+      toast.success(
+        `时间线精剪成片已生成：${data.clips} 段 · ${data.durationSeconds.toFixed(1)}s，已归档到「项目资产」`,
+        { duration: 3600 },
+      );
+    } catch (e) {
+      const axiosMsg =
+        typeof e === 'object' && e && 'response' in e
+          ? ((e as { response?: { data?: { message?: string } } }).response?.data?.message ?? '')
+          : '';
+      toast.error(axiosMsg || (e as Error).message || '时间线导出失败');
+    } finally {
+      setTlExporting(false);
+    }
+  };
+
   const [synthName, setSynthName] = useState('yimu-export.mp4');
   /** 项目名：浏览器端合成的下载文件名必须与项目同名（与服务端落盘规则一致） */
   const [projectTitle, setProjectTitle] = useState('');
@@ -521,12 +547,56 @@ const ProjectExportTab = () => {
             ) : null}
           </div>
 
+          {/* 端口一：按时间线精剪导出（读 EDL，与镜头顺序端口并存） */}
+          <div className="ex-synth-alt">
+            <div className="ex-synth-alt-l">
+              <span className="ex-synth-alt-ico"><Scissors size={14} /></span>
+              <div>
+                <b>按时间线精剪导出</b>
+                <span>用底部时间线的剪辑结果：片段顺序 / 裁剪 / 变速 / 音轨 / 字幕轨，尊重轨道静音与独奏</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="ex-btn ex-btn-quiet"
+              onClick={handleTimelineExport}
+              disabled={tlExporting}
+            >
+              {tlExporting ? <Loader2 size={13} className="spin" /> : <Scissors size={13} />}
+              {tlExporting ? '导出中…' : '按时间线导出'}
+            </button>
+          </div>
+          {tlAsset ? (
+            <div className="ex-synth-alt">
+              <div className="ex-synth-alt-l">
+                <span className="ex-synth-alt-ico"><CheckCircle2 size={14} /></span>
+                <div>
+                  <b>{tlAsset.name}</b>
+                  <span>时间线精剪成片，已登记到「项目资产」</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="ex-btn ex-btn-ghost"
+                onClick={() => {
+                  if (tlAsset.fileUrl) {
+                    exportApi
+                      .downloadDeliverable(tlAsset.fileUrl)
+                      .catch(() => toast.error('下载失败'));
+                  }
+                }}
+              >
+                <Download size={13} /> 下载精剪成片
+              </button>
+            </div>
+          ) : null}
+
           <div className="ex-synth-alt">
             <div className="ex-synth-alt-l">
               <span className="ex-synth-alt-ico"><Server size={14} /></span>
               <div>
-                <b>服务端合成并归档</b>
-                <span>服务器 ffmpeg 拼接 · 硬字幕烧录 · BGM 混音 · 自动提取封面，归档到「项目资产」</span>
+                <b>按镜头顺序合成并归档</b>
+                <span>不读时间线，按镜头号顺序拼接 · 硬字幕烧录 · BGM 混音 · 自动提取封面，归档到「项目资产」</span>
               </div>
             </div>
             <button
