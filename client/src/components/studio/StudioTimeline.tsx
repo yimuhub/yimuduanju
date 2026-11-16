@@ -203,7 +203,10 @@ const ClipView = ({
   const isVideo = clip.track === 'video';
   const isAudio = clip.track === 'audio';
   const thumb = useThumbnails(projectId, isVideo ? clip.sourceUrl : null);
-  const wave = useWaveform(projectId, isAudio ? clip.sourceUrl : null);
+  const wave = useWaveform(
+    projectId,
+    isAudio || isVideo ? clip.sourceUrl : null,
+  );
   const isSub = clip.track === 'subtitle';
   const ts = resolveTextStyle(clip.textStyle ?? null);
 
@@ -256,6 +259,17 @@ const ClipView = ({
           outPoint={clip.outPoint}
           pxPerSec={pxPerSec}
         />
+      ) : null}
+      {isVideo && wave ? (
+        <div className="tl-clip-wave" aria-hidden>
+          <Waveform
+            wave={wave}
+            span={span}
+            inPoint={clip.inPoint}
+            outPoint={clip.outPoint}
+            pxPerSec={pxPerSec}
+          />
+        </div>
       ) : null}
       <span
         className="tl-clip-label"
