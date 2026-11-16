@@ -24,11 +24,31 @@ export const mediaProxyUrl = (projectId: string, url: string): string => {
 
 /**
  * 交付物下载：裸 <a href> 导航无法携带 CSRF 头（框架对 /api/* 全方法校验）会 403。
- * 改走 axios 取 blob（自动带 X-Suda-Csrf-Token）再触发浏览器保存。文件名取 URL 末段。
+ * 改走 axios 取 blob（自动带 X-Suda-Csrf-Token）再触发浏览器保存。
+ *
+ * 文件名优先读后端给的 Content-Disposition：
+ *   /export/final.mp4 这类端点的 URL 末段是「final.mp4」，只有响应头里才有项目名。
+ *   旧实现一律用 URL 末段，导出成片下载下来永远叫 final.mp4 —— 与「文件名 = 项目名」
+ *   的要求直接冲突。顺序：filename*（RFC 5987，带中文）> filename="..." > URL 末段。
  */
 export const downloadDeliverable = async (url: string): Promise<void> => {
   const res = await axiosForBackend.get(url, { responseType: 'blob' });
-  const fileName = decodeURIComponent(url.split('?')[0].split('/').pop() || 'download');
+  const disposition = String(res.headers?.['content-disposition'] ?? '');
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const plain = /filename="([^"]+)"/i.exec(disposition);
+  let fileName = '';
+  if (star) {
+    try {
+      fileName = decodeURIComponent(star[1].trim());
+    } catch {
+      fileName = star[1].trim();
+    }
+  } else if (plain) {
+    fileName = plain[1];
+  }
+  if (!fileName) {
+    fileName = decodeURIComponent(url.split('?')[0].split('/').pop() || 'download');
+  }
   const blobUrl = URL.createObjectURL(res.data as Blob);
   const a = document.createElement('a');
   a.href = blobUrl;

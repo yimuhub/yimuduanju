@@ -3,7 +3,7 @@ import { randomUUID, createHash } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { mkdir, writeFile, unlink, stat, copyFile, rm, readFile } from 'fs/promises';
-import { join, resolve as resolvePath, basename } from 'path';
+import { join, resolve as resolvePath } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import {
@@ -69,8 +69,8 @@ export class ExportService {
    * ------------------------------------------------------------------
    * 文件名必须是项目名：用户在素材箱/浏览器里看到的就是「项目名.mp4」，
    * 而不是 final_3e1a2b53.mp4。历史成片仍叫 final_xxx.mp4，这里按
-   * 「最新一条合成资产」定位真实文件，用它的 basename 做下载名 ——
-   * 不因为改名而找不到旧片。
+   * 「最新一条合成资产」定位真实文件，但**下载名始终用项目名** ——
+   * 历史成片仍叫 final_xxx.mp4，不代表用户应该继续收到这个不可读的名字。
    */
   async getFinalVideoFile(
     projectId: string,
@@ -94,15 +94,18 @@ export class ExportService {
       'mp4',
       `project-${projectId.slice(0, 8)}`,
     );
+    // 首选「项目名.mp4」（新版导出的落盘名）；没有再退回最新一条合成资产的
+    // 实际路径（历史 final_xxx.mp4）。无论命中哪个，**下载名一律用项目名** ——
+    // 老项目不该因为历史上叫 final_xxx 就继续给用户一个不可读的文件名。
     const candidates = [
-      rows[0]?.filePath,
       join(uploadDir(), projectId, preferred),
+      rows[0]?.filePath,
     ].filter((p): p is string => typeof p === 'string' && p.length > 0);
 
     for (const absPath of candidates) {
       if (!existsSync(absPath)) continue;
       const info = await stat(absPath);
-      return { absPath, fileName: basename(absPath), size: info.size };
+      return { absPath, fileName: preferred, size: info.size };
     }
     throw new BadRequestException('尚未合成成片：请先在导出页点击「开始合成」');
   }

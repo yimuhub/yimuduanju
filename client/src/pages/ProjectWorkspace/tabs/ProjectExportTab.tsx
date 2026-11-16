@@ -146,15 +146,25 @@ const ProjectExportTab = () => {
   const [bgmAssetId, setBgmAssetId] = useState('');
   // 商业交付 3·封面：导出成功后展示缩略图 + 下载
   const [cover, setCover] = useState<Asset | null>(null);
+  /** 是否已有服务端合成的成片（决定「成片 MP4」下载项是否可用） */
+  const [finalAsset, setFinalAsset] = useState<Asset | null>(null);
   useEffect(() => {
     if (!id) return;
     assetsApi
       .listByProject(id)
-      .then((rows) =>
-        setAudioAssets(rows.filter((a) => a.assetType === 'audio' && Boolean(a.fileUrl))),
-      )
-      .catch(() => setAudioAssets([]));
-  }, [id]);
+      .then((rows) => {
+        setAudioAssets(rows.filter((a) => a.assetType === 'audio' && Boolean(a.fileUrl)));
+        setFinalAsset(
+          rows.find(
+            (a) => a.assetType === 'video' && (a.sourceId ?? '').startsWith('assemble-'),
+          ) ?? null,
+        );
+      })
+      .catch(() => {
+        setAudioAssets([]);
+        setFinalAsset(null);
+      });
+  }, [id, assembling]);
   const handleServerAssemble = async () => {
     if (!id || assembling) return;
     setAssembling(true);
@@ -279,6 +289,17 @@ const ProjectExportTab = () => {
   const hasShots = shots.length > 0;
   const deliverables = [
     {
+      icon: Clapperboard,
+      label: '成片 MP4',
+      desc: finalAsset
+        ? `服务端合成整片，文件名＝项目名（${projectTitle || '当前项目'}）`
+        : '还没有服务端合成的成片，先在下方点「开始合成」',
+      tag: 'MP4',
+      group: '成片',
+      href: `${exportBase}/final.mp4`,
+      disabled: !finalAsset,
+    },
+    {
       icon: FileText,
       label: '字幕 SRT',
       desc: `${withSubtitle} / ${shots.length} 个镜头有字幕，按镜头时长自动排轴`,
@@ -324,7 +345,7 @@ const ProjectExportTab = () => {
       disabled: !hasShots,
     },
   ];
-  const groups = ['字幕与时间轴', '数据与工程'] as const;
+  const groups = ['成片', '字幕与时间轴', '数据与工程'] as const;
 
   // mock 演练占位镜头：合成/导出前必须显式告知，避免把占位内容当成交付成片
   const mockShots = shots.filter((s) => s.mock);
