@@ -36,6 +36,7 @@ import { createChatSession, getChatSession } from '@client/src/api/chat';
 import { StudioRail } from './StudioRail';
 import { StudioStage } from './StudioStage';
 import { StudioDock } from './StudioDock';
+import { StudioShotPool } from './StudioShotPool';
 import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
 import { NewWorkDialog, type NewWorkOpenOptions } from './NewWorkDialog';
@@ -182,26 +183,25 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
 
   /** 进入全功能编辑前的左栏状态：退出时还原，避免用户手动收起的偏好被改掉 */
   const railBeforePro = useRef(railCollapsed);
+  const tlBeforePro = useRef(tlCollapsed);
 
-  const setProEdit = useCallback(
-    (v: boolean) => {
-      // 全功能编辑 = 剪映式工作台：左栏保留但自动收起，把宽度全给预览+时间线
-      if (v && !proEdit) {
-        railBeforePro.current = railCollapsed;
-        setRailCollapsed(true);
-      } else if (!v && proEdit) {
-        setRailCollapsed(railBeforePro.current);
-      }
-      setProEditState(v);
-      try {
-        localStorage.setItem('yimu.proEdit', v ? '1' : '0');
-      } catch {
-        /* 忽略 */
-      }
-    },
-    [proEdit, railCollapsed, setRailCollapsed],
-  );
-  const toggleProEdit = useCallback(() => setProEdit(!proEdit), [proEdit, setProEdit]);
+  /** 全功能编辑：预览 / 时间线分隔高度 + 右侧镜头池宽度（都可拖拽，持久化） */
+  const [proTlH, setProTlH] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem('yimu.proTlH'));
+      return Number.isFinite(n) && n >= 180 ? Math.min(n, Math.round(window.innerHeight * 0.62)) : 304;
+    } catch {
+      return 304;
+    }
+  });
+  const [poolW, setPoolW] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem('yimu.poolW'));
+      return Number.isFinite(n) && n >= 240 ? Math.min(n, 460) : 316;
+    } catch {
+      return 316;
+    }
+  });
 
   const setTlCollapsed = useCallback((v: boolean) => {
     setTlCollapsedState(v);
@@ -211,6 +211,47 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       /* 隐私模式等场景忽略写失败 */
     }
   }, []);
+
+  // 从 localStorage 恢复的全功能编辑态：首帧就收起左栏，避免展开态先闪一下
+  const proInitRef = useRef(false);
+  useEffect(() => {
+    if (proInitRef.current) return;
+    proInitRef.current = true;
+    if (proEdit) setRailCollapsed(true);
+  }, [proEdit]);
+
+  const setProEdit = useCallback(
+    (v: boolean) => {
+      // 全功能编辑 = 剪映式工作台：左栏保留但自动收起，把宽度全给预览+时间线
+      if (v && !proEdit) {
+        railBeforePro.current = railCollapsed;
+        tlBeforePro.current = tlCollapsed;
+        setRailCollapsed(true);
+        // 全功能编辑不允许时间线处于细条态，否则没有可编辑的工作区
+        if (tlCollapsed) setTlCollapsed(false);
+      } else if (!v && proEdit) {
+        setRailCollapsed(railBeforePro.current);
+        setTlCollapsed(tlBeforePro.current);
+      }
+      setProEditState(v);
+      try {
+        localStorage.setItem('yimu.proEdit', v ? '1' : '0');
+      } catch {
+        /* 忽略 */
+      }
+    },
+    [proEdit, railCollapsed, setRailCollapsed, tlCollapsed, setTlCollapsed],
+  );
+  const toggleProEdit = useCallback(() => setProEdit(!proEdit), [proEdit, setProEdit]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('yimu.proTlH', String(proTlH));
+      localStorage.setItem('yimu.poolW', String(poolW));
+    } catch {
+      /* 隐私模式忽略 */
+    }
+  }, [proTlH, poolW]);
 
   const toggleTlCollapsed = useCallback(() => {
     setTlCollapsed(!tlCollapsed);
@@ -521,7 +562,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         dockHidden ? 'dock-collapsed' : '',
         tlHidden ? 'tl-collapsed' : '',
         stageView === 'canvas' ? 'canvas-mode' : '',
-        proEdit ? 'pro-edit' : '',
+        proEdit && projectId ? 'pro-edit' : '',
       ]
         .filter(Boolean)
         .join(' '),
@@ -605,7 +646,13 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     <StudioContext.Provider value={ctxValue}>
       <div
         className={appClass}
-        style={dockW ? ({ '--dock-w': `${dockW}px` } as React.CSSProperties) : undefined}
+        style={
+          {
+            ...(dockW ? { '--dock-w': `${dockW}px` } : null),
+            '--pro-tl-h': `${proTlH}px`,
+            '--pool-w': `${poolW}px`,
+          } as React.CSSProperties
+        }
       >
         <EdlProvider data={data}>
         <button
@@ -630,7 +677,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
             <path d="M15 18l-6-6 6-6" />
           </svg>
         </button>
-        {projectId ? (
+        {projectId && !proEdit ? (
           <button
             type="button"
             className="dock-toggle"
@@ -657,6 +704,61 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
 
         <StudioRail />
         <StudioStage>{pageContent}</StudioStage>
+        {projectId && proEdit ? (
+          <>
+            {/* 全功能编辑：右侧镜头池，左边缘可左右拖拽 */}
+            <div className="pro-pool" style={{ ['--pool-w' as string]: `${poolW}px` }}>
+              <div
+                className="pro-pool-resize"
+                title="左右拖拽调整镜头池宽度 · 双击复位"
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  const startX = e.clientX;
+                  const startW = poolW;
+                  const move = (ev: PointerEvent) => {
+                    const next = Math.max(240, Math.min(460, startW + (startX - ev.clientX)));
+                    setPoolW(next);
+                  };
+                  const up = () => {
+                    window.removeEventListener('pointermove', move);
+                    window.removeEventListener('pointerup', up);
+                  };
+                  window.addEventListener('pointermove', move);
+                  window.addEventListener('pointerup', up);
+                }}
+                onDoubleClick={() => setPoolW(316)}
+              />
+              <StudioShotPool />
+            </div>
+          </>
+        ) : null}
+        {projectId && proEdit ? (
+          <div
+            className="pro-split"
+            title="上下拖拽调整预览 / 时间线高度 · 双击复位"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              const startY = e.clientY;
+              const startH = proTlH;
+              const move = (ev: PointerEvent) => {
+                const next = Math.max(
+                  180,
+                  Math.min(Math.round(window.innerHeight * 0.62), startH + (startY - ev.clientY)),
+                );
+                setProTlH(next);
+              };
+              const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+              };
+              window.addEventListener('pointermove', move);
+              window.addEventListener('pointerup', up);
+            }}
+            onDoubleClick={() => setProTlH(304)}
+          >
+            <span className="pro-split-grip"><i /><i /><i /></span>
+          </div>
+        ) : null}
         {projectId && !proEdit ? <StudioDock /> : null}
         {projectId ? <StudioTimeline /> : null}
         <StudioStatusBar />

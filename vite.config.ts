@@ -1,4 +1,6 @@
 import path from 'path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -30,7 +32,10 @@ export default defineConfig(({ command }) => {
   define: {
     // 与 scripts/gateway.js 的 /app/yimu 前缀保持一致（basename 失配会导致首页 404）
     'process.env.CLIENT_BASE_PATH': JSON.stringify(process.env.CLIENT_BASE_PATH || '/app/yimu'),
-    'process.env.APP_VERSION': JSON.stringify(process.env.APP_VERSION || '3.10.2'),
+    // 版本号唯一真源 = package.json；每次 bump-version 后重新构建即自动更新
+    'process.env.APP_VERSION': JSON.stringify(
+      process.env.APP_VERSION || JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version,
+    ),
     'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString().slice(0,16).replace('T',' ')),
     // 不再依赖 `NODE_ENV=production vite build` 这种 POSIX 前缀写法
     // （Windows 构建机上会直接报「'NODE_ENV' 不是内部或外部命令」）：

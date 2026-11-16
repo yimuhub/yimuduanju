@@ -124,12 +124,19 @@
 }
 /* 全功能编辑：剪映式工作台
  *   左 rail 保留（自动收起，可展开）
- *   中舞台 = 全屏预览 + 属性（原右坞内容），对话收进浮动球
- *   底部 = 多轨时间线（编辑区）
- *   右 dock 整体收起，不再占列
+ *   中舞台 = 全屏预览 + 属性，对话收进浮动球
+ *   右侧 = 镜头池（左边缘可左右拖拽）
+ *   底部 = 多轨时间线（上边界可上下拖拽），右 dock 整体收起
  */
 .app.pro-edit {
-  --tl-h: min(54vh, 620px);
+  grid-template-columns: var(--rail-w, var(--rail)) minmax(0, 1fr) var(--pool-w, 316px);
+  grid-template-rows:
+    minmax(0, 1fr) 8px var(--pro-tl-h, 304px) var(--statusbar);
+  grid-template-areas:
+    'rail stage pool'
+    'rail split split'
+    'rail tl tl'
+    'status status status';
 }
 .app.pro-edit .stage-head,
 .app.pro-edit .secnav {
@@ -159,6 +166,262 @@
   position: sticky;
   top: 0;
   z-index: 3;
+}
+
+/* 全功能编辑：预览 / 时间线分隔条 */
+.pro-split {
+  grid-area: split;
+  position: relative;
+  cursor: row-resize;
+  background: var(--bg);
+  z-index: 12;
+  touch-action: none;
+}
+.pro-split::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  transition: background 0.15s;
+}
+.pro-split:hover::before {
+  background: var(--primary);
+  box-shadow: 0 0 10px rgba(255, 64, 58, 0.5);
+}
+.pro-split-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  gap: 3px;
+  opacity: 0.4;
+  line-height: 0;
+}
+.pro-split-grip i {
+  display: block;
+  width: 2px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--muted-foreground);
+}
+.pro-split:hover .pro-split-grip {
+  opacity: 1;
+}
+
+/* 全功能编辑：右侧镜头池容器（宽度由 --pool-w 控制） */
+.pro-pool {
+  grid-area: pool;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  border-left: 1px solid var(--line);
+  background: #101216;
+  overflow: visible;
+}
+.pro-pool-resize {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 20;
+  touch-action: none;
+}
+.pro-pool-resize::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.pro-pool-resize:hover::before {
+  background: var(--primary);
+  box-shadow: 0 0 10px rgba(255, 64, 58, 0.45);
+}
+
+/* 镜头池内部 */
+.shot-pool {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--foreground);
+}
+.shot-pool .sp-head {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.shot-pool .sp-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.shot-pool .sp-title h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.shot-pool .sp-title small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.shot-pool .sp-filters {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+.shot-pool .sp-chip {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  cursor: pointer;
+}
+.shot-pool .sp-chip.on {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.shot-pool .sp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.shot-pool .sp-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.shot-pool .sp-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-rows: auto auto;
+  gap: 2px 9px;
+  align-items: center;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+/* 主视图：编辑器主舞台（预览区） */
+.shot-pool .sp-item:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+.shot-pool .sp-item.on {
+  background: rgba(255, 64, 58, 0.07);
+  border-color: rgba(255, 64, 58, 0.32);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.shot-pool .sp-thumb {
+  grid-row: 1 / 3;
+  width: 44px;
+  height: 52px;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(150deg, #27374f, #0d131d);
+}
+.shot-pool .sp-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.shot-pool .sp-thumb b {
+  position: absolute;
+  left: 4px;
+  bottom: 3px;
+  z-index: 2;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px #000;
+}
+.shot-pool .sp-meta {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  min-width: 0;
+}
+.shot-pool .sp-l1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #dfe3e9;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.shot-pool .sp-l1 b {
+  font-weight: 600;
+}
+.shot-pool .sp-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: 0 0 5px;
+  background: #3c424b;
+}
+.shot-pool .sp-dot.ok {
+  background: #4fbf8f;
+}
+.shot-pool .sp-dot.run {
+  background: #f0a020;
+}
+.shot-pool .sp-tag {
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+.shot-pool .sp-l2 {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shot-pool .sp-dur {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
+  text-align: right;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.shot-pool .sp-state {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: start;
+  text-align: right;
+  color: var(--dim, #606772);
+  font-size: 9px;
+}
+.shot-pool .sp-foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-foreground);
+  font-size: 10px;
 }
 
 /* ---------- 左：导航轨 ---------- */
@@ -12004,7 +12267,22 @@ select.nw-input {
   font-weight: 600;
 }
 
-/* 全功能编辑：预览吃满中舞台（原右坞里的预览改全屏），信息区降为下方一条 */
+/* 全功能编辑：预览吃满中舞台（原右坞里的预览改全屏）
+ * 镜头池已独立到右侧，预览下区（镜头胶片条 / 场景信息）全部收起，
+ * 只保留「时间线合成画面」本身——这是本模式的唯一主角。
+ */
+.app.pro-edit .pro-edit-body .pv-bottom,
+.app.pro-edit .pro-edit-body .pv-splitter {
+  display: none !important;
+}
+.app.pro-edit .pro-edit-body .pv-stage {
+  flex: 1;
+  min-height: 0;
+}
+.app.pro-edit .pro-edit-body .pv-top {
+  flex: 1 1 auto;
+  padding: 8px 16px 12px;
+}
 .app.pro-edit .pro-edit-body .pv-top {
   height: auto !important;
   flex: 1 1 62%;
