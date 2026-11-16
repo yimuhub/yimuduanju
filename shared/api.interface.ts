@@ -1884,8 +1884,13 @@ export interface ExportTimelineRequest {
   height?: number;
   /** 是否烧录字幕轨，默认 true */
   burnSubtitles?: boolean;
-  /** 画面轨处理：sequence=全部串行拼接（旧行为）；main=只取主链 */
-  videoLaneMode?: 'sequence' | 'main';
+  /**
+   * 画面轨处理：
+   * · sequence = 全部串行拼接（旧行为）
+   * · main = 只取主链，其余轨不参与
+   * · overlay = 主链铺底，其余轨按各自时间点叠加为画中画
+   */
+  videoLaneMode?: 'sequence' | 'main' | 'overlay';
 }
 
 /**

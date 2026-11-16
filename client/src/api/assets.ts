@@ -60,26 +60,77 @@ export const deleteAsset = (id: string) =>
 
 // 白模产线 · 本地二进制上传（白模 webm/照片落盘，octet-stream，复用 axios CSRF 链路）
 // 注：listProjectAssets 走 projects 控制器的 GET api/projects/:id/assets（已存在），项目维度的全量资产用 listAssets({ projectId }) 分页版。
-export const uploadLocalFile = (
+/** 单请求上限：与服务端 MAX_BYTES 对齐；超过就走分片 */
+const SINGLE_UPLOAD_MAX = 25 * 1024 * 1024;
+
+export const uploadLocalFile = async (
   projectId: string,
   blob: Blob,
   filename: string,
   durationSeconds?: number,
-) =>
-  axiosForBackend
-    .post<{ asset: Asset; fileUrl: string }>(
-      `/api/projects/${projectId}/uploads${
-        durationSeconds ? `?durationSeconds=${durationSeconds}` : ''
-      }`,
-      blob,
-      {
-        headers: {
-          'Content-Type': blob.type || 'application/octet-stream',
-          'X-Filename': filename,
+  onProgress?: (percent: number) => void,
+): Promise<{ asset: Asset; fileUrl: string }> => {
+  if (blob.size <= SINGLE_UPLOAD_MAX) {
+    return axiosForBackend
+      .post<{ asset: Asset; fileUrl: string }>(
+        `/api/projects/${projectId}/uploads${
+          durationSeconds ? `?durationSeconds=${durationSeconds}` : ''
+        }`,
+        blob,
+        {
+          headers: { 'Content-Type': blob.type || 'application/octet-stream', 'X-Filename': filename },
+          timeout: 10 * 60_000,
+          onUploadProgress: (e) => {
+            if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+          },
         },
+      )
+      .then((res) => res.data);
+  }
+
+  // 大文件：init → 逐片 PUT → complete（服务端按序追加，完成后一次登记资产）
+  const init = await axiosForBackend
+    .post<{ uploadId: string; chunkSize: number }>(
+      `/api/projects/${projectId}/uploads/chunks`,
+      {
+        filename,
+        mimeType: blob.type || 'application/octet-stream',
+        totalSize: blob.size,
+        durationSeconds,
       },
+      { timeout: 60_000 },
     )
     .then((res) => res.data);
+  const chunkSize = Math.max(1, Math.min(init.chunkSize || 8 * 1024 * 1024, 12 * 1024 * 1024));
+  const totalParts = Math.ceil(blob.size / chunkSize);
+  for (let i = 0; i < totalParts; i += 1) {
+    const start = i * chunkSize;
+    const part = blob.slice(start, Math.min(blob.size, start + chunkSize));
+    // eslint-disable-next-line no-await-in-loop
+    await axiosForBackend.put(
+      `/api/projects/${projectId}/uploads/chunks/${init.uploadId}/part?index=${i}`,
+      part,
+      {
+        headers: { 'Content-Type': 'application/octet-stream' },
+        timeout: 5 * 60_000,
+        onUploadProgress: (e) => {
+          if (!onProgress) return;
+          const done = start + (e.loaded ?? 0);
+          onProgress(Math.min(99, Math.round((done / blob.size) * 100)));
+        },
+      },
+    );
+  }
+  const done = await axiosForBackend
+    .post<{ asset: Asset; fileUrl: string }>(
+      `/api/projects/${projectId}/uploads/chunks/${init.uploadId}/complete`,
+      {},
+      { timeout: 120_000 },
+    )
+    .then((res) => res.data);
+  onProgress?.(100);
+  return done;
+};
 
 export const listProjectAssets = (projectId: string) =>
   axiosForBackend

@@ -17,43 +17,94 @@ export interface TimelineOpsProposal {
 
 const FENCE = /```yimu-timeline\s*([\s\S]*?)```/g;
 
-/** 提取最后一个合法代码块（模型有时先解释再给动作） */
-export function parseTimelineOpsProposal(content: string): TimelineOpsProposal | null {
-  if (!content || !content.includes('yimu-timeline')) return null;
-  const matches = [...content.matchAll(FENCE)];
-  for (let i = matches.length - 1; i >= 0; i -= 1) {
-    const raw = matches[i][1]?.trim();
-    if (!raw) continue;
-    try {
-      const data = JSON.parse(raw) as {
-        baseVersion?: unknown;
-        summary?: unknown;
-        ops?: unknown;
-      };
-      const baseVersion = Number(data.baseVersion);
-      if (!Number.isFinite(baseVersion) || baseVersion < 0) continue;
-      if (!Array.isArray(data.ops) || data.ops.length === 0) continue;
-      const ops = data.ops.filter(
-        (o): o is TimelineOp =>
-          Boolean(o) &&
-          typeof o === 'object' &&
-          typeof (o as { op?: unknown }).op === 'string' &&
-          TIMELINE_OP_NAMES.includes((o as { op: string }).op as never),
-      );
-      // 有一条不合法就整块不认：避免「部分动作偷偷生效」
-      if (ops.length !== data.ops.length || ops.length > 40) continue;
-      return {
-        baseVersion,
-        summary:
-          typeof data.summary === 'string' && data.summary.trim()
-            ? data.summary.trim().slice(0, 200)
-            : '按你的要求调整时间线',
-        ops,
-        raw,
-      };
-    } catch {
-      /* 继续尝试更早的代码块 */
+/** 从一段文本里摘出所有「看起来是完整对象」的 JSON 片段（容错未加围栏的输出） */
+function balancedObjects(text: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '{') continue;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let j = i; j < text.length; j += 1) {
+      const ch = text[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          out.push(text.slice(i, j + 1));
+          break;
+        }
+      }
     }
+  }
+  return out;
+}
+
+/** 解析一段 JSON 文本；不合规（版本/op 名/数量）返回 null */
+function parseBody(raw: string): TimelineOpsProposal | null {
+  try {
+    const data = JSON.parse(raw) as {
+      baseVersion?: unknown;
+      summary?: unknown;
+      ops?: unknown;
+    };
+    const baseVersion = Number(data.baseVersion);
+    if (!Number.isFinite(baseVersion) || baseVersion < 0) return null;
+    if (!Array.isArray(data.ops) || data.ops.length === 0) return null;
+    const ops = data.ops.filter(
+      (o): o is TimelineOp =>
+        Boolean(o) &&
+        typeof o === 'object' &&
+        typeof (o as { op?: unknown }).op === 'string' &&
+        TIMELINE_OP_NAMES.includes((o as { op: string }).op as never),
+    );
+    // 有一条不合法就整块不认：避免「部分动作偷偷生效」
+    if (ops.length !== data.ops.length || ops.length > 40) return null;
+    return {
+      baseVersion,
+      summary:
+        typeof data.summary === 'string' && data.summary.trim()
+          ? data.summary.trim().slice(0, 200)
+          : '按你的要求调整时间线',
+      ops,
+      raw,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 解析模型回复里的动作提案。
+ * 容错顺序：标准 yimu-timeline 围栏 → 未加围栏的裸 JSON（模型偶尔漏围栏）。
+ * 仍坚持「宁可 null 也不执行半截动作」。
+ */
+export function parseTimelineOpsProposal(content: string): TimelineOpsProposal | null {
+  if (!content) return null;
+  if (content.includes('yimu-timeline')) {
+    const matches = [...content.matchAll(FENCE)];
+    for (let i = matches.length - 1; i >= 0; i -= 1) {
+      const raw = matches[i][1]?.trim();
+      if (!raw) continue;
+      const parsed = parseBody(raw);
+      if (parsed) return parsed;
+    }
+  }
+  // 兜底：模型把 JSON 直接贴在自然语言里（常见于小模型/被截断的围栏）
+  if (!content.includes('"ops"')) return null;
+  const candidates = balancedObjects(content)
+    .filter((raw) => raw.includes('"ops"'))
+    .reverse();
+  for (const raw of candidates) {
+    const parsed = parseBody(raw);
+    if (parsed) return parsed;
   }
   return null;
 }

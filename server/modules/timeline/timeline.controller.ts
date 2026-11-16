@@ -50,6 +50,15 @@ export class TimelineController {
    * 对话驱动的剪辑：一批动作，服务端事务应用 + 审计。
    * 客户端先用同一份 shared/timeline-ops 做 dry-run 出 diff，再调这里落库。
    */
+  /** 最近剪辑历史（审计回放） */
+  @Get('agent-ops')
+  async agentOpsHistory(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    return this.timelineService.listAgentOps(projectId, limitRaw ? Number(limitRaw) : 20);
+  }
+
   @Post('agent-ops')
   async agentOps(
     @Param('projectId', ParseUUIDPipe) projectId: string,

@@ -11844,3 +11844,127 @@ select.nw-input {
 .tl-ops-meta { font-size: 11px; color: var(--muted-foreground); }
 .tl-ops-apply { height: 28px; padding: 0 12px; font-size: 12px; }
 .tl-ops-apply:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Agent 剪辑历史（审计回放） */
+.tl-hist-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(10, 12, 16, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tl-hist {
+  width: min(720px, 92vw);
+  max-height: min(640px, 80vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+.tl-hist-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+}
+.tl-hist-h > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tl-hist-h button {
+  border: 1px solid var(--border, #e5e7eb);
+  background: transparent;
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--muted-foreground, #6b7280);
+}
+.tl-hist-list {
+  overflow: auto;
+  padding: 10px 12px 14px;
+}
+.tl-hist-empty {
+  padding: 28px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-foreground, #6b7280);
+  line-height: 1.7;
+}
+.tl-hist-row {
+  border: 1px solid var(--border, #eceef2);
+  border-radius: 10px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  background: var(--surface-2, #fafafa);
+}
+.tl-hist-row-h {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.tl-hist-row-h b {
+  font-weight: 600;
+}
+.tl-hist-row-h .num {
+  color: var(--muted-foreground, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+.tl-hist-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground, #9ca3af);
+  font-variant-numeric: tabular-nums;
+}
+.tl-hist-diffs {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+.tl-hist-diff {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted-foreground, #6b7280);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tl-hist-diff .op {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 64, 58, 0.1);
+  color: var(--primary, #ff403a);
+  font-weight: 600;
+}
+.tl-hist-diff .before {
+  text-decoration: line-through;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-hist-diff .after {
+  color: var(--foreground, #1f2329);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-hist-diff .note {
+  color: var(--muted-foreground, #9ca3af);
+}

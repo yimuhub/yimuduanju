@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Headers,
   Inject,
@@ -8,6 +9,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
   Req,
 } from '@nestjs/common';
@@ -17,7 +19,7 @@ import { eq } from 'drizzle-orm';
 import { createWriteStream } from 'fs';
 // 修复：unlink 原本在两个分支里各写一次 `await import('fs/promises')` 动态导入，
 // 而顶部已静态导入了 mkdir。统一为静态导入，去掉重复的运行时解析。
-import { mkdir, unlink } from 'fs/promises';
+import { mkdir, stat, unlink, writeFile } from 'fs/promises';
 import { createHash, randomUUID } from 'crypto';
 // 修复：`resolve` 从未被使用，noUnusedLocals 下会直接编译失败；
 // 同时把重复的第二条 '@nestjs/common' import 合并进上面那条。
@@ -41,6 +43,26 @@ import { uploadDir } from './upload-dir';
  * 直喂需要公网可拉取 URL——Key 到位做 R2V 联调时，需换 S3/OSS 公网地址。
  */
 const MAX_BYTES = 25 * 1024 * 1024;
+/**
+ * 分片上传（大文件）：单片 12MB，总大小 2GB。
+ * 单请求 25MB 上限保留给小文件（零额外往返），大文件走 init → part* → complete。
+ * 会话只存内存：单进程部署足够；多副本部署需换成对象存储 multipart。
+ */
+const CHUNK_MAX_BYTES = 12 * 1024 * 1024;
+const CHUNK_TOTAL_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+type ChunkSession = {
+  projectId: string;
+  absPath: string;
+  fileName: string;
+  ext: string;
+  mime: string;
+  displayName: string;
+  totalSize: number;
+  received: number;
+  parts: number;
+  durationSeconds?: number;
+};
+const chunkSessions = new Map<string, ChunkSession>();
 /** 请求体接收超时：旧实现的 Promise 没有任何超时，客户端只连不发就会挂死一个请求 */
 const UPLOAD_TIMEOUT_MS = 60_000;
 const ALLOWED: Record<string, string> = {
@@ -68,6 +90,183 @@ export class UploadsController {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly assetsService: AssetsService,
   ) {}
+
+  /**
+   * 大文件分片：初始化会话。
+   * POST /api/projects/:projectId/uploads/chunks
+   * {"filename":"a.mp4","mimeType":"video/mp4","totalSize":123456789,"durationSeconds":30}
+   */
+  @Post('chunks')
+  async initChunks(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body()
+    body: {
+      filename?: string;
+      mimeType?: string;
+      totalSize?: number;
+      durationSeconds?: number;
+    },
+  ): Promise<{ uploadId: string; chunkSize: number }> {
+    const mime = (body.mimeType ?? '').split(';')[0].trim().toLowerCase();
+    const ext = ALLOWED[mime];
+    if (!ext) {
+      throw new BadRequestException(
+        `不支持的 MIME 类型，仅允许 ${Object.keys(ALLOWED).join('、')}`,
+      );
+    }
+    const totalSize = Number(body.totalSize);
+    if (!Number.isFinite(totalSize) || totalSize <= 0) {
+      throw new BadRequestException('totalSize 必须是正整数');
+    }
+    if (totalSize > CHUNK_TOTAL_MAX_BYTES) {
+      throw new BadRequestException(
+        `文件超过 ${CHUNK_TOTAL_MAX_BYTES / 1024 / 1024 / 1024}GB 上限`,
+      );
+    }
+    const projRows = await this.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (projRows.length === 0) throw new NotFoundException('项目不存在');
+
+    const dir = join(uploadDir(), projectId);
+    await mkdir(dir, { recursive: true });
+    const fileName = `${randomUUID()}.${ext}`;
+    const absPath = join(dir, fileName);
+    await writeFile(absPath, Buffer.alloc(0));
+
+    const displayName = (body.filename ?? '')
+      .split(/[/\\]/)
+      .pop()
+      ?.replace(/[^\w\u4e00-\u9fff.\-()\[\] ]/g, '')
+      .slice(0, 80) ?? '';
+
+    const uploadId = randomUUID();
+    chunkSessions.set(uploadId, {
+      projectId,
+      absPath,
+      fileName,
+      ext,
+      mime,
+      displayName,
+      totalSize,
+      received: 0,
+      parts: 0,
+      durationSeconds:
+        Number.isFinite(Number(body.durationSeconds)) && Number(body.durationSeconds) > 0
+          ? Number(body.durationSeconds)
+          : undefined,
+    });
+    return { uploadId, chunkSize: CHUNK_MAX_BYTES };
+  }
+
+  /**
+   * 大文件分片：追加一片。必须按 index 顺序（0,1,2…），服务端只追加不重排。
+   * PUT /api/projects/:projectId/uploads/chunks/:uploadId/part?index=0  (octet-stream)
+   */
+  @Put('chunks/:uploadId/part')
+  async putChunk(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('uploadId') uploadId: string,
+    @Query('index') indexRaw: string | undefined,
+    @Req() req: Request,
+  ): Promise<{ received: number; nextIndex: number }> {
+    const session = chunkSessions.get(uploadId);
+    if (!session || session.projectId !== projectId) {
+      throw new NotFoundException('上传会话不存在或已过期');
+    }
+    const index = Number(indexRaw);
+    if (!Number.isInteger(index) || index < 0) {
+      throw new BadRequestException('index 必须是从 0 开始的整数');
+    }
+    if (index !== session.parts) {
+      throw new BadRequestException(
+        `分片顺序错误：期望 index=${session.parts}，收到 ${index}`,
+      );
+    }
+    if (req.readableEnded) {
+      throw new BadRequestException('请求体已被上游中间件消费，无法落盘');
+    }
+
+    const received = await new Promise<number>((resolvePart, reject) => {
+      let bytes = 0;
+      let settled = false;
+      const stream = createWriteStream(session.absPath, { flags: 'a' });
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+      req.on('data', (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > CHUNK_MAX_BYTES) {
+          req.pause();
+          settle(() => reject(new BadRequestException('单片超过 12MB 上限')));
+          return;
+        }
+        if (session.received + bytes > session.totalSize) {
+          req.pause();
+          settle(() => reject(new BadRequestException('分片累计超过声明的 totalSize')));
+          return;
+        }
+        if (!stream.write(chunk)) req.pause();
+      });
+      stream.on('drain', () => req.resume());
+      req.on('end', () => stream.end(() => settle(() => resolvePart(bytes))));
+      req.on('error', (e) => {
+        stream.destroy();
+        settle(() => reject(e));
+      });
+      stream.on('error', (e) => settle(() => reject(e)));
+    });
+
+    if (received === 0) throw new BadRequestException('空分片');
+    session.received += received;
+    session.parts += 1;
+    return { received: session.received, nextIndex: session.parts };
+  }
+
+  /**
+   * 大文件分片：收尾校验并登记资产。
+   * POST /api/projects/:projectId/uploads/chunks/:uploadId/complete
+   */
+  @Post('chunks/:uploadId/complete')
+  async completeChunks(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('uploadId') uploadId: string,
+  ): Promise<{ asset: Asset; fileUrl: string }> {
+    const session = chunkSessions.get(uploadId);
+    if (!session || session.projectId !== projectId) {
+      throw new NotFoundException('上传会话不存在或已过期');
+    }
+    const actual = (await stat(session.absPath).catch(() => null))?.size ?? 0;
+    if (session.received !== session.totalSize || actual !== session.totalSize) {
+      throw new BadRequestException(
+        `文件不完整：声明 ${session.totalSize} 字节，实收 ${session.received}，落盘 ${actual}`,
+      );
+    }
+    const isVideo = session.mime.startsWith('video/');
+    const isAudio = session.mime.startsWith('audio/');
+    const asset = await this.assetsService.create({
+      projectId,
+      assetType: isVideo ? 'video' : isAudio ? 'audio' : 'image',
+      name:
+        session.displayName ||
+        `白模-${createHash('md5').update(session.fileName).digest('hex').slice(0, 8)}.${session.ext}`,
+      fileUrl: `/uploads/${projectId}/${session.fileName}`,
+      mimeType: session.mime,
+      fileSize: session.totalSize,
+      durationSeconds: session.durationSeconds,
+      sourceType: 'whitemodel',
+      status: 'ready',
+    });
+    chunkSessions.delete(uploadId);
+    this.logger.log(
+      `分片上传完成 ${projectId}/${session.fileName} ${(session.totalSize / 1024 / 1024).toFixed(1)}MB / ${session.parts} 片`,
+    );
+    return { asset, fileUrl: asset.fileUrl ?? '' };
+  }
 
   @Post()
   async upload(

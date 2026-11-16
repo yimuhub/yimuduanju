@@ -9,11 +9,20 @@
  *     所以「说一句话就自动改片」做不到；做成「结构化剪辑指令」——用户描述后，
  *     在对话窗里给出可复制的操作清单，交用户在时间线上手动执行（诚实降级，见方案 §6.3）。
  *
- * 明确不承诺：系统级桌面宠物（脱离浏览器、透明置顶）—— Web 端做不到，需 Tauri 客户端。
+ * 桌面悬浮：Chromium 116+ 支持 Document Picture-in-Picture 时，可把小球投成
+ * 系统级置顶小窗（可拖到屏幕任意位置），点它回到主窗口继续对话；
+ * Safari/Firefox 无此 API，退化为页内拖拽小球。全平台透明置顶宠物仍需 Tauri 壳。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Grip, MessageCircle, Send, X } from 'lucide-react';
+import { Grip, MessageCircle, MonitorUp, Send, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
+
+/** Document Picture-in-Picture（Chromium 专有，TS lib 尚未收录） */
+type DocPip = {
+  requestWindow?: (opts?: { width?: number; height?: number }) => Promise<Window>;
+  window?: Window | null;
+};
 
 const POS_KEY = 'yimu.proChat.pos';
 
@@ -44,6 +53,8 @@ export const StudioFloatingChat = () => {
     null,
   );
   const listRef = useRef<HTMLDivElement>(null);
+  /** 已投到桌面的悬浮小窗（Document PiP） */
+  const petWinRef = useRef<Window | null>(null);
 
   useEffect(() => {
     try {
@@ -86,6 +97,71 @@ export const StudioFloatingChat = () => {
     [pos],
   );
 
+  /**
+   * 把 logo 投成系统级置顶小窗：Document PiP 窗口本身可被用户拖到屏幕任意位置，
+   * 点一下聚焦主窗口并展开对话。React 事件不能跨窗口，所以这里用原生 DOM。
+   */
+  const popPetToDesktop = async () => {
+    const dpip = (window as unknown as { documentPictureInPicture?: DocPip })
+      .documentPictureInPicture;
+    if (!dpip?.requestWindow) {
+      toast.error('当前浏览器不支持桌面悬浮窗（需 Chrome / Edge 116+），已保留页内拖拽小球');
+      return;
+    }
+    if (petWinRef.current && !petWinRef.current.closed) {
+      petWinRef.current.close();
+      petWinRef.current = null;
+      return;
+    }
+    try {
+      const w = await dpip.requestWindow({ width: 148, height: 148 });
+      petWinRef.current = w;
+      const doc = w.document;
+      doc.body.innerHTML = '';
+      Object.assign(doc.body.style, {
+        margin: '0',
+        background: 'transparent',
+        overflow: 'hidden',
+        display: 'grid',
+        placeItems: 'center',
+        height: '100vh',
+        userSelect: 'none',
+      });
+      const ball = doc.createElement('button');
+      ball.type = 'button';
+      ball.title = '回到一幕，继续和 AI 对话（可拖到屏幕任意位置）';
+      ball.style.cssText = [
+        'width:96px',
+        'height:96px',
+        'border-radius:50%',
+        'border:0',
+        'cursor:pointer',
+        'position:relative',
+        'background:radial-gradient(circle at 32% 28%, #ff7a6e 0%, #ff403a 46%, #c81d19 100%)',
+        'box-shadow:0 10px 28px rgba(255,64,58,.45), inset 0 -6px 12px rgba(0,0,0,.18)',
+        'color:#fff',
+        'font:700 15px/1.1 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
+        'letter-spacing:.08em',
+        'display:grid',
+        'place-items:center',
+      ].join(';');
+      ball.textContent = 'YIMU';
+      ball.addEventListener('click', () => {
+        try {
+          window.focus();
+        } catch {
+          /* 某些环境禁止 focus，忽略 */
+        }
+        setOpen(true);
+      });
+      doc.body.appendChild(ball);
+      toast.success('已投到桌面：拖动小窗到任意位置，点它回到对话', { duration: 2600 });
+    } catch (e) {
+      petWinRef.current = null;
+      toast.error(`投到桌面失败：${(e as Error).message || '浏览器拒绝'} `);
+    }
+  };
+
   const submit = () => {
     const text = draft.trim();
     if (!text || chatBusy) return;
@@ -101,6 +177,13 @@ export const StudioFloatingChat = () => {
             <Grip size={13} className="pro-chat-grip" />
             <b>AI 剪辑助手</b>
             <span className="spacer" />
+            <button
+              type="button"
+              title="投到桌面悬浮窗（Chromium 支持，置顶可拖动）"
+              onClick={() => void popPetToDesktop()}
+            >
+              <MonitorUp size={14} />
+            </button>
             <button type="button" title="收起" onClick={() => setOpen(false)}>
               <X size={14} />
             </button>

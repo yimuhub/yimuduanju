@@ -13,7 +13,7 @@ import { mkdir, stat, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import {
   agentEditOps,
   assets,
@@ -410,6 +410,25 @@ export class TimelineService {
     };
   }
 
+  /** 最近 N 次 Agent 剪辑（审计回放用；只读，不返回整份快照） */
+  async listAgentOps(projectId: string, limit = 20) {
+    await this.requireProject(projectId);
+    return this.db
+      .select({
+        id: agentEditOps.id,
+        summary: agentEditOps.summary,
+        status: agentEditOps.status,
+        baseVersion: agentEditOps.baseVersion,
+        resultVersion: agentEditOps.resultVersion,
+        createdAt: agentEditOps.createdAt,
+        diffs: agentEditOps.diffs,
+      })
+      .from(agentEditOps)
+      .where(eq(agentEditOps.projectId, projectId))
+      .orderBy(desc(agentEditOps.createdAt))
+      .limit(Math.min(50, Math.max(1, limit)));
+  }
+
   /**
    * 轨道静音 / 独奏过滤：solo 优先（只保留 solo 轨），其次剔除 muted 轨。
    * tracks 为空（未设置过轨道属性）时原样返回，保证旧项目导出行为不变。
@@ -657,18 +676,30 @@ export class TimelineService {
     // 画面轨语义（缺省 sequence = 历史行为，保证老项目导出不变）
     const metaOf = (c: TimelineClip) =>
       (doc.tracks ?? []).find((t) => t.track === c.track && (t.lane ?? 0) === (c.lane ?? 0));
-    const videoClips = audible
+    const allVideo = audible
       .filter((c) => c.track === 'video' && c.sourceUrl)
-      .filter((c) => {
-        if (dto.videoLaneMode !== 'main') return true;
-        const meta = metaOf(c);
-        if (meta?.exportEnabled === false) return false;
-        if (meta?.role === 'alt' || meta?.role === 'overlay') return false;
-        return meta?.role === 'main' || (c.lane ?? 0) === 0;
-      })
       .sort((a, b) => a.timelineStart - b.timelineStart);
+    /** 主链：lane 0 或显式 role=main，且未被 track 关闭导出 */
+    const isMainLane = (c: TimelineClip) => {
+      const meta = metaOf(c);
+      if (meta?.exportEnabled === false) return false;
+      return meta?.role === 'main' || (c.lane ?? 0) === 0;
+    };
+    // overlay 模式：主链铺底，其余轨（非 alt、未关闭导出）按各自时间点叠加为画中画
+    const overlayClips =
+      dto.videoLaneMode === 'overlay'
+        ? allVideo.filter((c) => {
+            if (isMainLane(c)) return false;
+            const meta = metaOf(c);
+            return meta?.exportEnabled !== false && meta?.role !== 'alt';
+          })
+        : [];
+    const videoClips =
+      dto.videoLaneMode === 'main' || dto.videoLaneMode === 'overlay'
+        ? allVideo.filter(isMainLane)
+        : allVideo;
     if (videoClips.length === 0) {
-      throw new BadRequestException('时间线没有可导出的视频片段：请先生成镜头视频');
+      throw new BadRequestException('主画面轨没有可导出的视频片段：请先生成镜头视频或把片段拖回主轨');
     }
     const audioClips = audible
       .filter((c) => c.track === 'audio' && c.sourceUrl)
@@ -760,6 +791,9 @@ export class TimelineService {
 
       const concatPath = join(work, 'concat.mp4');
       cleanup.push(concatPath);
+      /** 最终画面源：默认就是主链拼接结果；overlay 模式会再合成一层画中画 */
+      let finalVideoPath = concatPath;
+      let overlayCount = 0;
       if (plan.hasCrossfade) {
         // 有叠化：不能走 concat 协议的 `-c copy`（它只会首尾相接，做不出同时可见）。
         // 改成一条 filter 链，硬切用 concat 滤镜、叠化用 xfade，串在同一张图里，
@@ -792,6 +826,96 @@ export class TimelineService {
           '-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', concatPath,
         ]);
         if (!concatOk) throw new BadRequestException('片段拼接失败（编码不一致）');
+      }
+
+      // 1.5) 多画面轨真正叠加（画中画）：主链铺底，其余轨按 timelineStart 叠上去。
+      // 之前的实现把 V2/V3 当串行片段拼进去，等于「备选镜头接在后面」；这里改成同帧叠加。
+      if (overlayClips.length > 0) {
+        /** 片段与渲染结果成对保存：中间某个下载失败时，时间点不会错位 */
+        const ovRendered: { seg: string; clip: TimelineClip }[] = [];
+        for (let i = 0; i < overlayClips.length; i += 1) {
+          const clip = overlayClips[i];
+          const url = clip.sourceUrl as string;
+          const still = MEDIA_IMAGE_EXT.test(url);
+          const src = join(work, `ov_src_${String(i).padStart(3, '0')}${mediaExt(url)}`);
+          cleanup.push(src);
+          // eslint-disable-next-line no-await-in-loop
+          const ok = await this.exportService.materializeMediaToFile(url, src, cacheDir);
+          if (!ok) {
+            this.logger.warn(`画中画片段 ${i + 1} 下载失败，跳过`);
+            continue;
+          }
+          const speed = clip.speed > 0 ? clip.speed : 1;
+          const span = Math.max(0.05, (clip.outPoint - clip.inPoint) / speed);
+          // 画中画默认占画面 42%，等比缩放居中偏右下；轨道 role=overlay 也可走同一条路径
+          const boxW = Math.max(2, Math.round(width * 0.42 / 2) * 2);
+          const boxH = Math.max(2, Math.round(height * 0.42 / 2) * 2);
+          const seg = join(work, `ov_seg_${String(i).padStart(3, '0')}.mp4`);
+          cleanup.push(seg);
+          // eslint-disable-next-line no-await-in-loop
+          const segOk = await run([
+            '-y',
+            ...(still ? ['-loop', '1', '-i', src] : ['-ss', String(Math.max(0, clip.inPoint)), '-i', src]),
+            '-t', String(span),
+            '-vf', [
+              `scale=${boxW}:${boxH}:force_original_aspect_ratio=decrease`,
+              'setsar=1',
+              `fps=${fps}`,
+            ].join(','),
+            '-an',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'veryfast',
+            '-crf', '20',
+            seg,
+          ]);
+          if (!segOk) {
+            this.logger.warn(`画中画片段 ${i + 1} 渲染失败，跳过`);
+            continue;
+          }
+          ovRendered.push({ seg, clip });
+        }
+
+        if (ovRendered.length > 0) {
+          const compositePath = join(work, 'composite.mp4');
+          cleanup.push(compositePath);
+          const inputs = [concatPath, ...ovRendered.map((o) => o.seg)].flatMap((p) => ['-i', p]);
+          const chains: string[] = ['[0:v]setpts=PTS-STARTPTS[b0]'];
+          for (let i = 0; i < ovRendered.length; i += 1) {
+            const clip = ovRendered[i].clip;
+            const start = Math.max(0, clip.timelineStart);
+            const span = Math.max(0.05, (clip.outPoint - clip.inPoint) / (clip.speed > 0 ? clip.speed : 1));
+            const end = start + span;
+            chains.push(
+              `[${i + 1}:v]setpts=PTS-STARTPTS+${start.toFixed(3)}/TB[o${i}]`,
+            );
+            chains.push(
+              `[b${i}][o${i}]overlay=x=W-w-32:y=H-h-32:eof_action=pass:enable='between(t,${start.toFixed(
+                3,
+              )},${end.toFixed(3)})'[b${i + 1}]`,
+            );
+          }
+          const filter = chains.join(';');
+          const ok = await run([
+            '-y',
+            ...inputs,
+            '-filter_complex', filter,
+            '-map', `[b${ovRendered.length}]`,
+            '-an',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'veryfast',
+            '-crf', '20',
+            '-t', String(totalDur),
+            compositePath,
+          ]);
+          if (!ok) throw new BadRequestException('画中画合成失败（请检查片段编码）');
+          finalVideoPath = compositePath;
+          overlayCount = ovRendered.length;
+          this.logger.log(
+            `画中画合成：主链 ${segments.length} 段 + 叠加 ${overlayCount} 段`,
+          );
+        }
       }
 
       // 2) 音频轨：trim + 音量 + 延迟到 timelineStart，多轨 amix
@@ -858,7 +982,7 @@ export class TimelineService {
         const audioIn = audioPath ? ['-i', audioPath] : [];
         const burnOk = await run(
           [
-            '-y', '-i', concatPath, ...audioIn,
+            '-y', '-i', finalVideoPath, ...audioIn,
             '-vf', vf,
             '-map', '0:v:0',
             ...(audioPath ? ['-map', '1:a:0'] : []),
@@ -880,7 +1004,7 @@ export class TimelineService {
               cleanup.push(srtPath);
               await writeFile(srtPath, srt, 'utf8');
               return run([
-                '-y', '-i', concatPath, ...audioIn, '-i', srtPath,
+                '-y', '-i', finalVideoPath, ...audioIn, '-i', srtPath,
                 '-map', '0:v:0',
                 ...(audioPath ? ['-map', '1:a:0'] : []),
                 '-map', audioPath ? '2:s:0' : '1:s:0',
@@ -892,7 +1016,7 @@ export class TimelineService {
               ]);
             })()
           : await run([
-              '-y', '-i', concatPath, ...audioIn,
+              '-y', '-i', finalVideoPath, ...audioIn,
               '-map', '0:v:0',
               ...(audioPath ? ['-map', '1:a:0'] : []),
               '-c:v', 'copy',
@@ -919,7 +1043,7 @@ export class TimelineService {
           durationSeconds: String(totalDur),
           sourceType: 'generated',
           sourceId: `timeline-export-${randomUUID()}`,
-          generationPrompt: `按 EDL 导出 ${segments.length} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}）`,
+          generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}）`,
           metadata: {
             aigcGenerated: true,
             hasAudio: Boolean(audioPath),
@@ -930,8 +1054,11 @@ export class TimelineService {
         })
         .returning();
       const asset = this.mapAsset(rows[0]);
-      this.logger.log(`EDL 导出完成 ${projectId}：${segments.length} 段 → ${fileUrl}（${st.size}B）`);
-      return { asset, clips: segments.length, durationSeconds: totalDur };
+      const totalClips = segments.length + overlayCount;
+      this.logger.log(
+        `EDL 导出完成 ${projectId}：${totalClips} 段（叠加 ${overlayCount}）→ ${fileUrl}（${st.size}B）`,
+      );
+      return { asset, clips: totalClips, durationSeconds: totalDur };
     } finally {
       for (const f of cleanup) await unlink(f).catch(() => {});
     }

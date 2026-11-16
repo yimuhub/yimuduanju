@@ -45,6 +45,8 @@ const TIMELINE_ACTION_PROTOCOL = [
   '当用户要求剪辑已产出的时间线（移动/修剪/分割/删除/字幕/变速/音量/建轨）时，',
   '回复末尾追加 ```yimu-timeline 代码块，内容是一批可执行动作：',
   '{"baseVersion":<当前版本号>,"summary":"一句话说明改了什么","ops":[{"op":"trim","target":{"clientKey":"..."},"edge":"right","deltaSec":-0.5}]}',
+  '完整示例（照这个格式输出，不要改写字段名）：',
+  '{"baseVersion":3,"summary":"第2镜剪短0.5秒并把字幕改成新台词","ops":[{"op":"trim","target":{"clientKey":"derived-v-s2"},"edge":"right","deltaSec":-0.5},{"op":"subtitle","target":{"clientKey":"derived-s-s2"},"text":"新台词"}]}',
   '可用 op：move(target,toStart,toLane?)、trim(target,edge,deltaSec)、split(target,atSec)、delete(targets[])、',
   'subtitle(target?,text,atSec?,durationSec?,style?)、speed(target,value)、volume(target,value)、lock(target,locked)、',
   'track(action,lane?,track,patch?)。',

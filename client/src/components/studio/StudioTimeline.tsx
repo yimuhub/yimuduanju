@@ -31,6 +31,7 @@ import {
   Film,
   Flag,
   Gauge,
+  History,
   Keyboard,
   Layers,
   Link2,
@@ -69,7 +70,11 @@ import {
   type ImportedMedia,
 } from './StudioImportDialog';
 import { Filmstrip, useThumbnails, useWaveform, Waveform } from './timeline-media';
-import { exportTimeline } from '@client/src/api/timeline';
+import {
+  exportTimeline,
+  listTimelineAgentOps,
+  type TimelineAgentOpRecord,
+} from '@client/src/api/timeline';
 import { listProjectAssets, mediaUrl } from '@client/src/api/assets';
 import {
   clamp,
@@ -521,6 +526,10 @@ export const StudioTimeline = () => {
     h: number;
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Agent 剪辑历史：审计表只读回放（谁在哪个版本改了什么，便于回溯）
+  const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
+  const [agentHistory, setAgentHistory] = useState<TimelineAgentOpRecord[]>([]);
+  const [agentHistoryLoading, setAgentHistoryLoading] = useState(false);
   const [renamingRow, setRenamingRow] = useState<string | null>(null);
   const [rowNameDraft, setRowNameDraft] = useState('');
   const [viewport, setViewport] = useState({ start: 0, end: Number.POSITIVE_INFINITY });
@@ -1469,6 +1478,20 @@ export const StudioTimeline = () => {
     setRenamingRow(null);
   };
 
+  const openAgentHistory = async () => {
+    if (!data.projectId) return;
+    setAgentHistoryOpen(true);
+    setAgentHistoryLoading(true);
+    try {
+      const rows = await listTimelineAgentOps(data.projectId, 30);
+      setAgentHistory(rows);
+    } catch {
+      toast.error('读取剪辑历史失败');
+    } finally {
+      setAgentHistoryLoading(false);
+    }
+  };
+
   const runExport = async () => {
     if (!data.projectId || exporting) return;
     if (editor.conflict) {
@@ -2090,6 +2113,14 @@ export const StudioTimeline = () => {
           <button
             type="button"
             className="icon-btn"
+            title="Agent 剪辑历史（审计回放）"
+            onClick={() => void openAgentHistory()}
+          >
+            <History size={13} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
             title="快捷键一览 (?)"
             onClick={() => setShortcutsOpen(true)}
           >
@@ -2561,6 +2592,60 @@ export const StudioTimeline = () => {
                       {a.durationSeconds ? `${a.durationSeconds.toFixed(1)}s` : '—'}
                     </span>
                   </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {agentHistoryOpen ? (
+        <div className="tl-hist-mask" onClick={() => setAgentHistoryOpen(false)}>
+          <div className="tl-hist" onClick={(e) => e.stopPropagation()}>
+            <div className="tl-hist-h">
+              <span>
+                <History size={14} /> Agent 剪辑历史
+              </span>
+              <button type="button" onClick={() => setAgentHistoryOpen(false)} title="关闭">
+                <X size={13} />
+              </button>
+            </div>
+            <div className="tl-hist-list">
+              {agentHistoryLoading ? (
+                <div className="tl-hist-empty">读取中…</div>
+              ) : agentHistory.length === 0 ? (
+                <div className="tl-hist-empty">
+                  还没有 Agent 剪辑记录。在对话里让它改时间线后点「应用」，这里会留下可回溯的审计。
+                </div>
+              ) : (
+                agentHistory.map((row) => (
+                  <div key={row.id} className="tl-hist-row">
+                    <div className="tl-hist-row-h">
+                      <b>{row.summary || 'Agent 剪辑'}</b>
+                      <span className="num">
+                        v{row.baseVersion} → v{row.resultVersion} · {row.diffs.length} 处改动
+                      </span>
+                      <span className="tl-hist-time">
+                        {new Date(row.createdAt).toLocaleString('zh-CN', { hour12: false })}
+                      </span>
+                    </div>
+                    {row.diffs.length > 0 ? (
+                      <div className="tl-hist-diffs">
+                        {row.diffs.slice(0, 8).map((d, idx) => (
+                          <div key={`${row.id}-${idx}`} className="tl-hist-diff">
+                            <span className="op">{d.op}</span>
+                            <span className="before">{d.before}</span>
+                            <span className="arrow">→</span>
+                            <span className="after">{d.after}</span>
+                            {d.note ? <span className="note">{d.note}</span> : null}
+                          </div>
+                        ))}
+                        {row.diffs.length > 8 ? (
+                          <div className="tl-hist-diff">… 其余 {row.diffs.length - 8} 处</div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 ))
               )}
             </div>

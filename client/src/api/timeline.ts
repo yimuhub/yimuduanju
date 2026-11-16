@@ -87,6 +87,24 @@ export const applyTimelineAgentOps = (
     )
     .then((res) => res.data);
 
+/** 最近 Agent 剪辑审计记录（只读回放） */
+export interface TimelineAgentOpRecord {
+  id: string;
+  summary: string | null;
+  status: string;
+  baseVersion: number;
+  resultVersion: number;
+  createdAt: string;
+  diffs: TimelineOpDiff[];
+}
+
+export const listTimelineAgentOps = (projectId: string, limit = 20) =>
+  axiosForBackend
+    .get<TimelineAgentOpRecord[]>(`/api/projects/${projectId}/timeline/agent-ops`, {
+      params: { limit },
+    })
+    .then((res) => res.data);
+
 /** P4：按 EDL 导出成片（预留） */
 export const exportTimeline = (projectId: string, data: ExportTimelineRequest = {}) =>
   axiosForBackend

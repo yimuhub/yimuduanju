@@ -228,8 +228,8 @@ export class ExportTimelineDto {
 
   /** 画面轨处理：sequence=全部串行拼接（旧行为）；main=只取主链 */
   @IsOptional()
-  @IsIn(['sequence', 'main'])
-  videoLaneMode?: 'sequence' | 'main';
+  @IsIn(['sequence', 'main', 'overlay'])
+  videoLaneMode?: 'sequence' | 'main' | 'overlay';
 }
 
 /** POST /timeline/agent-ops：对话驱动的剪辑动作（结构由 shared/timeline-ops 校验） */

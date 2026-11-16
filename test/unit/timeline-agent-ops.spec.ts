@@ -42,6 +42,19 @@ describe('parseTimelineOpsProposal', () => {
     expect(p).toBeNull();
   });
 
+  it('模型漏写围栏时，裸 JSON 也能兜底解析', () => {
+    const text =
+      '我建议这样改：{"baseVersion":4,"summary":"删掉广告段","ops":[{"op":"delete","targets":[{"clientKey":"k1"}]}]} 你看可以吗？';
+    const p = parseTimelineOpsProposal(text);
+    expect(p?.baseVersion).toBe(4);
+    expect(p?.ops).toHaveLength(1);
+  });
+
+  it('裸 JSON 里混入非法 op 仍然整块拒绝', () => {
+    const text = '{"baseVersion":1,"ops":[{"op":"delete","targets":[]},{"op":"hack"}]}';
+    expect(parseTimelineOpsProposal(text)).toBeNull();
+  });
+
   it('缺 baseVersion / 空 ops 视为无效', () => {
     expect(parseTimelineOpsProposal(fence({ ops: [{ op: 'delete', targets: [] }] }))).toBeNull();
     expect(parseTimelineOpsProposal(fence({ baseVersion: 3, ops: [] }))).toBeNull();
