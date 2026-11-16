@@ -230,6 +230,8 @@ const ProjectStoryboardTab = () => {
    * 再次从时间线点同一镜时必须能重新打开——只靠 shot 参数会因为「值没变」不触发。
    */
   const deepLinkKey = useRef<string | null>(null);
+  /** 拖拽排序结束后浏览器补的那一次 click：不吞掉就会顺手打开大图 */
+  const suppressClickRef = useRef(false);
   useEffect(() => {
     const shotId = searchParams.get('shot');
     const wantEdit = searchParams.get('edit') === '1';
@@ -623,10 +625,15 @@ const ProjectStoryboardTab = () => {
   /**
    * 网格卡片拖拽排序
    * -------------------------------------------------------------
-   * 关键点：**必须提交全量顺序**，不能只交被筛出来的一批。
+   * 关键点一：**必须提交全量顺序**，不能只交被筛出来的一批。
    * 服务端 reorderShots 的语义是「给定 id 按数组顺序排前面，其余保持原序」，
    * 按场筛选时只交子集会把这几镜全部提到片头（静默改变成片顺序）。
    * 所以这里在完整的 shots 列表上做插入，再把全部 id 交上去。
+   *
+   * 关键点二：用 pointer 事件自己实现，不用 HTML5 draggable。
+   * ① 与时间线片段拖动同一套手感；② draggable 在触屏上不可用；
+   * ③ HTML5 拖放拿不到「拖动中」的落点预览。拖起后必须给源卡片加
+   * pointer-events:none，否则 elementFromPoint 永远命中自己、落点算不出来。
    */
   const handleReorderShots = async (fromId: string, toId: string) => {
     if (!id || fromId === toId || reordering) return;
@@ -652,6 +659,48 @@ const ProjectStoryboardTab = () => {
     } finally {
       setReordering(false);
     }
+  };
+
+  /** 拖起卡片：超过 6px 才算拖动，避免和「点击看大图」抢动作 */
+  const onCardPointerDown = (e: React.PointerEvent<HTMLDivElement>, shotId: string) => {
+    if (e.button !== 0 || reordering) return;
+    const target = e.target as HTMLElement;
+    // 卡片展开区里有输入框/按钮：那里按下是编辑，不是拖
+    if (target.closest('input,textarea,select,button,a,[contenteditable="true"]')) return;
+    const origin = { id: shotId, x: e.clientX, y: e.clientY, pointerId: e.pointerId, moved: false };
+    const cardUnder = (x: number, y: number): string | null => {
+      const el = document.elementFromPoint(x, y)?.closest('[data-shot-card]') as HTMLElement | null;
+      return el?.dataset.shotCard ?? null;
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== origin.pointerId) return;
+      if (!origin.moved) {
+        if (Math.hypot(ev.clientX - origin.x, ev.clientY - origin.y) < 6) return;
+        origin.moved = true;
+        setDragShotId(origin.id);
+      }
+      const over = cardUnder(ev.clientX, ev.clientY);
+      setDropShotId(over && over !== origin.id ? over : null);
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      const wasDrag = origin.moved;
+      setDragShotId(null);
+      setDropShotId(null);
+      if (!wasDrag) return;
+      // 拖动之后浏览器还会补一次 click：吞掉它，否则会顺手打开大图
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      const over = cardUnder(ev.clientX, ev.clientY);
+      if (over && over !== origin.id) void handleReorderShots(origin.id, over);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   const handleDelete = async (shotId: string) => {
@@ -924,38 +973,12 @@ const ProjectStoryboardTab = () => {
               <div
                 key={shot.id}
                 id={`shot-card-${shot.id}`}
-                // 拖拽排序：整卡可拖，松手落到目标卡的位置上（不是交换，是插入）
-                draggable={!reordering}
-                onDragStart={(e) => {
-                  e.dataTransfer.effectAllowed = 'move';
-                  // Firefox 必须写数据，否则 dragstart 之后不会触发 dragover
-                  e.dataTransfer.setData('text/plain', shot.id);
-                  setDragShotId(shot.id);
-                  setDropShotId(null);
-                }}
-                onDragOver={(e) => {
-                  if (!dragShotId || dragShotId === shot.id) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  if (dropShotId !== shot.id) setDropShotId(shot.id);
-                }}
-                onDragLeave={() => {
-                  if (dropShotId === shot.id) setDropShotId(null);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const from = dragShotId || e.dataTransfer.getData('text/plain');
-                  setDragShotId(null);
-                  setDropShotId(null);
-                  if (from && from !== shot.id) void handleReorderShots(from, shot.id);
-                }}
-                onDragEnd={() => {
-                  setDragShotId(null);
-                  setDropShotId(null);
-                }}
+                data-shot-card={shot.id}
+                // 指针拖拽排序：按住卡片拖到另一张卡上，松手即插到它的位置
+                onPointerDown={(e) => onCardPointerDown(e, shot.id)}
                 className={`overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md ${
                   searchParams.get('shot') === shot.id ? 'ring-2 ring-primary/50' : ''
-                } ${dragShotId === shot.id ? 'opacity-40' : ''} ${
+                } ${dragShotId === shot.id ? 'pointer-events-none opacity-40' : ''} ${
                   dropShotId === shot.id ? 'ring-2 ring-primary ring-offset-2' : ''
                 } ${reordering ? 'cursor-wait' : 'cursor-grab active:cursor-grabbing'}`}
               >
@@ -964,6 +987,7 @@ const ProjectStoryboardTab = () => {
                   className="relative w-full cursor-pointer"
                   style={{ aspectRatio: cssAspect(aspectRatio) }}
                   onClick={() => {
+                    if (suppressClickRef.current) return;
                     if (shot.startFrameUrl) {
                       setLightbox({ url: shot.startFrameUrl, title: `分镜 #${shot.shotNumber} 主图` });
                     } else {
