@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import StoryboardFocusEditor from './StoryboardFocusEditor';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -214,6 +214,29 @@ const ProjectStoryboardTab = () => {
     if (shot && historyMap[shot.id] === undefined) void loadHistory(shot);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusShotId]);
+
+  /**
+   * 深链直达「详细分镜编辑」：`?shot=<id>&edit=1`
+   * -------------------------------------------------------------
+   * 时间线双击画面片段 / 属性条「分镜详情」都会带这组参数跳过来，
+   * 所以剪辑时看到某一镜不对，一键就能进到单镜创作视角改提示词 / 运镜 / 分段。
+   *
+   * `d` 是一次性防抖戳：用户关掉编辑后仍停在同一 URL，
+   * 再次从时间线点同一镜时必须能重新打开——只靠 shot 参数会因为「值没变」不触发。
+   */
+  const deepLinkKey = useRef<string | null>(null);
+  useEffect(() => {
+    const shotId = searchParams.get('shot');
+    const wantEdit = searchParams.get('edit') === '1';
+    if (!shotId || !wantEdit || loading) return;
+    const key = `${shotId}|${searchParams.get('d') ?? ''}`;
+    if (deepLinkKey.current === key) return;
+    if (!shots.some((s) => s.id === shotId)) return;
+    deepLinkKey.current = key;
+    // 该镜可能被「按场筛选」挡住了：深链进来先解除筛选，否则聚焦编辑器会落到别的镜头
+    setSelectedScene('all');
+    setFocusShotId(shotId);
+  }, [searchParams, loading, shots]);
 
   const revertTo = async (shot: Shot, asset: Asset) => {
     if (!id) return;

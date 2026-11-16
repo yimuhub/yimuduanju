@@ -111,7 +111,12 @@ export interface StudioContextValue {
   openNewWork: (options?: NewWorkOpenOptions) => void;
   /** 右侧产出坞当前 Tab */
   dockTab: DockTabKey;
-  setDockTab: (t: DockTabKey) => void;
+  /**
+   * 切右坞 Tab。
+   * 传 `query` 可把「要定位到哪一条」带进 URL（例：分镜详情 `{ shot, edit: '1' }`），
+   * 这样刷新/分享也能落在同一镜上。不传则清空 query，避免上一次的定位残留。
+   */
+  setDockTab: (t: DockTabKey, query?: Record<string, string | undefined>) => void;
   /** 右坞宽度（可拖拽调整，null = 用设计稿默认宽度） */
   dockW: number | null;
   setDockW: (n: number | null) => void;
@@ -331,12 +336,18 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     [projectId, navigate],
   );
 
-  /** 切右坞 Tab：在项目内改 URL（可分享） */
+  /** 切右坞 Tab：在项目内改 URL（可分享）；query 一并带上，用于「定位到某一镜」 */
   const setDockTab = useCallback(
-    (t: DockTabKey) => {
+    (t: DockTabKey, query?: Record<string, string | undefined>) => {
       if (projectId) {
         const s = DOCK_SEG_OF[t];
-        navigate(s ? `/project/${projectId}/${s}` : `/project/${projectId}`);
+        const base = s ? `/project/${projectId}/${s}` : `/project/${projectId}`;
+        const qs = new URLSearchParams();
+        for (const [k, v] of Object.entries(query ?? {})) {
+          if (v != null && v !== '') qs.set(k, v);
+        }
+        const tail = qs.toString();
+        navigate(tail ? `${base}?${tail}` : base);
         return;
       }
       setDockTabState(t);

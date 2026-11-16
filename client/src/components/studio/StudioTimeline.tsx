@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardPaste,
+  Clapperboard,
   Copy,
   Film,
   Flag,
@@ -331,6 +332,21 @@ export const StudioTimeline = () => {
   const collapsed = tlCollapsed;
   const editor = useEdlEditor();
   const navigate = useNavigate();
+
+  /**
+   * 打开某一镜的「详细分镜编辑」（右坞分镜 Tab 的全屏聚焦编辑器）。
+   * 时间线是剪辑视角、分镜详情是单镜创作视角，两边必须能一键来回：
+   *   · 双击画面片段 / 属性条「分镜详情」/ 镜头条右键 —— 都走这里；
+   *   · 定位信息写进 URL（?shot=&edit=1），刷新或分享也能落回同一镜。
+   */
+  const openShotDetail = useCallback(
+    (shotId: string) => {
+      const idx = shots.findIndex((s) => s.id === shotId);
+      if (idx >= 0) setSel(idx);
+      setDockTab('board', { shot: shotId, edit: '1', d: String(Date.now()) });
+    },
+    [shots, setSel, setDockTab],
+  );
 
   const [focused, setFocused] = useState(false);
   const focusTimer = useRef<number | null>(null);
@@ -1182,8 +1198,7 @@ export const StudioTimeline = () => {
     return e >= viewport.start - 2 && s <= viewport.end + 2;
   };
 
-  const selectedClip = clips.find((c) => c.id === editor.selectedIds[0]);
-  const selectedRow = selectedClip
+  const selectedClip = clips.find((c) => c.id === editor.selectedIds[0]);  const selectedRow = selectedClip
     ? rowByKey.get(`${selectedClip.track}:${selectedClip.lane ?? 0}`)
     : undefined;
   const multi = editor.selectedIds.length > 1;
@@ -1249,6 +1264,17 @@ export const StudioTimeline = () => {
           <option value="crossfade">叠化（预留）</option>
         </select>
       </label>
+      {selectedClip.track === 'video' && selectedClip.sourceShotId ? (
+        <button
+          type="button"
+          className="tl-prop-btn"
+          onClick={() => openShotDetail(selectedClip.sourceShotId as string)}
+          title="打开该镜的详细分镜编辑：提示词 / 主体 / 动作 / 运镜 / 时间分段（景别·@角色）/ 生成历史"
+        >
+          <Clapperboard size={11} />
+          分镜详情
+        </button>
+      ) : null}
       <button
         type="button"
         className={`tl-prop-btn${selectedClip.locked ? ' on' : ''}`}
@@ -1782,9 +1808,7 @@ export const StudioTimeline = () => {
                         }
                         // 画面片段双击 = 打开该镜头的详细分镜编辑（主体/动作/运镜/景别/角色）
                         if (c.track === 'video' && c.sourceShotId) {
-                          const idx = shots.findIndex((sh) => sh.id === c.sourceShotId);
-                          if (idx >= 0) setSel(idx);
-                          setDockTab('board');
+                          openShotDetail(c.sourceShotId);
                         }
                       }}
                       onDelete={() => editor.removeClip(c.id)}
@@ -1840,8 +1864,9 @@ export const StudioTimeline = () => {
               key={s.id}
               type="button"
               className={`tl-strip-i${i === sel ? ' on' : ''}`}
-              title={`${shotLabel(s.no)} ${s.sceneLabel} · ${s.tag} · ${s.dur.toFixed(1)}s · ${s.txt}`}
+              title={`${shotLabel(s.no)} ${s.sceneLabel} · ${s.tag} · ${s.dur.toFixed(1)}s · ${s.txt}（双击进分镜详情）`}
               onClick={() => jumpToShot(i)}
+              onDoubleClick={() => openShotDetail(s.id)}
             >
               <b>{shotLabel(s.no)}</b>
               <span className="num">{s.dur.toFixed(1)}s</span>

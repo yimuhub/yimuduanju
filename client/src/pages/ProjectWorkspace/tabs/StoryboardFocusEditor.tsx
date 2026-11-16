@@ -65,14 +65,63 @@ const movementOptions = (current: string | undefined): { value: string; label: s
   return rigOpts;
 };
 
-type FieldKey = 'subject' | 'action' | 'duration' | 'movement';
+type FieldKind = 'text' | 'textarea' | 'number' | 'select';
 
-const FIELD_META: { key: FieldKey; label: string; hint: string }[] = [
-  { key: 'subject', label: '镜头标题（主体）', hint: '画面主体，一句话' },
-  { key: 'action', label: '动作描述', hint: '该镜发生了什么' },
-  { key: 'duration', label: '时长（秒）', hint: '建议 3-15s' },
-  { key: 'movement', label: '运镜（机位预设）', hint: '视频提示词会拼入运镜事实' },
+interface FieldSpec {
+  key: string;
+  label: string;
+  hint: string;
+  kind: FieldKind;
+  options?: { value: string; label: string }[];
+}
+
+/** 机位角度：与 shared/shot-continuity.ts 的 ANGLE_BUCKET 同一套取值，存量未知值兜底 */
+const CAMERA_ANGLE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'eye_level', label: '平视 eye_level' },
+  { value: 'front', label: '正面 front' },
+  { value: 'three_quarter', label: '四分之三侧 three_quarter' },
+  { value: 'side', label: '侧面 side' },
+  { value: 'over_shoulder', label: '过肩 over_shoulder' },
+  { value: 'back', label: '背面 back' },
+  { value: 'high', label: '俯拍 high' },
+  { value: 'low', label: '仰拍 low' },
+  { value: 'pov', label: '主观 pov' },
 ];
+
+/**
+ * 检查器字段表（分组）——「非常详细的分镜头编辑」的落点。
+ * 分三组：镜内容（写什么）/ 摄影（怎么拍）/ 节奏与约束（多长、不要什么）。
+ * 全部字段都走 blur 单字段 PATCH（onPatchField），后端 UpdateShotDto 已全部接收。
+ */
+const FIELD_GROUPS: { title: string; fields: FieldSpec[] }[] = [
+  {
+    title: '镜内容',
+    fields: [
+      { key: 'subject', label: '镜头标题（主体）', hint: '画面主体，一句话', kind: 'text' },
+      { key: 'action', label: '动作描述', hint: '该镜发生了什么（可见的物理现象）', kind: 'textarea' },
+      { key: 'dialogue', label: '台词', hint: '逐字对剧本；字幕与对白绑定以此为准', kind: 'textarea' },
+      { key: 'emotion', label: '情绪基调', hint: '如：压抑 / 释然 / 警觉', kind: 'text' },
+    ],
+  },
+  {
+    title: '摄影',
+    fields: [
+      { key: 'shotSize', label: '景别', hint: '影响接缝校验与画面信息量', kind: 'select', options: [] },
+      { key: 'cameraAngle', label: '机位角度', hint: '相邻镜角度差 <1 档会提示越轴', kind: 'select', options: [] },
+      { key: 'lens', label: '镜头焦距', hint: '等效焦距，如 24mm / 50mm / 85mm', kind: 'text' },
+      { key: 'movement', label: '运镜（机位预设）', hint: '视频提示词会拼入运镜事实', kind: 'select', options: [] },
+    ],
+  },
+  {
+    title: '节奏与约束',
+    fields: [
+      { key: 'duration', label: '时长（秒）', hint: '建议 3-15s；改这里会重排时间线', kind: 'number' },
+      { key: 'negativePrompt', label: '负面提示（本镜）', hint: '只写本镜额外禁止项，底线负面词由系统统一加', kind: 'textarea' },
+    ],
+  },
+];
+
+const ALL_FIELDS: FieldSpec[] = FIELD_GROUPS.flatMap((g) => g.fields);
 
 /* ================= 时间分段编辑器（migration 0025，对标 Pavo / huobao 分镜编辑） ================= */
 
@@ -415,12 +464,7 @@ const StoryboardFocusEditor = ({
   // forceNew：勾选后「保存并重跑首帧」先清空旧主图再重跑（不复用旧产物），默认关
   const [forceNew, setForceNew] = useState(false);
   // 字段级精修草稿：切镜时重置为该镜当前值；blur 才落盘（单字段 PATCH）
-  const [fieldDrafts, setFieldDrafts] = useState<Record<FieldKey, string>>({
-    subject: '',
-    action: '',
-    duration: '',
-    movement: '',
-  });
+  const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({});
   const taRef = useRef<HTMLTextAreaElement>(null);
   const shot = shots[idx];
   const shotId = shot?.id;
@@ -437,12 +481,9 @@ const StoryboardFocusEditor = ({
   // 切镜 / shots 数据刷新时，把字段草稿对齐当前镜头值（草稿仅在聚焦期间生效）
   useEffect(() => {
     if (!shot) return;
-    setFieldDrafts({
-      subject: shot.subject ?? '',
-      action: shot.action ?? '',
-      duration: String(shot.duration ?? ''),
-      movement: shot.movement ?? '',
-    });
+    const next: Record<string, string> = {};
+    for (const f of ALL_FIELDS) next[f.key] = String((shot as unknown as Record<string, unknown>)[f.key] ?? '');
+    setFieldDrafts(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shotId]);
 
@@ -464,8 +505,8 @@ const StoryboardFocusEditor = ({
   const draft = promptDrafts[shot.id] ?? shot.visualPrompt ?? shot.action ?? '';
 
   /** 字段 blur 保存：值有变化才 PATCH；时长做数值校验，非法值静默还原 */
-  const commitField = (key: FieldKey) => {
-    const raw = fieldDrafts[key];
+  const commitField = (key: string) => {
+    const raw = fieldDrafts[key] ?? '';
     if (key === 'duration') {
       const n = Number(raw);
       if (!raw.trim() || !Number.isFinite(n) || n <= 0) {
@@ -476,12 +517,27 @@ const StoryboardFocusEditor = ({
       void onPatchField(shot, { duration: n });
       return;
     }
-    const current = String(shot[key] ?? '');
+    const current = String((shot as unknown as Record<string, unknown>)[key] ?? '');
     if (raw === current) return;
     void onPatchField(shot, { [key]: raw.trim() } as Partial<Shot>);
   };
 
-  const fieldBusy = (key: FieldKey) => patching && fieldDrafts[key] !== String(shot[key] ?? '');
+  const fieldBusy = (key: string) =>
+    patching && (fieldDrafts[key] ?? '') !== String((shot as unknown as Record<string, unknown>)[key] ?? '');
+
+  /** 下拉项：景别 / 机位角度 / 运镜（运镜依赖当前值，需现算）；存量未知值兜底保留 */
+  const optionsFor = (f: FieldSpec): { value: string; label: string }[] => {
+    const current = fieldDrafts[f.key] ?? '';
+    let base: { value: string; label: string }[];
+    if (f.key === 'shotSize') base = SEGMENT_SHOT_TYPES;
+    else if (f.key === 'cameraAngle') base = CAMERA_ANGLE_OPTIONS;
+    else if (f.key === 'movement') return movementOptions(shot.movement);
+    else base = f.options ?? [];
+    if (current && !base.some((o) => o.value === current)) {
+      return [{ value: current, label: `${current}（当前值）` }, ...base];
+    }
+    return base;
+  };
 
   return (
     <div className="fixed inset-0 z-[80] flex flex-col bg-background">
@@ -632,45 +688,53 @@ const StoryboardFocusEditor = ({
                 <span className="text-xs font-semibold text-foreground">字段精修</span>
                 <span className="text-[10px] text-muted-foreground/70">失焦自动保存</span>
               </div>
-              {FIELD_META.map(({ key, label, hint }) => (
-                <div key={key}>
-                  <label htmlFor={`focus-f-${key}`} className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                    {label}
-                    {fieldBusy(key) && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
-                  </label>
-                  {key === 'movement' ? (
-                    <select
-                      id={`focus-f-${key}`}
-                      value={fieldDrafts.movement}
-                      onChange={(e) => setFieldDrafts((p) => ({ ...p, movement: e.target.value }))}
-                      onBlur={() => commitField('movement')}
-                      className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs outline-none focus:border-primary"
-                    >
-                      {movementOptions(shot.movement).map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  ) : key === 'action' ? (
-                    <textarea
-                      id={`focus-f-${key}`}
-                      value={fieldDrafts.action}
-                      onChange={(e) => setFieldDrafts((p) => ({ ...p, action: e.target.value }))}
-                      onBlur={() => commitField('action')}
-                      rows={2}
-                      className="w-full resize-y rounded-lg border border-input bg-background p-2 text-xs leading-relaxed outline-none focus:border-primary"
-                    />
-                  ) : (
-                    <input
-                      id={`focus-f-${key}`}
-                      type={key === 'duration' ? 'number' : 'text'}
-                      min={key === 'duration' ? 1 : undefined}
-                      value={fieldDrafts[key]}
-                      onChange={(e) => setFieldDrafts((p) => ({ ...p, [key]: e.target.value }))}
-                      onBlur={() => commitField(key)}
-                      className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs outline-none focus:border-primary"
-                    />
-                  )}
-                  <p className="mt-0.5 text-[10px] text-muted-foreground/60">{hint}</p>
+              {FIELD_GROUPS.map((group) => (
+                <div key={group.title} className="space-y-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    {group.title}
+                  </div>
+                  {group.fields.map((f) => (
+                    <div key={f.key}>
+                      <label htmlFor={`focus-f-${f.key}`} className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                        {f.label}
+                        {fieldBusy(f.key) && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                      </label>
+                      {f.kind === 'select' ? (
+                        <select
+                          id={`focus-f-${f.key}`}
+                          value={fieldDrafts[f.key] ?? ''}
+                          onChange={(e) => setFieldDrafts((p) => ({ ...p, [f.key]: e.target.value }))}
+                          onBlur={() => commitField(f.key)}
+                          className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs outline-none focus:border-primary"
+                        >
+                          {optionsFor(f).map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      ) : f.kind === 'textarea' ? (
+                        <textarea
+                          id={`focus-f-${f.key}`}
+                          value={fieldDrafts[f.key] ?? ''}
+                          onChange={(e) => setFieldDrafts((p) => ({ ...p, [f.key]: e.target.value }))}
+                          onBlur={() => commitField(f.key)}
+                          rows={f.key === 'action' ? 2 : 3}
+                          className="w-full resize-y rounded-lg border border-input bg-background p-2 text-xs leading-relaxed outline-none focus:border-primary"
+                        />
+                      ) : (
+                        <input
+                          id={`focus-f-${f.key}`}
+                          type={f.kind === 'number' ? 'number' : 'text'}
+                          min={f.kind === 'number' ? 1 : undefined}
+                          step={f.kind === 'number' ? 0.1 : undefined}
+                          value={fieldDrafts[f.key] ?? ''}
+                          onChange={(e) => setFieldDrafts((p) => ({ ...p, [f.key]: e.target.value }))}
+                          onBlur={() => commitField(f.key)}
+                          className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs outline-none focus:border-primary"
+                        />
+                      )}
+                      <p className="mt-0.5 text-[10px] text-muted-foreground/60">{f.hint}</p>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
