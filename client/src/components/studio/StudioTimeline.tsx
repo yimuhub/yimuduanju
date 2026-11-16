@@ -535,7 +535,23 @@ export const StudioTimeline = () => {
       0.2,
       payload.durationSeconds && payload.durationSeconds > 0 ? payload.durationSeconds : 5,
     );
-    const t = quantizeToFrame(Math.max(0, (e.clientX - rect.left) / pxRef.current), fps);
+    // 与拖动片段用同一套磁吸：落点也贴着播放头/片段边缘，避免「差两像素没对齐」
+    const rawT = Math.max(0, (e.clientX - rect.left) / pxRef.current);
+    const snap = snapClipStart(
+      rawT,
+      span,
+      collectSnapTargets({
+        clips: clips.map((c) => ({
+          start: c.timelineStart,
+          end: c.timelineStart + clipSpan(c),
+        })),
+        playhead: curT,
+        markers: editor.markers,
+      }),
+      SNAP_PX / pxRef.current,
+      fps,
+    );
+    const t = quantizeToFrame(Math.max(0, snap.start), fps);
     // 减掉 16px 标尺，再按行高命中轨道；落在空白区时 laneFromY 会给「最大 lane + 1」
     const wanted = laneFromY(rows, Math.max(0, e.clientY - rect.top - 16), track);
     const occupied = clips
