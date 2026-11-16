@@ -122,6 +122,13 @@ export class TimelineMediaService implements OnModuleInit {
     }
   }
 
+  /** 源媒体副本的缓存路径（与 materialize 用同一套命名，供命中路径刷新访问时间） */
+  private srcPath(projectId: string, url: string): string {
+    const trimmed = url.trim();
+    const ext = (trimmed.split('?')[0].match(/\.[a-z0-9]{2,5}$/i)?.[0] ?? '.mp4').toLowerCase();
+    return join(uploadDir(), projectId, 'timeline-src', `${this.hash(trimmed)}${ext}`);
+  }
+
   /**
    * 把媒体物化成服务端本地文件（本地 /uploads 直接复用，公网 URL 走下载缓存）。
    * 生成 sprite / 波形都要先有本地文件，这里统一收口，避免各处重复处理路径穿越。
@@ -130,8 +137,7 @@ export class TimelineMediaService implements OnModuleInit {
     const trimmed = url.trim();
     const dir = join(uploadDir(), projectId, 'timeline-src');
     await mkdir(dir, { recursive: true });
-    const ext = (trimmed.split('?')[0].match(/\.[a-z0-9]{2,5}$/i)?.[0] ?? '.mp4').toLowerCase();
-    const dest = join(dir, `${this.hash(trimmed)}${ext}`);
+    const dest = this.srcPath(projectId, url);
     const size = await stat(dest).then((s) => s.size).catch(() => 0);
     if (size > 1024) {
       // 命中已下载的副本：刷新最后访问时间，避免被淘汰扫走
@@ -225,8 +231,10 @@ export class TimelineMediaService implements OnModuleInit {
 
     const cached = await this.readJson<TimelineThumbnails>(metaPath);
     if (cached && existsSync(spritePath)) {
-      // 命中：刷新 sprite 与元数据的最后访问时间
-      await this.touch(spritePath, metaPath);
+      // 命中：刷新 sprite / 元数据 / 源副本的最后访问时间。
+      // 源副本必须一起刷新 —— 命中时不会走 materialize，否则它会在 TTL 后被单独删掉，
+      // 下次参数变化需要重建时又得重新下载一遍。
+      await this.touch(spritePath, metaPath, this.srcPath(projectId, url));
       return cached;
     }
 
@@ -318,7 +326,8 @@ export class TimelineMediaService implements OnModuleInit {
 
     const cached = await this.readJson<TimelineWaveform>(jsonPath);
     if (cached) {
-      await this.touch(jsonPath);
+      // 同上：源副本一起续期，避免波形还在用、源却被 TTL 清掉
+      await this.touch(jsonPath, this.srcPath(projectId, url));
       return cached;
     }
 
