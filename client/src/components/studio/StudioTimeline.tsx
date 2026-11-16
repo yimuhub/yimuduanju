@@ -689,9 +689,14 @@ export const StudioTimeline = () => {
     for (const c of clips) ensure(c.track, c.lane ?? 0);
     for (const t of editor.tracks) ensure(t.track, t.lane ?? 0);
     const order: RowTrack[] = ['subtitle', 'video', 'audio', 'overlay'];
-    return [...map.values()].sort(
-      (a, b) => order.indexOf(a.track) - order.indexOf(b.track) || a.lane - b.lane,
-    );
+    // 剪映式层序：V1 永远在最下面，V2/V3/V4 依次向上叠。
+    // 轨道越靠上，合成时越先被识别（预览取 lane 最大的命中片段）。
+    return [...map.values()].sort((a, b) => {
+      const byTrack = order.indexOf(a.track) - order.indexOf(b.track);
+      if (byTrack !== 0) return byTrack;
+      if (a.track === 'video' || a.track === 'overlay') return b.lane - a.lane;
+      return a.lane - b.lane;
+    });
   }, [clips, editor.tracks, rowMetaMap]);
 
   const rowByKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
@@ -1384,6 +1389,33 @@ export const StudioTimeline = () => {
         e.preventDefault();
         const created = editorRef.current.pasteAt(curTRef.current);
         if (created.length) editorRef.current.setSelection(created);
+        return;
+      }
+      // 剪映快捷键：⌘/Ctrl+B 在播放头分割
+      if (mod && key === 'b') {
+        e.preventDefault();
+        const created = editorRef.current.splitAtPlayhead(curTRef.current, selectedRef.current[0]);
+        if (created) editorRef.current.setSelection([created]);
+        return;
+      }
+      // 剪映快捷键：⌘/Ctrl+D 原位复制当前选中片段
+      if (mod && key === 'd') {
+        if (selectedRef.current.length === 0) return;
+        e.preventDefault();
+        editorRef.current.copySelection(selectedRef.current);
+        const created = editorRef.current.pasteAt(curTRef.current);
+        if (created.length) editorRef.current.setSelection(created);
+        return;
+      }
+      if (mod && key === 'y') {
+        e.preventDefault();
+        editorRef.current.redo();
+        return;
+      }
+      // 剪映式快捷入口：⌘/Ctrl+I 打开素材导入
+      if (mod && key === 'i') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('yimu:studio-import'));
         return;
       }
       if (mod && key === 'a') {
@@ -2617,7 +2649,7 @@ export const StudioTimeline = () => {
         <div className="tl-modal-mask" onClick={() => setShortcutsOpen(false)}>
           <div className="tl-modal" onClick={(e) => e.stopPropagation()}>
             <div className="tl-modal-head">
-              <b>时间线快捷键</b>
+              <b>一幕·神剪快捷键（对标剪映）</b>
               <button type="button" title="关闭" onClick={() => setShortcutsOpen(false)}>
                 <X size={14} />
               </button>
@@ -2633,8 +2665,11 @@ export const StudioTimeline = () => {
                 ['⌘/Ctrl+X', '剪切选中片段'],
                 ['⌘/Ctrl+V', '粘贴到播放头'],
                 ['⌘/Ctrl+A', '全选片段'],
+                ['⌘/Ctrl+B', '在播放头分割（同剪映）'],
+                ['⌘/Ctrl+D', '原位复制选中片段'],
+                ['⌘/Ctrl+I', '打开素材导入'],
                 ['⌘/Ctrl+Z', '撤销'],
-                ['⌘/Ctrl+Shift+Z', '重做'],
+                ['⌘/Ctrl+Shift+Z / ⌘/Ctrl+Y', '重做'],
                 ['Shift+点击', '加选 / 减选片段'],
                 ['Shift+拖动空白', '框选片段'],
                 ['⌘/Ctrl+滚轮', '以指针为锚点缩放'],

@@ -5,6 +5,7 @@ import { ChatText } from './ChatText';
 import { TimelineOpsCard } from '../TimelineOpsCard';
 import { stripAgentBlocks } from '@client/src/lib/timeline-agent-ops';
 import { ChatMessageBoundary } from './ChatMessageBoundary';
+import type { AgentAutonomy } from '@client/src/lib/agent-autonomy';
 
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -15,6 +16,8 @@ const when = (iso: string) => {
 interface ChatTurnsProps {
   msgs: ChatMessage[];
   busy: boolean;
+  /** 神剪权限：只影响时间线提案卡的自动执行，不影响普通聊天 */
+  autonomy?: AgentAutonomy;
   /** 顶部固定内容（阶段确认卡 / 一致性卡 / 生产链进度） */
   header?: React.ReactNode;
   /** 无消息时的开场内容（新建作品弹窗用） */
@@ -25,7 +28,7 @@ interface ChatTurnsProps {
  * 对话消息流。所有消息来自服务端（含刷新后的历史）；
  * 生成中最后一条 agent 消息逐字增长，并显示光标。
  */
-export const ChatTurns = ({ msgs, busy, header, empty }: ChatTurnsProps) => {
+export const ChatTurns = ({ msgs, busy, header, empty, autonomy = 'ask' }: ChatTurnsProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,7 +79,12 @@ export const ChatTurns = ({ msgs, busy, header, empty }: ChatTurnsProps) => {
                   )}
                   {isLastAgent && m.content ? <span className="chat-cursor" /> : null}
                   {m.role === 'agent' && m.content ? (
-                    <TimelineOpsCard content={m.content} messageId={m.id || `turn-${i}`} />
+                    <TimelineOpsCard
+                      content={m.content}
+                      messageId={m.id || `turn-${i}`}
+                      autonomy={autonomy}
+                      latest={i === msgs.length - 1}
+                    />
                   ) : null}
                 </div>
               </div>

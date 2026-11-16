@@ -18,6 +18,8 @@ import { useStudio } from './StudioShell';
 import { clipSpan, shotLabel, stateShort, toTimecode } from './model';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
 import { listCharacters, listProps } from '@client/src/api/bible';
+import { isImageUrl } from '@client/src/lib/media-kind';
+import { previewProxyUrl } from '@client/src/lib/preview-proxy';
 import type { Prop } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1';
@@ -63,6 +65,7 @@ export const StudioPreview = () => {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasOn, setCanvasOn] = useState(false);
+  const [proxyBroken, setProxyBroken] = useState(false);
 
   const shots = data.shots;
   const shot = shots[sel];
@@ -98,8 +101,9 @@ export const StudioPreview = () => {
     if (!tlMode) return null;
     const hit = videoClips
       .filter((c) => curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c))
-      // 主画面永远优先（lane 0）；只有主轨空白时才回退到叠加轨，避免 V3 素材把主画面顶掉
-      .sort((a, b) => (a.lane ?? 0) - (b.lane ?? 0))[0];
+      // 剪映式层序：V1 是底图，V2/V3/V4 越往上越先被识别。
+      // 同一时间命中多条画面时，取 lane 最大（最上层）的一条作为当前画面。
+      .sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0))[0];
     return hit ?? null;
   }, [tlMode, videoClips, curT]);
 
@@ -143,14 +147,35 @@ export const StudioPreview = () => {
   const shotVideoUrl = shot?.videoUrl;
   const activeVideoId = activeVideo?.id;
   const activeVideoUrl = activeVideo?.sourceUrl;
+
+  /** 原始时间线/镜头地址；图片仍直接走原图，视频在流畅档走 540p 代理 */
+  const previewVideoUrl = tlMode ? activeVideo?.sourceUrl : shot?.videoUrl;
+  const previewIsStill = Boolean(tlMode && isImageUrl(previewVideoUrl));
+  // 只为真正的本地素材开代理：/uploads 复制+转码是毫秒级；
+  // 远程 Agnes 源先直接播放，避免代理下载慢导致画面一直黑屏。
+  const fastProxyEligible =
+    Boolean(previewVideoUrl) &&
+    !previewIsStill &&
+    previewQuality === 'fast' &&
+    tlMode &&
+    Boolean(projectId) &&
+    Boolean(previewVideoUrl?.startsWith('/uploads/'));
+  const fastProxyUrl =
+    fastProxyEligible && previewVideoUrl && projectId
+      ? previewProxyUrl(projectId, previewVideoUrl)
+      : previewVideoUrl;
+  const effectiveVideoUrl = fastProxyEligible && !proxyBroken ? fastProxyUrl : previewVideoUrl;
+  const usingProxy = Boolean(fastProxyEligible && !proxyBroken && fastProxyUrl);
+
   useEffect(() => {
     setVideoBroken(false);
-  }, [shotId, shotVideoUrl, activeVideoId, activeVideoUrl]);
+    setProxyBroken(false);
+  }, [shotId, shotVideoUrl, activeVideoId, activeVideoUrl, previewQuality]);
 
   // 媒体从动于主时钟 curT
   useEffect(() => {
     const speed = activeVideo && activeVideo.speed > 0 ? activeVideo.speed : 1;
-    const videoUrl = tlMode ? activeVideo?.sourceUrl : shot?.videoUrl;
+    const videoUrl = effectiveVideoUrl;
     const v = videoRef.current;
     if (v && videoUrl && !videoBroken) {
       const videoT = tlMode && activeVideo
@@ -221,7 +246,7 @@ export const StudioPreview = () => {
         if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.05) a.currentTime = t;
       }
     }
-  }, [curT, playing, shot, videoBroken, tlMode, activeVideo, activeAudio, previewVolume, previewMuted, originalAudio]);
+  }, [curT, playing, shot, videoBroken, tlMode, activeVideo, activeAudio, previewVolume, previewMuted, originalAudio, effectiveVideoUrl]);
 
   // ---------- 上/下区拖拽分割 ----------
   const onSplitStart = useCallback(
@@ -264,8 +289,6 @@ export const StudioPreview = () => {
   }, []);
 
   /** 预览当前媒体：时间线片段优先，否则镜头成片；图片/GIF 走静态图分支 */
-  const previewVideoUrl = tlMode ? activeVideo?.sourceUrl : shot?.videoUrl;
-  const previewIsStill = Boolean(tlMode && isImageUrl(previewVideoUrl));
 
   /**
    * 流畅预览：把当前视频帧画到 640px 长的画布上再铺满画面。
@@ -304,7 +327,7 @@ export const StudioPreview = () => {
       alive = false;
       if (raf) window.cancelAnimationFrame(raf);
     };
-  }, [previewQuality, tlMode, previewIsStill, previewVideoUrl]);
+  }, [previewQuality, tlMode, previewIsStill, effectiveVideoUrl, usingProxy]);
 
 
   if (!shot) {
@@ -322,7 +345,7 @@ export const StudioPreview = () => {
   const clipDur = tlMode && activeVideo ? clipSpan(activeVideo) : shot.dur;
   const displayShot = activeShot ?? shot;
   const scene = data.scenes.find((s) => s.id === displayShot.sceneId);
-  const videoUrl = previewVideoUrl;
+  const videoUrl = effectiveVideoUrl;
   const activeIsStill = previewIsStill;
   const showVideo = Boolean(videoUrl) && !videoBroken && !activeIsStill;
   const showStill = Boolean(videoUrl) && !videoBroken && activeIsStill;
@@ -364,7 +387,7 @@ export const StudioPreview = () => {
                 <button
                   type="button"
                   className={previewQuality === 'fast' ? 'on' : ''}
-                  title="流畅预览：低分辨率画布合成，拖动播放头更跟手"
+                  title="流畅预览：本地视频自动 540p 代理 + 低分辨率画布合成，拖动播放头更跟手"
                   onClick={() => setPreviewQuality('fast')}
                 >
                   流畅
@@ -432,7 +455,10 @@ export const StudioPreview = () => {
                 poster={tlMode ? undefined : shot.frameUrl}
                 playsInline
                 preload="auto"
-                onError={() => setVideoBroken(true)}
+                onError={() => {
+                  if (usingProxy) setProxyBroken(true);
+                  else setVideoBroken(true);
+                }}
                 style={{
                   position: 'absolute',
                   inset: 0,
@@ -699,5 +725,5 @@ export const StudioPreview = () => {
       ) : null}
     </div>
   );
-};import { isImageUrl } from '@client/src/lib/media-kind';
+};
 

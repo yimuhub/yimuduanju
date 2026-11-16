@@ -9,9 +9,12 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import type { TimelineDocument } from '@shared/api.interface';
 import { TimelineMediaService } from './media-analysis.service';
+import { PreviewProxyService } from './preview-proxy.service';
 import { TimelineService } from './timeline.service';
 import { AgentTimelineOpsDto, ExportTimelineDto, SaveTimelineDto } from './dto';
 
@@ -26,6 +29,7 @@ export class TimelineController {
   constructor(
     private readonly timelineService: TimelineService,
     private readonly mediaService: TimelineMediaService,
+    private readonly previewProxy: PreviewProxyService,
   ) {}
 
   /** 读取 EDL：未保存过则从镜头台账派生默认工程（只读） */
@@ -35,6 +39,28 @@ export class TimelineController {
     @Param('projectId', ParseUUIDPipe) projectId: string,
   ): Promise<TimelineDocument> {
     return this.timelineService.getDocument(projectId);
+  }
+
+  /**
+   * 流畅预览代理：540p 小文件，按源地址哈希缓存。
+   * 源只接受 /uploads、/api/assets/:id/content 或公网 http(s)，由 ExportService
+   * materializeMediaToFile 统一做路径与 SSRF 守卫。
+   */
+  @Get('preview-proxy')
+  async previewProxyFile(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query('src') src: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!src?.trim()) throw new BadRequestException('src 不能为空');
+    const file = await this.previewProxy.ensureProxy(projectId, src);
+    if (!file) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.sendFile(file);
   }
 
   /** 整体保存 EDL（事务替换 + 乐观锁） */

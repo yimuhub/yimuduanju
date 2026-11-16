@@ -4,7 +4,7 @@
  * 模型只出「提案」，这里先干跑 diff（同一份纯函数），用户点「应用」才走
  * /timeline/agent-ops 事务落库；应用后进入编辑器撤销栈，⌘Z 可整体回退。
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Loader2, Sparkles, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEdlOptional } from './EdlContext';
@@ -13,6 +13,7 @@ import {
   summarizeOps,
   timelineOpLabel,
 } from '@client/src/lib/timeline-agent-ops';
+import { isDestructiveTimelineOp, type AgentAutonomy } from '@client/src/lib/agent-autonomy';
 
 const APPLIED_KEY = 'yimu.agentops.applied';
 
@@ -38,15 +39,22 @@ const markApplied = (id: string) => {
 export const TimelineOpsCard = ({
   content,
   messageId,
+  autonomy = 'ask',
+  latest = false,
 }: {
   content: string;
   messageId: string;
+  autonomy?: AgentAutonomy;
+  /** 只有最新一条 Agent 消息可以自动执行，历史提案不重放 */
+  latest?: boolean;
 }) => {
   const editor = useEdlOptional();
   const proposal = useMemo(() => parseTimelineOpsProposal(content), [content]);
   const [applied, setApplied] = useState(() => readApplied().includes(messageId));
   const [applying, setApplying] = useState(false);
+  const [autoApplied, setAutoApplied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoStarted = useRef(false);
 
   const preview = useMemo(
     () => (editor && proposal ? editor.previewAgentOps(proposal.ops) : null),
@@ -58,15 +66,16 @@ export const TimelineOpsCard = ({
   const blocked = preview.errors.length > 0;
   const stale = proposal.baseVersion !== editor.version;
 
-  const apply = async () => {
+  const apply = async (byAgent = false) => {
     if (blocked || applying || applied) return;
     setApplying(true);
+    if (byAgent) setAutoApplied(true);
     setError(null);
     try {
       await editor.applyAgentOps(proposal.ops, proposal.summary);
       markApplied(messageId);
       setApplied(true);
-      toast.success('已应用到时间线', {
+      toast.success(byAgent ? 'Agent 已直接执行剪辑' : '已应用到时间线', {
         description: `${summarizeOps(proposal.ops)} · 可用 ⌘Z 撤销本次修改`,
         duration: 3000,
       });
@@ -91,6 +100,21 @@ export const TimelineOpsCard = ({
     }
   };
 
+  const autoEligible =
+    latest &&
+    !stale &&
+    !blocked &&
+    (autonomy === 'full' ||
+      (autonomy === 'reduced' && !proposal.ops.some((op) => isDestructiveTimelineOp(op.op))));
+
+  useEffect(() => {
+    if (!autoEligible || autoStarted.current || applied || applying) return;
+    autoStarted.current = true;
+    void apply(true);
+    // autoEligible 已经覆盖 autonomy / blocked / stale / latest；apply 的闭包随本次渲染更新
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoEligible]);
+
   return (
     <div className="tl-ops-card">
       <div className="tl-ops-h">
@@ -99,6 +123,13 @@ export const TimelineOpsCard = ({
         <span>{proposal.summary}</span>
         <em>基于 v{proposal.baseVersion}</em>
       </div>
+      {autoEligible && !applied ? (
+        <div className="tl-ops-auto">
+          {autonomy === 'full' ? '完全授权：正在直接执行…' : '减少询问：低风险动作直接执行…'}
+        </div>
+      ) : autoApplied || (applied && autonomy !== 'ask') ? (
+        <div className="tl-ops-auto ok">已由 Agent 自动执行，⌘Z 可撤销</div>
+      ) : null}
       {stale ? (
         <div className="tl-ops-stale">
           提案基于 v{proposal.baseVersion}，当前已到 v{editor.version}；应用时会按当前时间线重新校验。
@@ -133,10 +164,16 @@ export const TimelineOpsCard = ({
           type="button"
           className="btn tl-ops-apply"
           disabled={blocked || applying || applied}
-          onClick={() => void apply()}
+          onClick={() => void apply(false)}
         >
           {applying ? <Loader2 className="spin" size={12} /> : applied ? <Check size={12} /> : null}
-          {applied ? '已应用（⌘Z 可撤销）' : applying ? '应用中…' : `应用 ${proposal.ops.length} 个动作`}
+          {applied
+            ? autonomy === 'ask'
+              ? '已应用（⌘Z 可撤销）'
+              : 'Agent 已执行（⌘Z 可撤销）'
+            : applying
+              ? '应用中…'
+              : `${autonomy === 'full' ? '直接执行' : '应用'} ${proposal.ops.length} 个动作`}
         </button>
       </div>
     </div>

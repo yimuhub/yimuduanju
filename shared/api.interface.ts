@@ -65,6 +65,23 @@ export interface StyleBible {
   subtitleStyle: string;
 }
 
+/** 神剪封面编辑器：底图 + 标题排版模板，服务端只存配置，不生成第二条时间线。 */
+export interface ProjectCoverConfig {
+  imageUrl: string;
+  title: string;
+  subtitle?: string;
+  template: 'poster' | 'center' | 'band' | 'minimal' | 'plain';
+  fontSize: number;
+  color: string;
+  align: 'left' | 'center' | 'right';
+  /** 文本纵向锚点 0.1–0.9（0=顶部，1=底部） */
+  position: number;
+  showSubtitle: boolean;
+  /** 保存时生成的封面图资产地址（用于项目卡片直接显示） */
+  assetUrl?: string;
+  updatedAt?: string;
+}
+
 export interface ProjectMetadata {
   totalShots: number;
   totalScenes: number;
@@ -94,6 +111,8 @@ export interface ProjectMetadata {
    * 自动归入；开集模式由 projects.has_episodes 控制，旧项目无此键。
    */
   activeEpisodeId?: string;
+  /** 项目封面排版配置（神剪封面编辑器） */
+  cover?: ProjectCoverConfig;
 }
 
 /**

@@ -17,6 +17,7 @@ import { Grip, MessageCircle, MonitorUp, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
 import { ChatTurns } from './chat/ChatTurns';
+import { AGENT_AUTONOMY_DESC, AGENT_AUTONOMY_KEY, AGENT_AUTONOMY_LABEL, readAgentAutonomy, type AgentAutonomy } from '@client/src/lib/agent-autonomy';
 
 /** Document Picture-in-Picture（Chromium 专有，TS lib 尚未收录） */
 type DocPip = {
@@ -48,12 +49,21 @@ export const StudioFloatingChat = () => {
   const { chatMsgs, chatBusy, sendChat, stopChat } = useStudio();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<Pos>(readPos);
+  const [autonomy, setAutonomy] = useState<AgentAutonomy>(readAgentAutonomy);
   const [draft, setDraft] = useState('');
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(
     null,
   );
   /** 已投到桌面的悬浮小窗（Document PiP） */
   const petWinRef = useRef<Window | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AGENT_AUTONOMY_KEY, autonomy);
+    } catch {
+      /* 忽略 */
+    }
+  }, [autonomy]);
 
   useEffect(() => {
     try {
@@ -187,13 +197,27 @@ export const StudioFloatingChat = () => {
             <ChatTurns
               msgs={chatMsgs}
               busy={chatBusy}
+              autonomy={autonomy}
               empty={
                 <div className="pro-chat-empty">
-                  继续和 AI 对话。它可以读取项目镜头/素材，也能直接给你时间线剪辑提案；
-                  点「应用」才会落库，⌘Z 可整体撤销。
+                  继续和 AI 对话。它可以读取项目镜头/素材，也能直接改时间线；
+                  执行权限可在下方切换，完全授权时会直接执行合法提案，⌘Z 可整体撤销。
                 </div>
               }
             />
+          </div>
+          <div className="pro-chat-auth" title={AGENT_AUTONOMY_DESC[autonomy]}>
+            <span>执行权限</span>
+            <select
+              aria-label="Agent 时间线执行权限"
+              value={autonomy}
+              onChange={(e) => setAutonomy(e.target.value as AgentAutonomy)}
+            >
+              {(['ask', 'reduced', 'full'] as const).map((v) => (
+                <option key={v} value={v}>{AGENT_AUTONOMY_LABEL[v]}</option>
+              ))}
+            </select>
+            <small>{autonomy === 'full' ? '直接执行' : autonomy === 'reduced' ? '低风险直执' : '先确认'}</small>
           </div>
           <div className="pro-chat-compose">
             <textarea

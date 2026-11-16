@@ -25,9 +25,9 @@ export const StudioProTopBar = () => {
     <div className="pro-topbar">
       <div className="pro-crumb">
         <b>{data.project?.title ?? '未命名项目'}</b>
-        <span>/ 剪辑</span>
+        <span>/ 神剪</span>
       </div>
-      <span className="pro-save" title={`当前版本 v${APP_VERSION}`}>
+      <span className="pro-save" title={`一幕·神剪 v${APP_VERSION}`}>
         <i />
         自动保存 · v{APP_VERSION}
       </span>
@@ -69,7 +69,7 @@ export const StudioProTopBar = () => {
         <button
           type="button"
           className="pro-btn"
-          title="设置项目封面（从项目图片素材里选一张，不进入时间线）"
+          title="神剪封面编辑：底图 + 标题排版，不进入时间线"
           onClick={() => fire('yimu:open-cover')}
         >
           <ImageIcon size={13} />

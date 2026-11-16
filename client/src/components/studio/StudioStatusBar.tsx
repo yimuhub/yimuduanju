@@ -75,12 +75,12 @@ export const StudioStatusBar = () => {
           className={`sb hoverable sb-pro-edit${proEdit ? ' on' : ''}`}
           title={
             proEdit
-              ? '退出全功能编辑：恢复中间的对话区（对话内容不丢）'
-              : '全功能编辑：取消中间的对话区、时间线拉满，对话变成可拖拽的小球'
+              ? '退出一幕·神剪：恢复中间的对话区（对话内容不丢）'
+              : '一幕·神剪：取消中间的对话区、时间线拉满，对话变成可拖拽的小球'
           }
           onClick={toggleProEdit}
         >
-          <Clapperboard size={11} /> 全功能编辑 <b className={proEdit ? 'sb-ok' : 'sb-accent'}>{proEdit ? '开' : '关'}</b>
+          <Clapperboard size={11} /> 一幕·神剪 <b className={proEdit ? 'sb-ok' : 'sb-accent'}>{proEdit ? '开' : '关'}</b>
         </button>
       ) : null}
       <button
