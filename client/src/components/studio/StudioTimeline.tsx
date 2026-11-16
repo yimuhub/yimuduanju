@@ -582,7 +582,6 @@ export const StudioTimeline = () => {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const labelsRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const scrollSyncRef = useRef(false);
   const dragRef = useRef<DragState | null>(null);
   const pxRef = useRef(pxPerSec);
   pxRef.current = pxPerSec;
@@ -852,29 +851,19 @@ export const StudioTimeline = () => {
     };
   }, [rows, collapsed, editor.selectedIds.length]);
 
-  /* 左侧轨道头与右侧时间画布共用同一纵向滚动位置：滚任一侧，另一侧跟随 */
-  useEffect(() => {
-    const tracks = scrollRef.current;
-    const labels = labelsRef.current;
-    if (!tracks || !labels) return undefined;
-    const sync = (from: HTMLDivElement, to: HTMLDivElement) => {
-      if (scrollSyncRef.current) return;
-      if (Math.abs(to.scrollTop - from.scrollTop) < 1) return;
-      scrollSyncRef.current = true;
-      to.scrollTop = from.scrollTop;
-      requestAnimationFrame(() => {
-        scrollSyncRef.current = false;
-      });
-    };
-    const onTracksScroll = () => sync(tracks, labels);
-    const onLabelsScroll = () => sync(labels, tracks);
-    tracks.addEventListener('scroll', onTracksScroll, { passive: true });
-    labels.addEventListener('scroll', onLabelsScroll, { passive: true });
-    return () => {
-      tracks.removeEventListener('scroll', onTracksScroll);
-      labels.removeEventListener('scroll', onLabelsScroll);
-    };
-  }, []);
+  /**
+   * 左侧轨道头与右侧时间画布共用同一纵向滚动位置。
+   * 用 React onScroll 而不是原生监听：打包/热更新后不会丢绑定；
+   * 不设滚动锁，只比较目标值，相等就直接跳过，天然不会互相触发回环。
+   */
+  const syncTimelineScroll = (
+    from: HTMLDivElement | null,
+    to: HTMLDivElement | null,
+  ): void => {
+    if (!from || !to) return;
+    if (Math.abs(to.scrollTop - from.scrollTop) < 1) return;
+    to.scrollTop = from.scrollTop;
+  };
 
   /**
    * 手动调整单轨行高：拖左侧轨道头底部的细横条。
@@ -2377,6 +2366,7 @@ export const StudioTimeline = () => {
         <div
           className="tl-labels"
           ref={labelsRef}
+          onScroll={(e) => syncTimelineScroll(e.currentTarget, scrollRef.current)}
           style={{ flex: `0 0 ${LABEL_W}px`, width: `${LABEL_W}px` }}
         >
           <div className="tl-lb-spacer" />
@@ -2470,7 +2460,12 @@ export const StudioTimeline = () => {
           ))}
         </div>
 
-        <div className="tl-tracks" id="tracks" ref={scrollRef}>
+        <div
+          className="tl-tracks"
+          id="tracks"
+          ref={scrollRef}
+          onScroll={(e) => syncTimelineScroll(e.currentTarget, labelsRef.current)}
+        >
           <div
             className="tl-canvas"
             ref={canvasRef}
