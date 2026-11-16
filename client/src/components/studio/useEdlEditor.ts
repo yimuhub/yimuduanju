@@ -61,6 +61,9 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   volume: c.volume,
   transition: c.transition ?? null,
   text: c.text ?? null,
+  // 绑定组与字幕样式必须一起落库，否则一保存就「解绑」、样式回默认
+  bindGroup: c.bindGroup ?? null,
+  textStyle: c.textStyle ?? null,
   locked: c.locked,
   sortOrder: c.sortOrder,
 });
@@ -920,11 +923,23 @@ export function useEdlEditor(): EdlEditor {
       const targetAt = quantizeToFrame(Math.max(0, at), fpsRef.current);
       const now = new Date().toISOString();
       const before = clipsRef.current;
+      // 粘贴要保留「副本内部」的绑定关系，但不能继续挂在原组上 ——
+      // 否则拖原来的片段，刚粘贴的也跟着跑。所以按原组 id 重新发一批组 id。
+      const groupRemap = new Map<string, string>();
+      const remap = (g: string | null | undefined): string | null => {
+        if (!g) return null;
+        const hit = groupRemap.get(g);
+        if (hit) return hit;
+        const fresh = `bg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        groupRemap.set(g, fresh);
+        return fresh;
+      };
       const created: TimelineClip[] = src.map((c, i) => ({
         ...c,
         id: localId('local-paste'),
         projectId: projectId ?? '',
         timelineStart: round3(Math.max(0, c.timelineStart - base + targetAt)),
+        bindGroup: remap(c.bindGroup),
         sortOrder: before.length + i,
         createdAt: now,
         updatedAt: now,
