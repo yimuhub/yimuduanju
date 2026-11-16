@@ -47,6 +47,20 @@
 统一接口：generateText / generateImage / generateVideo / generateTTS
 Provider Adapter：火山方舟 / OpenAI兼容中转站 / 自定义
 
+### 图库（public media library）
+视频通道（Agnes 官方）的首帧/尾帧/参考图**只接受公网 http(s) URL**，而全部产物落的是
+`/uploads/xxx.png`。任何「把本地路径直接交给厂商」的写法都会让该素材被静默丢弃
+（首帧丢失 → 退化成纯文生视频；参考图丢失 → 跨镜换脸）。
+
+统一收敛顺序，不得调换：
+1. 上游图片 CDN 回传地址（`generation_jobs.outputData.images[0].remoteUrl`，零成本最稳）
+2. **图库** `public-media-library.ts`：本地图上传一次（catbox / 自建 `YIMU_MEDIA_UPLOAD_URL`），
+   映射持久化在 `public_media` 表，隧道重启也不失效
+3. 隧道临时副本 `staged-media.ts`：仅作兜底，终态即删
+
+新增任何「提交给外部模型」的媒体入口，都必须走 `ensureLibraryUrl`，禁止裸传 `/uploads` 路径。
+历史数据可用 `node scripts/backfill-public-media.js` 幂等回填。
+
 ### 状态机
 DRAFT → PARSING → PLANNING → BIBLE_READY → STORYBOARD_READY → ASSETS_GENERATING → VIDEO_GENERATING → AUDIO_GENERATING → EDITING → QC → READY → EXPORTED
 

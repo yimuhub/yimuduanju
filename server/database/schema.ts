@@ -958,3 +958,19 @@ export const chatMessages = pgTable("chat_messages", {
   }).onDelete("cascade"),
 ]);
 export const chatMessagesTable = chatMessages;
+
+/**
+ * 0026 图库：本地图片 → 公网 URL 的持久映射（手写，非自动生成）。
+ * 主键是 local_path，同一张图被多项目/多镜头引用时复用同一条记录。
+ * 不建 projects 外键：图库是「素材的对外地址」，生命周期与项目无关。
+ */
+export const publicMedia = pgTable("public_media", {
+  localPath: text("local_path").primaryKey(),
+  publicUrl: text("public_url").notNull(),
+  host: varchar("host", { length: 40 }).notNull(),
+  bytes: bigint("bytes", { mode: 'number' }),
+  hits: integer("hits").notNull().default(0),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  lastUsedAt: customTimestamptz("last_used_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+export const publicMediaTable = publicMedia;

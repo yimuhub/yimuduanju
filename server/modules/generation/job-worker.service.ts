@@ -101,6 +101,7 @@ import { buildSegmentedVideoPrompt, describeContinuity } from '@shared/video-pro
 // 就被迫拉起整条 Controller → Service → DI 依赖链。
 import { uploadDir } from '../assets/upload-dir';
 import { releaseStagedFrames, stageFramesForJob, sweepExpiredStagedFrames } from './staged-media';
+import { ensureLibraryUrl, tunnelFallbackUrl } from './public-media-library';
 import {
   isHttpUrl,
   isPublicUrlReachable,
@@ -2231,6 +2232,31 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       if (upstream) lastFrameUrl = upstream;
     }
     /*
+     * 图库：本地图片 → 永久公网 URL（用户明确要求的主路径）。
+     * ------------------------------------------------------------------
+     * 顺序必须是「上游 CDN → 图库 → 隧道暂存」：
+     *   ① 上游 CDN 是厂商自家地址，零成本、最稳（上面已解析）；
+     *   ② 图库一次上传长期复用（public_media 表），**不依赖隧道**，
+     *      隧道重启换域名也不影响已经提交的任务；
+     *   ③ 隧道 staged 是临时副本（终态即删），只在图库不可用时兜底。
+     * 历史上顺序是反的，于是所有本地首帧都挂在 trycloudflare 的临时域名上，
+     * 隧道一换域名上游就下载不到 —— 这正是「本地图片项目全部失败」的根因。
+     */
+    if (imageUrl && !isHttpUrl(imageUrl)) {
+      const libUrl = await ensureLibraryUrl(this.db, imageUrl);
+      if (libUrl) {
+        this.logger.log(`首帧已入图库：${imageUrl.slice(-28)} → ${libUrl.slice(0, 64)}`);
+        imageUrl = libUrl;
+      }
+    }
+    if (lastFrameUrl && !isHttpUrl(lastFrameUrl)) {
+      const libUrl = await ensureLibraryUrl(this.db, lastFrameUrl);
+      if (libUrl) {
+        this.logger.log(`尾帧已入图库：${lastFrameUrl.slice(-28)} → ${libUrl.slice(0, 64)}`);
+        lastFrameUrl = libUrl;
+      }
+    }
+    /*
      * 首帧/尾帧「临时公开副本」：Agnes 只吃公网 http(s) URL，直接暴露项目原图
      * 等于把资产永久挂在一个公开地址上。这里改用按 jobId 命名的临时副本
      * （本地硬链接，零额外磁盘占用），任务一到终态就自动删除，另有 TTL 兜底。
@@ -2291,30 +2317,47 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
      */
     let keepStaged = false;
     try {
-      // W 公网 URL 兜底：首帧/尾帧/参考图如果是本地 /uploads/ 路径，
-      // 云端视频 API 无法下载——上传到免费图床获取公网 URL。
+      // 参考图（角色定妆照/场景图/道具图）同样是本地 /uploads 路径，
+      // 必须与首帧走同一套「上游 CDN → 图库 → 隧道兜底」收敛，否则
+      // 厂商只能拿到相对路径、整组参考图被静默丢弃（跨镜换脸的直接原因）。
       const resolvePublic = async (u: string | undefined): Promise<string | undefined> => {
         if (!u) return u;
         if (/^https?:\/\//i.test(u)) return u; // 已是公网 URL
         if (!u.startsWith('/uploads/')) return u; // data: / 其他格式不动
-        // ① 先查 Agnes CDN URL（图片任务 outputData 已有的公网地址）
-        const shotMeta = null; // 上下文简化：CDN 解析已覆盖主要场景
-        if (shotMeta?.upstreamFrame?.remote && shotMeta.upstreamFrame.local === u) {
-          return shotMeta.upstreamFrame.remote;
+        const cdnUrl = await resolveUpstreamFrameUrl(
+          this.db,
+          u,
+          job.targetType === 'shot' ? job.targetId : undefined,
+        );
+        if (cdnUrl) {
+          this.logger.log(`帧图 CDN 解析: ${u.slice(-20)} → ${cdnUrl.slice(0, 60)}`);
+          return cdnUrl;
         }
-        const cdnUrl = await resolveUpstreamFrameUrl(this.db, u, job.targetType === 'shot' ? job.targetId : undefined);
-        if (cdnUrl) { this.logger.log(`帧图 CDN 解析: ${u.slice(-20)} → ${cdnUrl.slice(0, 60)}`); return cdnUrl; }
-        // ② 免费图床兜底
-        const pubUrl = await this.uploadToPublicHost(u);
-        if (pubUrl) this.logger.log(`帧图已上传公网图床：${u.slice(-20)} → ${pubUrl.slice(0, 50)}`);
-        return pubUrl ?? u; // 上传失败回落原路径（让 Agnes 报明确错误而非静默）
+        const libUrl = await ensureLibraryUrl(this.db, u);
+        if (libUrl) {
+          this.logger.log(`参考图已入图库：${u.slice(-20)} → ${libUrl.slice(0, 60)}`);
+          return libUrl;
+        }
+        // 图库也不可用时才退回隧道临时地址（会让任务长期依赖隧道存活）
+        return tunnelFallbackUrl(u) ?? u;
       };
       const pubImageUrl = await resolvePublic(imageUrl);
       const pubLastFrame = lastFrameUrl ? await resolvePublic(lastFrameUrl) : undefined;
+      // 白模位其实是一张图（字段名沿用 referenceVideoUrl），同样不能把本地路径丢给厂商
+      const pubReference = refs[1] ? await resolvePublic(refs[1]) : undefined;
       const pubRefImages: string[] = [];
-      for (const ref of (refs.slice(3).filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u)).filter((u) => u !== imageUrl && u !== lastFrameUrl))) {
+      /*
+       * 保位数组 refs：0=首帧 1=白模 2=尾帧 3+=角色图，空槽是 ''。
+       * 旧实现先 `.filter(/^https?:\/\//)` 再交给 resolvePublic —— 本地路径的
+       * 角色图在进入收敛之前就被丢掉，图库永远等不到它们。
+       */
+      for (const ref of refs.slice(3)) {
+        if (!ref || ref === imageUrl || ref === lastFrameUrl) continue;
+        // eslint-disable-next-line no-await-in-loop
         const resolved = await resolvePublic(ref);
-        if (resolved) pubRefImages.push(resolved);
+        if (resolved && /^https?:\/\//i.test(resolved) && !pubRefImages.includes(resolved)) {
+          pubRefImages.push(resolved);
+        }
       }
       const created = await this.createVideoWithKeyPool(
         job,
@@ -2325,7 +2368,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
               ? input.duration
               : composed.duration || 5,
           imageUrl: pubImageUrl,
-          referenceVideoUrl: refs[1],
+          referenceVideoUrl: pubReference,
           referenceImages: pubRefImages.slice(0, 4),
           lastFrameUrl: pubLastFrame,
           model: opts?.model,
@@ -5154,39 +5197,6 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       url.startsWith('data:') ? (url.slice(5, url.indexOf(';')) || fallbackMime) : fallbackMime,
     );
     return local?.fileUrl ?? url;
-  }
-
-  /**
-   * W 免费图床兜底：本地 /uploads/ 路径无法被云端视频 API 访问——
-   * 用 catbox.moe（免费、无需注册、永久存储）上传获取公网 URL。
-   * 上传失败（网络/服务不可用）返回 null，调用方回退到不传参考图。
-   */
-  private async uploadToPublicHost(
-    localUrl: string,
-  ): Promise<string | null> {
-    try {
-      const filePath = localUrl.startsWith('/uploads/')
-        ? join(process.cwd(), 'data', localUrl)
-        : null;
-          try { await readFile(filePath); } catch { return null; }
-      const buf = await readFile(filePath);
-      if (buf.length > 50 * 1024 * 1024) return null; // 50MB 上限
-
-      const form = new FormData();
-      form.append('reqtype', 'fileupload');
-      form.append('fileToUpload', new Blob([buf], { type: 'image/png' }), 'frame.png');
-      const res = await fetch('https://catbox.moe/user/api.php', {
-        method: 'POST',
-        body: form,
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!res.ok) return null;
-      const text = (await res.text()).trim();
-      if (text.startsWith('https://')) return text;
-      return null;
-    } catch {
-      return null;
-    }
   }
 
   /**
