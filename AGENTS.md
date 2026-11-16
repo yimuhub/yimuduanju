@@ -47,6 +47,28 @@
 统一接口：generateText / generateImage / generateVideo / generateTTS
 Provider Adapter：火山方舟 / OpenAI兼容中转站 / 自定义
 
+### 视频通道（Agnes 专用 ≠ 通用）
+通道判定只有一处真源：`shared/video-channel.ts` 的 `resolveVideoChannel()`。
+网关、密钥池、worker、设置页四处共用，**禁止再各自写 `includes('agnes')`**。
+
+优先级：显式 `modelParams.videoChannel` > `formatType` > `agnesSchema=relay`
+> `agnes-ai.com` 端点 > `agnes-*` 模型 > 火山 > 通用。
+
+- `agnes`：`POST /videos`，`mode=text/keyframe/reference`，只收公网 http(s) 素材，
+  需要 Agnes 密钥 + `agnes-video-*` 模型；缺失时网关在建单前指名报错。
+  参考图位置 `refs[1]`（字段名 `referenceVideoUrl`，实际是图片）**不受
+  `capabilities.videoReference` 门控**，作为 `images` 与首帧合并发送。
+- `generic`：`POST /video/generations`，OpenAI 兼容，只发标准字段（`image_url`）。
+- `volcengine_ark`：`POST /contents/generations/tasks`。历史脏值 `format_type=volcano`
+  由 `normalizeFormatType()` 归一化，不归一化会掉进通用分支拿空 baseUrl。
+- 联邦密钥池（`leaseForVideo`）**只服务 agnes 通道**：视频环节绑了通用/火山时
+  不得被换成 Agnes 的 Key 与端点。
+
+手动重试（`retryJob`）必须清空 `transientSince / transientReleases /
+lostTaskRetries / pausedReason`，并回收该 job 残留的 `key_leases`。否则重试会继承
+上一次的等待时长，第一次撞 503 就按「已等待 3000+ 分钟」直接判死 —— 表现为
+「点一下重试秒失败」。
+
 ### 图库（public media library）
 视频通道（Agnes 官方）的首帧/尾帧/参考图**只接受公网 http(s) URL**，而全部产物落的是
 `/uploads/xxx.png`。任何「把本地路径直接交给厂商」的写法都会让该素材被静默丢弃
