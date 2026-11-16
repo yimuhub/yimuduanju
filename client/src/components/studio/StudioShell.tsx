@@ -180,14 +180,27 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     },
   );
 
-  const setProEdit = useCallback((v: boolean) => {
-    setProEditState(v);
-    try {
-      localStorage.setItem('yimu.proEdit', v ? '1' : '0');
-    } catch {
-      /* 忽略 */
-    }
-  }, []);
+  /** 进入全功能编辑前的左栏状态：退出时还原，避免用户手动收起的偏好被改掉 */
+  const railBeforePro = useRef(railCollapsed);
+
+  const setProEdit = useCallback(
+    (v: boolean) => {
+      // 全功能编辑 = 剪映式工作台：左栏保留但自动收起，把宽度全给预览+时间线
+      if (v && !proEdit) {
+        railBeforePro.current = railCollapsed;
+        setRailCollapsed(true);
+      } else if (!v && proEdit) {
+        setRailCollapsed(railBeforePro.current);
+      }
+      setProEditState(v);
+      try {
+        localStorage.setItem('yimu.proEdit', v ? '1' : '0');
+      } catch {
+        /* 忽略 */
+      }
+    },
+    [proEdit, railCollapsed, setRailCollapsed],
+  );
   const toggleProEdit = useCallback(() => setProEdit(!proEdit), [proEdit, setProEdit]);
 
   const setTlCollapsed = useCallback((v: boolean) => {
@@ -496,7 +509,8 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   }, [curT, shots, data.timeline]);
 
   // 无项目时产出坞不渲染；同时释放它占的网格列，否则舞台会被挤成窄条、右侧留大片空白
-  const dockHidden = dockCollapsed || !projectId;
+  // 全功能编辑：右侧产出坞整体收起，坞里的预览改由中舞台全屏承载
+  const dockHidden = dockCollapsed || !projectId || proEdit;
   const tlHidden = tlCollapsed || !projectId;
 
   const appClass = useMemo(
@@ -643,7 +657,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
 
         <StudioRail />
         <StudioStage>{pageContent}</StudioStage>
-        {projectId ? <StudioDock /> : null}
+        {projectId && !proEdit ? <StudioDock /> : null}
         {projectId ? <StudioTimeline /> : null}
         <StudioStatusBar />
         <NewWorkDialog

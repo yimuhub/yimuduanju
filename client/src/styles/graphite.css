@@ -122,17 +122,37 @@
 .app.tl-collapsed {
   --tl-h: var(--tl-min);
 }
-/* 全功能编辑：中舞台对话区取消，时间线拉满到占主视野（剪映式），左 rail / 右 dock 保留 */
+/* 全功能编辑：剪映式工作台
+ *   左 rail 保留（自动收起，可展开）
+ *   中舞台 = 全屏预览 + 属性（原右坞内容），对话收进浮动球
+ *   底部 = 多轨时间线（编辑区）
+ *   右 dock 整体收起，不再占列
+ */
 .app.pro-edit {
-  --tl-h: min(68vh, 720px);
+  --tl-h: min(54vh, 620px);
 }
-.app.pro-edit .stage-body,
 .app.pro-edit .stage-head,
 .app.pro-edit .secnav {
   display: none;
 }
 .app.pro-edit .stage {
   overflow: hidden;
+}
+.app.pro-edit .stage-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.pro-edit-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pro-edit-body > .pv {
+  flex: 1;
+  min-height: 0;
 }
 .app.pro-edit .timeline-panel .tl-props {
   /* 编辑区拉高后属性条保持可见 */
@@ -11982,4 +12002,18 @@ select.nw-input {
   border: 1px solid var(--primary, #ff403a) !important;
   color: var(--primary, #ff403a) !important;
   font-weight: 600;
+}
+
+/* 全功能编辑：预览吃满中舞台（原右坞里的预览改全屏），信息区降为下方一条 */
+.app.pro-edit .pro-edit-body .pv-top {
+  height: auto !important;
+  flex: 1 1 62%;
+  min-height: 0;
+}
+.app.pro-edit .pro-edit-body .pv-bottom {
+  flex: 0 1 38%;
+  min-height: 0;
+}
+.app.pro-edit .pro-edit-body .pv-stage {
+  min-height: 0;
 }

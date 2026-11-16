@@ -18,6 +18,7 @@ import { useLocation } from 'react-router-dom';
 import { useStudio } from './StudioShell';
 import { StudioChat } from './StudioChat';
 import { ProjectSectionNav } from './ProjectSectionNav';
+import { StudioPreview } from './StudioPreview';
 
 /** 全局页面的面包屑标题（无项目时用） */
 const PAGE_TITLES: Record<string, string> = {
@@ -50,7 +51,7 @@ const PROJECT_STATUS_TEXT: Partial<Record<ProjectStatus, string>> = {
 };
 
 export const StudioStage = ({ children }: { children?: ReactNode }) => {
-  const { data, stageView, projectId } = useStudio();
+  const { data, stageView, projectId, proEdit } = useStudio();
   const location = useLocation();
   const project = data.project;
 
@@ -111,7 +112,16 @@ export const StudioStage = ({ children }: { children?: ReactNode }) => {
         {/* 画布体验统一走全屏自由画布（canvas-free3）；中舞台在 page/chat 之间切换。
             内容页包进 .studio-page（flex:1 + min-height:0 + overflow-y:auto）：
             stage-body 本身 overflow:hidden，若不包滚动容器，窗口小于内容时下方会被裁切且无法滚动 */}
-        {showPage ? <div className="studio-page">{children}</div> : <StudioChat />}
+        {proEdit && projectId ? (
+          /* 全功能编辑：中舞台只剩「预览 + 属性」，对话收进浮动球，时间线在下方 */
+          <div className="pro-edit-body">
+            <StudioPreview />
+          </div>
+        ) : showPage ? (
+          <div className="studio-page">{children}</div>
+        ) : (
+          <StudioChat />
+        )}
       </div>
     </section>
   );
