@@ -107,6 +107,9 @@ export interface StudioContextValue {
   setCurT: (t: number) => void;
   playing: boolean;
   setPlaying: (v: boolean) => void;
+  /** 走带方向：1 正放 / -1 倒放（J 键驱动，靠主时钟反向推进） */
+  playDir: 1 | -1;
+  setPlayDir: (v: 1 | -1) => void;
   /** 中央预览的来源：timeline=只渲染时间轴；shot=镜头池点选后的单镜预览 */
   previewMode: 'timeline' | 'shot';
   setPreviewMode: (m: 'timeline' | 'shot') => void;
@@ -332,6 +335,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const [sel, setSelRaw] = useState(0);
   const [curT, setCurT] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [playDir, setPlayDir] = useState<1 | -1>(1);
   const [canvasApi, setCanvasApi] = useState<StudioContextValue['canvasApi']>(null);
   const {
     msgs: chatMsgs,
@@ -510,6 +514,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         case ' ':
           // 空格：播放 / 暂停（阻止页面滚动与焦点按钮误触发）
           e.preventDefault();
+          setPlayDir(1);
           setPlaying((v) => !v);
           break;
         case '[':
@@ -573,11 +578,15 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         const step = acc;
         acc = 0;
         setCurT((t) => {
-          const next = t + step;
+          const next = t + step * playDir;
+          if (playDir < 0 && next <= 0) {
+            window.setTimeout(() => setPlaying(false), 0);
+            return 0;
+          }
           if (next >= total) {
             window.setTimeout(() => setPlaying(false), 0);
             // 单镜预览停在镜尾；时间轴播放保持原来的循环行为
-            return shot ? total : 0;
+            return shot ? (playDir > 0 ? total : 0) : 0;
           }
           return next;
         });
@@ -586,7 +595,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, timelineTotal, previewMode, sel, data.shots, setPlaying]);
+  }, [playing, playDir, timelineTotal, previewMode, sel, data.shots, setPlaying]);
 
   // 播放头移动 → 通过 EDL 视频片段反查镜头（片段被移动后仍能跟随）
   useEffect(() => {
@@ -647,6 +656,8 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setCurT,
       playing,
       setPlaying,
+      playDir,
+      setPlayDir,
       previewMode,
       setPreviewMode,
       previewVolume,

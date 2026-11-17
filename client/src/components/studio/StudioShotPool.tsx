@@ -24,7 +24,8 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 export const StudioShotPool = () => {
-  const { data, projectId, sel, setSel, setCurT, setPlaying, setPreviewMode } = useStudio();
+  const { data, projectId, sel, setSel, setCurT, setPlayDir,
+    setPlaying, setPreviewMode } = useStudio();
   const [filter, setFilter] = useState<Filter>('all');
   const [tab, setTab] = useState<Tab>('shots');
   // 剪映 Tab：切换素材面板显隐；不销毁组件，回来时保留筛选与 Tab
@@ -52,7 +53,8 @@ export const StudioShotPool = () => {
     setPreviewMode('shot');
     setSel(index);
     setCurT(shot.start + 0.01);
-    setPlaying(true);
+    setPlayDir(1);
+        setPlaying(true);
   };
 
   const removeShot = async (shotId: string, name: string) => {

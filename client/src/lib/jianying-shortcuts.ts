@@ -76,7 +76,7 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
       { id: 'marker', label: '添加标记点', keys: 'M', status: 'ready', note: '内部标记；非剪映标准键位，剪映手动踩点为 Ctrl+J' },
       { id: 'beat', label: '手动踩点', keys: 'Ctrl+J', macKeys: '⌘J', status: 'ready', note: '在播放头打踩点并显示标记' },
       { id: 'mute', label: '静音 / 取消静音片段', keys: 'Shift+M', status: 'ready' },
-      { id: 'jkl', label: '播放控制 J/K/L', keys: 'J / K / L', status: 'partial', note: 'L 正放、K 暂停、J 以 0.5s 回退近似倒放；浏览器 video 不支持负速率' },
+      { id: 'jkl', label: '播放控制 J/K/L', keys: 'J / K / L', status: 'ready', note: 'L 正放、K 暂停、J 主时钟反向走带；视频/音频逐帧反向 seek' },
     ],
   },
   {

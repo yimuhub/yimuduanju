@@ -45,6 +45,8 @@ export const StudioPreview = () => {
     curT,
     playing,
     setPlaying,
+    playDir,
+    setPlayDir,
     projectId,
     proEdit,
     previewMode,
@@ -223,7 +225,7 @@ export const StudioPreview = () => {
       v.playbackRate = reversePreview ? 1 : tlMode && activeVideo ? speed : 1;
       v.volume = previewVolume;
       v.muted = previewMuted || !originalAudio;
-      if (playing && !reversePreview) {
+      if (playing && playDir > 0 && !reversePreview) {
         if (v.paused) v.play().catch(() => {});
         if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.12) {
           v.currentTime = videoT;
@@ -231,7 +233,7 @@ export const StudioPreview = () => {
       } else {
         // 浏览器 video 不支持负速率：倒放时保持暂停，由主时钟逐帧反向 seek
         if (!v.paused) v.pause();
-        const tol = reversePreview ? 0.02 : 0.05;
+        const tol = reversePreview || playDir < 0 ? 0.02 : 0.05;
         if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > tol) {
           v.currentTime = videoT;
         }
@@ -243,14 +245,15 @@ export const StudioPreview = () => {
       const a = audioRefs.current.get('legacy');
       if (a && shot?.voiceUrl) {
         const localT = Math.max(0, curT - shot.start);
-        if (playing) {
+        if (playing && playDir > 0) {
           if (a.paused) a.play().catch(() => {});
           if (a.readyState >= 1 && Math.abs(a.currentTime - localT) > 0.12) {
             a.currentTime = localT;
           }
         } else {
           if (!a.paused) a.pause();
-          if (a.readyState >= 1 && Math.abs(a.currentTime - localT) > 0.05) {
+          const tol = playDir < 0 ? 0.02 : 0.05;
+          if (a.readyState >= 1 && Math.abs(a.currentTime - localT) > tol) {
             a.currentTime = localT;
           }
         }
@@ -262,22 +265,26 @@ export const StudioPreview = () => {
       const a = audioRefs.current.get(clip.id);
       if (!a) continue;
       const rate = clip.speed > 0 ? clip.speed : 1;
-      const t = Math.min(
-        Math.max(clip.inPoint + (curT - clip.timelineStart) * rate, clip.inPoint),
-        Math.max(clip.inPoint, clip.outPoint),
-      );
+      const localA = Math.max(0, curT - clip.timelineStart);
+      const t = clip.reverse
+        ? Math.max(clip.inPoint, clip.outPoint - localA * rate)
+        : Math.min(
+            Math.max(clip.inPoint + localA * rate, clip.inPoint),
+            Math.max(clip.inPoint, clip.outPoint),
+          );
       a.playbackRate = rate;
       a.volume = Math.max(0, Math.min(1, clip.volume)) * previewVolume;
       a.muted = previewMuted;
-      if (playing) {
+      if (playing && playDir > 0 && !clip.reverse) {
         if (a.paused) a.play().catch(() => {});
         if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.12) a.currentTime = t;
       } else {
         if (!a.paused) a.pause();
-        if (a.readyState >= 1 && Math.abs(a.currentTime - t) > 0.05) a.currentTime = t;
+        const tol = playDir < 0 || clip.reverse ? 0.02 : 0.05;
+        if (a.readyState >= 1 && Math.abs(a.currentTime - t) > tol) a.currentTime = t;
       }
     }
-  }, [curT, playing, shot, videoBroken, tlMode, activeVideo, activeAudio, previewVolume, previewMuted, originalAudio, effectiveVideoUrl]);
+  }, [curT, playing, playDir, shot, videoBroken, tlMode, activeVideo, activeAudio, previewVolume, previewMuted, originalAudio, effectiveVideoUrl]);
 
   // ---------- 上/下区拖拽分割 ----------
   const onSplitStart = useCallback(
@@ -706,7 +713,10 @@ export const StudioPreview = () => {
             <button
               type="button"
               className={`pv-play${playing ? ' on' : ''}`}
-              onClick={() => setPlaying(!playing)}
+              onClick={() => {
+                setPlayDir(1);
+                setPlaying(!playing);
+              }}
               title="按真实时长播放"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

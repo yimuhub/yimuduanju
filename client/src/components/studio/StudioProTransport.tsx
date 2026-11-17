@@ -16,6 +16,7 @@ export const StudioProTransport = () => {
     setCurT,
     playing,
     setPlaying,
+    setPlayDir,
     previewMode,
     previewVolume,
     setPreviewVolume,
@@ -56,7 +57,10 @@ export const StudioProTransport = () => {
         type="button"
         className="pt-play"
         title={playing ? '暂停 (空格)' : '播放 (空格)'}
-        onClick={() => setPlaying(!playing)}
+        onClick={() => {
+        setPlayDir(1);
+        setPlaying(!playing);
+      }}
       >
         {playing ? <Pause size={14} /> : <Play size={14} />}
       </button>

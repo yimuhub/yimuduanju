@@ -496,6 +496,7 @@ export const StudioTimeline = () => {
     setCurT,
     playing,
     setPlaying,
+    setPlayDir,
     tlCollapsed,
     setTlCollapsed,
     toggleTlCollapsed,
