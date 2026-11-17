@@ -61,6 +61,7 @@ import { RoutingService } from './routing.service';
 import { ProviderKeyPoolService } from './provider-key-pool.service';
 import { StorySkillsService, type BoardsShot } from '../story-skills/story-skills.service';
 import { StoryboardService } from '../storyboard/storyboard.service';
+import { buildShotDirection } from '../storyboard/shot-direction';
 import { ExportService } from '../export/export.service';
 import { QcService } from '../qc/qc.service';
 // 资产前置（asset-first）：人物/场景/道具必须先出定妆图，才允许拆分镜与出首帧
@@ -4060,24 +4061,23 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             ...this.matchCastIds(cast, [`${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`]),
           ]);
           const duration = b.durationSeconds;
-          // Pavo 式分镜：台词必须带说话人与语气，导演描述必须带声音/连续性。
-          // 旧实现只落 b.dialogue / b.visualPrompt 原文，UI 里就成了「不知道谁说的一句台词
-          // + 一句谁在做什么」，这是生成视频不伦不类的直接原因。
-          const speaker = (b.dialogueSpeaker ?? '').trim();
-          const tone = (b.dialogueTone ?? '').trim();
-          const dialogueLine = b.dialogue
-            ? speaker && speaker !== '无'
-              ? `${speaker}${tone ? `（${tone}）` : ''}：${b.dialogue}`
-              : b.dialogue
-            : '';
-          const detailedPrompt = [
-            b.shotTitle ? `【${b.shotTitle}】` : '',
-            b.visualPrompt ?? '',
-            b.soundDesign ? `声音设计：${b.soundDesign}` : '',
-            b.continuityNote ? `连续性：${b.continuityNote}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n');
+          // 全产线统一走 buildShotDirection：模型分镜与本地拆分不再各拼一套。
+          const dir = buildShotDirection({
+            shotTitle: b.shotTitle,
+            rawVisual: b.visualPrompt,
+            dialogue: b.dialogue,
+            speaker: b.dialogueSpeaker,
+            tone: b.dialogueTone,
+            soundDesign: b.soundDesign,
+            continuityNote: b.continuityNote,
+            negativePrompt: b.negativePrompt,
+            shotSize: b.shotSize,
+            cameraAngle: 'eye_level',
+            lens: '50mm',
+            movement: b.movement,
+            sceneEnv: b.sceneEnv,
+            shotNumber: shotTotal,
+          });
           // eslint-disable-next-line no-await-in-loop
           await this.db.insert(shots).values({
             projectId: job.projectId,
@@ -4100,10 +4100,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
                     visualPrompt: b.visualPrompt,
                     shotSize: b.shotSize,
                   }),
-            dialogue: dialogueLine,
+            dialogue: dir.dialogueLine,
             subtitleText: b.dialogue,
-            visualPrompt: detailedPrompt,
-            negativePrompt: b.negativePrompt,
+            visualPrompt: dir.visualPrompt,
+            negativePrompt: dir.direction.negativePrompt,
+            metadata: { direction: dir.direction },
             // 逐镜场景环境（结构化事实）随分镜一起落库，首帧与视频提示词共用
             sceneEnv: normalizeSceneEnv(b.sceneEnv),
             subject: (b.shotTitle || b.visualPrompt || '').slice(0, 200),
@@ -4763,6 +4764,20 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             ? [...cast.entries()].find(([name]) => this.normalizeName(s.speaker ?? '') === name)?.[1]
             : undefined;
           const shotCast = speakerId ? [speakerId] : blockCast.slice(0, 2);
+          // 本地确定性拆分也必须产出 Pavo 六段式：旧实现只落一句 summary，
+          // 这类项目一旦不走模型分镜，提示词就「相当于没写」。
+          const dir = buildShotDirection({
+            shotTitle: `第 ${shotTotal} 镜`,
+            rawVisual: s.visualPrompt,
+            dialogue: s.dialogue,
+            speaker: s.speaker,
+            shotSize: s.shotSize,
+            cameraAngle: 'eye_level',
+            lens: '50mm',
+            movement: s.movement,
+            sceneEnv: {},
+            shotNumber: shotTotal,
+          });
           // eslint-disable-next-line no-await-in-loop
           const [inserted] = await this.db
             .insert(shots)
@@ -4783,9 +4798,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
                 visualPrompt: s.visualPrompt,
                 shotSize: s.shotSize,
               }),
-              dialogue: s.dialogue,
+              dialogue: dir.dialogueLine,
               subtitleText: prefs.subtitleEnabled ? s.dialogue : undefined,
-              visualPrompt: s.visualPrompt,
+              visualPrompt: dir.visualPrompt,
+              negativePrompt: dir.direction.negativePrompt,
+              metadata: { direction: dir.direction },
               // 确定性拆分没有 LLM 场景字段：留空，由运行时用 locations 环境数据兜底
               sceneEnv: {},
               subject: s.visualPrompt?.slice(0, 200),
@@ -4887,6 +4904,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     //   2. 「X特写，<台词>」对白镜：台词原文嵌在描述里（台词永远不该进画面提示词）。
     //    匹配时剥掉说话人前缀（prompt 里写的是「X特写，台词」，不是「X：台词」）。
     const pending = targets.filter((t) => {
+      // Pavo 六段式已经是「可直接喂视频模型」的成品，不能再被 25-60 词的
+      // 英文转写覆盖 —— 那会把标题/声音设计/连续性全部冲掉，退回一句话提示词。
+      if (t.prompt.includes('声音设计：') && t.prompt.includes('连续性：')) {
+        return false;
+      }
       if (looksLikeDialogueBoard(t.prompt)) return true;
       const bare = (t.dialogue ?? '').trim().replace(/^[^：:\n]{1,12}[：:]\s*/, '');
       return bare.length >= 10 && t.prompt.includes(bare.slice(0, 10));

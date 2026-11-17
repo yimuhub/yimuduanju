@@ -1129,6 +1129,48 @@ const ProjectStoryboardTab = ({ detailOnly = false, onDetailClose }: ProjectStor
                 {isExpanded && (
                   <div className="border-t border-border bg-muted/20 p-3">
                     <div className="space-y-1.5 text-xs">
+                      {/* Pavo 式导演字段：台词说话人、语气、声音、连续性一眼可读 */}
+                      {/* 台词必须写清「谁说 + 什么语气」；格式统一为 角色名（语气）：台词 */}
+                      {shot.dialogue !== undefined && (
+                        <div className="rounded-md border border-border/60 bg-card px-2 py-1.5">
+                          <div className="mb-1 font-medium text-foreground">
+                            台词（格式：角色名（语气）：台词；旁白写「旁白」）
+                          </div>
+                          <textarea
+                            defaultValue={shot.dialogue ?? ''}
+                            rows={2}
+                            placeholder="老匠（疑惑、低沉）：这钟，怎么停了？"
+                            className="w-full resize-y rounded-md border border-input bg-background p-1.5 text-xs outline-none focus:border-primary"
+                            onBlur={(e) => {
+                              const next = e.target.value;
+                              if (!id || next === (shot.dialogue ?? '')) return;
+                              void storyboard
+                                .updateShot(id, shot.id, { dialogue: next })
+                                .then(() =>
+                                  setShots((prev) =>
+                                    prev.map((s) =>
+                                      s.id === shot.id ? { ...s, dialogue: next } : s,
+                                    ),
+                                  ),
+                                );
+                            }}
+                          />
+                        </div>
+                      )}
+                      {(() => {
+                        const dir = (shot.metadata as { direction?: Record<string, string> } | undefined)
+                          ?.direction;
+                        if (!dir) return null;
+                        return (
+                          <div className="grid grid-cols-2 gap-1.5 text-[11px] text-muted-foreground">
+                            {dir.tone && <div>语气：{dir.tone}</div>}
+                            {dir.soundDesign && <div className="col-span-2">声音设计：{dir.soundDesign}</div>}
+                            {dir.continuityNote && (
+                              <div className="col-span-2">连续性：{dir.continuityNote}</div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* P2 行内提示词编辑：改完可就地重跑单镜，不再跳导演台 */}
                       <div>
                         <span className="font-medium text-foreground">画面提示词：</span>
