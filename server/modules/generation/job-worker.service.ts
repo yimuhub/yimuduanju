@@ -1097,9 +1097,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async process(job: GenerationJob): Promise<void> {
+    console.log(`[PROC] enter ${job.id} ${job.jobType}`);
     this.logger.log(`认领任务 ${job.id}（${job.jobType}，目标 ${job.targetType ?? '-'}）`);
     // 首帧质量门：一键成片的视频必须等本镜首帧成功，否则释放回 pending 并阻断，不调用模型、不计费。
     const dep = await this.checkFirstFrameDependency(job);
+    console.log(`[PROC] dep-ready=${job.id}`);
     // 显式相等判断：strict 模式下 if (!dep.ready) 不会收窄判别联合，dep.reason 会编译报错
     if (dep.ready === false) {
       await this.setFirstFrameBlock(job.id, dep.reason);
@@ -1112,6 +1114,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.getProjectBudgetMode(job.projectId),
       job.projectId,
     );
+    console.log(`[PROC] routed=${job.id} ${decision.reason}`);
     this.logger.log(`任务 ${job.id} 路由决策：${decision.reason}`);
     const routedName = job.providerName ?? decision.providerName;
     // 决策落盘：后续结算/免费判定需要知道实际供应商（否则免费模型会被收费）
@@ -1124,6 +1127,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     // B1 环节覆盖：绑定优先于任务自带与路由决策
     const stage = await this.applyStageBinding(job, routedName);
+    console.log(`[PROC] staged=${job.id} provider=${stage.providerName ?? '-'}`);
     const providerName = stage.providerName;
     // 环节绑定可能再次改供应商：必须把「实际执行的供应商」落盘。
     // 否则结算只看路由供应商，会算错钱（mock 演练被照价收费，真实调用被误判免费）。
@@ -1411,8 +1415,11 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private inputPrompt(job: GenerationJob): string {
     const input = (job.inputData ?? {}) as Record<string, unknown>;
-    const prompt = input.prompt;
-    return typeof prompt === 'string' ? prompt : '';
+    // 兼容三种生产方写法：prompt（文本/图片通用）、scriptText（剧本/分镜链）、
+    // source（一句话扩写）。旧实现只认 prompt，导致 parse_script 拿到 16 镜剧本
+    // 却报「剧本内容为空」并把已物化的任务标 failed。
+    const value = input.prompt ?? input.scriptText ?? input.source;
+    return typeof value === 'string' ? value : '';
   }
 
   /** 项目级画面策略：画幅、画面字幕开关、中文风格圣经。所有生成通道共用一次取数。 */
