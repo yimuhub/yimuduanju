@@ -15,7 +15,7 @@ import { TimelineHealthPanel } from './TimelineHealthPanel';
 import { APP_VERSION } from '@client/src/lib/version';
 
 export const StudioStatusBar = () => {
-  const { data, proEdit, toggleProEdit } = useStudio();
+  const { data, projectId } = useStudio();
   const navigate = useNavigate();
   const [healthOpen, setHealthOpen] = useState(false);
 
@@ -89,15 +89,13 @@ export const StudioStatusBar = () => {
       {data.project ? (
         <button
           type="button"
-          className={`sb hoverable sb-pro-edit${proEdit ? ' on' : ''}`}
-          title={
-            proEdit
-              ? '退出一幕·神剪：恢复中间的对话区（对话内容不丢）'
-              : '一幕·神剪：取消中间的对话区、时间线拉满，对话变成可拖拽的小球'
-          }
-          onClick={toggleProEdit}
+          className="sb hoverable sb-pro-edit"
+          title="进入独立的一幕·神剪工作台：剪映级四区布局、全部真实时间线"
+          onClick={() => {
+            if (projectId) navigate(`/project/${projectId}/shenjian`);
+          }}
         >
-          <Clapperboard size={11} /> 一幕·神剪 <b className={proEdit ? 'sb-ok' : 'sb-accent'}>{proEdit ? '开' : '关'}</b>
+          <Clapperboard size={11} /> 一幕·神剪 <b className="sb-accent">进入</b>
         </button>
       ) : null}
       <button
