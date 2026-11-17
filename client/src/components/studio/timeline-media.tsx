@@ -176,8 +176,8 @@ export const Filmstrip = ({
           height: '100%',
           flex: '0 0 auto',
           backgroundImage: `url("${thumb.spriteUrl}")`,
-          backgroundSize: `${thumb.columns * tileW}px ${thumb.rows * rowHeight}px`,
-          backgroundPosition: `-${col * tileW}px -${row * rowHeight}px`,
+          backgroundSize: `${thumb.columns * tileW}px ${thumb.rows * thumb.tileHeight}px`,
+          backgroundPosition: `-${col * tileW}px -${row * thumb.tileHeight}px`,
           backgroundRepeat: 'no-repeat',
         }}
       />,

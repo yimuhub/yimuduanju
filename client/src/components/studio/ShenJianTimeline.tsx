@@ -13,7 +13,7 @@ import { clipSpan } from './model';
 import type { TimelineClip, TimelineTrackKind } from '@shared/api.interface';
 import { mediaOfDrag, peekTimelineDrag, readTimelineDrag, trackOfDrag } from '@client/src/lib/timeline-dnd';
 import { probeVideoHasAudio } from '@client/src/lib/media-audio';
-import { useWaveform, Waveform } from './timeline-media';
+import { useThumbnails, Filmstrip, StillFrame, useWaveform, Waveform } from './timeline-media';
 
 type Row = {
   key: string;
@@ -22,6 +22,7 @@ type Row = {
   lane: number;
   label: string;
   name: string;
+  visible: boolean;
   muted: boolean;
   locked: boolean;
 };
@@ -56,6 +57,49 @@ const clipLabel = (c: TimelineClip) => {
   if (c.track === 'subtitle') return c.text || '字幕';
   if (c.track === 'audio') return c.text || '音频';
   return c.text?.slice(0, 16) || '画面';
+};
+
+const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#]|$)/i;
+
+/**
+ * 画面片段缩略层：
+ * - 视频走服务端抽帧 sprite，按片段区间铺成多帧 filmstrip；
+ * - 图片/GIF 走 StillFrame 保留原图/动画；
+ * - sprite 未就绪时先用源首帧兜底，不把片段画成空白。
+ */
+const ClipVisual = ({
+  projectId,
+  clip,
+  fallbackUrl,
+  span,
+  pxPerSec,
+  rowHeight,
+}: {
+  projectId: string;
+  clip: TimelineClip;
+  fallbackUrl?: string;
+  span: number;
+  pxPerSec: number;
+  rowHeight: number;
+}) => {
+  const url = clip.sourceUrl || fallbackUrl || '';
+  const still = IMAGE_RE.test(url);
+  const thumb = useThumbnails(projectId, still ? null : url);
+  if (!url) return null;
+  if (still) return <StillFrame url={url} span={span} pxPerSec={pxPerSec} />;
+  if (thumb) {
+    return (
+      <Filmstrip
+        thumb={thumb}
+        span={span}
+        inPoint={clip.inPoint}
+        outPoint={clip.outPoint}
+        pxPerSec={pxPerSec}
+        rowHeight={rowHeight}
+      />
+    );
+  }
+  return <img className="thumb" src={url} alt="" loading="lazy" draggable={false} />;
 };
 
 /**
@@ -142,7 +186,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         lane,
         label: `V${lane + 1}`,
         name: meta?.name || (lane === 0 ? '画面主轨' : '叠加画面'),
-        muted: meta?.exportEnabled === false,
+        visible: meta?.exportEnabled !== false,
+        muted: meta?.muted === true,
         locked: meta?.locked === true,
       });
     };
@@ -157,6 +202,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         lane,
         label: `T${lane + 1}`,
         name: meta?.name || '字幕 / 文本',
+        visible: true,
         muted: meta?.muted === true,
         locked: meta?.locked === true,
       });
@@ -171,6 +217,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         lane,
         label: `A${lane + 1}`,
         name: meta?.name || (lane === 0 ? '原声 / 对白' : lane === 1 ? '音乐' : '音效'),
+        visible: true,
         muted: meta?.muted === true,
         locked: meta?.locked === true,
       });
@@ -373,12 +420,24 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         <button type="button" className="tl-tool" data-tip="删除后半段 (W)：保留播放头之前" onClick={deleteRight}><IconTrimRight /></button>
         <button type="button" className="tl-tool" data-tip="波纹删除：删除并自动合拢空隙" onClick={() => selected && edl.rippleDelete([selected.id])}><IconRippleDelete /></button>
         <button type="button" className="tl-tool" data-tip="删除选中片段 (Delete)" onClick={() => selected && edl.rippleDelete([selected.id])}><span className="del-ico">✕</span></button>
+        <button
+          type="button"
+          className="tl-tool"
+          data-tip="音画分离 (⌘⇧S)：把选中画面的原声拆成独立音频轨"
+          onClick={() => {
+            if (!selected || selected.track !== 'video') { toast.info('先选中一个画面片段'); return; }
+            const audioId = edl.detachAudio(selected.id);
+            toast.success(audioId ? '已分离音频，下方出现独立音频轨' : '该画面已有独立原声轨');
+          }}
+        >
+          <Volume2 />
+        </button>
         <div className="sep" />
         <button type="button" className="tl-tool" data-tip="撤销 (Ctrl+Z)" onClick={() => edl.undo()}><Undo2 /></button>
         <button type="button" className="tl-tool" data-tip="重做 (Ctrl+Shift+Z)" onClick={() => edl.redo()}><Redo2 /></button>
         <button type="button" className={`tl-tool${snapOn ? ' on' : ''}`} data-tip="吸附开关 (N)" onClick={() => setSnapOn(!snapOn)}><Magnet /></button>
         <button type="button" className="tl-tool" data-tip="添加标记 (M)" onClick={() => edl.addMarker(curT)}><MapPin /></button>
-        <div className="tl-caption">A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后</div>
+        <div className="tl-caption">A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后 · ⇧⌘S 音画分离</div>
         <div className="grow">
           <span className="tl-newhint">拖到空白自动建轨</span>
           <button type="button" className="icon-btn" data-tip="时间线缩小 (-)" onClick={() => setZoom((z) => Math.max(14, z - 4))}><Minus /></button>
@@ -403,18 +462,26 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                 <span className="tname">{row.label}</span>
                 <span className="tlabel"><em>轨道 {row.no}</em><b>{row.name}</b></span>
                 <span className="locks">
-                  <button
-                    type="button"
-                    className={row.muted ? 'on' : ''}
-                    title={row.muted ? (row.track === 'audio' ? '恢复声音' : '恢复显示') : (row.track === 'audio' ? '静音该轨' : '隐藏该轨')}
-                    onClick={() =>
-                      row.track === 'video'
-                        ? edl.updateTrack('video', row.lane, { exportEnabled: row.muted })
-                        : edl.updateTrack(row.track, row.lane, { muted: !row.muted })
-                    }
-                  >
-                    {row.track === 'audio' ? (row.muted ? <VolumeX /> : <Volume2 />) : (row.muted ? <EyeOff /> : <Eye />)}
-                  </button>
+                  {row.track === 'video' ? (
+                    <button
+                      type="button"
+                      className={row.visible ? '' : 'on'}
+                      title={row.visible ? '隐藏该画面轨' : '恢复显示该画面轨'}
+                      onClick={() => edl.updateTrack('video', row.lane, { exportEnabled: !row.visible })}
+                    >
+                      {row.visible ? <Eye /> : <EyeOff />}
+                    </button>
+                  ) : null}
+                  {row.track !== 'subtitle' ? (
+                    <button
+                      type="button"
+                      className={row.muted ? 'on' : ''}
+                      title={row.muted ? '取消静音该轨' : '静音该轨'}
+                      onClick={() => edl.updateTrack(row.track, row.lane, { muted: !row.muted })}
+                    >
+                      {row.muted ? <VolumeX /> : <Volume2 />}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className={row.locked ? 'on' : ''}
@@ -539,7 +606,6 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                     const isSelected = edl.selectedIds.includes(clip.id);
                     const w = Math.max(8, span * zoom);
                     const shot = clip.sourceShotId ? data.shots.find((s) => s.id === clip.sourceShotId) : null;
-                    const thumb = shot?.frameUrl || (/\.(png|jpe?g|webp|gif|bmp|avif)/i.test(clip.sourceUrl || '') ? clip.sourceUrl : '');
                     return (
                       <div
                         key={clip.id}
@@ -565,7 +631,14 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                           edl.setSelection([clip.id]);
                         }}
                       >
-                        {thumb ? <img className="thumb" src={thumb} alt="" /> : null}
+                        <ClipVisual
+                          projectId={projectId}
+                          clip={clip}
+                          fallbackUrl={shot?.frameUrl}
+                          span={span}
+                          pxPerSec={zoom}
+                          rowHeight={laneH - 10}
+                        />
                         {clip.track === 'audio' ? (
                           <AudioClipWave projectId={projectId} clip={clip} span={span} pxPerSec={zoom} />
                         ) : null}

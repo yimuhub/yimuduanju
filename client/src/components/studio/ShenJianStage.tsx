@@ -56,8 +56,10 @@ export const ShenJianStage = ({
 
   const total = Math.max(1, data.totalSec || 0);
 
+  // 轨道属性以本地 EDL 为准：静音/显隐点完立即生效，不等一次刷新。
+  const timelineTracks = edl.tracks?.length ? edl.tracks : (data.timeline?.tracks ?? []);
   const trackMeta = (track: string, lane: number) =>
-    (data.timeline?.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
+    timelineTracks.find((t) => t.track === track && (t.lane ?? 0) === lane);
 
   const active = useMemo(() => {
     const clips = (data.timeline?.clips ?? []).filter(
@@ -69,7 +71,9 @@ export const ShenJianStage = ({
         curT < c.timelineStart + clipSpan(c),
     );
     return clips.sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0))[0] ?? null;
-  }, [data.timeline?.clips, data.timeline?.tracks, curT]);
+  }, [data.timeline?.clips, timelineTracks, curT]);
+
+  const activeVideoMuted = active ? trackMeta('video', active.lane ?? 0)?.muted === true : false;
 
   const audioClips = useMemo(
     () => (data.timeline?.clips ?? []).filter((c) => c.track === 'audio' && c.sourceUrl && c.enabled !== false),
@@ -83,7 +87,7 @@ export const ShenJianStage = ({
           curT >= c.timelineStart &&
           curT < c.timelineStart + clipSpan(c),
       ),
-    [audioClips, data.timeline?.tracks, curT],
+    [audioClips, timelineTracks, curT],
   );
 
   const activeSubs = useMemo(() => {
@@ -118,14 +122,14 @@ export const ShenJianStage = ({
       }
       v.volume = previewVolume;
       // 有独立音频轨在出声时，画面本体静音，避免同一条对白重复播放
-      v.muted = previewMuted || activeAudio.length > 0;
+      v.muted = previewMuted || activeVideoMuted || activeAudio.length > 0;
       if (playing) void v.play().catch(() => undefined);
       else v.pause();
     };
     if (v.readyState >= 1) sync();
     else v.addEventListener('loadedmetadata', sync, { once: true });
     return () => v.removeEventListener('loadedmetadata', sync);
-  }, [sourceTime, playing, previewVolume, previewMuted, isStill, active?.id, activeAudio.length]);
+  }, [sourceTime, playing, previewVolume, previewMuted, isStill, active?.id, activeAudio.length, activeVideoMuted]);
 
   // 音频轨真实播放：时间线每帧对齐 sourceTime，音量/速度/音高实时生效
   useEffect(() => {
@@ -285,7 +289,7 @@ export const ShenJianStage = ({
                   className="bg"
                   src={url}
                   playsInline
-                  muted={previewMuted || activeAudio.length > 0}
+                  muted={previewMuted || activeVideoMuted || activeAudio.length > 0}
                   onError={() => setVideoBroken(true)}
                   style={{ filter, transform: `scale(${transform.scale}) translate(${transform.x * 100}%, ${transform.y * 100}%) rotate(${transform.rotate}deg)` }}
                 />

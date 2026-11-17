@@ -449,3 +449,11 @@
 .sj2 .canvas .layer-sub:hover{outline:1px dashed #ffffff88;outline-offset:3px}
 .sj2 .canvas .layer-sub.selected{outline:1px solid #ff403a}
 .sj2 .canvas .layer-sub.dragging{cursor:grabbing;opacity:.92}
+
+/* 画面片段帧带：视频按真实抽帧 sprite 铺满片段，图片/GIF 原图铺满 */
+.sj2 .clip2 .tl-film{position:absolute;inset:0;display:flex;overflow:hidden;border-radius:inherit;opacity:.9}
+.sj2 .clip2 .tl-film i{display:block;height:100%;flex:0 0 auto;background-color:#1c2024}
+.sj2 .clip2 .tl-still{position:absolute;inset:0;overflow:hidden;border-radius:inherit;background:#0b0c0f}
+.sj2 .clip2 .tl-still img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+/* 静音轨道：波形/画面降亮度，并保留轨道名，避免误以为素材丢了 */
+.sj2 .track-head .locks .mute-on{color:#ff8066}
