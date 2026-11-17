@@ -74,6 +74,8 @@ export interface AgentTimelineOpsResponse {
   diffs: TimelineOpDiff[];
   auditId: string;
   idempotent: boolean;
+  /** baseVersion 过期但改动不相交时，期间发生的修订号 */
+  concurrentRevisions?: number[];
 }
 
 export const applyTimelineAgentOps = (
@@ -103,6 +105,51 @@ export const listTimelineAgentOps = (projectId: string, limit = 20) =>
     .get<TimelineAgentOpRecord[]>(`/api/projects/${projectId}/timeline/agent-ops`, {
       params: { limit },
     })
+    .then((res) => res.data);
+
+/** 时间线体检（blocking / warning / info） */
+export interface TimelineIssue {
+  code: string;
+  severity: 'blocking' | 'warning' | 'info';
+  message: string;
+  clipKeys: string[];
+  suggestion?: string;
+}
+
+export interface TimelineIssueReport {
+  version: number;
+  issues: TimelineIssue[];
+}
+
+export const getTimelineIssues = (projectId: string) =>
+  axiosForBackend
+    .get<TimelineIssueReport>(`/api/projects/${projectId}/timeline/issues`)
+    .then((res) => res.data);
+
+/** 修订历史（不含快照） */
+export interface TimelineRevision {
+  revision: number;
+  parentRevision: number | null;
+  author: 'user' | 'agent' | 'restore' | string;
+  summary: string | null;
+  changedClientKeys: string[] | null;
+  createdAt: string;
+}
+
+export const listTimelineRevisions = (projectId: string, limit = 30) =>
+  axiosForBackend
+    .get<TimelineRevision[]>(`/api/projects/${projectId}/timeline/revisions`, {
+      params: { limit },
+    })
+    .then((res) => res.data);
+
+export const restoreTimelineRevision = (projectId: string, revision: number) =>
+  axiosForBackend
+    .post<{
+      doc: TimelineDocument;
+      restoredFrom: number;
+      newRevision: number;
+    }>(`/api/projects/${projectId}/timeline/revisions/${revision}/restore`)
     .then((res) => res.data);
 
 /** P4：按 EDL 导出成片（预留） */

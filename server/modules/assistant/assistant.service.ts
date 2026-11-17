@@ -11,7 +11,12 @@ import {
 import { ModelGatewayService } from '../generation/model-gateway.service';
 import { TimelineService } from '../timeline/timeline.service';
 import { describeTimelineForAgent } from '@shared/timeline-ops';
-import { buildTranscriptIndex, formatTranscriptForAgent } from '@shared/transcript-index';
+import { formatIssuesForAgent, scanTimelineIssues } from '@shared/timeline-issues';
+import {
+  buildTranscriptIndex,
+  formatTranscriptForAgent,
+  selectRoughCutRanges,
+} from '@shared/transcript-index';
 import type {
   ChatMessage,
   ChatSession,
@@ -121,6 +126,36 @@ function fallbackTitle(text: string): string {
   const first = cleaned.split(' ').find(Boolean) ?? '';
   const title = first.slice(0, 16).trim();
   return title || '未命名作品';
+}
+
+/** 从自然语言里提取目标时长（秒）；识别不了返回 null，不瞎猜。 */
+function parseTargetSec(text: string): number | null {
+  const cn: Record<string, number> = {
+    一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
+    十五: 15, 二十: 20, 三十: 30, 四十: 40, 五十: 50, 六十: 60, 九十: 90,
+  };
+  const num = (raw: string): number => {
+    if (/^\d+(?:\.\d+)?$/.test(raw)) return Number(raw);
+    return cn[raw] ?? NaN;
+  };
+  const variant = text.replace(/分钟|分/g, '分钟').replace(/秒钟|秒/g, '秒');
+  if (/半分钟/.test(text)) return 30;
+  const half = /(\d+(?:\.\d+)?|[一二两三四五六七八九十]+)\s*分半/.exec(text);
+  if (half) {
+    const v = num(half[1]);
+    if (Number.isFinite(v)) return Math.round(v * 60 + 30);
+  }
+  let m = /(\d+(?:\.\d+)?|[一二两三四五六七八九十]+)\s*(分钟)/.exec(variant);
+  if (m) {
+    const v = num(m[1]);
+    if (Number.isFinite(v)) return Math.round(v * 60);
+  }
+  m = /(\d+(?:\.\d+)?|[一二两三四五六七八九十]+)\s*(秒|s)/i.exec(variant);
+  if (m) {
+    const v = num(m[1]);
+    if (Number.isFinite(v)) return Math.round(v);
+  }
+  return null;
 }
 
 interface ContextRow {
@@ -353,12 +388,67 @@ export class AssistantService {
       const transcript = formatTranscriptForAgent(index, 22000, 900);
       return [
         describeTimelineForAgent(doc, 60),
+        formatIssuesForAgent(scanTimelineIssues(doc)),
         DEEP_EDIT_PROTOCOL,
         transcript,
         TIMELINE_ACTION_PROTOCOL,
       ].join('\n\n');
     } catch {
       return [DEEP_EDIT_PROTOCOL, TIMELINE_ACTION_PROTOCOL].join('\n\n');
+    }
+  }
+
+  /**
+   * 一句话粗剪的确定性兜底。
+   *
+   * 模型偶尔只给解释、不给 yimu-timeline 代码块，或直接调用失败；这时不能
+   * 让用户“说了也白说”。这里用同一份转写索引做抽取式选段，产出与模型
+   * 完全同构的提案，前端照常出确认卡、照常可应用/撤销。
+   */
+  private async deepEditFallback(
+    projectId: string,
+    userText: string,
+    reply: string,
+  ): Promise<string> {
+    if (/```yimu-timeline/.test(reply)) return reply;
+    if (!/宣传片|预告|精华|高光|混剪|集锦|剪成|剪一个|压缩|缩短|精简/.test(userText)) return reply;
+    const targetSec = parseTargetSec(userText);
+    if (!targetSec) return reply;
+    try {
+      const doc = await this.timelineService.getDocument(projectId);
+      const shotRows = await this.db
+        .select({ id: shots.id, dialogue: shots.dialogue, subtitleText: shots.subtitleText })
+        .from(shots)
+        .where(eq(shots.projectId, projectId));
+      const index = buildTranscriptIndex(doc, shotRows);
+      if (index.cues.length === 0) return reply;
+      const ranges = selectRoughCutRanges(index, { targetSec, keepHook: true });
+      if (ranges.length === 0) return reply;
+      const actual = ranges.reduce((n, r) => n + (r.end - r.start), 0);
+      const proposal = {
+        baseVersion: doc.version ?? 0,
+        summary: `目标 ${targetSec}s → 实际 ${actual.toFixed(1)}s；按全文 ${index.cues.length} 句的语义权重选段（确定性兜底）`,
+        ops: [
+          {
+            op: 'roughcut',
+            ranges: ranges.map((r) => ({
+              start: Math.round(r.start * 1000) / 1000,
+              end: Math.round(r.end * 1000) / 1000,
+              label: r.label,
+            })),
+            targetDurationSec: targetSec,
+          },
+        ],
+      };
+      return (
+        reply.trimEnd() +
+        '\n\n（模型未给出可执行动作，已按全文转写自动生成一版粗剪提案，可直接应用或让 Agent 调整）\n' +
+        '```yimu-timeline\n' +
+        JSON.stringify(proposal) +
+        '\n```'
+      );
+    } catch {
+      return reply;
     }
   }
 
@@ -535,6 +625,17 @@ export class AssistantService {
           '\n可以重发一次；如果持续失败，请到「设置」检查文本模型与 Key。';
         text = fallback;
         write(`data: ${JSON.stringify({ delta: fallback })}\n\n`);
+      }
+    }
+
+    // 模型只给解释、没给可执行动作时，用确定性选段补一版粗剪提案；
+    // 追加内容以 delta 推给前端，保证流式气泡与落库正文一致。
+    if (detail.session.projectId && text) {
+      const enhanced = await this.deepEditFallback(detail.session.projectId, userText, text);
+      if (enhanced !== text) {
+        const suffix = enhanced.slice(text.length);
+        text = enhanced;
+        write(`data: ${JSON.stringify({ delta: suffix })}\n\n`);
       }
     }
 

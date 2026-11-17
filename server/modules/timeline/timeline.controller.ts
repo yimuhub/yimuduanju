@@ -106,6 +106,34 @@ export class TimelineController {
     return this.timelineService.applyAgentOps(projectId, body);
   }
 
+  /** 时间线体检：blocking / warning / info，Agent 与 UI 共用 */
+  @Get('issues')
+  async issues(@Param('projectId', ParseUUIDPipe) projectId: string) {
+    return this.timelineService.issues(projectId);
+  }
+
+  /** 修订历史（不含快照） */
+  @Get('revisions')
+  async revisions(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    return this.timelineService.listRevisions(projectId, limitRaw ? Number(limitRaw) : 30);
+  }
+
+  /** 回滚到某条修订：追加新修订，不改写历史 */
+  @Post('revisions/:revision/restore')
+  async restore(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('revision') revisionRaw: string,
+  ) {
+    const revision = Number(revisionRaw);
+    if (!Number.isInteger(revision) || revision <= 0) {
+      throw new BadRequestException('revision 必须是正整数');
+    }
+    return this.timelineService.restoreRevision(projectId, revision);
+  }
+
   /** 视频片段帧缩略图 sprite（懒生成 + 磁盘缓存） */
   @Get('thumbnails')
   @Header('Cache-Control', 'no-cache, no-store, must-revalidate')

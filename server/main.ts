@@ -42,7 +42,9 @@ async function bootstrap() {
   // 在途任务被丢在 running，只能等下次启动 recoverOrphanedRunning 捞回。
   app.enableShutdownHooks();
 
-  const host = process.env.SERVER_HOST || 'localhost';
+  // macOS 上 `localhost` 可能被解析成 ::1，而网关默认连 127.0.0.1，
+  // 两边不一致会表现为「网关 502、后端日志却显示已启动」。默认统一用 IPv4 回环。
+  const host = process.env.SERVER_HOST || '127.0.0.1';
   // 修复：Number('abc') === NaN，app.listen(NaN) 行为不可预期（可能随机端口或直接抛错）。
   // 另外 SERVER_HOST 默认 'localhost' 在容器里只绑回环，不显式设 0.0.0.0 外部访问不到 ——
   // 这是有意保留的默认（安全优先），部署时请按环境显式设置。

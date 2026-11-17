@@ -40,7 +40,7 @@ try {
 
 const ROOT = process.cwd();
 const PORT = parseInt(process.env.GATEWAY_PORT || '5173', 10);
-const TARGET = process.env.BACKEND_TARGET || 'http://localhost:3301';
+const TARGET = process.env.BACKEND_TARGET || 'http://127.0.0.1:3301';
 const DIST_DIR = path.resolve(ROOT, process.env.CLIENT_DIST_DIR || 'dist/client');
 // W4：5 个数据补全接口（recent-projects / activity / usage-trend /
 // GET /api/projects/:id / 嵌套 scenes/:sceneId/shots）已收敛回后端实现，

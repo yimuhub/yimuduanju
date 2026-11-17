@@ -906,6 +906,35 @@ export const timelineClips = pgTable("timeline_clips", {
 ]);
 export const timelineClipsTable = timelineClips;
 
+/**
+ * 时间线修订账本（migration 0032）：
+ * revision 与 timeline_documents.version 同号，每条保存写一份快照。
+ * 用于 Agent 剪辑的冲突检测（changedClientKeys）与用户回滚。
+ */
+export const timelineRevisions = pgTable("timeline_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull(),
+  revision: integer("revision").notNull(),
+  parentRevision: integer("parent_revision"),
+  /** user / agent / restore */
+  author: varchar("author", { length: 20 }).notNull().default('user'),
+  summary: text("summary"),
+  /** 完整 EDL 快照：{ fps,width,height,tracks,clips } */
+  snapshot: jsonb("snapshot").notNull(),
+  /** 相对上一条修订改动过的片段 clientKey */
+  changedClientKeys: jsonb("changed_client_keys").notNull().default([]),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdBy: userProfile("created_by"),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId],
+    foreignColumns: [projects.id],
+    name: "timeline_revisions_project_id_fkey",
+  }).onDelete("cascade"),
+  uniqueIndex("timeline_revisions_project_revision_uq").on(table.projectId, table.revision),
+]);
+export const timelineRevisionsTable = timelineRevisions;
+
 /* ================= 长篇多集架构（migration 0024） =================
  * 注意：schema.ts 标注为自动生成，若后续重新执行 gen:db-schema，
  * 本段手工映射可能被覆盖，请检查（同 auditLogs 段的约定）。 */

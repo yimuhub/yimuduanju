@@ -41,6 +41,7 @@ import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
 import { NewWorkDialog, type NewWorkOpenOptions } from './NewWorkDialog';
 import { StudioFloatingChat } from './StudioFloatingChat';
+import ProjectStoryboardTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectStoryboardTab';
 import { EdlProvider } from './EdlContext';
 import { useStreamingChat } from './chat/useStreamingChat';
 import type { PendingAttachment } from './chat/ChatComposer';
@@ -293,6 +294,13 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     [proEdit, railCollapsed, setRailCollapsed, tlCollapsed, setTlCollapsed],
   );
   const toggleProEdit = useCallback(() => setProEdit(!proEdit), [proEdit, setProEdit]);
+
+  /** 全功能编辑里点「分镜详情」：右坞被隐藏，必须改用全屏分镜编辑器，不能只切 dockTab。 */
+  const shotDetailId = new URLSearchParams(location.search).get('shot');
+  const shotDetailEdit = new URLSearchParams(location.search).get('edit') === '1';
+  const shotDetailOpen = Boolean(
+    projectId && proEdit && seg === 'storyboard' && shotDetailId && shotDetailEdit,
+  );
 
   useEffect(() => {
     try {
@@ -829,6 +837,14 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
           </div>
         ) : null}
         {projectId && !proEdit ? <StudioDock /> : null}
+        {shotDetailOpen && projectId ? (
+          <div className="pro-shot-detail-layer">
+            <ProjectStoryboardTab
+              detailOnly
+              onDetailClose={() => navigate(`/project/${projectId}`, { replace: true })}
+            />
+          </div>
+        ) : null}
         {projectId ? <StudioTimeline /> : null}
         <StudioStatusBar />
         <NewWorkDialog

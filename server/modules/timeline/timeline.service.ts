@@ -13,7 +13,7 @@ import { mkdir, stat, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, lte } from 'drizzle-orm';
 import {
   agentEditOps,
   assets,
@@ -22,10 +22,12 @@ import {
   shots,
   timelineClips,
   timelineDocuments,
+  timelineRevisions,
 } from '@server/database/schema';
 import { resolveTextStyle } from '@shared/api.interface';
 import { buildTransitionFilter, planTransitions } from './transition-plan';
 import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
+import { scanTimelineIssues } from '@shared/timeline-issues';
 import type {
   Asset,
   ExportTimelineResult,
@@ -47,6 +49,86 @@ const num = (v: unknown, fallback = 0): number => {
   return Number.isFinite(n) ? n : fallback;
 };
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/**
+ * 对比前后两份 EDL，返回改动过的片段 clientKey。
+ * 只比较业务身份与渲染相关字段，避免 updatedAt/sortOrder 之类噪声。
+ */
+function diffChangedClientKeys(prev: SaveTimelineClipDto[], next: SaveTimelineClipDto[]): string[] {
+  const norm = (c: SaveTimelineClipDto) => {
+    const key = c.clientKey ?? '';
+    return [
+      key,
+      c.track,
+      c.lane ?? 0,
+      c.sourceShotId ?? '',
+      c.sourceUrl ?? '',
+      c.inPoint,
+      c.outPoint,
+      c.timelineStart,
+      c.speed ?? 1,
+      c.volume ?? 1,
+      c.text ?? '',
+      c.bindGroup ?? '',
+      c.locked ? 1 : 0,
+      c.enabled === false ? 0 : 1,
+      c.transition?.type ?? '',
+      c.transition?.duration ?? 0,
+      JSON.stringify(c.textStyle ?? null),
+    ].join('|');
+  };
+  const prevMap = new Map(prev.map((c) => [c.clientKey ?? '', norm(c)]));
+  const nextMap = new Map(next.map((c) => [c.clientKey ?? '', norm(c)]));
+  const changed = new Set<string>();
+  for (const [key, value] of nextMap) {
+    if (!prevMap.has(key) || prevMap.get(key) !== value) changed.add(key);
+  }
+  for (const key of prevMap.keys()) {
+    if (!nextMap.has(key)) changed.add(key);
+  }
+  changed.delete('');
+  return [...changed];
+}
+
+function opTargetKeys(ops: TimelineOp[]): Set<string> | null {
+  const keys = new Set<string>();
+  for (const op of ops) {
+    switch (op.op) {
+      case 'move':
+      case 'trim':
+      case 'split':
+      case 'speed':
+      case 'volume':
+      case 'lock':
+      case 'enable':
+        if (op.target?.clientKey) keys.add(op.target.clientKey);
+        else if (op.target?.id) keys.add(op.target.id);
+        else if (op.target?.code) keys.add(op.target.code);
+        else return null;
+        break;
+      case 'delete':
+        if (!op.targets?.length) return null;
+        for (const t of op.targets) {
+          if (t.clientKey) keys.add(t.clientKey);
+          else if (t.id) keys.add(t.id);
+          else if (t.code) keys.add(t.code);
+          else return null;
+        }
+        break;
+      case 'subtitle':
+        if (!op.target?.clientKey) return null;
+        keys.add(op.target.clientKey);
+        break;
+      case 'roughcut':
+      case 'track':
+        return null;
+      default:
+        return null;
+    }
+  }
+  return keys;
+}
+
 const iso = (d: unknown): string =>
   d instanceof Date ? d.toISOString() : typeof d === 'string' ? d : new Date().toISOString();
 
@@ -256,7 +338,11 @@ export class TimelineService {
    * 整体替换 EDL（单事务）。clip.id 一律由服务端生成：客户端回传的 id 只用于
    * 本地关联，落库后以响应中的新 id 为准，避免跨项目 id 覆写风险。
    */
-  async saveDocument(projectId: string, dto: SaveTimelineDto): Promise<TimelineDocument> {
+  async saveDocument(
+    projectId: string,
+    dto: SaveTimelineDto,
+    meta?: { author?: 'user' | 'agent' | 'restore'; summary?: string | null; changedClientKeys?: string[] },
+  ): Promise<TimelineDocument> {
     await this.requireProject(projectId);
     const fps = dto.fps ?? 24;
     const width = dto.width ?? 1080;
@@ -268,6 +354,7 @@ export class TimelineService {
       }
     }
     const now = new Date();
+    let savedVersion = 1;
     await this.db.transaction(async (tx) => {
       await tx.delete(timelineClips).where(eq(timelineClips.projectId, projectId));
       if (dto.clips.length > 0) {
@@ -308,6 +395,7 @@ export class TimelineService {
         await tx
           .insert(timelineDocuments)
           .values({ projectId, fps, width, height, tracks, version: 1 });
+        savedVersion = 1;
       } else {
         const current = existing[0].version ?? 0;
         if (dto.expectedVersion != null && dto.expectedVersion !== current) {
@@ -315,10 +403,65 @@ export class TimelineService {
             `时间线已在别处更新（当前版本 ${current}，你基于 ${dto.expectedVersion}），请刷新后再改`,
           );
         }
+        savedVersion = current + 1;
         await tx
           .update(timelineDocuments)
-          .set({ fps, width, height, tracks, version: current + 1, updatedAt: now })
+          .set({ fps, width, height, tracks, version: savedVersion, updatedAt: now })
           .where(eq(timelineDocuments.projectId, projectId));
+      }
+
+      // 修订账本：与 version 同号，每个保存动作一份快照。
+      // 失败不会留下半条修订，因为它和 EDL 在同一个事务里。
+      const prev = existing.length === 0 ? 0 : (existing[0].version ?? 0);
+      const snapshot = {
+        fps,
+        width,
+        height,
+        tracks,
+        clips: dto.clips.map((c, i) => ({ ...c, sortOrder: c.sortOrder ?? i })),
+      };
+      let changed = meta?.changedClientKeys;
+      if (!changed) {
+        if (prev === 0) {
+          changed = dto.clips.map((c) => c.clientKey ?? '').filter(Boolean);
+        } else {
+          const prevRow = await tx
+            .select({ snapshot: timelineRevisions.snapshot })
+            .from(timelineRevisions)
+            .where(
+              and(
+                eq(timelineRevisions.projectId, projectId),
+                eq(timelineRevisions.revision, prev),
+              ),
+            )
+            .limit(1);
+          const prevClips = (prevRow[0]?.snapshot as { clips?: SaveTimelineClipDto[] } | null)
+            ?.clips ?? [];
+          changed = diffChangedClientKeys(prevClips, dto.clips);
+        }
+      }
+      await tx
+        .insert(timelineRevisions)
+        .values({
+          projectId,
+          revision: savedVersion,
+          parentRevision: prev > 0 ? prev : null,
+          author: meta?.author ?? 'user',
+          summary: meta?.summary ?? null,
+          snapshot,
+          changedClientKeys: changed,
+        })
+        .onConflictDoNothing();
+      // 只保留最近 50 条修订；旧快照没有回滚价值，避免表无限增长
+      if (savedVersion > 50) {
+        await tx
+          .delete(timelineRevisions)
+          .where(
+            and(
+              eq(timelineRevisions.projectId, projectId),
+              lte(timelineRevisions.revision, savedVersion - 50),
+            ),
+          );
       }
     });
     return this.getDocument(projectId);
@@ -340,6 +483,7 @@ export class TimelineService {
     diffs: ReturnType<typeof applyTimelineOps>['diffs'];
     auditId: string;
     idempotent: boolean;
+    concurrentRevisions: number[];
   }> {
     await this.requireProject(projectId);
 
@@ -361,15 +505,34 @@ export class TimelineService {
           diffs: (hit[0].diffs as ReturnType<typeof applyTimelineOps>['diffs']) ?? [],
           auditId: hit[0].id,
           idempotent: true,
+          concurrentRevisions: [],
         };
       }
     }
 
     const doc = await this.getDocument(projectId);
     const current = doc.version ?? 0;
+    let concurrentRevisions: number[] = [];
+
     if (dto.baseVersion !== current) {
-      throw new ConflictException(
-        `时间线版本已变化（当前 v${current}，提案基于 v${dto.baseVersion}），请让 Agent 重新生成后再应用`,
+      /**
+       * 冲突判定从「整批拒绝」升级为「按片段判定」：
+       * baseVersion 之后如果别人只改了本次提案没碰的片段，提案可以安全落到最新版本；
+       * 只要相交（或提案涉及全片 roughcut / 轨道属性），仍然拒绝并要求重新生成。
+       */
+      const changed = await this.changedKeysBetween(projectId, dto.baseVersion, current);
+      const targets = opTargetKeys(dto.ops as unknown as TimelineOp[]);
+      const intersects =
+        targets === null || [...targets].some((k) => changed.has(k)) || changed.has('*');
+      if (intersects) {
+        throw new ConflictException(
+          `时间线版本已变化（当前 v${current}，提案基于 v${dto.baseVersion}），且本次提案涉及的片段已被改动：` +
+            `${[...(targets ?? [])].filter((k) => changed.has(k)).join('、') || '全片/轨道'}。请让 Agent 重新生成后再应用`,
+        );
+      }
+      concurrentRevisions = await this.revisionsBetween(projectId, dto.baseVersion, current);
+      this.logger.log(
+        `Agent 提案基于旧版本 v${dto.baseVersion}，但与 v${current} 的改动不相交，按最新版本应用`,
       );
     }
 
@@ -381,17 +544,22 @@ export class TimelineService {
       );
     }
 
-    const saved = await this.saveDocument(projectId, {
-      fps: doc.fps,
-      width: doc.width,
-      height: doc.height,
-      clips: result.doc.clips.map((c) => ({
-        ...c,
-        clientKey: clipKey(c),
-      })) as unknown as SaveTimelineClipDto[],
-      tracks: (result.doc.tracks ?? []) as unknown as SaveTimelineDto['tracks'],
-      expectedVersion: current,
-    });
+    const changedKeys = [...new Set(result.diffs.map((d) => d.target).filter(Boolean))];
+    const saved = await this.saveDocument(
+      projectId,
+      {
+        fps: doc.fps,
+        width: doc.width,
+        height: doc.height,
+        clips: result.doc.clips.map((c) => ({
+          ...c,
+          clientKey: clipKey(c),
+        })) as unknown as SaveTimelineClipDto[],
+        tracks: (result.doc.tracks ?? []) as unknown as SaveTimelineDto['tracks'],
+        expectedVersion: current,
+      },
+      { author: 'agent', summary: dto.summary ?? null, changedClientKeys: changedKeys },
+    );
 
     const audit = await this.db
       .insert(agentEditOps)
@@ -399,7 +567,7 @@ export class TimelineService {
         projectId,
         sessionId: dto.sessionId ?? null,
         messageId: dto.messageId ?? null,
-        baseVersion: current,
+        baseVersion: dto.baseVersion,
         resultVersion: saved.version ?? current + 1,
         summary: dto.summary ?? null,
         ops: dto.ops,
@@ -414,6 +582,127 @@ export class TimelineService {
       diffs: result.diffs,
       auditId: audit[0]?.id ?? '',
       idempotent: false,
+      concurrentRevisions,
+    };
+  }
+
+  /** 某两个版本之间实际发生过的修订号（用于告知调用方“期间有哪些改动”） */
+  private async revisionsBetween(projectId: string, from: number, to: number): Promise<number[]> {
+    if (to <= from) return [];
+    const rows = await this.db
+      .select({ revision: timelineRevisions.revision })
+      .from(timelineRevisions)
+      .where(eq(timelineRevisions.projectId, projectId))
+      .orderBy(asc(timelineRevisions.revision));
+    return rows.map((r) => r.revision).filter((r) => r > from && r <= to);
+  }
+
+  /** baseVersion 之后改动过的片段键集合；`*` 表示全片级改动（roughcut / 轨道）。 */
+  private async changedKeysBetween(
+    projectId: string,
+    from: number,
+    to: number,
+  ): Promise<Set<string>> {
+    const rows = await this.db
+      .select({
+        revision: timelineRevisions.revision,
+        keys: timelineRevisions.changedClientKeys,
+      })
+      .from(timelineRevisions)
+      .where(eq(timelineRevisions.projectId, projectId))
+      .orderBy(asc(timelineRevisions.revision));
+    const set = new Set<string>();
+    for (const r of rows) {
+      if (r.revision <= from || r.revision > to) continue;
+      for (const k of (r.keys as string[] | null) ?? []) set.add(k);
+    }
+    return set;
+  }
+
+  /** 修订历史（不含快照，避免大对象进列表） */
+  async listRevisions(projectId: string, limit = 30) {
+    await this.requireProject(projectId);
+    return this.db
+      .select({
+        revision: timelineRevisions.revision,
+        parentRevision: timelineRevisions.parentRevision,
+        author: timelineRevisions.author,
+        summary: timelineRevisions.summary,
+        changedClientKeys: timelineRevisions.changedClientKeys,
+        createdAt: timelineRevisions.createdAt,
+      })
+      .from(timelineRevisions)
+      .where(eq(timelineRevisions.projectId, projectId))
+      .orderBy(desc(timelineRevisions.revision))
+      .limit(Math.min(100, Math.max(1, limit)));
+  }
+
+  /** 回滚到某条修订：以快照追加一个新修订，历史不改写。 */
+  async restoreRevision(projectId: string, revision: number): Promise<{
+    doc: TimelineDocument;
+    restoredFrom: number;
+    newRevision: number;
+  }> {
+    await this.requireProject(projectId);
+    const rows = await this.db
+      .select({ snapshot: timelineRevisions.snapshot, revision: timelineRevisions.revision })
+      .from(timelineRevisions)
+      .where(
+        and(eq(timelineRevisions.projectId, projectId), eq(timelineRevisions.revision, revision)),
+      )
+      .limit(1);
+    if (!rows[0]) throw new NotFoundException(`修订 v${revision} 不存在`);
+    const snapshot = rows[0].snapshot as {
+      fps?: number;
+      width?: number;
+      height?: number;
+      tracks?: SaveTimelineDto['tracks'];
+      clips?: SaveTimelineClipDto[];
+    };
+    const current = await this.getDocument(projectId);
+    const saved = await this.saveDocument(
+      projectId,
+      {
+        fps: snapshot.fps ?? current.fps,
+        width: snapshot.width ?? current.width,
+        height: snapshot.height ?? current.height,
+        clips: snapshot.clips ?? [],
+        tracks: snapshot.tracks ?? [],
+        expectedVersion: current.version ?? 0,
+      },
+      { author: 'restore', summary: `回滚到 v${revision}` },
+    );
+    return {
+      doc: saved,
+      restoredFrom: revision,
+      newRevision: saved.version ?? 0,
+    };
+  }
+
+  /** 时间线体检：Agent 改片前先读，改片后再读。 */
+  async issues(projectId: string) {
+    await this.requireProject(projectId);
+    const doc = await this.getDocument(projectId);
+    return { version: doc.version ?? 0, issues: scanTimelineIssues(doc) };
+  }
+
+  /** Agent 读上下文：时间线 + 转写 + 体检 + 工具契约（只读，一次给全）。 */
+  async agentContext(projectId: string, transcript: string) {
+    await this.requireProject(projectId);
+    const doc = await this.getDocument(projectId);
+    return {
+      version: doc.version ?? 0,
+      fps: doc.fps,
+      width: doc.width,
+      height: doc.height,
+      durationSec: (() => {
+        const ends = doc.clips
+          .filter((c) => c.enabled !== false)
+          .map((c) => c.timelineStart + clipSpan(c));
+        return ends.length ? Math.max(...ends) : 0;
+      })(),
+      issues: scanTimelineIssues(doc),
+      transcript,
     };
   }
 

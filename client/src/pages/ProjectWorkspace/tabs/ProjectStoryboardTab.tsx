@@ -83,7 +83,16 @@ const shotSizeLabels: Record<string, string> = {
   over_the_shoulder: '过肩',
 };
 
-const ProjectStoryboardTab = () => {
+interface ProjectStoryboardTabProps {
+  /**
+   * 仅作为「分镜详情」全屏浮层使用：
+   * 聚焦编辑器关闭后立刻回调退出浮层，而不是露出背后的分镜网格。
+   */
+  detailOnly?: boolean;
+  onDetailClose?: () => void;
+}
+
+const ProjectStoryboardTab = ({ detailOnly = false, onDetailClose }: ProjectStoryboardTabProps = {}) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   // 长篇多集：has_episodes=true 时按当前集加载 shots/scenes；旧项目（关集模式）走原路径
@@ -1509,7 +1518,10 @@ const ProjectStoryboardTab = () => {
           selectingHistoryIds={selectingHistoryIds}
           historyMap={historyMap}
           historyLoading={historyLoading}
-          onClose={() => setFocusShotId(null)}
+          onClose={() => {
+            setFocusShotId(null);
+            if (detailOnly) onDetailClose?.();
+          }}
         />
       )}
     </div>

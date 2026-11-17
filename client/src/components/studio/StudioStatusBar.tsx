@@ -7,15 +7,17 @@
  *   通道       —— 当前任务实际使用的 providerName
  *   预算       —— /api/dashboard/cost-summary 的月度花费与上限
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Clapperboard } from 'lucide-react';
+import { Clapperboard, ShieldCheck } from 'lucide-react';
 import { useStudio } from './StudioShell';
+import { TimelineHealthPanel } from './TimelineHealthPanel';
 import { APP_VERSION } from '@client/src/lib/version';
 
 export const StudioStatusBar = () => {
   const { data, proEdit, toggleProEdit } = useStudio();
   const navigate = useNavigate();
+  const [healthOpen, setHealthOpen] = useState(false);
 
   const running = useMemo(
     () => data.jobs.filter((j) => j.status === 'running').length,
@@ -68,7 +70,22 @@ export const StudioStatusBar = () => {
         镜头 <b className="num">{data.shotStats.total}</b> · 已渲{' '}
         <b className="num">{data.shotStats.done}</b>
       </span>
+      {data.project ? (
+        <button
+          type="button"
+          className="sb hoverable"
+          title="时间线体检与修订历史：查看阻断问题、回滚到任意一版"
+          onClick={() => setHealthOpen(true)}
+        >
+          <ShieldCheck size={11} /> 体检 · 历史
+        </button>
+      ) : null}
       <span className="grow" />
+      <TimelineHealthPanel
+        open={healthOpen}
+        projectId={data.project?.id ?? ''}
+        onClose={() => setHealthOpen(false)}
+      />
       {data.project ? (
         <button
           type="button"
