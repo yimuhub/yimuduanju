@@ -235,6 +235,22 @@ export class ExportTimelineDto {
   @IsOptional()
   @IsIn(['sequence', 'main', 'overlay'])
   videoLaneMode?: 'sequence' | 'main' | 'overlay';
+
+  /** 选区导出起点（秒）；与 endSec 同时给才生效 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(86400)
+  startSec?: number;
+
+  /** 选区导出终点（秒） */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(86400)
+  endSec?: number;
 }
 
 /** POST /timeline/agent-ops：对话驱动的剪辑动作（结构由 shared/timeline-ops 校验） */

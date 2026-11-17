@@ -1912,6 +1912,10 @@ export interface ExportTimelineRequest {
    * · overlay = 主链铺底，其余轨按各自时间点叠加为画中画
    */
   videoLaneMode?: 'sequence' | 'main' | 'overlay';
+  /** 选区导出起点（秒）；缺省 0。与 endSec 同时给才生效。 */
+  startSec?: number;
+  /** 选区导出终点（秒）；缺省时间线总时长。 */
+  endSec?: number;
 }
 
 /**

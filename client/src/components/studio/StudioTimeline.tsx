@@ -2230,24 +2230,38 @@ export const StudioTimeline = () => {
     }
   };
 
-  const runExport = async () => {
+  const selectionRange =
+    markRange.inSec != null &&
+    markRange.outSec != null &&
+    markRange.outSec - markRange.inSec > 0.05
+      ? { startSec: markRange.inSec, endSec: markRange.outSec }
+      : null;
+
+  const runExport = async (range?: { startSec: number; endSec: number }) => {
     if (!data.projectId || exporting) return;
     if (editor.conflict) {
       toast.error('时间线有版本冲突，请先重新载入');
       return;
     }
     setExporting(true);
-    const tid = toast.loading('正在保存时间线并按 EDL 导出…');
+    const tid = toast.loading(
+      range
+        ? `正在导出选区 ${formatTimecode(range.startSec, fps)}–${formatTimecode(range.endSec, fps)}…`
+        : '正在保存时间线并按 EDL 导出…',
+    );
     try {
       const saved = await editor.saveNow();
       if (!saved) {
         toast.error('时间线未保存，已取消导出', { id: tid });
         return;
       }
-      const res = await exportTimeline(data.projectId, { burnSubtitles: true });
+      const res = await exportTimeline(data.projectId, {
+        burnSubtitles: true,
+        ...(range ?? {}),
+      });
       toast.success(`导出完成：${res.asset.name}`, {
         id: tid,
-        description: `${res.clips} 段 · ${res.durationSeconds.toFixed(1)}s，已归档到项目资产`,
+        description: `${res.clips} 段 · ${res.durationSeconds.toFixed(1)}s${range ? ' · 已按 I/O 选区裁剪' : ''}，已归档到项目资产`,
       });
     } catch (err) {
       const msg =
@@ -2891,6 +2905,18 @@ export const StudioTimeline = () => {
           >
             <Film size={13} />
           </button>
+          {selectionRange ? (
+            <button
+              type="button"
+              className="icon-btn tl-range-export"
+              title={`导出 I/O 选区 ${formatTimecode(selectionRange.startSec, fps)}–${formatTimecode(selectionRange.endSec, fps)}`}
+              disabled={exporting}
+              onClick={() => void runExport(selectionRange)}
+            >
+              <Scissors size={13} />
+              <span>选区</span>
+            </button>
+          ) : null}
           <button
             type="button"
             className="icon-btn"

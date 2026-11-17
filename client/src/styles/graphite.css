@@ -13761,6 +13761,18 @@ select.nw-input {
   font-size: 9px;
   white-space: nowrap;
 }
+.tl-range-export {
+  width: auto !important;
+  gap: 4px;
+  padding: 0 6px !important;
+  color: #ffc400 !important;
+  border: 1px solid rgba(255, 196, 0, 0.45);
+  border-radius: 4px;
+}
+.tl-range-export span {
+  font-size: 10px;
+  line-height: 1;
+}
 .tl-preview-axis {
   position: absolute;
   top: 0;

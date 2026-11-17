@@ -49,7 +49,7 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
       { id: 'select-right', label: '选中播放头右侧片段', keys: ']', status: 'ready' },
       { id: 'in', label: '设入点', keys: 'I', status: 'ready' },
       { id: 'out', label: '设出点', keys: 'O', status: 'ready' },
-      { id: 'mark-area', label: '按片段选择区域', keys: 'Shift+X', status: 'partial', note: '当前用于导出区间；完整区间剪辑需配合 I/O' },
+      { id: 'mark-area', label: '按片段选择区域', keys: 'Shift+X', status: 'ready', note: '按 I/O 选区选择片段；工具栏「选区」按同一区间导出' },
       { id: 'clear-area', label: '清除选择区域', keys: 'Alt+X', status: 'ready' },
     ],
   },

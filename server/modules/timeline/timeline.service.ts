@@ -9,7 +9,7 @@ import {
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, stat, unlink, writeFile } from 'fs/promises';
+import { mkdir, rename, stat, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
@@ -1003,7 +1003,9 @@ export class TimelineService {
       .filter((c) => c.track === 'audio' && c.sourceUrl)
       .sort((a, b) => a.timelineStart - b.timelineStart);
     const srt = this.buildSrt(audible);
-    const burn = dto.burnSubtitles !== false && Boolean(srt.trim());
+    // 选区导出时软字幕时间戳仍是全片时间轴，必须强制烧录后再裁，否则字幕整体错位
+    const wantRange = dto.startSec != null || dto.endSec != null;
+    const burn = (dto.burnSubtitles !== false || wantRange) && Boolean(srt.trim());
 
     const ffmpeg = this.exportService.resolveFfmpegBin();
     const burnBin = burn ? await this.resolveBurnFfmpeg() : null;
@@ -1086,6 +1088,12 @@ export class TimelineService {
         segments.push(seg);
       }
       const totalDur = plan.total;
+      const rangeStart = Math.max(0, Math.min(totalDur, dto.startSec ?? 0));
+      const rangeEnd = Math.max(0, Math.min(totalDur, dto.endSec ?? totalDur));
+      if (wantRange && rangeEnd - rangeStart <= 0.05) {
+        throw new BadRequestException('选区导出失败：入点必须早于出点，且区间至少 0.05s');
+      }
+      const finalDuration = wantRange ? rangeEnd - rangeStart : totalDur;
 
       const concatPath = join(work, 'concat.mp4');
       cleanup.push(concatPath);
@@ -1326,6 +1334,26 @@ export class TimelineService {
       }
       if (!done) throw new BadRequestException('ffmpeg 导出失败：请检查本机 ffmpeg');
 
+      // 选区导出：整片先按全时间轴合成（字幕/混音/叠化都在绝对时间上完成），
+      // 最后再按 I/O 裁一刀。这样音频与烧录字幕不会因为提前裁剪而错位。
+      if (wantRange && (rangeStart > 0.01 || rangeEnd < totalDur - 0.01)) {
+        const ranged = join(work, 'ranged.mp4');
+        cleanup.push(ranged);
+        const rangeOk = await run([
+          '-y',
+          '-ss', rangeStart.toFixed(3),
+          '-i', outAbs,
+          '-t', finalDuration.toFixed(3),
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-crf', '20',
+          '-c:a', 'aac', '-b:a', '160k',
+          '-movflags', '+faststart',
+          ...aigcMeta, ranged,
+        ]);
+        if (!rangeOk) throw new BadRequestException('选区裁剪失败：导出中间文件不可读');
+        await rename(ranged, outAbs);
+        cleanup.splice(cleanup.indexOf(ranged), 1);
+      }
+
       const st = await stat(outAbs);
       const fileUrl = `/uploads/${projectId}/${outName}`;
       const rows = await this.db
@@ -1338,10 +1366,10 @@ export class TimelineService {
           filePath: outAbs,
           mimeType: 'video/mp4',
           fileSize: st.size,
-          durationSeconds: String(totalDur),
+          durationSeconds: String(finalDuration),
           sourceType: 'generated',
           sourceId: `timeline-export-${randomUUID()}`,
-          generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}）`,
+          generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}${wantRange ? '·选区' : ''}）`,
           metadata: {
             aigcGenerated: true,
             hasAudio: Boolean(audioPath),
@@ -1356,7 +1384,7 @@ export class TimelineService {
       this.logger.log(
         `EDL 导出完成 ${projectId}：${totalClips} 段（叠加 ${overlayCount}）→ ${fileUrl}（${st.size}B）`,
       );
-      return { asset, clips: totalClips, durationSeconds: totalDur };
+      return { asset, clips: totalClips, durationSeconds: finalDuration };
     } finally {
       for (const f of cleanup) await unlink(f).catch(() => {});
     }
