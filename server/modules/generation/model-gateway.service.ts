@@ -284,6 +284,9 @@ export class ModelGatewayService {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        // 文本任务不能无限等：上游 SSE/网关挂住时，消费器会永远占着 running 0%。
+        // 90s 是剧本技能长文生成的保守上限；超时按失败返回，重试由任务层决定。
+        signal: AbortSignal.timeout(90_000),
       });
 
       if (!response.ok) {

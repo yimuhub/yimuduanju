@@ -130,7 +130,7 @@ import {
  * 或 Redis 启动后掉线，任务会永远停在 queued —— tick() 只认领 pending，
  * 而 running 回收原本只在 onModuleInit 跑一次，queued 态没有任何回收路径。
  */
-const STALE_QUEUED_MS = 5 * 60 * 1000;
+const STALE_QUEUED_MS = 60 * 1000;
 
 /**
  * 暂时性释放（上游限流 / 未配置 Provider）的最大轮数。
@@ -289,8 +289,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`初始化视频并发上限失败：${e.message}`),
     );
     // Redis 可达 → BullMQ 队列模式；否则进程内串行降级（开发/单机同样可用）
+    // 显式 YIMU_QUEUE_MODE=inline 可强制单进程串行：本机多开调试、Redis 队列
+    // 残留脏任务时用，避免 DB 已 queued 但 BullMQ 没有对应消息的“假排队”。
+    const forceInline = process.env.YIMU_QUEUE_MODE === 'inline';
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    if (forceInline) {
+      this.inlineMode = true;
+      this.logger.warn('YIMU_QUEUE_MODE=inline：跳过 BullMQ，改为进程内串行消费');
+    }
     try {
+      if (forceInline) throw new Error('forced inline');
       const redis = new IORedis(redisUrl, {
         maxRetriesPerRequest: null,
         connectTimeout: 3000,
@@ -1244,14 +1252,24 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     // 任务既然要回队列，它占的 Key 车道必须先还掉，否则 concurrency=1 的
     // Key 会被一条根本不在跑的任务占死整个 TTL（30 分钟），队列看起来像卡住。
     await this.keyPool.releaseByJob(id);
-    await this.db
+    const rows = await this.db
       .update(generationJobs)
       .set({
         status: 'pending',
         ...(requeue ? { queueSeq: sql`nextval('generation_jobs_queue_seq_seq')` } : {}),
         updatedAt: new Date(),
       })
-      .where(eq(generationJobs.id, id));
+      .where(
+        and(
+          eq(generationJobs.id, id),
+          notInArray(generationJobs.status, ['paused', 'cancelled', 'succeeded', 'failed']),
+        ),
+      )
+      .returning({ id: generationJobs.id });
+    if (rows.length === 0) {
+      // 排队页已暂停/用户已终止的任务，不能被在途释放逻辑复活。
+      this.logger.log(`任务 ${id} 已暂停或终结，跳过释放回队列`);
+    }
   }
 
   /**
@@ -1310,7 +1328,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     // 放回队列前先归还 Key 车道（同 releaseToPending 的理由）
     await this.keyPool.releaseByJob(job.id);
-    await this.db
+    const result = await this.db
       .update(generationJobs)
       .set({
         status: 'pending',
@@ -1340,7 +1358,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         )`,
         updatedAt: new Date(),
       })
-      .where(eq(generationJobs.id, job.id));
+      .where(
+        and(
+          eq(generationJobs.id, job.id),
+          notInArray(generationJobs.status, ['paused', 'cancelled', 'succeeded', 'failed']),
+        ),
+      )
+      .returning({ id: generationJobs.id });
+    if (!result.length) {
+      this.logger.log(`任务 ${job.id} 已暂停或终结，跳过暂时性释放`);
+    }
   }
 
   private inputPrompt(job: GenerationJob): string {
@@ -3508,17 +3535,30 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       .limit(1);
     const styleId = input.styleId ?? artRows[0]?.artStyle ?? undefined;
     const targetSeconds = artRows[0]?.durationSeconds ?? undefined;
-    const result = await this.storySkills.runSkill({
-      skillId: kind,
-      source: input.source ?? '',
-      styleId,
-      genreId: typeof input.genreId === 'string' ? input.genreId : undefined,
-      model: opts?.model,
-      temperature: opts?.temperature,
-      rewriteEnabled: input.rewriteEnabled,
-      directives: input.directives,
-      providerName: providerName ?? job.providerName,
-      targetSeconds,
+    // 双保险：即便底层 fetch 因代理/连接池问题不返回，剧本任务也不能把
+    // running 0% 挂成永久状态。与模型网关 90s 请求超时叠加，这里 150s 兜底。
+    let skillTimer: NodeJS.Timeout | null = null;
+    const result = await Promise.race([
+      this.storySkills.runSkill({
+        skillId: kind,
+        source: input.source ?? '',
+        styleId,
+        genreId: typeof input.genreId === 'string' ? input.genreId : undefined,
+        model: opts?.model,
+        temperature: opts?.temperature,
+        rewriteEnabled: input.rewriteEnabled,
+        directives: input.directives,
+        providerName: providerName ?? job.providerName,
+        targetSeconds,
+      }),
+      new Promise<never>((_, reject) => {
+        skillTimer = setTimeout(
+          () => reject(new Error('剧本技能超时（>150s）：文本模型未返回，请检查供应商/网络后重试')),
+          150_000,
+        );
+      }),
+    ]).finally(() => {
+      if (skillTimer) clearTimeout(skillTimer);
     });
     if (!result.scriptText.trim() || result.scenesCount === 0) {
       // 解析不出场景时不能假装成功：否则项目卡在 parsing、用户无任何可继续的入口。
