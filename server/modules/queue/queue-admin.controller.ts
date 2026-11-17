@@ -117,6 +117,18 @@ export class QueueAdminController {
     return this.queue.recalculateRoutes();
   }
 
+  /** 单项目暂停：项目状态 paused，任务暂停/终止 */
+  @Post('projects/:id/pause')
+  pauseProject(@Param('id', ParseUUIDPipe) id: string): Promise<{ paused: number; terminated: number; message: string }> {
+    return this.queue.pauseProject(id);
+  }
+
+  /** 单项目重启：恢复项目状态并重新排队 */
+  @Post('projects/:id/resume')
+  resumeProject(@Param('id', ParseUUIDPipe) id: string): Promise<{ resumed: number; status: string; message: string }> {
+    return this.queue.resumeProject(id);
+  }
+
   /** 给项目钉一把 Key（项目间互不抢并发额度）；keyId=null 解钉；mode=exclusive 独占 */
   @Post('projects/:id/pin-key')
   pinProjectKey(

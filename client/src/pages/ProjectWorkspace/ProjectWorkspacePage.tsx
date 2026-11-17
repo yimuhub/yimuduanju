@@ -23,6 +23,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { projects } from '@client/src/api';
+import * as queueApi from '@client/src/api/queue';
 import type { Project, ProjectProgressResponse, ProjectStatus } from '@shared/api.interface';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@client/src/api/http';
@@ -55,6 +56,7 @@ const TAB_GROUPS = ['概览', '剧本圣经', '美术资产', '镜头', '画布'
 
 const statusLabelMap: Record<ProjectStatus, string> = {
   draft: '草稿',
+  paused: '暂停中',
   parsing: '解析中',
   planning: '规划中',
   bible_ready: '圣经已就绪',
@@ -72,6 +74,7 @@ const statusLabelMap: Record<ProjectStatus, string> = {
 // 状态胶囊：统一 .pill 5 色板（蓝=生产 绿=就绪 琥珀=质检 红=失败 灰=草稿）
 const statusColorMap: Record<ProjectStatus, string> = {
   draft: 'pill-neutral',
+  paused: 'pill-wait',
   parsing: 'pill-run',
   planning: 'pill-run',
   bible_ready: 'pill-ok',
@@ -157,6 +160,28 @@ const ProjectWorkspacePage = () => {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {project && (
+            <button
+              onClick={async () => {
+                try {
+                  if (project.status === 'paused') {
+                    const r = await queueApi.resumeProjectJobs(project.id);
+                    toast.success(r.message);
+                  } else {
+                    const r = await queueApi.pauseProjectJobs(project.id);
+                    toast.success(r.message);
+                  }
+                  const fresh = await projects.getProject(project.id);
+                  setProject(fresh);
+                } catch (e) {
+                  toast.error(apiErrorMessage(e));
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2 text-sm font-medium text-amber-300 hover:bg-amber-500/20"
+            >
+              {project.status === 'paused' ? '重启项目' : '暂停项目'}
+            </button>
+          )}
           <button
             onClick={() => navigate(`/project/${id}/canvas-free3`)}
             className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3.5 py-2 text-sm font-medium text-primary hover:bg-primary/10"

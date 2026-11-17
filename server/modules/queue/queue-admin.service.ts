@@ -523,6 +523,84 @@ export class QueueAdminService {
   }
 
   /**
+   * 单项目暂停：项目状态写 paused，未开始任务暂停、执行中任务终止。
+   * 项目卡片与工作台直接显示「暂停中」，不再误显示「生产中」。
+   */
+  async pauseProject(projectId: string): Promise<{ paused: number; terminated: number; message: string }> {
+    const project = await this.db
+      .select({ id: projects.id, status: projects.status, metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (project.length === 0) throw new NotFoundException('项目不存在');
+    const fromStatus = project[0].status;
+    if (fromStatus !== 'paused') {
+      await this.db
+        .update(projects)
+        .set({
+          status: 'paused',
+          metadata: sql`jsonb_set(coalesce(${projects.metadata}, '{}'::jsonb), '{pausedFromStatus}', to_jsonb(${fromStatus}::text), true)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(projects.id, projectId));
+    }
+    const rows = await this.db
+      .select({ id: generationJobs.id, status: generationJobs.status })
+      .from(generationJobs)
+      .where(and(eq(generationJobs.projectId, projectId), inArray(generationJobs.status, ['pending', 'queued', 'retrying', 'running'])));
+    let paused = 0;
+    let terminated = 0;
+    for (const row of rows) {
+      try {
+        if (row.status === 'running') {
+          await this.terminateJob(row.id);
+          terminated += 1;
+        } else {
+          await this.pauseJob(row.id);
+          paused += 1;
+        }
+      } catch (e) {
+        this.logger.warn(`项目暂停跳过 ${row.id}（${row.status}）：${(e as Error).message}`);
+      }
+    }
+    return { paused, terminated, message: `项目已暂停：暂停 ${paused} 个、终止 ${terminated} 个执行中任务` };
+  }
+
+  /** 单项目重启：恢复项目状态，并把暂停任务重新放回队列 */
+  async resumeProject(projectId: string): Promise<{ resumed: number; status: string; message: string }> {
+    const project = await this.db
+      .select({ id: projects.id, status: projects.status, metadata: projects.metadata })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (project.length === 0) throw new NotFoundException('项目不存在');
+    const meta = (project[0].metadata ?? {}) as { pausedFromStatus?: string };
+    const restored = meta.pausedFromStatus && meta.pausedFromStatus !== 'paused' ? meta.pausedFromStatus : 'draft';
+    await this.db
+      .update(projects)
+      .set({
+        status: restored,
+        metadata: sql`coalesce(${projects.metadata}, '{}'::jsonb) - 'pausedFromStatus'`,
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId));
+    const rows = await this.db
+      .select({ id: generationJobs.id })
+      .from(generationJobs)
+      .where(and(eq(generationJobs.projectId, projectId), eq(generationJobs.status, 'paused')));
+    let resumed = 0;
+    for (const row of rows) {
+      try {
+        await this.resumeJob(row.id);
+        resumed += 1;
+      } catch (e) {
+        this.logger.warn(`项目恢复跳过 ${row.id}：${(e as Error).message}`);
+      }
+    }
+    return { resumed, status: restored, message: `项目已重启：${resumed} 个暂停任务重新排队` };
+  }
+
+  /**
    * 全部冻结：未开始的任务批量暂停（可逐个恢复）；执行中的任务终止（可重启）。
    * 这是队列页「暂停全站消费」之外的库级冻结：进程重启后依然保持冻结。
    */

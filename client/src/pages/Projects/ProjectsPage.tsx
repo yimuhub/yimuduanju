@@ -39,6 +39,8 @@ const statusBadge = (status: ProjectStatus): { label: string; dot: string; pill:
       return { label: status === 'ready' ? '已完成' : '已导出', dot: 'bg-emerald-400', pill: 'pill-ok' };
     case 'failed':
       return { label: '失败', dot: 'bg-red-400', pill: 'pill-fail' };
+    case 'paused':
+      return { label: '暂停中', dot: 'bg-amber-400', pill: 'pill-wait' };
     case 'draft':
       return { label: '草稿', dot: 'bg-muted-foreground/60', pill: 'pill-neutral' };
     case 'parsing':

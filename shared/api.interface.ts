@@ -3,6 +3,7 @@ import type { TimelineVideoKeyframe } from './timeline-keyframes';
 
 export type ProjectStatus =
   | 'draft'
+  | 'paused'
   | 'parsing'
   | 'planning'
   | 'bible_ready'

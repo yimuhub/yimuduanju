@@ -79,3 +79,16 @@ export const pauseAllQueueJobs = () =>
   axiosForBackend
     .post<{ paused: number; terminated: number; message: string }>('/api/queue/jobs/pause-all')
     .then((res) => res.data);
+
+
+/** 单项目暂停：项目状态变「暂停中」，任务暂停/终止 */
+export const pauseProjectJobs = (projectId: string) =>
+  axiosForBackend
+    .post<{ paused: number; terminated: number; message: string }>(`/api/queue/projects/${projectId}/pause`)
+    .then((res) => res.data);
+
+/** 单项目重启：恢复项目状态并重新排队 */
+export const resumeProjectJobs = (projectId: string) =>
+  axiosForBackend
+    .post<{ resumed: number; status: string; message: string }>(`/api/queue/projects/${projectId}/resume`)
+    .then((res) => res.data);
