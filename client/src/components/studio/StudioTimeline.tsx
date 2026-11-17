@@ -14,7 +14,7 @@
  *   · 标尺/空白拖动 = scrub；Shift + 空白拖动 = 框选
  *   · 片段拖动 = 移动；拖到同类型其它轨 = 换 lane；左右把手 = 修剪
  *   · Shift + 点击 = 加选；⌘A = 全选；⌘C / ⌘X / ⌘V = 复制 / 剪切 / 粘贴
- *   · Delete = 波纹删除；Shift+Delete = 删除留空隙；⌘B = 分割；Q/W = 删左/删右
+ *   · Delete = 波纹删除；Shift+Delete = 删除留空隙；E / ⌘B = 分割；Q/W = 删左/删右
  *   · ←/→ = 前后一帧；↑/↓ = 上/下一剪辑点；Shift+Z = 适配时间线；? = 快捷键面板
  *   · 全部键位与剪映专业版对齐，总表见 client/src/lib/jianying-shortcuts.ts
  */
@@ -1960,7 +1960,7 @@ export const StudioTimeline = () => {
       if (key === 's') {
         e.preventDefault();
         setPreviewAxis((v) => !v);
-        toast.info('预览轴参考线已切换（剪映 S 为预览轴；分割请用 Ctrl+B）', { duration: 1800 });
+        toast.info('预览轴参考线已切换（剪映 S 为预览轴；分割请用 E 或 Ctrl+B）', { duration: 1800 });
         return;
       }
       if (key === 'i') {
@@ -2766,7 +2766,7 @@ export const StudioTimeline = () => {
           <button
             type="button"
             className="icon-btn"
-            title="在播放头处分割 ⌘B（剪映同键位）"
+            title="在播放头处分割 E / ⌘B（剪映默认 ⌘B，常用自定义 E）"
             disabled={!editor.ready || clips.length === 0}
             onClick={() => {
               const created = editor.splitAtPlayhead(curT, editor.selectedIds[0]);
@@ -3314,7 +3314,7 @@ export const StudioTimeline = () => {
           )}
         </div>
         <span className="sp" />
-        <span className="tl-info-keys">S 分割 · Delete 波纹删 · M 标记 · ? 快捷键</span>
+        <span className="tl-info-keys">E 分割 · Q 删左 · W 删右 · Delete 波纹删 · ? 快捷键</span>
         <button
           type="button"
           className="tl-info-btn"
@@ -3385,7 +3385,7 @@ export const StudioTimeline = () => {
               ))}
             </div>
             <p className="tl-modal-note">
-              本条总表与剪映专业版桌面端对齐：A/B 工具、⌘B 分割、Q/W 左右删除、←/→ 帧步进、↑/↓ 剪辑点、Shift+Z 适配、N 吸附、I/O 入出点。
+              本条总表与剪映专业版桌面端对齐：A/B 工具、E/⌘B 分割、Q/W 左右删除、←/→ 帧步进、↑/↓ 剪辑点、Shift+Z 适配、N 吸附、I/O 入出点。
               电影级关键帧（⌘K / Alt+K）与曲线变速（Shift+B）需要属性关键帧模型，本版不提供假面板；其余常用键位已接通。
               片段属性（速度 / 音量 / 转场 / 锁定 / 启用）在时间线上方属性条调整；轨道头可重命名、静音、独奏、锁定。
             </p>
