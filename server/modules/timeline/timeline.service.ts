@@ -300,6 +300,7 @@ export class TimelineService {
       transition: (row.transition as TimelineClip['transition']) ?? null,
       text: row.text,
       keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
+      reverse: Boolean(row.reverse),
       textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
       bindGroup: row.bindGroup,
       locked: row.locked,
@@ -375,6 +376,7 @@ export class TimelineService {
           transition: c.transition ?? null,
           text: c.text ?? null,
           keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
+          reverse: Boolean(c.reverse),
           bindGroup: c.bindGroup ?? null,
           textStyle: c.textStyle ?? null,
           locked: c.locked ?? false,
@@ -1062,6 +1064,7 @@ export class TimelineService {
         cleanup.push(seg);
         const kf = buildZoompanExpressions(clip.keyframes, fps, visibleSpan);
         const vf = [
+          ...(clip.reverse ? ['reverse'] : []),
           `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
           `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`,
           'setsar=1',
@@ -1260,7 +1263,7 @@ export class TimelineService {
             '-i', src,
             '-t', String(span),
             '-vn',
-            '-af', `volume=${Math.min(1, Math.max(0, a.volume))},adelay=${delayMs}|${delayMs}`,
+            '-af', `${a.reverse ? 'areverse,' : ''}volume=${Math.min(1, Math.max(0, a.volume))},adelay=${delayMs}|${delayMs}`,
             '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le',
             part,
           ]);

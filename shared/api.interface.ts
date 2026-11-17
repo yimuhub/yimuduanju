@@ -1808,6 +1808,8 @@ export interface TimelineClip {
    * time 是相对片段起点的秒数；导出与预览读同一份数据。
    */
   keyframes?: TimelineVideoKeyframe[] | null;
+  /** 倒放：视频画面与独立音频轨都反向播放 */
+  reverse?: boolean | null;
   /**
    * 字幕样式（字幕轨）。缺省走项目默认样式。
    * 只存「偏离默认」的字段，未填即继承，这样换主题时旧字幕不会全员打架。

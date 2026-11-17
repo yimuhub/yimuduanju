@@ -2569,6 +2569,17 @@ export const StudioTimeline = () => {
           </button>
         )
       ) : null}
+      {(selectedClip.track === 'video' || selectedClip.track === 'audio') && selectedClip.sourceUrl ? (
+        <button
+          type="button"
+          className={`tl-prop-btn${selectedClip.reverse ? ' on' : ''}`}
+          onClick={() => editor.toggleClipReverse(selectedClip.id)}
+          title="倒放：画面与音频反向播放；预览逐帧反向定位，导出 reverse/areverse"
+        >
+          <RotateCcw size={11} />
+          {selectedClip.reverse ? '取消倒放' : '倒放'}
+        </button>
+      ) : null}
       {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
         <button
           type="button"

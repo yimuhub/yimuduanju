@@ -880,6 +880,7 @@ export const timelineClips = pgTable("timeline_clips", {
    * time 为片段内秒数；预览与导出共用。
    */
   keyframes: jsonb("keyframes"),
+  reverse: boolean("reverse").default(false),
   /** 绑定组 id：同组片段一起平移（画面 ↔ 对白 / 配乐 / 字幕），空 = 未绑定 */
   bindGroup: text("bind_group"),
   /**

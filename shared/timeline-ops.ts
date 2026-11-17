@@ -16,6 +16,7 @@ import type {
   TimelineTextStyle,
   TimelineTrackMeta,
 } from './api.interface';
+import { normalizeVideoKeyframes } from './timeline-keyframes';
 
 export type TimelineTrackKind = 'video' | 'audio' | 'subtitle' | 'overlay';
 
@@ -44,6 +45,8 @@ export type TimelineOp =
   | { op: 'volume'; target: ClipRef; value: number }
   | { op: 'lock'; target: ClipRef; locked: boolean }
   | { op: 'enable'; target: ClipRef; enabled: boolean }
+  | { op: 'reverse'; target: ClipRef; value: boolean }
+  | { op: 'keyframes'; target: ClipRef; frames: TimelineClip['keyframes'] }
   /**
    * 粗剪：只保留给定的时间线区间，按顺序无空隙重排。
    * 区间内所有轨道（画面/音频/字幕/叠加）一起切片，切点按源媒体入出点精确换算。
@@ -96,6 +99,8 @@ export const TIMELINE_OP_NAMES = [
   'volume',
   'lock',
   'enable',
+  'reverse',
+  'keyframes',
   'roughcut',
   'track',
 ] as const;
@@ -452,6 +457,32 @@ export function applyTimelineOps(
           const before = `${c.speed}×`;
           c.speed = round3(value);
           diffs.push({ opIndex: i, op: 'speed', target: clipKey(c), before, after: `${c.speed}×` });
+          return;
+        }
+        case 'reverse': {
+          const c = resolveClip(next, op.target);
+          if (!c) return fail(i, '找不到目标片段');
+          if (c.locked) return fail(i, '目标片段已锁定');
+          const on = Boolean(op.value);
+          const before = c.reverse ? '已倒放' : '正常';
+          c.reverse = on;
+          diffs.push({ opIndex: i, op: 'reverse', target: clipKey(c), before, after: on ? '已倒放' : '正常' });
+          return;
+        }
+        case 'keyframes': {
+          const c = resolveClip(next, op.target);
+          if (!c) return fail(i, '找不到目标片段');
+          if (c.locked) return fail(i, '目标片段已锁定');
+          if (c.track !== 'video') return fail(i, '关键帧只作用于画面片段');
+          const before = `${c.keyframes?.length ?? 0} 帧`;
+          c.keyframes = op.frames?.length ? normalizeVideoKeyframes(op.frames) : null;
+          diffs.push({
+            opIndex: i,
+            op: 'keyframes',
+            target: clipKey(c),
+            before,
+            after: `${c.keyframes?.length ?? 0} 帧`,
+          });
           return;
         }
         case 'volume': {

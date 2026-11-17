@@ -57,7 +57,7 @@ const TIMELINE_ACTION_PROTOCOL = [
   '{"baseVersion":3,"summary":"第2镜剪短0.5秒并把字幕改成新台词","ops":[{"op":"trim","target":{"clientKey":"derived-v-s2"},"edge":"right","deltaSec":-0.5},{"op":"subtitle","target":{"clientKey":"derived-s-s2"},"text":"新台词"}]}',
   '可用 op：move(target,toStart,toLane?)、trim(target,edge,deltaSec)、split(target,atSec)、delete(targets[])、',
   'subtitle(target?,text,atSec?,durationSec?,style?)、speed(target,value)、volume(target,value)、lock(target,locked)、',
-  'enable(target,enabled)、track(action,lane?,track,patch?)。',
+  'enable(target,enabled)、reverse(target,value)、keyframes(target,frames[{time,scale?,x?,y?,rotate?}])、track(action,lane?,track,patch?)。',
   '粗剪/从长素材剪出目标时长时，必须使用 roughcut 一次成型：',
   '{"op":"roughcut","ranges":[{"start":12.4,"end":18.2,"label":"开场钩子"},{"start":42.0,"end":48.5,"label":"核心观点"}],"targetDurationSec":60}',
   'roughcut 会把区间内画面/音频/字幕一起切片并按顺序无空隙重排；ranges 用成片时间线的秒（不是源文件秒）。',

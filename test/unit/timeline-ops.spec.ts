@@ -264,3 +264,41 @@ describe('timeline-ops: 启用/停用与智能粗剪', () => {
     expect(res.doc.clips[0].timelineStart).toBe(0);
   });
 });
+
+describe('timeline-ops: 倒放与运镜关键帧', () => {
+  it('reverse 切换倒放并出 diff', () => {
+    const doc = docOf([baseClip()]);
+    const res = applyTimelineOps(doc, [
+      { op: 'reverse', target: { clientKey: 'ck-1' }, value: true },
+    ]);
+    expect(res.errors).toHaveLength(0);
+    expect(res.doc.clips[0].reverse).toBe(true);
+    expect(res.diffs[0].after).toBe('已倒放');
+  });
+
+  it('keyframes 归一化后写入，空数组清空', () => {
+    const doc = docOf([baseClip()]);
+    const res = applyTimelineOps(doc, [
+      {
+        op: 'keyframes',
+        target: { clientKey: 'ck-1' },
+        frames: [
+          { time: 1, scale: 1.5, x: 0.2 },
+          { time: 0, scale: 0.9 },
+        ],
+      },
+    ]);
+    expect(res.errors).toHaveLength(0);
+    expect(res.doc.clips[0].keyframes).toHaveLength(2);
+    expect(res.doc.clips[0].keyframes?.[0].time).toBe(0);
+  });
+
+  it('关键帧拒绝音频片段', () => {
+    const doc = docOf([baseClip({ track: 'audio', clientKey: 'a1', id: 'a1' })]);
+    const res = applyTimelineOps(doc, [
+      { op: 'keyframes', target: { clientKey: 'a1' }, frames: [{ time: 0, scale: 1.2 }] },
+    ]);
+    expect(res.errors).toHaveLength(1);
+    expect(res.doc.clips[0].keyframes).toBeUndefined();
+  });
+});

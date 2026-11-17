@@ -184,6 +184,8 @@ export interface EdlEditor {
   setClipSpeed: (id: string, speed: number) => void;
   /** 曲线变速：把选中画面按等长源片段拆成 N 段，逐段速度形成折线曲线（真实可导出） */
   setClipSpeedCurve: (id: string, speeds: number[]) => boolean;
+  /** 倒放开关（画面与独立音频） */
+  toggleClipReverse: (id: string) => void;
   setClipVolume: (id: string, volume: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
   setClipLocked: (id: string, locked: boolean) => void;
@@ -1049,6 +1051,21 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const toggleClipReverse = useCallback(
+    (id: string) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      const next = Boolean(!src.reverse);
+      commit(
+        before.map((c) => (c.id === id ? { ...c, reverse: next } : c)),
+        next ? '设置倒放' : '取消倒放',
+        before,
+      );
+    },
+    [commit],
+  );
+
   const setClipVolume = useCallback(
     (id: string, volume: number) => {
       const before = clipsRef.current;
@@ -1429,6 +1446,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     packVideo,
     setClipSpeed,
     setClipSpeedCurve,
+    toggleClipReverse,
     setClipVolume,
     setClipTransition,
     setClipLocked,

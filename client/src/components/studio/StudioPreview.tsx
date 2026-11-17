@@ -197,29 +197,40 @@ export const StudioPreview = () => {
     const v = videoRef.current;
     if (v && videoUrl && !videoBroken) {
       const videoT = tlMode && activeVideo
-        ? Math.min(
-            Math.max(
-              activeVideo.inPoint + (curT - activeVideo.timelineStart) * speed,
-              activeVideo.inPoint,
-            ),
-            Math.max(activeVideo.inPoint, activeVideo.outPoint),
-          )
+        ? activeVideo.reverse
+          ? Math.min(
+              Math.max(
+                activeVideo.outPoint - Math.max(0, curT - activeVideo.timelineStart) * speed,
+                activeVideo.inPoint,
+              ),
+              Math.max(activeVideo.inPoint, activeVideo.outPoint),
+            )
+          : Math.min(
+              Math.max(
+                activeVideo.inPoint + (curT - activeVideo.timelineStart) * speed,
+                activeVideo.inPoint,
+              ),
+              Math.max(activeVideo.inPoint, activeVideo.outPoint),
+            )
         : (() => {
             const inP = shot?.inPoint ?? 0;
             const outP = shot?.outPoint ?? inP + (shot?.dur ?? 0);
             return Math.min(inP + Math.max(0, curT - (shot?.start ?? 0)), Math.max(inP, outP));
           })();
-      v.playbackRate = tlMode && activeVideo ? speed : 1;
+      const reversePreview = Boolean(tlMode && activeVideo?.reverse);
+      v.playbackRate = reversePreview ? 1 : tlMode && activeVideo ? speed : 1;
       v.volume = previewVolume;
       v.muted = previewMuted || !originalAudio;
-      if (playing) {
+      if (playing && !reversePreview) {
         if (v.paused) v.play().catch(() => {});
         if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.12) {
           v.currentTime = videoT;
         }
       } else {
+        // 浏览器 video 不支持负速率：倒放时保持暂停，由主时钟逐帧反向 seek
         if (!v.paused) v.pause();
-        if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.05) {
+        const tol = reversePreview ? 0.02 : 0.05;
+        if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > tol) {
           v.currentTime = videoT;
         }
       }
