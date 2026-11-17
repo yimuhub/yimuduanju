@@ -25,6 +25,7 @@ import {
   ListTodo,
   MapPin,
   PenTool,
+  Scissors,
   Users,
   Video,
   Workflow,
@@ -54,6 +55,7 @@ const SECTIONS: Section[] = [
     title: '展开底部多轨时间线 · EDL 落库，可修剪 / 加字幕音频 / 分割 / 导出成片',
     action: 'timeline',
   },
+  { seg: 'shenjian', label: '神剪', group: '生产', icon: <Scissors />, title: '一幕·神剪：剪映级多轨工作台，真实 EDL 可剪可导出' },
   { seg: 'agents', label: 'AI助手', group: '运维', icon: <Bot />, title: '8 大影视工种智能体协同对话' },
   { seg: 'tasks', label: '任务队列', group: '运维', icon: <ListTodo />, title: '后台生成队列进度、重试与取消' },
 ];

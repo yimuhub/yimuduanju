@@ -36,9 +36,12 @@ import { createChatSession, getChatSession } from '@client/src/api/chat';
 import { StudioRail } from './StudioRail';
 import { StudioStage } from './StudioStage';
 import { StudioDock } from './StudioDock';
-import { StudioShotPool } from './StudioShotPool';
+import { StudioAssetLibrary } from './StudioAssetLibrary';
+import { ShenJianRightPanel } from './ShenJianRightPanel';
 import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
+import { StudioProTopBar } from './StudioProTopBar';
+import { ShenJianWorkbench } from './ShenJianWorkbench';
 import { NewWorkDialog, type NewWorkOpenOptions } from './NewWorkDialog';
 import { StudioFloatingChat } from './StudioFloatingChat';
 import ProjectStoryboardTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectStoryboardTab';
@@ -633,7 +636,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         dockHidden ? 'dock-collapsed' : '',
         tlHidden ? 'tl-collapsed' : '',
         stageView === 'canvas' ? 'canvas-mode' : '',
-        proEdit && projectId ? 'pro-edit' : '',
+        proEdit && projectId ? 'pro-edit shenjian' : '',
       ]
         .filter(Boolean)
         .join(' '),
@@ -730,6 +733,17 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     [data.reloadProjects, navigate],
   );
 
+  // 一幕·神剪独立工作台：严格按原型 HTML 的四区布局，数据仍走同一份 EDL
+  if (projectId && seg === 'shenjian') {
+    return (
+      <StudioContext.Provider value={ctxValue}>
+        <EdlProvider data={data}>
+          <ShenJianWorkbench />
+        </EdlProvider>
+      </StudioContext.Provider>
+    );
+  }
+
   return (
     <StudioContext.Provider value={ctxValue}>
       <div
@@ -791,6 +805,22 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
         ) : null}
 
         <StudioRail />
+        {projectId && proEdit ? (
+          <div className="sj-global-topbar">
+            <StudioProTopBar />
+          </div>
+        ) : null}
+        {projectId && proEdit ? (
+          <aside className="pro-library" aria-label="项目资产库">
+            <div className="pro-library-head">
+              <span>项目资产库</span>
+              <small>拖到时间线即可使用</small>
+            </div>
+            <div className="shot-pool">
+              <StudioAssetLibrary />
+            </div>
+          </aside>
+        ) : null}
         <StudioStage>{pageContent}</StudioStage>
         {projectId && proEdit ? (
           <>
@@ -816,7 +846,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
                 }}
                 onDoubleClick={() => setPoolW(316)}
               />
-              <StudioShotPool />
+              <ShenJianRightPanel />
             </div>
           </>
         ) : null}

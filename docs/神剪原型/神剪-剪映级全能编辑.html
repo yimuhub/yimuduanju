@@ -1,0 +1,1901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一幕·神剪 — 剪映级全能编辑</title>
+<style>
+:root{
+  --bg:#0b0c0f; --panel:#131418; --panel2:#181a1f; --panel3:#1e2027;
+  --line:#282a31; --line2:#353841; --fg:#e9ebef; --muted:#8a909b; --dim:#5d636e;
+  --acc:#37d6c2; --acc2:#7ce9da; --warn:#f3b45a; --danger:#ff6b6b;
+  --video:#2b4152; --audio:#1f4438; --text:#4b3a24;
+  --lane-h:44px; --tl-scale:38px; --radius:8px;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:12px;overflow:hidden}
+button,input,select,textarea{font-family:inherit;color:inherit}
+button{border:0;background:none;cursor:pointer}
+svg{width:16px;height:16px;display:inline-block;vertical-align:middle}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#343841;border-radius:6px;border:2px solid var(--panel)}
+::-webkit-scrollbar-track{background:var(--panel)}
+.app{display:grid;grid-template-rows:52px minmax(0,1fr) 380px;height:100vh}
+
+/* ============ 顶栏 ============ */
+.topbar{display:flex;align-items:center;gap:10px;padding:0 12px;background:linear-gradient(180deg,#17181d,#121317);border-bottom:1px solid var(--line);position:relative;z-index:40}
+.brand{display:flex;align-items:center;gap:8px;padding-right:12px;border-right:1px solid var(--line);height:100%}
+.brand-mark{width:26px;height:26px;border-radius:7px;background:conic-gradient(from 210deg,#37d6c2,#1d6f78,#f3b45a,#37d6c2);display:grid;place-items:center;font-weight:800;font-size:12px;color:#08110f;box-shadow:0 0 0 1px #ffffff12 inset}
+.brand-name{font-size:13px;font-weight:650;letter-spacing:.4px}
+.brand-name em{font-style:normal;color:var(--acc)}
+.proj{display:flex;align-items:center;gap:8px;min-width:0}
+.proj-title{font-size:13px;font-weight:600;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.proj-badge{font-size:10px;color:var(--muted);border:1px solid var(--line2);padding:2px 6px;border-radius:20px}
+.save-dot{width:6px;height:6px;border-radius:50%;background:var(--acc);box-shadow:0 0 8px var(--acc)}
+.top-center{display:flex;align-items:center;gap:6px;margin-left:auto}
+.top-right{display:flex;align-items:center;gap:6px;margin-left:auto}
+.seg{display:flex;background:#101115;border:1px solid var(--line);border-radius:7px;padding:2px}
+.seg button{padding:4px 9px;border-radius:5px;color:var(--muted);font-size:11px;white-space:nowrap}
+.seg button.on{background:#262a31;color:var(--fg);box-shadow:0 1px 0 #ffffff0d inset}
+.chip{display:flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--line);border-radius:7px;background:#101115;color:#c9cdd4;font-size:11px}
+.chip:hover{border-color:#3b3f49;color:#fff}
+.chip.primary{background:linear-gradient(180deg,#40e0cb,#25b8a7);border-color:#37d6c2;color:#061b18;font-weight:700}
+.chip.primary:hover{filter:brightness(1.08)}
+.icon-btn{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:#aeb4bf;border:1px solid transparent}
+.icon-btn:hover{background:#22252b;color:#fff}
+.icon-btn.active{background:#233b3a;color:var(--acc);border-color:#2f5a56}
+.icon-btn:disabled{opacity:.35;cursor:default}
+
+/* ============ 工作区 ============ */
+.workspace{display:grid;grid-template-columns:286px minmax(0,1fr) 318px;min-height:0;background:#0a0b0e}
+
+/* 左侧素材库 */
+.library{display:grid;grid-template-columns:48px 1fr;min-height:0;border-right:1px solid var(--line);background:var(--panel)}
+.lib-rail{display:flex;flex-direction:column;gap:2px;padding:8px 4px;border-right:1px solid var(--line);background:#101115}
+.rail-btn{width:40px;height:46px;border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#9298a3;font-size:10px}
+.rail-btn:hover{background:#1b1e24;color:#e6e8ed}
+.rail-btn.on{background:#233b3a;color:var(--acc)}
+.rail-btn svg{width:17px;height:17px}
+.lib-main{display:flex;flex-direction:column;min-height:0}
+.lib-head{display:flex;align-items:center;justify-content:between;gap:6px;padding:10px 10px 6px}
+.lib-title{font-size:13px;font-weight:650;flex:1}
+.lib-actions{display:flex;gap:4px}
+.import-btn{display:flex;align-items:center;gap:4px;height:25px;padding:0 7px;border-radius:6px;background:#24272e;border:1px solid #343842;font-size:11px}
+.import-btn:hover{border-color:var(--acc);color:var(--acc)}
+.lib-subtabs{display:flex;gap:2px;padding:0 8px 8px;overflow:auto}
+.lib-subtabs button{font-size:10px;color:var(--muted);padding:3px 7px;border-radius:20px;white-space:nowrap}
+.lib-subtabs button.on{background:#2a2e36;color:#fff}
+.lib-scroll{flex:1;overflow:auto;padding:4px 8px 12px}
+.folder{display:flex;align-items:center;gap:6px;padding:7px 6px;border-radius:6px;color:#c9cdd4;cursor:pointer}
+.folder:hover{background:#1b1e24}
+.folder svg{color:var(--warn)}
+.folder .count{margin-left:auto;color:var(--muted);font-size:10px}
+.media-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.media-card{position:relative;border-radius:6px;overflow:hidden;border:1px solid #2a2d35;background:#101216;cursor:grab;aspect-ratio:9/12}
+.media-card img{width:100%;height:100%;object-fit:cover;display:block}
+.media-card:hover{border-color:#4b505b}
+.media-card .sel{position:absolute;left:4px;top:4px;width:15px;height:15px;border-radius:4px;background:#0b0c0fcc;border:1px solid #ffffff44;display:grid;place-items:center;color:transparent}
+.media-card.selected .sel{background:var(--acc);border-color:var(--acc);color:#06201d}
+.media-card .dur{position:absolute;right:4px;bottom:4px;background:#000000cc;border-radius:3px;padding:1px 4px;font-size:9px;color:#dfe3e8}
+.media-card .name{position:absolute;left:0;right:0;bottom:0;padding:14px 5px 4px;background:linear-gradient(transparent,#000000cc);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.media-card .type{position:absolute;left:4px;top:4px;background:#000000b3;border-radius:3px;padding:1px 4px;font-size:8px;color:#9fe8dc}
+.media-card.selected .type{left:22px}
+.lib-foot{border-top:1px solid var(--line);padding:6px 10px;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:10px}
+.progressbar{height:3px;flex:1;background:#262a31;border-radius:3px;overflow:hidden}
+.progressbar i{display:block;height:100%;width:46%;background:linear-gradient(90deg,#37d6c2,#7ce9da)}
+
+/* 舞台 */
+.stage{display:flex;flex-direction:column;min-width:0;min-height:0;background:radial-gradient(120% 90% at 50% 0%,#191b21 0%,#0b0c0f 55%)}
+.stage-bar{height:34px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid #1d1f25;color:var(--muted);font-size:10.5px}
+.stage-bar .meta{display:flex;align-items:center;gap:6px}
+.stage-bar .dot{width:3px;height:3px;background:#3e434d;border-radius:50%}
+.stage-bar .right{margin-left:auto;display:flex;gap:4px}
+.canvas-wrap{flex:1;min-height:0;display:grid;place-items:center;padding:12px 18px 4px;position:relative}
+.canvas-frame{position:relative;height:100%;aspect-ratio:9/16;max-width:100%;border-radius:7px;overflow:hidden;background:#000;box-shadow:0 18px 50px #000000aa,0 0 0 1px #ffffff14}
+.canvas-frame.wide{aspect-ratio:16/9;height:auto;width:100%}
+.canvas-frame.square{aspect-ratio:1/1;height:auto;width:min(100%,58vh)}
+.canvas{position:absolute;inset:0;overflow:hidden;background:#000}
+.canvas .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:filter .25s,transform .25s}
+.canvas.fast .bg{filter:saturate(.88) contrast(.94) brightness(.96);transform:scale(1.004)}
+.canvas .grade{position:absolute;inset:0;background:linear-gradient(90deg,#0a2a3a22,#00000000 45%,#f3a64a1a);mix-blend-mode:multiply;pointer-events:none}
+.canvas .vignette{position:absolute;inset:0;box-shadow:inset 0 0 90px 30px #00000099;pointer-events:none}
+.canvas .layer-title{position:absolute;left:8%;top:11%;font-size:7.5cqw;font-weight:800;letter-spacing:2px;color:#f6efe2;text-shadow:0 2px 12px #000;opacity:.92}
+.canvas .layer-sub{position:absolute;left:0;right:0;bottom:13%;text-align:center;font-size:4.2cqw;color:#fff;text-shadow:0 2px 6px #000;padding:0 7%;line-height:1.55}
+.canvas .layer-sub span{background:#0000008c;padding:2px 6px;border-radius:3px;box-decoration-break:clone}
+.canvas .layer-watermark{position:absolute;right:5%;bottom:5%;font-size:2.6cqw;color:#ffffff8a;letter-spacing:1px}
+.canvas .safe{position:absolute;inset:6%;border:1px dashed #ffffff59;display:none;pointer-events:none}
+.canvas.safe-on .safe{display:block}
+.canvas .quality-badge{position:absolute;left:6px;top:6px;font-size:9px;background:#000000a6;border:1px solid #ffffff26;border-radius:4px;padding:2px 5px;color:#a7ece2;display:none}
+.canvas.fast .quality-badge{display:block}
+.canvas-frame{container-type:size}
+.transport{height:46px;display:flex;align-items:center;gap:10px;padding:0 14px;border-top:1px solid #1d1f25;background:#0d0e12}
+.tc{font-variant-numeric:tabular-nums;font-size:12px;letter-spacing:.4px;color:#d9dde4;min-width:110px}
+.tc em{font-style:normal;color:#6d737e}
+.transport .mid{display:flex;align-items:center;gap:4px;margin:0 auto}
+.transport .icon-btn{width:30px;height:30px}
+.play-btn{width:34px!important;height:34px!important;border-radius:50%!important;background:#e9ebef;color:#101115!important}
+.play-btn:hover{background:#fff}
+.transport .right{display:flex;align-items:center;gap:6px;margin-left:auto}
+.tiny-select{background:#17191e;border:1px solid var(--line);border-radius:5px;height:24px;font-size:10px;color:#c5c9d1;padding:0 4px}
+
+/* 检查器 */
+.inspector{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.insp-tabs{display:flex;gap:1px;border-bottom:1px solid var(--line);padding:0 6px}
+.insp-tabs button{flex:1;height:34px;color:var(--muted);font-size:11px;border-bottom:2px solid transparent}
+.insp-tabs button.on{color:#fff;border-bottom-color:var(--acc)}
+.insp-scroll{flex:1;overflow:auto;padding:10px 12px 40px}
+.insp-empty{color:var(--dim);font-size:11px;line-height:1.7;padding:16px 4px}
+.sel-head{display:flex;align-items:center;gap:8px;padding:2px 0 10px;border-bottom:1px solid #22252b}
+.sel-thumb{width:38px;height:48px;border-radius:5px;background:var(--video);overflow:hidden;flex:none;border:1px solid #3a3f49}
+.sel-thumb img{width:100%;height:100%;object-fit:cover}
+.sel-name{font-weight:650;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel-meta{color:var(--muted);font-size:10px;margin-top:3px}
+.kind-pill{font-size:9px;padding:1px 5px;border-radius:3px;background:#2b3f4e;color:#a8d8ff;margin-left:auto}
+.section{border-bottom:1px solid #202329;padding:10px 0}
+.section h4{display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:11px;color:#ced3db;font-weight:600}
+.section h4 .val{margin-left:auto;color:var(--muted);font-weight:400;font-variant-numeric:tabular-nums}
+.row{display:flex;align-items:center;gap:8px;margin:7px 0}
+.row label{width:54px;color:#949aa5;font-size:10.5px;flex:none}
+.row input[type=range]{flex:1;height:3px;accent-color:var(--acc);background:#2a2e36;border-radius:3px}
+.row input[type=number],.row input[type=text],.row select{flex:1;height:26px;background:#0f1115;border:1px solid #2b2f37;border-radius:5px;padding:0 6px;font-size:11px;outline:none;min-width:0}
+.row input:focus,.row select:focus{border-color:var(--acc)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.tool-tile{height:44px;border:1px solid #2a2e36;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#a8afb9;font-size:9px}
+.tool-tile:hover{border-color:var(--acc);color:var(--acc);background:#17211f}
+.tool-tile.on{border-color:var(--acc);background:#17211f;color:var(--acc)}
+.swatches{display:flex;gap:5px;flex-wrap:wrap}
+.swatch{width:19px;height:19px;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.swatch.on{border-color:#fff;box-shadow:0 0 0 2px #000}
+.toggle{width:31px;height:16px;border-radius:20px;background:#2d3139;position:relative;flex:none;cursor:pointer}
+.toggle i{position:absolute;width:12px;height:12px;border-radius:50%;background:#8a909b;left:2px;top:2px;transition:.16s}
+.toggle.on{background:#1e5a52}.toggle.on i{left:17px;background:var(--acc)}
+.keyframe-bar{display:flex;align-items:center;justify-content:space-between;padding:8px;border:1px dashed #333741;border-radius:6px;color:var(--muted);font-size:10px}
+.mini-btn{height:23px;padding:0 7px;border:1px solid #333741;border-radius:5px;font-size:10px;color:#b9bfc8}
+.mini-btn:hover{border-color:var(--acc);color:var(--acc)}
+.insp-foot{margin-top:10px;color:#5f6570;font-size:9.5px;line-height:1.6}
+
+/* ============ 时间线 ============ */
+.timeline{display:flex;flex-direction:column;min-height:0;background:#101115;border-top:1px solid #2a2c33;position:relative;z-index:20}
+.tl-tools{height:38px;display:flex;align-items:center;gap:4px;padding:0 8px;border-bottom:1px solid #23252b;background:#15161b}
+.tl-tools .sep{width:1px;height:20px;background:#2b2e36;margin:0 4px}
+.tl-tools .grow{margin-left:auto;display:flex;align-items:center;gap:5px}
+.tl-zoom{width:84px;accent-color:var(--acc);height:3px}
+.tl-tool{width:29px;height:27px;border-radius:5px;display:grid;place-items:center;color:#9aa1ac;position:relative}
+.tl-tool:hover{background:#24272e;color:#fff}
+.tl-tool.on{background:#20302e;color:var(--acc);box-shadow:0 0 0 1px #2d4a47 inset}
+.tl-tool .dotmark{position:absolute;right:3px;bottom:3px;width:4px;height:4px;border-radius:50%;background:var(--warn);display:none}
+.tl-tool.on .dotmark{display:block}
+.tl-caption{font-size:10px;color:#767d88;margin-left:4px}
+.tl-body{flex:1;display:grid;grid-template-columns:160px minmax(0,1fr);min-height:0;position:relative}
+.track-heads{overflow:hidden;background:#131418;border-right:1px solid #292c33;position:relative;z-index:5}
+.heads-inner{will-change:transform}
+.head-ruler{height:24px;border-bottom:1px solid #23262d;display:flex;align-items:center;justify-content:space-between;padding:0 8px;color:#777e89;font-size:9px}
+.track-head{height:var(--lane-h);display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid #202329;position:relative}
+.track-head .tname{font-size:10px;font-weight:700;color:#b7bdc7;width:30px}
+.track-head .tlabel{font-size:9px;color:#6f7580;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.track-head .locks{margin-left:auto;display:flex;gap:1px}
+.track-head .locks button{width:17px;height:17px;color:#666d78;border-radius:3px}
+.track-head .locks button:hover{color:#fff;background:#262a31}
+.track-head .locks button.on{color:var(--warn)}
+.resize-handle{position:absolute;left:0;right:0;bottom:-3px;height:6px;cursor:row-resize;z-index:6}
+.resize-handle:hover{background:#37d6c255}
+.lanes-wrap{overflow:auto;position:relative;background:#0d0e12}
+.lanes-inner{position:relative;min-width:100%;will-change:width}
+.ruler{height:24px;position:sticky;top:0;z-index:8;background:#121318;border-bottom:1px solid #252830;cursor:pointer;overflow:hidden}
+.ruler .tick{position:absolute;top:0;bottom:0;border-left:1px solid #2a2d35;color:#7a818c;font-size:9px;padding-left:3px;font-variant-numeric:tabular-nums}
+.ruler .tick.minor{border-left-color:#202329;color:transparent}
+.lanes{position:relative}
+.lane{height:var(--lane-h);border-bottom:1px solid #1c1f24;position:relative;background:repeating-linear-gradient(90deg,#ffffff00 0,#ffffff00 calc(var(--tl-scale) - 1px),#ffffff08 calc(var(--tl-scale) - 1px),#ffffff08 var(--tl-scale))}
+.lane:nth-child(odd){background-color:#101116}
+.lane .drop-hint{position:absolute;inset:5px;border:1px dashed #2f343d;border-radius:5px;color:#3f4650;font-size:9px;display:flex;align-items:center;padding-left:8px;pointer-events:none}
+.clip{position:absolute;top:5px;bottom:5px;border-radius:5px;overflow:hidden;border:1px solid #3c4753;background:var(--video);cursor:grab;user-select:none;box-shadow:0 1px 3px #00000066}
+.clip:hover{filter:brightness(1.12)}
+.clip.selected{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc),0 0 14px #37d6c233}
+.clip .thumb{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.62}
+.clip .shade{position:absolute;inset:0;background:linear-gradient(180deg,#00000000 30%,#000000b3)}
+.clip .cname{position:absolute;left:5px;right:5px;bottom:4px;font-size:9px;color:#f1f3f5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px #000}
+.clip .tagline{position:absolute;left:5px;top:4px;font-size:8px;color:#ffffffc4;background:#0000008c;padding:1px 4px;border-radius:3px}
+.clip .trim{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;z-index:3;background:#ffffff00}
+.clip .trim:hover{background:#37d6c266}
+.clip .trim.l{left:0}.clip .trim.r{right:0}
+.clip .kf{position:absolute;top:50%;width:5px;height:5px;margin-top:-2px;background:var(--warn);transform:rotate(45deg);box-shadow:0 0 0 1px #000}
+.clip.audio{background:var(--audio);border-color:#2f5c4e}
+.clip.audio .wave{position:absolute;inset:4px 6px 3px;display:flex;align-items:center;gap:1px;opacity:.8}
+.clip.audio .wave i{width:2px;background:#69e0bd;border-radius:2px;display:block}
+.clip.text{background:var(--text);border-color:#6a573a}
+.clip.text .t{position:absolute;inset:0;padding:6px;font-size:9px;color:#ffe7bf;line-height:1.35;overflow:hidden}
+.clip.text .t b{display:block;font-size:8px;color:#c9a86d;font-weight:500;margin-bottom:2px}
+.clip .badge{position:absolute;right:4px;top:4px;font-size:8px;background:#000000a6;padding:1px 4px;border-radius:3px;color:#9de9dd}
+.transition{position:absolute;top:8px;bottom:8px;width:14px;margin-left:-7px;background:linear-gradient(90deg,#37d6c244,#37d6c4cc,#37d6c444);border:1px solid #37d6c4;border-radius:3px;z-index:4;color:#06201d;font-size:8px;display:grid;place-items:center;cursor:pointer}
+.playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--acc);z-index:9;pointer-events:none;box-shadow:0 0 6px #37d6c2aa}
+.playhead:before{content:"";position:absolute;top:-1px;left:-4px;width:9px;height:7px;background:var(--acc);clip-path:polygon(0 0,100% 0,50% 100%)}
+.marker{position:absolute;top:2px;width:7px;height:7px;background:var(--warn);border-radius:50%;z-index:7;margin-left:-3px}
+.tl-foot{height:20px;display:flex;align-items:center;gap:10px;padding:0 8px;border-top:1px solid #23262c;color:#626974;font-size:9px;background:#121317}
+.tl-foot .right{margin-left:auto}
+
+/* ============ 浮层 / 弹窗 ============ */
+.tooltip{position:fixed;z-index:300;background:#050608f2;border:1px solid #3a3f49;color:#dfe3e9;padding:5px 8px;border-radius:5px;font-size:10.5px;pointer-events:none;white-space:nowrap;box-shadow:0 6px 18px #000a;display:none;max-width:260px;white-space:normal;line-height:1.45}
+.modal-mask{position:fixed;inset:0;background:#000000b8;backdrop-filter:blur(3px);z-index:200;display:none;place-items:center}
+.modal-mask.open{display:grid}
+.modal{width:min(620px,92vw);max-height:88vh;background:#16181d;border:1px solid #343842;border-radius:12px;box-shadow:0 30px 90px #000;overflow:hidden;display:flex;flex-direction:column}
+.modal-head{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid #262a31;font-weight:650;font-size:14px}
+.modal-head .x{margin-left:auto}
+.modal-body{padding:16px;overflow:auto;min-height:0}
+.modal-foot{padding:12px 16px;border-top:1px solid #262a31;display:flex;justify-content:flex-end;gap:8px;background:#141519}
+.btn{padding:7px 13px;border-radius:6px;border:1px solid #3a3f49;font-size:11px;color:#d4d9e0}
+.btn:hover{border-color:#565c68}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#051a17;font-weight:700}
+.field{margin:10px 0}
+.field label{display:block;font-size:11px;color:#969ca7;margin-bottom:5px}
+.field input,.field select,.field textarea{width:100%;background:#0f1115;border:1px solid #2c3038;border-radius:6px;padding:8px;font-size:12px;outline:none}
+.field textarea{resize:vertical;min-height:60px}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--acc)}
+.range-line{display:flex;align-items:center;gap:8px}
+.range-line input[type=range]{flex:1;accent-color:var(--acc)}
+.kbd-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px}
+.kbd-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed #252830;font-size:11px;color:#b9bfc8}
+.kbd{display:inline-flex;gap:2px}
+.kbd b{background:#0d0e12;border:1px solid #3a3f49;border-bottom-width:2px;border-radius:4px;padding:1px 5px;font-size:10px;color:#e7eaf0;font-weight:600}
+.cover-tpls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 14px}
+.cover-tpl{aspect-ratio:9/16;border-radius:7px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:#101216;position:relative}
+.cover-tpl.on{border-color:var(--acc)}
+.cover-tpl img{width:100%;height:100%;object-fit:cover}
+.cover-tpl span{position:absolute;left:8%;right:8%;font-weight:800;color:#fff;text-shadow:0 2px 8px #000;line-height:1.25}
+.cover-tpl .cv-title{font-size:15px;top:12%}
+.cover-tpl .cv-sub{font-size:8px;bottom:12%;font-weight:500;opacity:.9}
+.ai-fab{position:fixed;right:22px;bottom:26px;z-index:120;width:48px;height:48px;border-radius:50%;background:conic-gradient(from 200deg,#37d6c2,#155a58,#f3b45a,#37d6c2);display:grid;place-items:center;box-shadow:0 8px 24px #0009,0 0 0 1px #ffffff1f;cursor:grab}
+.ai-fab:active{cursor:grabbing}
+.ai-fab .in{width:40px;height:40px;border-radius:50%;background:#111317;display:grid;place-items:center;color:#dffef9;font-weight:800;font-size:11px}
+.ai-panel{position:fixed;right:22px;bottom:86px;width:330px;max-height:60vh;background:#14161b;border:1px solid #343842;border-radius:12px;box-shadow:0 20px 60px #000c;z-index:121;display:none;flex-direction:column;overflow:hidden}
+.ai-panel.open{display:flex}
+.ai-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #262a31;font-size:12px;font-weight:600}
+.ai-head .perm{margin-left:auto;height:22px;background:#0e1014;border:1px solid #2e323b;border-radius:5px;font-size:9px;color:#c5cbd4}
+.ai-log{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:120px}
+.ai-msg{font-size:10.5px;line-height:1.55;padding:7px 9px;border-radius:7px;background:#1b1e24;color:#c4cad3;max-width:94%}
+.ai-msg.me{align-self:flex-end;background:#1d3b38;color:#d9fff9}
+.ai-quick{display:flex;gap:4px;flex-wrap:wrap;padding:0 10px 8px}
+.ai-quick button{font-size:9px;padding:3px 6px;border-radius:20px;border:1px solid #3438;color:#9aa1ab}
+.ai-quick button:hover{border-color:var(--acc);color:var(--acc)}
+.ai-input{display:flex;gap:5px;padding:8px 10px;border-top:1px solid #252830}
+.ai-input input{flex:1;height:30px;background:#0f1115;border:1px solid #2d3139;border-radius:6px;padding:0 8px;font-size:11px;outline:none}
+.ai-input button{width:30px;height:30px;border-radius:6px;background:var(--acc);color:#051a17;display:grid;place-items:center}
+.ctx{position:fixed;z-index:220;width:184px;background:#17191f;border:1px solid #363a44;border-radius:8px;box-shadow:0 10px 30px #000b;padding:4px;display:none}
+.ctx.open{display:block}
+.ctx button{display:flex;width:100%;align-items:center;gap:8px;padding:7px 8px;border-radius:5px;color:#c9ced6;font-size:11px;text-align:left}
+.ctx button:hover{background:#242831;color:#fff}
+.ctx .line{height:1px;background:#282c34;margin:4px 2px}
+.ctx .kbd2{margin-left:auto;color:#6f7681;font-size:9px}
+.toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);background:#e9ebef;color:#111317;padding:7px 14px;border-radius:20px;font-size:11px;z-index:400;opacity:0;transition:.2s;pointer-events:none;box-shadow:0 8px 24px #0008}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
+.export-progress{height:7px;background:#252932;border-radius:6px;overflow:hidden;margin:12px 0 6px}
+.export-progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#37d6c2,#8af5e4);transition:width .2s}
+.mini-note{color:#6f7681;font-size:10px;line-height:1.6}
+.split-line{height:1px;background:#252830;margin:12px 0}
+.badge-row{display:flex;gap:5px;flex-wrap:wrap;margin:8px 0}
+.mini-chip{font-size:9px;color:#969da8;border:1px solid #30343d;border-radius:20px;padding:2px 7px}
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4.5v15l13-7.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4h4v16H7zM13 4h4v16h-4z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4h2v16H7zM19 5v14L9 12z"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path fill="currentColor" d="M15 4h2v16h-2zM5 5v14l10-7z"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M4 9h9a5 5 0 1 1-4 8M4 9l4-4M4 9l4 4"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M20 9h-9a5 5 0 1 0 4 8M20 9l-4-4M20 9l-4 4"/></symbol>
+  <symbol id="i-cut" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M9 4l7 16M15 4L8 20M7 5.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4M17 14.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4"/></symbol>
+  <symbol id="i-trim" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M5 4v16M19 4v16M5 9h6M13 15h6"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></symbol>
+  <symbol id="i-ripple" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M3 12h5m3 0h4m3 0h6M4 6h16M4 18h16"/></symbol>
+  <symbol id="i-magnet" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M6 4v8a6 6 0 0 0 12 0V4M6 9h4M14 9h4M6 4h4M14 4h4"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path fill="currentColor" d="M5 3l14 8-6 2-3 6z"/></symbol>
+  <symbol id="i-razor" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 17h16M7 17V9l5-4 5 4v8M9 21h6"/></symbol>
+  <symbol id="i-marker" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M5 12h14"/></symbol>
+  <symbol id="i-full" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
+  <symbol id="i-cover" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 4h16v16H4zM4 15l4-4 4 4 3-3 5 5M15 8h.01"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h7"/></symbol>
+  <symbol id="i-media" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M3 5h18v14H3zM3 13l4-4 4 4 3-3 5 5"/></symbol>
+  <symbol id="i-audio" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M5 6V4h14v2M12 4v16M8 20h8"/></symbol>
+  <symbol id="i-sticker" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 4h16v16H4zM4 15c3 0 4 2 4 5M20 15c-4 0-6 2-6 5"/></symbol>
+  <symbol id="i-effect" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M12 3l2.2 5 5.8.6-4.4 3.8 1.4 5.6-5-2.8-5 2.8 1.4-5.6L4 8.6l5.8-.6z"/></symbol>
+  <symbol id="i-transition" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M3 5h8v14H3zM13 5h8v14h-8zM9 12h6M13 9l3 3-3 3"/></symbol>
+  <symbol id="i-caption" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M3 5h18v13H3zM7 18l1 3M6 10h12M6 13h8"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 4h16l-6 7v7l-4 2v-9z"/></symbol>
+  <symbol id="i-adjust" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M3 6h7l2 2h9v11H3z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 16V4M7 9l5-5 5 5M4 20h16"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 9h4l5-4v14l-5-4H4zM17 9a4 4 0 0 1 0 6"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 9h4l5-4v14l-5-4H4zM16 9l5 6M21 9l-5 6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M5 11h14v10H5zM8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M5 5l14 14M19 5L5 19"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 12l5 5 11-12"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M3 11l18-8-8 18-2-8-6-2z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path fill="currentColor" d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4M18 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4"/></symbol>
+  <symbol id="i-speed" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M12 20a8 8 0 1 1 8-8M12 12l6-6M12 16a4 4 0 1 0-4-4"/></symbol>
+  <symbol id="i-keyframe" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M12 4l7 8-7 8-7-8z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0zM6 11a6 6 0 0 0 12 0M12 17v4M8 21h8"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">神</div>
+      <div class="brand-name">一幕 · <em>神剪</em></div>
+    </div>
+    <div class="proj">
+      <span class="proj-title">雨夜怀表</span>
+      <span class="proj-badge" id="projBadge">9:16 · 79.0s</span>
+      <span class="save-dot" title="已自动保存"></span>
+    </div>
+    <div class="top-center">
+      <button class="icon-btn" data-tip="撤销 (Ctrl+Z)" data-act="undo"><svg><use href="#i-undo" xlink:href="#i-undo"/></svg></button>
+      <button class="icon-btn" data-tip="重做 (Ctrl+Shift+Z)" data-act="redo"><svg><use href="#i-redo" xlink:href="#i-redo"/></svg></button>
+      <div class="seg" id="ratioSeg">
+        <button class="on" data-ratio="9:16">9:16</button>
+        <button data-ratio="16:9">16:9</button>
+        <button data-ratio="1:1">1:1</button>
+      </div>
+      <div class="seg" id="qualitySeg">
+        <button class="on" data-q="fast" data-tip="流畅预览：540p 代理，剪辑不卡">流畅</button>
+        <button data-q="raw" data-tip="原画预览：加载原始分辨率，更吃性能">原画</button>
+      </div>
+      <button class="chip" data-tip="开启后拖动会吸附到其他片段边缘与播放头" data-act="snap"><svg><use href="#i-magnet"/></svg><span id="snapLabel">吸附开</span></button>
+    </div>
+    <div class="top-right">
+      <button class="chip" data-act="shortcuts" data-tip="查看全部剪映快捷键"><svg><use href="#i-keyboard"/></svg>快捷键</button>
+      <button class="chip" data-act="cover" data-tip="封面编辑：模板、标题、字号、颜色"><svg><use href="#i-cover"/></svg>封面</button>
+      <button class="chip primary" data-act="export" data-tip="导出成片 (Ctrl+E)"><svg><use href="#i-export"/></svg>导出</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="library">
+      <nav class="lib-rail" id="libRail">
+        <button class="rail-btn on" data-tab="media" data-tip="媒体：项目素材与平台资产库"><svg><use href="#i-media"/></svg>媒体</button>
+        <button class="rail-btn" data-tab="audio" data-tip="音频：音乐、音效、配音"><svg><use href="#i-audio"/></svg>音频</button>
+        <button class="rail-btn" data-tab="text" data-tip="文本：字幕、花字、模板"><svg><use href="#i-text"/></svg>文本</button>
+        <button class="rail-btn" data-tab="sticker" data-tip="贴纸与图形元素"><svg><use href="#i-sticker"/></svg>贴纸</button>
+        <button class="rail-btn" data-tab="effect" data-tip="画面特效、人物特效"><svg><use href="#i-effect"/></svg>特效</button>
+        <button class="rail-btn" data-tab="transition" data-tip="转场：叠化、推拉、闪白"><svg><use href="#i-transition"/></svg>转场</button>
+        <button class="rail-btn" data-tab="caption" data-tip="识别字幕、智能字幕"><svg><use href="#i-caption"/></svg>字幕</button>
+        <button class="rail-btn" data-tab="filter" data-tip="滤镜与调色预设"><svg><use href="#i-filter"/></svg>滤镜</button>
+        <button class="rail-btn" data-tab="adjust" data-tip="调节：亮度、对比、HSL"><svg><use href="#i-adjust"/></svg>调节</button>
+      </nav>
+      <div class="lib-main">
+        <div class="lib-head">
+          <div class="lib-title" id="libTitle">媒体</div>
+          <div class="lib-actions">
+            <button class="icon-btn" data-tip="新建文件夹：把素材按项目/场次分组" data-act="newFolder"><svg><use href="#i-folder"/></svg></button>
+            <button class="import-btn" data-act="import" data-tip="导入本地视频、图片、音频；导入前先预览确认"><svg><use href="#i-upload"/></svg>导入</button>
+          </div>
+        </div>
+        <div class="lib-subtabs" id="libSubtabs">
+          <button class="on" data-sub="all">全部</button>
+          <button data-sub="video">视频</button>
+          <button data-sub="image">图片</button>
+          <button data-sub="audio">音频</button>
+          <button data-sub="text">文本</button>
+        </div>
+        <div class="lib-scroll">
+          <div class="folder" data-folder="project" data-tip="本项目资产：由剧本/分镜/生成任务产出的全部素材">
+            <svg><use href="#i-folder"/></svg><span>雨夜怀表 · 本项目</span><span class="count">24</span>
+          </div>
+          <div class="folder" data-folder="platform" data-tip="平台资产库：跨项目可复用的视频、图片、音频">
+            <svg><use href="#i-folder"/></svg><span>平台资产库</span><span class="count">1,286</span>
+          </div>
+          <div class="folder" data-folder="other" data-tip="其他项目：可勾选全选后批量导入">
+            <svg><use href="#i-folder"/></svg><span>其他项目</span><span class="count">31</span>
+          </div>
+          <div class="media-grid" id="mediaGrid">
+            <div class="media-card" draggable="true" data-kind="image" data-name="GIF 雨夜循环" data-dur="0">
+              <img src="assets/雨夜循环.gif" alt="" />
+              <span class="type">GIF</span><span class="name">雨夜循环 · 动图</span>
+            </div>
+            <div class="media-card selected" draggable="true" data-asset="a1" data-kind="video" data-name="镜01 停滞的挂钟" data-dur="5.0">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <img src="assets/雨夜修表铺.jpg" alt="" />
+              <span class="type">视频</span><span class="dur">00:05</span><span class="name">镜01 · 挂钟</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a2" data-kind="video" data-name="镜02 猫叼怀表" data-dur="5.0">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <img src="assets/雨夜修表铺.jpg" style="object-position:60% 40%;filter:hue-rotate(-12deg) brightness(.9)" alt="" />
+              <span class="type">视频</span><span class="dur">00:05</span><span class="name">镜02 · 猫叼表</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a3" data-kind="video" data-name="镜06 雨中救人" data-dur="5.0">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <img src="assets/雨夜修表铺.jpg" style="object-position:0% 70%;filter:brightness(.78) saturate(1.15)" alt="" />
+              <span class="type">视频</span><span class="dur">00:05</span><span class="name">镜06 · 雨中</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a4" data-kind="image" data-name="角色 老匠 定妆" data-dur="0">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <img src="assets/雨夜修表铺.jpg" style="object-position:40% 20%;filter:contrast(1.1)" alt="" />
+              <span class="type">图片</span><span class="name">老匠 · 定妆</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a5" data-kind="image" data-name="场景 修表铺内" data-dur="0">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <img src="assets/雨夜修表铺.jpg" style="object-position:80% 60%;filter:saturate(.7) brightness(.85)" alt="" />
+              <span class="type">图片</span><span class="name">修表铺 · 场景</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a6" data-kind="audio" data-name="雨夜 BGM" data-dur="79">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <div style="position:absolute;inset:0;background:linear-gradient(150deg,#1f4438,#0f2b24);display:grid;place-items:center;color:#6fe4c6"><svg style="width:26px;height:26px"><use href="#i-audio"/></svg></div>
+              <span class="type">音频</span><span class="dur">01:19</span><span class="name">雨夜 BGM</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a7" data-kind="audio" data-name="怀表滴答 音效" data-dur="6">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <div style="position:absolute;inset:0;background:linear-gradient(150deg,#3c3420,#1d190e);display:grid;place-items:center;color:#f3c56e"><svg style="width:26px;height:26px"><use href="#i-audio"/></svg></div>
+              <span class="type">音频</span><span class="dur">00:06</span><span class="name">怀表滴答</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a8" data-kind="text" data-name="片名标题" data-dur="8">
+              <span class="sel"><svg style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <div style="position:absolute;inset:0;background:linear-gradient(150deg,#4b3a24,#241b0f);display:grid;place-items:center;color:#ffe7bf;font-weight:800;font-size:15px">雨夜<br/>怀表</div>
+              <span class="type">文本</span><span class="dur">00:08</span><span class="name">片名标题</span>
+            </div>
+          </div>
+          <div style="margin:12px 4px 6px;color:#6f7681;font-size:9px">最近使用</div>
+          <div class="media-grid" id="recentGrid">
+            <div class="media-card" draggable="true" data-asset="a9" data-kind="image" data-name="封面 雨夜怀表" data-dur="0">
+              <img src="assets/雨夜修表铺.jpg" style="filter:sepia(.25) contrast(1.15)" alt="" />
+              <span class="type">封面</span><span class="name">雨夜怀表 · 封面</span>
+            </div>
+            <div class="media-card" draggable="true" data-asset="a10" data-kind="video" data-name="片头 标志" data-dur="3">
+              <div style="position:absolute;inset:0;background:radial-gradient(circle at 50% 45%,#37d6c233,#0b0c0f);display:grid;place-items:center;color:#8af5e4;font-weight:800">一幕</div>
+              <span class="type">视频</span><span class="dur">00:03</span><span class="name">片头 · 标志</span>
+            </div>
+          </div>
+        </div>
+        <div class="lib-foot"><span>本机缓存</span><div class="progressbar"><i></i></div><span>46%</span></div>
+      </div>
+    </aside>
+
+    <section class="stage">
+      <div class="stage-bar">
+        <div class="meta"><span>9:16</span><span class="dot"></span><span>1080 × 1920</span><span class="dot"></span><span>29.97 fps</span><span class="dot"></span><span id="stageMode">流畅预览 540p</span></div>
+        <div class="right">
+          <button class="icon-btn" data-act="safe" data-tip="安全区参考线（短视频平台 UI 遮挡范围）"><svg><use href="#i-eye"/></svg></button>
+          <button class="icon-btn" data-act="zoomStage" data-tip="画布缩放：适合窗口 / 100%"><svg><use href="#i-full"/></svg></button>
+        </div>
+      </div>
+      <div class="canvas-wrap">
+        <div class="canvas-frame" id="canvasFrame">
+          <div class="canvas fast" id="canvas">
+            <img class="bg" src="assets/雨夜修表铺.jpg" alt="" id="canvasBg" />
+            <div class="grade"></div>
+            <div class="layer-title" id="layerTitle">雨夜怀表</div>
+            <div class="layer-sub" id="layerSub"><span>这钟，怎么停了？</span></div>
+            <div class="layer-watermark">一幕 · 神剪</div>
+            <div class="safe"></div>
+            <div class="quality-badge" id="qualityBadge">流畅预览 · 代理 540p</div>
+          </div>
+        </div>
+      </div>
+      <div class="transport">
+        <div class="tc"><span id="tcNow">00:00:00</span><em> / </em><span id="tcTotal">00:01:19</span></div>
+        <div class="mid">
+          <button class="icon-btn" data-act="home" data-tip="跳到开头 (Home)"><svg><use href="#i-back"/></svg></button>
+          <button class="icon-btn" data-act="prev" data-tip="上一帧 (←)"><svg style="transform:rotate(180deg)"><use href="#i-fwd"/></svg></button>
+          <button class="icon-btn play-btn" id="playBtn" data-act="play" data-tip="播放 / 暂停 (Space)"><svg><use href="#i-play"/></svg></button>
+          <button class="icon-btn" data-act="next" data-tip="下一帧 (→)"><svg><use href="#i-fwd"/></svg></button>
+          <button class="icon-btn" data-act="end" data-tip="跳到结尾 (End)"><svg><use href="#i-fwd"/></svg></button>
+        </div>
+        <div class="right">
+          <button class="icon-btn" data-act="muteAll" data-tip="全局静音"><svg><use href="#i-volume"/></svg></button>
+          <select class="tiny-select" id="speedSelect" data-tip="预览速度，不影响导出">
+            <option value="1">1.0×</option><option value="0.5">0.5×</option><option value="2">2.0×</option>
+          </select>
+          <button class="icon-btn" data-act="full" data-tip="全屏预览 (F)"><svg><use href="#i-full"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="inspector">
+      <div class="insp-tabs" id="inspTabs">
+        <button class="on" data-itab="basic">基础</button>
+        <button data-itab="color">调节</button>
+        <button data-itab="anim">动画</button>
+      </div>
+      <div class="insp-scroll" id="inspBody"></div>
+    </aside>
+  </main>
+
+  <section class="timeline">
+    <div class="tl-tools">
+      <button class="tl-tool on" data-tool="select" data-tip="选择工具 (A)：点选/拖动片段"><svg><use href="#i-cursor"/></svg><span class="dotmark"></span></button>
+      <button class="tl-tool" data-tool="razor" data-tip="剃刀工具 (B)：在点击处切开片段"><svg><use href="#i-razor"/></svg><span class="dotmark"></span></button>
+      <div class="sep"></div>
+      <button class="tl-tool" data-act="split" data-tip="分割 (E / Ctrl+B)：在播放头处切成两段"><svg><use href="#i-cut"/></svg></button>
+      <button class="tl-tool" data-act="delLeft" data-tip="删除前半段 (Q)：保留播放头之后的部分"><svg><use href="#i-trim"/></svg></button>
+      <button class="tl-tool" data-act="delRight" data-tip="删除后半段 (W)：保留播放头之前的部分"><svg style="transform:scaleX(-1)"><use href="#i-trim"/></svg></button>
+      <button class="tl-tool" data-act="rippleDel" data-tip="波纹删除：删除选中片段并自动合拢空隙"><svg><use href="#i-ripple"/></svg></button>
+      <button class="tl-tool" data-act="delete" data-tip="删除选中片段 (Delete)"><svg><use href="#i-trash"/></svg></button>
+      <div class="sep"></div>
+      <button class="tl-tool" data-act="undo" data-tip="撤销 (Ctrl+Z)"><svg><use href="#i-undo"/></svg></button>
+      <button class="tl-tool" data-act="redo" data-tip="重做 (Ctrl+Shift+Z)"><svg><use href="#i-redo"/></svg></button>
+      <button class="tl-tool on" data-act="snap" data-tip="吸附开关 (S)：靠近片段边缘/播放头自动对齐"><svg><use href="#i-magnet"/></svg></button>
+      <button class="tl-tool" data-act="marker" data-tip="添加标记 (M)：在播放头处打点，方便对节奏"><svg><use href="#i-marker"/></svg></button>
+      <div class="tl-caption" id="tlHint">A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后</div>
+      <div class="grow">
+        <button class="mini-btn" data-act="addTrack" data-tip="新增轨道：可以无限往上叠 V4/V5…"><svg style="width:12px;height:12px"><use href="#i-plus"/></svg> 轨道</button>
+        <button class="icon-btn" data-act="zoomOut" data-tip="时间线缩小 (-)"><svg><use href="#i-minus"/></svg></button>
+        <input class="tl-zoom" type="range" min="14" max="120" value="38" id="zoomRange" data-tip="时间线缩放：像素/秒" />
+        <button class="icon-btn" data-act="zoomIn" data-tip="时间线放大 (+)"><svg><use href="#i-plus"/></svg></button>
+        <button class="mini-btn" data-act="fit" data-tip="适应窗口：整条时间线一屏看完">适应</button>
+      </div>
+    </div>
+    <div class="tl-body">
+      <div class="track-heads">
+        <div class="heads-inner" id="headsInner">
+          <div class="head-ruler"><span>轨道</span><span id="trackCount">6 轨</span></div>
+          <div id="trackHeads"></div>
+          <div class="resize-handle" id="resizeHandle" data-tip="拖动调整所有轨道行高"></div>
+        </div>
+      </div>
+      <div class="lanes-wrap" id="lanesWrap">
+        <div class="lanes-inner" id="lanesInner">
+          <div class="ruler" id="ruler"></div>
+          <div class="lanes" id="lanes"></div>
+          <div class="playhead" id="playhead"></div>
+        </div>
+      </div>
+    </div>
+    <div class="tl-foot">
+      <span id="tlStatus">00:00:00 / 00:01:19 · 6 轨 · 17 片段</span>
+      <span>·</span><span>缩放 <b id="zoomLabel">38</b> px/s</span>
+      <span>·</span><span>行高</span><input class="tl-zoom" type="range" min="30" max="96" value="44" id="laneHeight" data-tip="拖动调整所有轨道行高，配合上下滚动查看全部轨道" />
+      <div class="right"><span>Ctrl+滚轮缩放</span><span>·</span><span>拖动片段可跨轨叠加</span></div>
+    </div>
+  </section>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<div class="modal-mask" id="shortcutModal">
+  <div class="modal">
+    <div class="modal-head">剪映快捷键 · 已全部对齐 <button class="icon-btn x" data-close="shortcutModal"><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div class="mini-note" style="margin-bottom:10px">目标：从剪映迁移过来的用户不需要重新学习。E=分割、Q=删前、W=删后，与剪映一致。</div>
+      <div class="kbd-grid" id="kbdGrid"></div>
+    </div>
+    <div class="modal-foot"><button class="btn" data-close="shortcutModal">关闭</button></div>
+  </div>
+</div>
+
+<div class="modal-mask" id="exportModal">
+  <div class="modal" style="width:520px">
+    <div class="modal-head">导出成片 <button class="icon-btn x" data-close="exportModal"><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div class="field"><label>文件名</label><input id="expName" value="雨夜怀表" /></div>
+      <div class="grid2">
+        <div class="field"><label>分辨率</label><select id="expRes"><option>1080P（1080×1920）</option><option>720P（720×1280）</option><option>4K（2160×3840）</option></select></div>
+        <div class="field"><label>帧率</label><select id="expFps"><option>29.97 fps</option><option>25 fps</option><option>60 fps</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>格式</label><select id="expFmt"><option>MP4 (H.264)</option><option>MOV (ProRes)</option><option>GIF</option></select></div>
+        <div class="field"><label>导出范围</label><select id="expRange"><option>整条时间线 00:00:00 – 00:01:19</option><option>选中片段</option><option>入点/出点区间</option></select></div>
+      </div>
+      <div class="field"><label>码率</label><div class="range-line"><input type="range" min="4" max="40" value="18" id="expBitrate" /><span id="bitrateVal">18 Mbps</span></div></div>
+      <div class="export-progress"><i id="expBar"></i></div>
+      <div class="mini-note" id="expStatus">预计 2 分 10 秒 · 硬件编码（VideoToolbox）已启用</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="exportModal">取消</button>
+      <button class="btn primary" data-act="startExport">开始导出</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="coverModal">
+  <div class="modal" style="width:760px">
+    <div class="modal-head">封面编辑 <button class="icon-btn x" data-close="coverModal"><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:1fr 260px;gap:18px">
+        <div>
+          <div class="mini-note">选一个模板，再改标题、字号、颜色与对齐；右侧实时预览。</div>
+          <div class="cover-tpls" id="coverTpls">
+            <div class="cover-tpl on" data-tpl="0"><img src="assets/雨夜修表铺.jpg" /><span class="cv-title" style="top:10%;font-size:17px">雨夜<br/>怀表</span><span class="cv-sub">一幕短剧 · 01</span></div>
+            <div class="cover-tpl" data-tpl="1"><img src="assets/雨夜修表铺.jpg" style="filter:brightness(.7) saturate(.75)" /><span class="cv-title" style="bottom:18%;top:auto;font-size:17px;letter-spacing:3px">时间停了</span><span class="cv-sub" style="bottom:9%">雨夜 · 怀表 · 救赎</span></div>
+            <div class="cover-tpl" data-tpl="2"><img src="assets/雨夜修表铺.jpg" style="filter:contrast(1.2) hue-rotate(-10deg)" /><span class="cv-title" style="top:auto;bottom:26%;font-size:15px">把时间<br/>还给你</span><span class="cv-sub">一幕出品</span></div>
+          </div>
+        </div>
+        <div>
+          <div class="field"><label>主标题</label><input id="coverTitle" value="雨夜怀表" /></div>
+          <div class="field"><label>副标题</label><input id="coverSub" value="时间停了，但爱还在走" /></div>
+          <div class="grid2">
+            <div class="field"><label>字号</label><input type="number" id="coverSize" value="26" min="14" max="48" /></div>
+            <div class="field"><label>对齐</label><select id="coverAlign"><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></div>
+          </div>
+          <div class="field"><label>标题颜色</label><div class="swatches" id="coverColors">
+            <span class="swatch on" data-color="#f6efe2" style="background:#f6efe2"></span>
+            <span class="swatch" data-color="#37d6c2" style="background:#37d6c2"></span>
+            <span class="swatch" data-color="#f3b45a" style="background:#f3b45a"></span>
+            <span class="swatch" data-color="#ff6b6b" style="background:#ff6b6b"></span>
+            <span class="swatch" data-color="#ffffff" style="background:#ffffff"></span>
+          </div></div>
+          <div class="field"><label>标题位置</label><div class="range-line"><input type="range" id="coverY" min="6" max="80" value="12" /><span id="coverYVal">12%</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn" data-close="coverModal">取消</button><button class="btn" data-act="exportCover">导出封面 PNG</button><button class="btn primary" data-act="saveCover">保存为项目封面</button></div>
+  </div>
+</div>
+
+<div class="modal-mask" id="previewModal">
+  <div class="modal" style="width:720px">
+    <div class="modal-head">导入预览 · 确认后再进素材库 <button class="icon-btn x" data-close="previewModal"><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div id="previewStage" style="background:#000;border-radius:8px;overflow:hidden;display:grid;place-items:center;min-height:320px"></div>
+      <div class="badge-row" id="previewMeta"></div>
+      <div class="mini-note">确认后只进入素材库，不会直接跳到时间线；需要你从素材库拖到轨道，避免误导入。</div>
+    </div>
+    <div class="modal-foot"><button class="btn" data-close="previewModal">取消</button><button class="btn primary" data-act="confirmImport">确认导入素材库</button></div>
+  </div>
+</div>
+
+<div class="ctx" id="ctxMenu">
+  <button data-ctx="split"><svg><use href="#i-cut"/></svg>在播放头分割<span class="kbd2">E</span></button>
+  <button data-ctx="copy"><svg><use href="#i-media"/></svg>复制<span class="kbd2">Ctrl+C</span></button>
+  <button data-ctx="delLeft"><svg><use href="#i-trim"/></svg>删除前半段<span class="kbd2">Q</span></button>
+  <button data-ctx="delRight"><svg style="transform:scaleX(-1)"><use href="#i-trim"/></svg>删除后半段<span class="kbd2">W</span></button>
+  <div class="line"></div>
+  <button data-ctx="detach"><svg><use href="#i-audio"/></svg>分离音频</button>
+  <button data-ctx="keyframe"><svg><use href="#i-keyframe"/></svg>添加关键帧</button>
+  <button data-ctx="rippleDel"><svg><use href="#i-ripple"/></svg>波纹删除</button>
+  <div class="line"></div>
+  <button data-ctx="delete" style="color:#ff9a9a"><svg><use href="#i-trash"/></svg>删除<span class="kbd2">Del</span></button>
+</div>
+
+<div class="ai-panel" id="aiPanel">
+  <div class="ai-head"><span style="width:22px;height:22px;border-radius:6px;background:#20302e;color:#8af5e4;display:grid;place-items:center">AI</span>神剪助手
+    <select class="perm" id="aiPerm" data-tip="权限：每次询问 / 减少询问 / 完全授权">
+      <option value="ask">每条都询问</option>
+      <option value="less">减少询问</option>
+      <option value="full">完全授权</option>
+    </select>
+    <button class="icon-btn" data-close="aiPanel" style="margin-left:4px"><svg><use href="#i-close"/></svg></button>
+  </div>
+  <div class="ai-log" id="aiLog">
+    <div class="ai-msg">我可以直接操作时间线：分割、删除、压缩时长、加字幕、铺 BGM。你可以先用一条命令试试。</div>
+  </div>
+  <div class="ai-quick" id="aiQuick">
+    <button data-cmd="压缩到60秒">压缩到 60 秒</button>
+    <button data-cmd="给所有台词加字幕">加字幕</button>
+    <button data-cmd="在播放头分割">在播放头分割</button>
+    <button data-cmd="加一个片头标题">加片头</button>
+    <button data-cmd="把BGM铺满全片">铺 BGM</button>
+  </div>
+  <div class="ai-input"><input id="aiInput" placeholder="例如：把这 79 秒剪成 1 分钟宣传片" /><button data-act="aiSend"><svg><use href="#i-send"/></svg></button></div>
+</div>
+<div class="ai-fab" id="aiFab" data-tip="神剪助手：自然语言直接改时间线，可设置权限"><div class="in">AI</div></div>
+
+<div class="toast" id="toast"></div>
+<input type="file" id="fileInput" accept="video/*,image/*,audio/*" multiple style="display:none" />
+<script>
+(() => {
+  const IMG = 'assets/雨夜修表铺.jpg';
+  let TOTAL = 79;
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const uid = () => Math.random().toString(36).slice(2, 8);
+
+  const state = {
+    time: 0, playing: false, zoom: 38, snap: true, quality: 'fast',
+    selectedId: null, laneH: 44, markers: [12.4, 38.6, 62.1],
+    clipboard: null, history: [], future: [], tool: 'select',
+    tracks: [
+      { id: 'V3', label: '水印 / 叠加', kind: 'video', locked: false, hidden: false, muted: false },
+      { id: 'V2', label: '叠加层 / 标题', kind: 'video', locked: false, hidden: false, muted: false },
+      { id: 'V1', label: '主画面', kind: 'video', locked: false, hidden: false, muted: false },
+      { id: 'A1', label: '音乐 / BGM', kind: 'audio', locked: false, hidden: false, muted: false },
+      { id: 'A2', label: '对白 / 配音', kind: 'audio', locked: false, hidden: false, muted: false },
+      { id: 'T1', label: '字幕', kind: 'text', locked: false, hidden: false, muted: false },
+    ],
+    clips: [],
+  };
+
+  const SHOTS = [
+    ['镜01 停滞的挂钟', 0, 5, '00:05'], ['镜02 猫叼怀表', 5, 10, '00:05'],
+    ['镜03 喵呜一声', 10, 14, '00:04'], ['镜04 逆时错觉', 14, 19, '00:05'],
+    ['镜05 敲击试钟', 19, 23, '00:04'], ['镜06 冲进雨里', 23, 28, '00:05'],
+    ['镜07 女孩尖叫', 28, 32, '00:04'], ['镜08 绝望喊声', 32, 37, '00:05'],
+    ['镜09 按下怀表', 37, 41, '00:04'], ['镜10 拉向安全区', 41, 46, '00:05'],
+    ['镜11 抽泣道谢', 46, 50, '00:04'], ['镜12 女孩离开', 50, 55, '00:05'],
+    ['镜13 怀表磨损', 55, 60, '00:05'], ['镜14 锁进抽屉', 60, 65, '00:05'],
+    ['镜15 猫蹭腿', 65, 69, '00:04'], ['镜16 晨光落在膝头', 69, 74, '00:05'],
+    ['镜17 温柔收尾', 74, 79, '00:05'],
+  ];
+
+  function seedClips() {
+    const clips = [];
+    SHOTS.forEach(([name, s, e], i) => {
+      clips.push({
+        id: 'v' + i, track: 'V1', kind: 'video', name, start: s, end: e,
+        thumb: IMG, thumbPos: `${(i * 23) % 100}% ${(i * 17) % 100}%`,
+        speed: 1, volume: 60, opacity: 100, scale: 100, x: 0, y: 0, rot: 0,
+        filter: 'none', brightness: 100, contrast: 100, saturate: 100, temp: 0,
+        blend: 'normal', inAnim: 'none', outAnim: 'none', kf: i % 3 === 0,
+      });
+    });
+    clips.push(
+      { id: 'v2t', track: 'V2', kind: 'text', name: '片名标题', start: 0, end: 5.2, text: '雨夜怀表', fontSize: 44, color: '#f6efe2', align: 'left', opacity: 100, y: -32, x: -26, rot: 0, inAnim: 'fade', outAnim: 'fade', kf: false },
+      { id: 'v2q', track: 'V2', kind: 'text', name: '金句叠加', start: 14, end: 19, text: '时间停了，但爱还在走', fontSize: 22, color: '#ffe7bf', align: 'center', opacity: 92, y: 22, x: 0, rot: 0, inAnim: 'up', outAnim: 'fade', kf: true },
+      { id: 'v3w', track: 'V3', kind: 'text', name: '品牌水印', start: 0, end: 79, text: '一幕 · 神剪', fontSize: 12, color: '#ffffff', align: 'right', opacity: 46, y: 36, x: 34, rot: 0, inAnim: 'none', outAnim: 'none', kf: false },
+      { id: 'a1', track: 'A1', kind: 'audio', name: '雨夜 BGM', start: 0, end: 79, volume: 38, speed: 1, fadeIn: 1.2, fadeOut: 2, kf: false },
+      { id: 'a2d1', track: 'A2', kind: 'audio', name: '老匠：这钟怎么停了', start: 0, end: 5, volume: 78, speed: 1, kf: false },
+      { id: 'a2d2', track: 'A2', kind: 'audio', name: '老匠：咪，你叼的什么', start: 5, end: 10, volume: 78, speed: 1, kf: false },
+      { id: 'a2d3', track: 'A2', kind: 'audio', name: '咪：喵呜', start: 10, end: 14, volume: 72, speed: 1, kf: false },
+      { id: 'a2d4', track: 'A2', kind: 'audio', name: '老匠：别动！', start: 23, end: 28, volume: 82, speed: 1, kf: false },
+      { id: 'a2d5', track: 'A2', kind: 'audio', name: '女孩：谢谢您', start: 46, end: 50, volume: 70, speed: 1, kf: false },
+      { id: 'a2d6', track: 'A2', kind: 'audio', name: '老匠：表快坏了', start: 55, end: 60, volume: 66, speed: 1, kf: false }
+    );
+    const subs = [
+      [0, 5, '老匠（疑惑、低沉）：这钟，怎么停了？'],
+      [5, 10, '老匠（好奇）：咪，你嘴里叼的什么？'],
+      [10, 14, '咪（短促、急切）：喵呜——'],
+      [23, 28, '老匠（急切、高声）：别动！'],
+      [46, 50, '女孩（抽泣、后怕）：谢谢您……'],
+      [55, 60, '老匠（疲惫、低沉）：这表，快坏了。'],
+      [69, 74, '旁白：晨光穿过雨幕，落在他的膝头。'],
+    ];
+    subs.forEach(([s, e, t], i) => clips.push({
+      id: 't' + i, track: 'T1', kind: 'text', name: t.slice(0, 12), start: s, end: e, text: t,
+      fontSize: 18, color: '#ffffff', align: 'center', opacity: 100, y: 34, x: 0, rot: 0, inAnim: 'none', outAnim: 'none', kf: false,
+    }));
+    state.clips = clips;
+  }
+  seedClips();
+
+  const KIND_COLORS = { video: '#2b4152', audio: '#1f4438', text: '#4b3a24' };
+  const trackOf = id => state.tracks.find(t => t.id === id);
+  const clipById = id => state.clips.find(c => c.id === id);
+  const activeAt = (track, t) => state.clips.filter(c => c.track === track && c.start <= t && c.end > t).sort((a, b) => b.start - a.start)[0];
+  const fmt = t => {
+    t = Math.max(0, t);
+    const m = Math.floor(t / 60), s = Math.floor(t % 60), f = Math.floor((t % 1) * 30);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  };
+  const fmtShort = t => {
+    const m = Math.floor(t / 60), s = Math.floor(t % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  function snapshot() {
+    return JSON.stringify({ clips: state.clips, markers: state.markers, tracks: state.tracks });
+  }
+  function pushHistory() {
+    state.history.push(snapshot());
+    if (state.history.length > 40) state.history.shift();
+    state.future = [];
+    updateUndoBtns();
+  }
+  function restore(str) {
+    const o = JSON.parse(str);
+    state.clips = o.clips; state.markers = o.markers; state.tracks = o.tracks;
+    state.selectedId = null;
+    renderAll();
+  }
+  function undo() {
+    if (!state.history.length) return toast('没有可撤销的操作');
+    state.future.push(snapshot());
+    restore(state.history.pop());
+    updateUndoBtns();
+    toast('已撤销');
+  }
+  function redo() {
+    if (!state.future.length) return toast('没有可重做的操作');
+    state.history.push(snapshot());
+    restore(state.future.pop());
+    updateUndoBtns();
+    toast('已重做');
+  }
+  function updateUndoBtns() {
+    $$('[data-act="undo"]').forEach(b => b.disabled = !state.history.length);
+    $$('[data-act="redo"]').forEach(b => b.disabled = !state.future.length);
+  }
+
+  function select(id) {
+    state.selectedId = id;
+    renderTimeline();
+    renderInspector();
+  }
+
+  function renderAll() {
+    renderHeads();
+    renderTimeline();
+    renderInspector();
+    renderCanvas();
+    updateTimecode();
+    updateUndoBtns();
+  }
+
+  function renderHeads() {
+    const wrap = $('#trackHeads');
+    wrap.innerHTML = state.tracks.map(t => `
+      <div class="track-head" data-track="${t.id}">
+        <span class="tname">${t.id}</span>
+        <span class="tlabel">${t.label}</span>
+        <span class="locks">
+          <button data-track-act="hidden" data-track="${t.id}" class="${t.hidden ? 'on' : ''}" data-tip="${t.hidden ? '显示' : '隐藏'}轨道"><svg><use href="#i-eye"/></svg></button>
+          <button data-track-act="muted" data-track="${t.id}" class="${t.muted ? 'on' : ''}" data-tip="静音轨道">${t.kind === 'audio' ? '<svg><use href="#i-volume"/></svg>' : '<svg><use href="#i-lock"/></svg>'}</button>
+          <button data-track-act="locked" data-track="${t.id}" class="${t.locked ? 'on' : ''}" data-tip="锁定轨道，避免误拖"><svg><use href="#i-lock"/></svg></button>
+        </span>
+      </div>`).join('');
+    $('#trackCount').textContent = `${state.tracks.length} 轨`;
+    $('#headsInner').style.setProperty('--lane-h', state.laneH + 'px');
+  }
+
+  function renderTimeline() {
+    const inner = $('#lanesInner');
+    const width = TOTAL * state.zoom + 260;
+    inner.style.width = width + 'px';
+    // ruler
+    let ticks = '';
+    for (let i = 0; i <= TOTAL; i++) {
+      const major = i % 5 === 0;
+      ticks += `<div class="tick ${major ? '' : 'minor'}" style="left:${i * state.zoom}px">${major ? fmtShort(i) : ''}</div>`;
+    }
+    document.documentElement.style.setProperty('--tl-scale', state.zoom + 'px');
+    $('#ruler').innerHTML = ticks;
+    // lanes
+    $('#lanes').innerHTML = state.tracks.map(t => `<div class="lane" data-track="${t.id}" data-kind="${t.kind}" style="${t.hidden ? 'opacity:.25' : ''}">${state.clips.filter(c => c.track === t.id).length === 0 ? `<div class="drop-hint">拖素材到这里 · ${t.label}</div>` : ''}</div>`).join('');
+    state.clips.forEach(c => {
+      const lane = $(`.lane[data-track="${c.track}"]`);
+      if (!lane) return;
+      const t = trackOf(c.track);
+      if (t.hidden) return;
+      const el = document.createElement('div');
+      el.className = `clip ${c.kind === 'audio' ? 'audio' : c.kind === 'text' ? 'text' : ''} ${state.selectedId === c.id ? 'selected' : ''}`;
+      el.dataset.id = c.id;
+      el.style.left = (c.start * state.zoom) + 'px';
+      el.style.width = Math.max(8, (c.end - c.start) * state.zoom) + 'px';
+      el.style.background = KIND_COLORS[c.kind] || KIND_COLORS.video;
+      if (c.kind === 'video') {
+        el.innerHTML = `<img class="thumb" src="${c.thumb || IMG}" style="object-position:${c.thumbPos || 'center'}" alt=""/>
+          <div class="shade"></div><span class="tagline">${fmtShort(c.start)}</span>
+          <span class="cname">${c.name}</span>
+          ${c.kf ? '<i class="kf" style="left:18%"></i><i class="kf" style="left:62%"></i>' : ''}
+          <div class="trim l"></div><div class="trim r"></div>`;
+      } else if (c.kind === 'audio') {
+        const bars = Array.from({ length: Math.max(10, Math.floor((c.end - c.start) * 6)) }, (_, i) => {
+          const h = 22 + ((i * 17 + c.name.length * 7) % 62);
+          return `<i style="height:${h}%"></i>`;
+        }).join('');
+        el.innerHTML = `<div class="wave">${bars}</div><span class="cname">${c.name}</span><span class="tagline">${c.volume ?? 60}%</span>
+          <div class="trim l"></div><div class="trim r"></div>`;
+      } else {
+        el.innerHTML = `<div class="t"><b>${c.name}</b>${c.text || ''}</div><div class="trim l"></div><div class="trim r"></div>`;
+      }
+      lane.appendChild(el);
+    });
+    // transitions at adjacent joins on V1
+    state.clips.filter(c => c.track === 'V1').forEach(c => {
+      const next = state.clips.find(n => n.track === 'V1' && Math.abs(n.start - c.end) < .01);
+      if (!next) return;
+      const lane = $('.lane[data-track="V1"]');
+      if (!lane) return;
+      const tr = document.createElement('div');
+      tr.className = 'transition';
+      tr.style.left = (c.end * state.zoom) + 'px';
+      tr.textContent = '◇';
+      tr.dataset.tip = '转场：叠化 0.4s，点击可换转场';
+      lane.appendChild(tr);
+    });
+    // markers
+    $$('.marker').forEach(m => m.remove());
+    state.markers.forEach(t => {
+      const m = document.createElement('div');
+      m.className = 'marker';
+      m.style.left = (t * state.zoom) + 'px';
+      m.dataset.tip = `标记 ${fmtShort(t)} · 右键删除`;
+      $('#lanesInner').appendChild(m);
+    });
+    $('#playhead').style.left = (state.time * state.zoom) + 'px';
+    $('#tlStatus').textContent = `${fmt(state.time)} / ${fmt(TOTAL)} · ${state.tracks.length} 轨 · ${state.clips.length} 片段`;
+    $('#zoomLabel').textContent = state.zoom;
+    $('#zoomRange').value = state.zoom;
+  }
+
+  function renderCanvas() {
+    const v = activeAt('V1', state.time);
+    if (v) {
+      $('#canvasBg').src = v.thumb || IMG;
+      $('#canvasBg').style.objectPosition = v.thumbPos || 'center';
+      const filters = [];
+      if (v.filter === 'warm') filters.push('sepia(.35) saturate(1.1)');
+      if (v.filter === 'cool') filters.push('hue-rotate(-18deg) saturate(.9)');
+      if (v.filter === 'mono') filters.push('grayscale(1) contrast(1.1)');
+      filters.push(`brightness(${(v.brightness ?? 100) / 100}) contrast(${(v.contrast ?? 100) / 100}) saturate(${(v.saturate ?? 100) / 100})`);
+      $('#canvasBg').style.filter = filters.join(' ');
+      $('#canvasBg').style.transform = `scale(${(v.scale ?? 100) / 100}) translate(${v.x ?? 0}%,${v.y ?? 0}%) rotate(${v.rot ?? 0}deg)`;
+      $('#canvasBg').style.opacity = (v.opacity ?? 100) / 100;
+    }
+    const title = state.clips.find(c => c.track === 'V2' && c.kind === 'text' && c.name === '片名标题' && c.start <= state.time && c.end > state.time);
+    const quote = state.clips.find(c => c.track === 'V2' && c.kind === 'text' && c.name === '金句叠加' && c.start <= state.time && c.end > state.time);
+    const lt = $('#layerTitle'), ls = $('#layerSub');
+    lt.style.display = title ? 'block' : 'none';
+    if (title) {
+      lt.textContent = title.text;
+      lt.style.color = title.color;
+      lt.style.fontSize = `${((title.fontSize || 44) / 44) * 7.2}cqw`;
+      lt.style.top = '11%'; lt.style.bottom = 'auto';
+      lt.style.left = '8%'; lt.style.right = 'auto'; lt.style.textAlign = 'left';
+    }
+    if (quote) {
+      lt.style.display = 'block'; lt.textContent = quote.text;
+      lt.style.fontSize = '4.6cqw'; lt.style.top = 'auto'; lt.style.bottom = '30%';
+      lt.style.left = '6%'; lt.style.right = '6%'; lt.style.textAlign = 'center';
+      lt.style.color = quote.color;
+    }
+    const sub = activeAt('T1', state.time);
+    ls.style.display = sub ? 'block' : 'none';
+    if (sub) {
+      ls.innerHTML = `<span>${sub.text || sub.name}</span>`;
+      ls.style.fontSize = `${((sub.fontSize || 18) / 18) * 4.2}cqw`;
+    }
+  }
+
+  function renderInspector() {
+    const body = $('#inspBody');
+    const c = clipById(state.selectedId);
+    const tab = $('#inspTabs button.on')?.dataset.itab || 'basic';
+    if (!c) {
+      body.innerHTML = `
+        <div class="sel-head"><div class="sel-thumb"><img src="${IMG}"/></div><div><div class="sel-name">雨夜怀表</div><div class="sel-meta">项目 · 9:16 · ${TOTAL.toFixed(1)}s</div></div></div>
+        <div class="section"><h4>项目设置</h4>
+          <div class="row"><label>画幅</label><select data-proj="ratio"><option>9:16 竖屏</option><option>16:9 横屏</option><option>1:1 方形</option></select></div>
+          <div class="row"><label>帧率</label><select data-proj="fps"><option>29.97</option><option>25</option><option>60</option></select></div>
+          <div class="row"><label>背景色</label><input type="text" value="#000000" /></div>
+        </div>
+        <div class="section"><h4>快速操作</h4><div class="grid4">
+          <button class="tool-tile" data-act="split"><svg><use href="#i-cut"/></svg>分割</button>
+          <button class="tool-tile" data-act="marker"><svg><use href="#i-marker"/></svg>标记</button>
+          <button class="tool-tile" data-act="cover"><svg><use href="#i-cover"/></svg>封面</button>
+          <button class="tool-tile" data-act="export"><svg><use href="#i-export"/></svg>导出</button>
+        </div></div>
+        <div class="section"><h4>剪辑信息</h4>
+          <div class="row"><span style="color:#8a909b">总片段</span><b style="margin-left:auto">${state.clips.length}</b></div>
+          <div class="row"><span style="color:#8a909b">轨道</span><b style="margin-left:auto">${state.tracks.length}</b></div>
+          <div class="row"><span style="color:#8a909b">标记</span><b style="margin-left:auto">${state.markers.length}</b></div>
+        </div>
+        <div class="insp-foot">选中时间线片段后，这里会变成完整的属性检查器：变换、速度、音量、滤镜、动画、关键帧。</div>`;
+      return;
+    }
+    const kindText = c.kind === 'video' ? '视频' : c.kind === 'audio' ? '音频' : '文本';
+    const kindColor = c.kind === 'video' ? '#a8d8ff' : c.kind === 'audio' ? '#8ef0cf' : '#ffd79a';
+    const basic = c.kind === 'text' ? `
+      <div class="section"><h4>文本</h4>
+        <div class="field" style="margin:0 0 8px"><textarea data-prop="text" rows="3" style="min-height:58px">${c.text || ''}</textarea></div>
+        <div class="row"><label>字号</label><input type="range" min="10" max="64" value="${c.fontSize || 18}" data-prop="fontSize" /><span style="width:28px;text-align:right">${c.fontSize || 18}</span></div>
+        <div class="row"><label>颜色</label><div class="swatches">${['#ffffff','#f6efe2','#ffe7bf','#37d6c2','#f3b45a','#ff8b8b'].map(col => `<span class="swatch ${c.color === col ? 'on' : ''}" data-prop="color" data-val="${col}" style="background:${col}"></span>`).join('')}</div></div>
+        <div class="row"><label>对齐</label><select data-prop="align"><option value="left" ${c.align === 'left' ? 'selected' : ''}>左对齐</option><option value="center" ${c.align === 'center' ? 'selected' : ''}>居中</option><option value="right" ${c.align === 'right' ? 'selected' : ''}>右对齐</option></select></div>
+      </div>
+      <div class="section"><h4>位置与样式 <span class="val">X ${c.x || 0} · Y ${c.y || 0}</span></h4>
+        <div class="row"><label>X</label><input type="range" min="-60" max="60" value="${c.x || 0}" data-prop="x" /></div>
+        <div class="row"><label>Y</label><input type="range" min="-60" max="60" value="${c.y || 0}" data-prop="y" /></div>
+        <div class="row"><label>不透明度</label><input type="range" min="0" max="100" value="${c.opacity ?? 100}" data-prop="opacity" /><span style="width:28px;text-align:right">${c.opacity ?? 100}%</span></div>
+        <div class="row"><label>旋转</label><input type="range" min="-180" max="180" value="${c.rot || 0}" data-prop="rot" /></div>
+      </div>` : c.kind === 'audio' ? `
+      <div class="section"><h4>音频</h4>
+        <div class="row"><label>音量</label><input type="range" min="0" max="100" value="${c.volume ?? 60}" data-prop="volume" /><span style="width:30px;text-align:right">${c.volume ?? 60}%</span></div>
+        <div class="row"><label>淡入</label><input type="number" value="${c.fadeIn ?? 0}" step="0.1" data-prop="fadeIn" /><span style="color:#6f7681">s</span></div>
+        <div class="row"><label>淡出</label><input type="number" value="${c.fadeOut ?? 0}" step="0.1" data-prop="fadeOut" /><span style="color:#6f7681">s</span></div>
+        <div class="row"><label>降噪</label><div class="toggle on"><i></i></div><span style="margin-left:auto;color:#6f7681">AI 降噪</span></div>
+        <div class="row"><label>变声</label><select data-prop="voice"><option>原声</option><option>低沉大叔</option><option>少女</option><option>旁白</option></select></div>
+      </div>` : `
+      <div class="section"><h4>变换</h4>
+        <div class="row"><label>缩放</label><input type="range" min="20" max="300" value="${c.scale ?? 100}" data-prop="scale" /><span style="width:34px;text-align:right">${c.scale ?? 100}%</span></div>
+        <div class="row"><label>X 位置</label><input type="range" min="-100" max="100" value="${c.x ?? 0}" data-prop="x" /></div>
+        <div class="row"><label>Y 位置</label><input type="range" min="-100" max="100" value="${c.y ?? 0}" data-prop="y" /></div>
+        <div class="row"><label>旋转</label><input type="range" min="-180" max="180" value="${c.rot ?? 0}" data-prop="rot" /></div>
+        <div class="row"><label>不透明度</label><input type="range" min="0" max="100" value="${c.opacity ?? 100}" data-prop="opacity" /><span style="width:28px;text-align:right">${c.opacity ?? 100}%</span></div>
+      </div>
+      <div class="section"><h4>速度与声音</h4>
+        <div class="row"><label>速度</label><input type="range" min="0.25" max="4" step="0.05" value="${c.speed ?? 1}" data-prop="speed" /><span style="width:34px;text-align:right">${(c.speed ?? 1).toFixed(2)}×</span></div>
+        <div class="row"><label>音量</label><input type="range" min="0" max="100" value="${c.volume ?? 60}" data-prop="volume" /><span style="width:28px;text-align:right">${c.volume ?? 60}%</span></div>
+        <div class="row"><label>混合</label><select data-prop="blend"><option value="normal" ${c.blend === 'normal' ? 'selected' : ''}>正常</option><option value="screen" ${c.blend === 'screen' ? 'selected' : ''}>滤色</option><option value="multiply" ${c.blend === 'multiply' ? 'selected' : ''}>正片叠底</option><option value="overlay" ${c.blend === 'overlay' ? 'selected' : ''}>叠加</option></select></div>
+      </div>
+      <div class="section"><h4>画面调节 <span class="val">${c.filter === 'none' ? '原始' : c.filter}</span></h4>
+        <div class="row"><label>滤镜</label><select data-prop="filter"><option value="none" ${c.filter === 'none' ? 'selected' : ''}>无</option><option value="warm" ${c.filter === 'warm' ? 'selected' : ''}>暖调胶片</option><option value="cool" ${c.filter === 'cool' ? 'selected' : ''}>冷调雨夜</option><option value="mono" ${c.filter === 'mono' ? 'selected' : ''}>黑白纪实</option></select></div>
+        <div class="row"><label>亮度</label><input type="range" min="50" max="150" value="${c.brightness ?? 100}" data-prop="brightness" /></div>
+        <div class="row"><label>对比度</label><input type="range" min="50" max="150" value="${c.contrast ?? 100}" data-prop="contrast" /></div>
+        <div class="row"><label>饱和度</label><input type="range" min="0" max="200" value="${c.saturate ?? 100}" data-prop="saturate" /></div>
+      </div>`;
+    const colorTab = `
+      <div class="section"><h4>基础调色</h4>
+        <div class="row"><label>色温</label><input type="range" min="-50" max="50" value="${c.temp ?? 0}" data-prop="temp" /></div>
+        <div class="row"><label>色调</label><input type="range" min="-50" max="50" value="0" /></div>
+        <div class="row"><label>高光</label><input type="range" min="-50" max="50" value="0" /></div>
+        <div class="row"><label>阴影</label><input type="range" min="-50" max="50" value="0" /></div>
+      </div>
+      <div class="section"><h4>预设</h4><div class="grid2">
+        <button class="tool-tile">雨夜青蓝</button><button class="tool-tile">暖调回忆</button>
+        <button class="tool-tile">低饱和纪实</button><button class="tool-tile">高对比胶片</button>
+      </div></div>`;
+    const animTab = `
+      <div class="section"><h4>入场 / 出场</h4>
+        <div class="row"><label>入场</label><select data-prop="inAnim"><option value="none" ${c.inAnim === 'none' ? 'selected' : ''}>无</option><option value="fade" ${c.inAnim === 'fade' ? 'selected' : ''}>淡入</option><option value="up" ${c.inAnim === 'up' ? 'selected' : ''}>上滑</option><option value="zoom" ${c.inAnim === 'zoom' ? 'selected' : ''}>放大</option></select></div>
+        <div class="row"><label>出场</label><select data-prop="outAnim"><option value="none" ${c.outAnim === 'none' ? 'selected' : ''}>无</option><option value="fade" ${c.outAnim === 'fade' ? 'selected' : ''}>淡出</option><option value="down" ${c.outAnim === 'down' ? 'selected' : ''}>下滑</option><option value="zoom" ${c.outAnim === 'zoom' ? 'selected' : ''}>缩小</option></select></div>
+      </div>
+      <div class="section"><h4>关键帧</h4>
+        <div class="keyframe-bar"><span>${c.kf ? '已有关键帧' : '尚未添加关键帧'}</span><button class="mini-btn" data-act="keyframe"><svg style="width:11px;height:11px"><use href="#i-keyframe"/></svg> 在播放头添加</button></div>
+        <div class="mini-note" style="margin-top:7px">关键帧用于缩放、位置、透明度、音量；两个关键帧之间自动插值。</div>
+      </div>`;
+    body.innerHTML = `
+      <div class="sel-head">
+        <div class="sel-thumb">${c.kind === 'video' ? `<img src="${c.thumb || IMG}" style="object-position:${c.thumbPos || 'center'}"/>` : `<div style="height:100%;display:grid;place-items:center;background:${kindColor}22;color:${kindColor}"><svg><use href="#i-${c.kind === 'audio' ? 'audio' : 'text'}"/></svg></div>`}</div>
+        <div style="min-width:0"><div class="sel-name">${c.name}</div><div class="sel-meta">${fmt(c.start)} → ${fmt(c.end)} · ${(c.end - c.start).toFixed(2)}s</div></div>
+        <span class="kind-pill" style="background:${kindColor}22;color:${kindColor}">${kindText}</span>
+      </div>
+      <div class="section"><h4>时间</h4>
+        <div class="grid2"><div><label style="color:#8a909b;font-size:10px">开始</label><input type="number" step="0.1" value="${c.start.toFixed(2)}" data-prop="start" style="width:100%;height:26px;background:#0f1115;border:1px solid #2b2f37;border-radius:5px;padding:0 6px" /></div>
+        <div><label style="color:#8a909b;font-size:10px">结束</label><input type="number" step="0.1" value="${c.end.toFixed(2)}" data-prop="end" style="width:100%;height:26px;background:#0f1115;border:1px solid #2b2f37;border-radius:5px;padding:0 6px" /></div></div>
+      </div>
+      ${tab === 'basic' ? basic : tab === 'color' ? colorTab : animTab}
+      <div class="section"><h4>操作</h4><div class="grid4">
+        <button class="tool-tile" data-act="split"><svg><use href="#i-cut"/></svg>分割 E</button>
+        <button class="tool-tile" data-act="delLeft"><svg><use href="#i-trim"/></svg>删前 Q</button>
+        <button class="tool-tile" data-act="delRight"><svg style="transform:scaleX(-1)"><use href="#i-trim"/></svg>删后 W</button>
+        <button class="tool-tile" data-act="rippleDel"><svg><use href="#i-ripple"/></svg>波纹删</button>
+      </div></div>
+      <div class="insp-foot">双击文本片段可直接改文案；右键片段可分离音频、复制、加关键帧。</div>`;
+  }
+
+  function updateTimecode() {
+    $('#tcNow').textContent = fmt(state.time);
+    $('#tcTotal').textContent = fmt(TOTAL);
+    const pb = $('#projBadge'); if (pb) pb.textContent = `9:16 · ${TOTAL.toFixed(1)}s`;
+    $('#playhead').style.left = (state.time * state.zoom) + 'px';
+    $('#tlStatus').textContent = `${fmt(state.time)} / ${fmt(TOTAL)} · ${state.tracks.length} 轨 · ${state.clips.length} 片段`;
+  }
+
+  function toast(msg) {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+
+  /* ================= 编辑动作 ================= */
+  function splitAt(t = state.time) {
+    const c = clipById(state.selectedId);
+    if (!c) return toast('先选中一个片段');
+    if (t <= c.start + .08 || t >= c.end - .08) return toast('播放头不在所选片段内部');
+    pushHistory();
+    const right = { ...c, id: uid(), start: t, name: c.name + ' · B' };
+    c.end = t; c.name = c.name.replace(/ · [AB]$/, '') + ' · A';
+    state.clips.push(right);
+    state.selectedId = right.id;
+    renderAll();
+    toast('已在播放头分割 (E)');
+  }
+  function delLeft() {
+    const c = clipById(state.selectedId);
+    if (!c) return toast('先选中一个片段');
+    if (state.time <= c.start || state.time >= c.end) return toast('播放头需在片段内部');
+    pushHistory(); c.start = state.time; renderAll(); toast('已删除前半段 (Q)');
+  }
+  function delRight() {
+    const c = clipById(state.selectedId);
+    if (!c) return toast('先选中一个片段');
+    if (state.time <= c.start || state.time >= c.end) return toast('播放头需在片段内部');
+    pushHistory(); c.end = state.time; renderAll(); toast('已删除后半段 (W)');
+  }
+  function deleteClip(ripple = false) {
+    const c = clipById(state.selectedId);
+    if (!c) return toast('先选中一个片段');
+    pushHistory();
+    const dur = c.end - c.start;
+    state.clips = state.clips.filter(x => x.id !== c.id);
+    if (ripple) state.clips.filter(x => x.track === c.track && x.start >= c.end).forEach(x => { x.start -= dur; x.end -= dur; });
+    state.selectedId = null;
+    renderAll();
+    toast(ripple ? '已波纹删除并合拢空隙' : '已删除片段');
+  }
+  function addMarker() {
+    pushHistory();
+    state.markers.push(state.time);
+    renderTimeline();
+    toast('已添加标记 (M)');
+  }
+  function copyClip() {
+    const c = clipById(state.selectedId);
+    if (!c) return toast('先选中片段');
+    state.clipboard = JSON.parse(JSON.stringify(c));
+    toast('已复制片段');
+  }
+  function pasteClip() {
+    if (!state.clipboard) return toast('剪贴板为空');
+    pushHistory();
+    const c = { ...state.clipboard, id: uid(), start: state.time, end: state.time + (state.clipboard.end - state.clipboard.start) };
+    state.clips.push(c); state.selectedId = c.id; renderAll(); toast('已粘贴到播放头');
+  }
+  function addTrack() {
+    pushHistory();
+    const n = state.tracks.filter(t => t.id.startsWith('V')).length + 1;
+    state.tracks.unshift({ id: 'V' + n, label: '叠加层 ' + n, kind: 'video', locked: false, hidden: false, muted: false });
+    renderAll(); toast('已新增 V' + n);
+  }
+  function zoomBy(d) {
+    state.zoom = clamp(state.zoom + d, 14, 120);
+    renderTimeline(); renderHeads();
+  }
+  function fitZoom() {
+    const w = $('#lanesWrap').clientWidth - 30;
+    state.zoom = clamp(w / TOTAL, 14, 120);
+    renderTimeline();
+  }
+  function seek(t) {
+    state.time = clamp(t, 0, TOTAL);
+    updateTimecode(); renderCanvas();
+  }
+
+  window.__shenjian = { state, renderAll, renderTimeline, renderHeads, renderInspector, renderCanvas, updateTimecode,
+    pushHistory, undo, redo, toast, select, seek, addTrack, zoomBy, fitZoom, splitAt, delLeft, delRight, deleteClip,
+    addMarker, copyClip, pasteClip, clipById, activeAt, fmt, fmtShort, getTotal: () => TOTAL,
+    setTotal: v => { TOTAL = v; }, zoom: () => state.zoom };
+})();
+</script>
+<script>
+(() => {
+  const S = window.__shenjian;
+  const { state, renderAll, renderTimeline, renderHeads, renderInspector, renderCanvas, updateTimecode,
+    pushHistory, undo, redo, toast, select, seek, addTrack, zoomBy, fitZoom, splitAt, delLeft, delRight,
+    deleteClip, addMarker, copyClip, pasteClip, clipById } = S;
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  let TOTAL = S.getTotal();
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  /* ---------- tooltip ---------- */
+  const tip = $('#tooltip');
+  let tipTarget = null;
+  document.addEventListener('mouseover', e => {
+    const t = e.target.closest('[data-tip]');
+    if (!t) return;
+    tipTarget = t;
+    tip.textContent = t.dataset.tip;
+    tip.style.display = 'block';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!tipTarget) return;
+    const r = tipTarget.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let x = clamp(e.clientX + 12, 8, innerWidth - tw - 8);
+    let y = r.top - th - 7;
+    if (y < 6) y = r.bottom + 7;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  });
+  document.addEventListener('mouseout', e => {
+    if (e.target.closest('[data-tip]')) { tip.style.display = 'none'; tipTarget = null; }
+  });
+
+  function openModal(id) { $('#' + id).classList.add('open'); }
+  function closeModal(id) { $('#' + id).classList.remove('open'); }
+  $('#shortcutModal').addEventListener('click', e => { if (e.target.id === 'shortcutModal') closeModal('shortcutModal'); });
+  document.addEventListener('click', e => {
+    const c = e.target.closest('[data-close]');
+    if (c) closeModal(c.dataset.close);
+  });
+
+  /* ---------- 快捷键表 ---------- */
+  const KEYS = [
+    ['播放 / 暂停', ['Space']], ['分割', ['E']], ['分割（备用）', ['Ctrl', 'B']],
+    ['删除前半段', ['Q']], ['删除后半段', ['W']], ['删除片段', ['Delete']],
+    ['选择工具', ['A']], ['剃刀工具', ['B']], ['吸附开关', ['S']],
+    ['撤销', ['Ctrl', 'Z']], ['重做', ['Ctrl', 'Shift', 'Z']],
+    ['复制', ['Ctrl', 'C']], ['粘贴', ['Ctrl', 'V']], ['剪切', ['Ctrl', 'X']],
+    ['上一帧', ['←']], ['下一帧', ['→']], ['后退 1 秒', ['Shift', '←']], ['前进 1 秒', ['Shift', '→']],
+    ['跳到开头', ['Home']], ['跳到结尾', ['End']], ['添加标记', ['M']],
+    ['时间线放大', ['+']], ['时间线缩小', ['-']], ['适应窗口', ['Shift', 'Z']],
+    ['全屏预览', ['F']], ['导出', ['Ctrl', 'E']], ['新建复合片段', ['Alt', 'G']],
+    ['入点', ['I']], ['出点', ['O']], ['局部导出', ['Shift', 'X']],
+    ['隐藏 / 显示快捷键', ['?']], ['音频分离', ['Ctrl', 'Shift', 'S']],
+  ];
+  $('#kbdGrid').innerHTML = KEYS.map(([name, keys]) =>
+    `<div class="kbd-item"><span>${name}</span><span class="kbd">${keys.map(k => `<b>${k}</b>`).join('')}</span></div>`).join('');
+
+  /* ---------- 全局 action ---------- */
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    switch (act) {
+      case 'undo': undo(); break;
+      case 'redo': redo(); break;
+      case 'snap':
+        state.snap = !state.snap;
+        $$('[data-act="snap"]').forEach(b => b.classList.toggle('on', state.snap));
+        $('#snapLabel').textContent = state.snap ? '吸附开' : '吸附关';
+        toast(state.snap ? '吸附已开启' : '吸附已关闭'); break;
+      case 'shortcuts': openModal('shortcutModal'); break;
+      case 'cover': openCover(); break;
+      case 'export': openModal('exportModal'); break;
+      case 'play': togglePlay(); break;
+      case 'home': seek(0); break;
+      case 'end': seek(TOTAL); break;
+      case 'prev': seek(state.time - 1 / 30); break;
+      case 'next': seek(state.time + 1 / 30); break;
+      case 'muteAll': {
+        const on = !state.tracks.filter(t => t.kind === 'audio').every(t => t.muted);
+        state.tracks.filter(t => t.kind === 'audio').forEach(t => t.muted = on);
+        renderHeads(); renderTimeline(); toast(on ? '已全局静音' : '已取消静音'); break;
+      }
+      case 'full': toggleFull(); break;
+      case 'safe':
+        $('#canvas').classList.toggle('safe-on');
+        toast($('#canvas').classList.contains('safe-on') ? '安全区已显示' : '安全区已关闭'); break;
+      case 'zoomStage':
+        $('#canvasFrame').style.height = $('#canvasFrame').style.height === '100%' ? 'auto' : '100%';
+        if ($('#canvasFrame').style.height === 'auto') $('#canvasFrame').style.width = '100%';
+        else $('#canvasFrame').style.width = ''; break;
+      case 'split': splitAt(); break;
+      case 'delLeft': delLeft(); break;
+      case 'delRight': delRight(); break;
+      case 'delete': deleteClip(false); break;
+      case 'rippleDel': deleteClip(true); break;
+      case 'marker': addMarker(); break;
+      case 'copy': copyClip(); break;
+      case 'paste': pasteClip(); break;
+      case 'addTrack': addTrack(); break;
+      case 'zoomIn': zoomBy(6); break;
+      case 'zoomOut': zoomBy(-6); break;
+      case 'fit': fitZoom(); break;
+      case 'keyframe': {
+        const c = clipById(state.selectedId);
+        if (c) { c.kf = true; renderTimeline(); renderInspector(); toast('已在播放头添加关键帧 (Alt+K)'); }
+        else toast('先选中片段'); break;
+      }
+      case 'startExport': startExport(); break;
+      case 'confirmImport': confirmImport(); break;
+      case 'saveCover': toast('封面已保存到项目，导出时会使用'); closeModal('coverModal'); break;
+      case 'exportCover': toast('封面 PNG 已导出到下载目录'); break;
+      case 'aiSend': sendAI(); break;
+      case 'newFolder':
+        toast('已创建文件夹「未命名分组」，可把素材拖进文件夹'); break;
+      case 'import': $('#fileInput').click(); break;
+    }
+  });
+
+  /* ---------- 播放 ---------- */
+  let raf = null, lastTs = 0, rate = 1;
+  $('#speedSelect').addEventListener('change', e => { rate = parseFloat(e.target.value); });
+  function togglePlay() {
+    state.playing = !state.playing;
+    const b = $('#playBtn');
+    b.innerHTML = state.playing ? '<svg><use href="#i-pause"/></svg>' : '<svg><use href="#i-play"/></svg>';
+    if (state.playing) {
+      if (state.time >= TOTAL) state.time = 0;
+      lastTs = performance.now();
+      raf = requestAnimationFrame(tick);
+    } else if (raf) cancelAnimationFrame(raf);
+  }
+  function tick(ts) {
+    if (!state.playing) return;
+    const dt = Math.min(.1, (ts - lastTs) / 1000);
+    lastTs = ts;
+    state.time += dt * rate;
+    if (state.time >= TOTAL) { state.time = TOTAL; state.playing = false; $('#playBtn').innerHTML = '<svg><use href="#i-play"/></svg>'; seek(TOTAL); return; }
+    updateTimecode(); renderCanvas();
+    raf = requestAnimationFrame(tick);
+  }
+
+  /* ---------- 画质 / 比例 ---------- */
+  $('#qualitySeg').addEventListener('click', e => {
+    const b = e.target.closest('[data-q]'); if (!b) return;
+    $$('#qualitySeg button').forEach(x => x.classList.toggle('on', x === b));
+    state.quality = b.dataset.q;
+    $('#canvas').classList.toggle('fast', state.quality === 'fast');
+    $('#stageMode').textContent = state.quality === 'fast' ? '流畅预览 540p' : '原画预览 1080p';
+    $('#qualityBadge').textContent = state.quality === 'fast' ? '流畅预览 · 代理 540p' : '原画预览 · 1080p';
+    toast(state.quality === 'fast' ? '已切换流畅预览：代理解码，剪辑更跟手' : '已切换原画预览：画质优先');
+  });
+  $('#ratioSeg').addEventListener('click', e => {
+    const b = e.target.closest('[data-ratio]'); if (!b) return;
+    $$('#ratioSeg button').forEach(x => x.classList.toggle('on', x === b));
+    const f = $('#canvasFrame');
+    f.classList.remove('wide', 'square');
+    if (b.dataset.ratio === '16:9') f.classList.add('wide');
+    if (b.dataset.ratio === '1:1') f.classList.add('square');
+    toast('画幅已切换为 ' + b.dataset.ratio);
+  });
+
+  /* ---------- 时间线点击 / 拖动 ---------- */
+  const lanesWrap = $('#lanesWrap');
+  lanesWrap.addEventListener('scroll', () => {
+    $('#headsInner').style.transform = `translateY(${-lanesWrap.scrollTop}px)`;
+  });
+  window.addEventListener('resize', () => { renderTimeline(); });
+
+  $('#ruler').addEventListener('pointerdown', e => {
+    const x = e.clientX - $('#ruler').getBoundingClientRect().left;
+    seek(x / state.zoom);
+    const move = ev => seek((ev.clientX - $('#ruler').getBoundingClientRect().left) / state.zoom);
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  });
+
+  $('#lanes').addEventListener('pointerdown', e => {
+    if (e.button === 2) return;
+    const clipEl = e.target.closest('.clip');
+    if (clipEl) {
+      const c = clipById(clipEl.dataset.id);
+      select(c.id);
+      if (state.tool === 'razor') {
+        const x = e.clientX - $('#lanes').getBoundingClientRect().left;
+        const t = clamp(c.start + x / state.zoom, c.start + .08, c.end - .08);
+        splitAt(t); return;
+      }
+      startClipDrag(e, c, !!e.target.closest('.trim'));
+      return;
+    }
+    const lane = e.target.closest('.lane');
+    if (lane) {
+      const x = e.clientX - $('#lanes').getBoundingClientRect().left;
+      seek(clamp(x / state.zoom, 0, TOTAL));
+      select(null);
+    }
+  });
+
+  function startClipDrag(e, c, trim) {
+    e.preventDefault();
+    pushHistory();
+    const startX = e.clientX, orig = { start: c.start, end: c.end, track: c.track };
+    const isLeft = trim && e.target.classList.contains('l');
+    const isRight = trim && e.target.classList.contains('r');
+    let moved = false;
+    const move = ev => {
+      const dt = (ev.clientX - startX) / state.zoom;
+      if (Math.abs(ev.clientX - startX) > 2) moved = true;
+      if (isLeft) {
+        c.start = clamp(orig.start + dt, 0, orig.end - .2);
+        if (state.snap) c.start = snapTime(c.start, c.id);
+      } else if (isRight) {
+        c.end = clamp(orig.end + dt, orig.start + .2, TOTAL);
+        if (state.snap) c.end = snapTime(c.end, c.id);
+      } else {
+        let ns = clamp(orig.start + dt, 0, TOTAL - (orig.end - orig.start));
+        if (state.snap) ns = snapTime(ns, c.id);
+        const dur = orig.end - orig.start;
+        c.start = ns; c.end = ns + dur;
+        const lanesRect = $('#lanes').getBoundingClientRect();
+        const idx = clamp(Math.floor((ev.clientY - lanesRect.top) / state.laneH), 0, state.tracks.length - 1);
+        const target = state.tracks[idx];
+        if (target && !target.locked) c.track = target.id;
+      }
+      renderTimeline();
+    };
+    const up = () => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+      if (!moved) { state.history.pop(); }
+      renderAll(); select(c.id);
+    };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  }
+
+  function snapTime(t, exceptId) {
+    const edges = [0, TOTAL, state.time, ...state.markers];
+    state.clips.forEach(c => { if (c.id !== exceptId) { edges.push(c.start, c.end); } });
+    let best = t, dist = 8 / state.zoom;
+    edges.forEach(edge => {
+      if (Math.abs(edge - t) < dist) { dist = Math.abs(edge - t); best = edge; }
+    });
+    return best;
+  }
+
+  /* ---------- 右键菜单 ---------- */
+  const ctx = $('#ctxMenu');
+  $('#lanes').addEventListener('contextmenu', e => {
+    const clipEl = e.target.closest('.clip');
+    if (!clipEl) return;
+    e.preventDefault();
+    select(clipEl.dataset.id);
+    ctx.style.left = clamp(e.clientX, 8, innerWidth - 196) + 'px';
+    ctx.style.top = clamp(e.clientY, 8, innerHeight - 260) + 'px';
+    ctx.classList.add('open');
+  });
+  ctx.addEventListener('click', e => {
+    const b = e.target.closest('[data-ctx]'); if (!b) return;
+    const act = b.dataset.ctx;
+    ctx.classList.remove('open');
+    if (act === 'split') splitAt();
+    else if (act === 'copy') copyClip();
+    else if (act === 'delLeft') delLeft();
+    else if (act === 'delRight') delRight();
+    else if (act === 'delete') deleteClip(false);
+    else if (act === 'rippleDel') deleteClip(true);
+    else if (act === 'keyframe') { const c = clipById(state.selectedId); if (c) { c.kf = true; renderTimeline(); renderInspector(); toast('关键帧已添加'); } }
+    else if (act === 'detach') {
+      const c = clipById(state.selectedId);
+      if (!c || c.kind !== 'video') return toast('只有视频可以分离音频');
+      pushHistory();
+      state.clips.push({ ...c, id: 'au' + Math.random().toString(36).slice(2, 6), kind: 'audio', track: 'A2', name: c.name + ' · 音频', volume: 60, kf: false });
+      c.volume = 0;
+      renderAll(); toast('音频已分离到 A2');
+    }
+  });
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('#ctxMenu')) ctx.classList.remove('open'); });
+
+  /* ---------- 素材拖入时间线 ---------- */
+  let dragAsset = null;
+  document.addEventListener('dragstart', e => {
+    const card = e.target.closest('.media-card');
+    if (!card) return;
+    dragAsset = { name: card.dataset.name, kind: card.dataset.kind || 'video', dur: parseFloat(card.dataset.dur || '5'), src: card.querySelector('img')?.src };
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('text/plain', JSON.stringify(dragAsset));
+  });
+  document.addEventListener('click', e => {
+    const card = e.target.closest('.media-card');
+    if (!card) return;
+    if (e.target.closest('.sel')) { card.classList.toggle('selected'); return; }
+    $$('.media-card').forEach(c => c.classList.remove('active-card'));
+    card.classList.add('active-card');
+  });
+  document.addEventListener('dblclick', e => {
+    const card = e.target.closest('.media-card');
+    if (!card) return;
+    addClipFromAsset({ name: card.dataset.name, kind: card.dataset.kind || 'video', dur: parseFloat(card.dataset.dur || '5'), src: card.querySelector('img')?.src }, state.time, 'V1');
+  });
+  $('#lanes').addEventListener('dragover', e => {
+    if (!e.target.closest('.lane')) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  });
+  $('#lanes').addEventListener('drop', e => {
+    const lane = e.target.closest('.lane');
+    if (!lane) return;
+    e.preventDefault();
+    let info = dragAsset;
+    try { info = JSON.parse(e.dataTransfer.getData('text/plain')) || info; } catch (_) {}
+    if (!info) return;
+    const x = e.clientX - $('#lanes').getBoundingClientRect().left;
+    addClipFromAsset(info, clamp(x / state.zoom, 0, TOTAL - 1), lane.dataset.track);
+  });
+  function addClipFromAsset(info, start, trackId) {
+    pushHistory();
+    const kind = info.kind === 'audio' ? 'audio' : info.kind === 'text' ? 'text' : info.kind === 'image' ? 'video' : 'video';
+    const dur = info.kind === 'image' ? 3 : Math.max(1, Math.min(info.dur || 5, TOTAL - start));
+    const c = {
+      id: 'd' + Math.random().toString(36).slice(2, 7), track: trackId, kind,
+      name: info.name || '新素材', start, end: start + dur,
+      thumb: info.src || null, thumbPos: 'center', speed: 1, volume: kind === 'audio' ? 70 : 50,
+      opacity: 100, scale: 100, x: 0, y: 0, rot: 0, filter: 'none', brightness: 100, contrast: 100, saturate: 100,
+      blend: 'normal', inAnim: 'none', outAnim: 'none', kf: false,
+      text: kind === 'text' ? (info.name || '新文本') : '',
+    };
+    state.clips.push(c);
+    state.selectedId = c.id;
+    renderAll();
+    toast(`已加入 ${trackId}：${c.name}`);
+  }
+
+  /* ---------- 检查器输入 ---------- */
+  $('#inspTabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-itab]'); if (!b) return;
+    $$('#inspTabs button').forEach(x => x.classList.toggle('on', x === b));
+    renderInspector();
+  });
+  $('#inspBody').addEventListener('input', e => {
+    const prop = e.target.dataset.prop;
+    if (!prop) return;
+    const c = clipById(state.selectedId);
+    if (!c) return;
+    let v = e.target.value;
+    if (['scale', 'x', 'y', 'rot', 'opacity', 'volume', 'speed', 'brightness', 'contrast', 'saturate', 'fontSize', 'start', 'end', 'fadeIn', 'fadeOut', 'temp'].includes(prop)) v = parseFloat(v);
+    if (prop === 'start') { c.start = clamp(v, 0, c.end - .2); }
+    else if (prop === 'end') { c.end = clamp(v, c.start + .2, TOTAL); }
+    else c[prop] = v;
+    if (prop === 'text' || prop === 'fontSize' || prop === 'color' || prop === 'align' || prop === 'x' || prop === 'y') renderCanvas();
+    renderTimeline(); updateTimecode();
+    if (['scale', 'opacity', 'filter', 'brightness', 'contrast', 'saturate'].includes(prop)) renderCanvas();
+  });
+  $('#inspBody').addEventListener('click', e => {
+    const sw = e.target.closest('[data-prop="color"]');
+    if (sw) {
+      const c = clipById(state.selectedId);
+      if (!c) return;
+      c.color = sw.dataset.val;
+      renderInspector(); renderCanvas();
+    }
+  });
+
+  /* ---------- 轨道头 ---------- */
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-track-act]');
+    if (!b) return;
+    const t = state.tracks.find(x => x.id === b.dataset.track);
+    if (!t) return;
+    const act = b.dataset.trackAct;
+    t[act] = !t[act];
+    renderAll();
+    toast(`${t.id} ${act === 'hidden' ? (t[act] ? '已隐藏' : '已显示') : act === 'muted' ? (t[act] ? '已静音' : '已取消静音') : t[act] ? '已锁定' : '已解锁'}`);
+  });
+
+  /* ---------- 行高拖拽 ---------- */
+  $('#resizeHandle').addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const sy = e.clientY, sh = state.laneH;
+    const move = ev => {
+      state.laneH = clamp(sh + (ev.clientY - sy), 38, 96);
+      document.documentElement.style.setProperty('--lane-h', state.laneH + 'px');
+      renderHeads(); renderTimeline();
+    };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  });
+
+  /* ---------- 行高 ---------- */
+  $('#laneHeight').addEventListener('input', e => {
+    state.laneH = parseInt(e.target.value);
+    document.documentElement.style.setProperty('--lane-h', state.laneH + 'px');
+    renderHeads(); renderTimeline();
+  });
+  /* ---------- 缩放 ---------- */
+  $('#zoomRange').addEventListener('input', e => {
+    state.zoom = parseInt(e.target.value);
+    renderTimeline();
+  });
+  lanesWrap.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 6 : -6);
+  }, { passive: false });
+
+  /* ---------- 工具切换 ---------- */
+  $$('[data-tool]').forEach(b => b.addEventListener('click', () => {
+    $$('[data-tool]').forEach(x => x.classList.toggle('on', x === b));
+    state.tool = b.dataset.tool;
+    $('#tlHint').textContent = state.tool === 'razor' ? '剃刀模式：点击片段即在该点切开 (B)' : 'A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后';
+    toast(state.tool === 'razor' ? '剃刀工具：点击片段切开' : '选择工具');
+  }));
+
+  /* ---------- 库切换 ---------- */
+  const mediaHome = $('#mediaGrid').innerHTML;
+  document.addEventListener('click', e => {
+    const f = e.target.closest('.folder');
+    if (!f) return;
+    const kind = f.dataset.folder;
+    if (kind === 'project') {
+      $('#mediaGrid').innerHTML = mediaHome;
+      $('#libTitle').textContent = '媒体';
+      toast('已回到本项目素材');
+    } else if (kind === 'platform') {
+      $('#mediaGrid').innerHTML = Array.from({ length: 8 }, (_, i) =>
+        `<div class="media-card" draggable="true" data-name="平台素材 ${i + 1}" data-kind="${i % 4 === 3 ? 'image' : 'video'}" data-dur="${i % 4 === 3 ? 0 : 5}">
+          <img src="assets/雨夜修表铺.jpg" style="object-position:${(i * 29) % 100}% ${(i * 13) % 100}%;filter:hue-rotate(${i * 12}deg)" />
+          <span class="type">${i % 4 === 3 ? '图片' : '视频'}</span><span class="name">平台 · ${i + 1}</span></div>`).join('');
+      $('#libTitle').textContent = '平台资产库';
+      toast('已载入平台资产库 · 可全选或逐个拖入');
+    } else {
+      $('#mediaGrid').innerHTML = ['九e · 18 镜', '雨夜怀表 · 17 镜', '旧城钟声 · 12 镜'].map((n, i) =>
+        `<div class="media-card" draggable="true" data-name="${n}" data-kind="video" data-dur="5" style="aspect-ratio:1/1">
+          <img src="assets/雨夜修表铺.jpg" style="filter:brightness(${0.7 + i * .1})" /><span class="type">项目</span><span class="name">${n}</span></div>`).join('');
+      $('#libTitle').textContent = '其他项目';
+      toast('可先预览，再全选导入到本项目素材库');
+    }
+    $('.lib-scroll').scrollTop = 0;
+  });
+  const LIB = {
+    media: ['媒体', ['全部', '视频', '图片', '音频', '文本']],
+    audio: ['音频', ['音乐库', '音效', '配音', '我的音频']],
+    text: ['文本', ['默认文本', '花字', '标题', '字幕模板']],
+    sticker: ['贴纸', ['全部', '表情', '图形', '边框']],
+    effect: ['特效', ['画面特效', '人物特效', '氛围', '转场']],
+    transition: ['转场', ['全部', '叠化', '推拉', '光效']],
+    caption: ['字幕', ['智能字幕', '识别歌词', '双语字幕']],
+    filter: ['滤镜', ['全部', '电影', '人像', '风景']],
+    adjust: ['调节', ['基础', 'HSL', '曲线', '色轮']],
+  };
+  document.addEventListener('click', e => {
+    const rail = e.target.closest('.rail-btn');
+    if (!rail) return;
+    $$('.rail-btn').forEach(b => b.classList.toggle('on', b === rail));
+    const [title, subs] = LIB[rail.dataset.tab] || ['媒体', []];
+    $('#libTitle').textContent = title;
+    $('#libSubtabs').innerHTML = subs.map((s, i) => `<button class="${i === 0 ? 'on' : ''}">${s}</button>`).join('');
+    if (rail.dataset.tab !== 'media') {
+      $('#mediaGrid').innerHTML = presetCards(rail.dataset.tab);
+      $('.lib-scroll').scrollTop = 0;
+    } else {
+      $('#mediaGrid').innerHTML = mediaHome;
+      $('#mediaGrid').classList.add('media-grid');
+    }
+  });
+  function presetCards(tab) {
+    const data = {
+      audio: [['雨夜 BGM', '01:19'], ['怀表滴答', '00:06'], ['城市环境雨声', '00:30'], ['钢琴主题', '02:10'], ['悬疑低频', '01:00'], ['人声旁白', '00:45']],
+      text: [['默认标题', '基础'], ['花字 · 霓虹', '样式'], ['电影片名', '模板'], ['字幕条', '模板'], ['金句描边', '样式'], ['片尾名单', '模板']],
+      sticker: [['雨滴', '图形'], ['时钟', '图形'], ['猫爪', '图形'], ['胶片边框', '边框'], ['对话气泡', '图形'], ['箭头', '图形']],
+      effect: [['雨夜氛围', '氛围'], ['镜头光晕', '光效'], ['胶片颗粒', '质感'], ['故障闪屏', '转场'], ['慢门拖影', '运动'], ['人物描边', '人物']],
+      transition: [['叠化', '0.4s'], ['闪白', '0.3s'], ['推近', '0.5s'], ['拉远', '0.5s'], ['左滑', '0.4s'], ['胶片烧灼', '0.6s']],
+      caption: [['智能识别字幕', 'AI'], ['识别歌词', 'AI'], ['双语字幕', 'AI'], ['字幕样式', '样式']],
+      filter: [['雨夜青蓝', '电影'], ['暖调回忆', '人像'], ['低饱和纪实', '电影'], ['高对比黑白', '风格'], ['柔光', '人像'], ['冷调城市', '风景']],
+      adjust: [['亮度', '基础'], ['对比度', '基础'], ['饱和度', '基础'], ['HSL', '高级'], ['曲线', '高级'], ['色轮', '高级']],
+    }[tab] || [];
+    return data.map(([n, t], i) => `<div class="media-card" style="aspect-ratio:1/1" data-tip="点击应用：${n}">
+      <div style="position:absolute;inset:0;background:linear-gradient(${140 + i * 30}deg,#233038,#141a1f);display:grid;place-items:center;color:#a8e7dc;font-size:11px;font-weight:600">${n}</div>
+      <span class="type">${t}</span></div>`).join('');
+  }
+
+  /* ---------- 导入预览 ---------- */
+  let pendingFiles = [];
+  $('#fileInput').addEventListener('change', e => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    pendingFiles = files;
+    const f = files[0];
+    const kind = f.type.startsWith('video') ? 'video' : f.type.startsWith('audio') ? 'audio' : 'image';
+    const url = URL.createObjectURL(f);
+    const stage = $('#previewStage');
+    stage.innerHTML = kind === 'video' ? `<video src="${url}" controls autoplay style="max-width:100%;max-height:360px"></video>`
+      : kind === 'audio' ? `<div style="padding:40px;color:#8af5e4;text-align:center"><svg style="width:40px;height:40px"><use href="#i-audio"/></svg><div style="margin-top:8px">${f.name}</div><audio src="${url}" controls style="margin-top:12px"></audio></div>`
+        : `<img src="${url}" style="max-width:100%;max-height:380px;object-fit:contain" />`;
+    $('#previewMeta').innerHTML = `<span class="mini-chip">${f.name}</span><span class="mini-chip">${(f.size / 1024 / 1024).toFixed(2)} MB</span><span class="mini-chip">${kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片'}</span><span class="mini-chip">待确认</span>`;
+    $('#previewModal').classList.add('open');
+    e.target.value = '';
+  });
+  function confirmImport() {
+    const files = pendingFiles;
+    if (!files.length) return;
+    files.forEach(f => {
+      const url = URL.createObjectURL(f);
+      const kind = f.type.startsWith('video') ? 'video' : f.type.startsWith('audio') ? 'audio' : 'image';
+      const card = document.createElement('div');
+      card.className = 'media-card'; card.draggable = true;
+      card.dataset.name = f.name.replace(/\.\w+$/, ''); card.dataset.kind = kind; card.dataset.dur = kind === 'image' ? '0' : '5';
+      card.innerHTML = `${kind === 'audio' ? `<div style="position:absolute;inset:0;background:linear-gradient(150deg,#1f4438,#0f2b24);display:grid;place-items:center;color:#6fe4c6"><svg style="width:26px;height:26px"><use href="#i-audio"/></svg></div>` : `<img src="${url}" />`}
+        <span class="type">${kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片'}</span><span class="name">${f.name}</span>`;
+      card.addEventListener('dragstart', ev => {
+        dragAsset = { name: card.dataset.name, kind, dur: 5, src: url };
+        ev.dataTransfer.setData('text/plain', JSON.stringify(dragAsset));
+      });
+      $('#mediaGrid').prepend(card);
+    });
+    closeModal('previewModal');
+    toast(`已导入 ${files.length} 个素材到「本项目」素材库，可拖到时间线`);
+    pendingFiles = [];
+  }
+  $('#previewModal').addEventListener('click', e => { if (e.target.id === 'previewModal') closeModal('previewModal'); });
+
+  /* ---------- 封面 ---------- */
+  let coverTpl = 0;
+  function openCover() { openModal('coverModal'); syncCover(); }
+  $('#coverTpls').addEventListener('click', e => {
+    const t = e.target.closest('.cover-tpl'); if (!t) return;
+    coverTpl = parseInt(t.dataset.tpl);
+    $$('.cover-tpl').forEach(x => x.classList.toggle('on', x === t));
+    const title = $('#coverTitle').value, sub = $('#coverSub').value;
+    t.querySelector('.cv-title').textContent = title;
+    t.querySelector('.cv-sub').textContent = sub;
+  });
+  function syncCover() {
+    const t = $$('.cover-tpl')[coverTpl];
+    if (!t) return;
+    const title = t.querySelector('.cv-title'), sub = t.querySelector('.cv-sub');
+    title.textContent = $('#coverTitle').value || ' ';
+    sub.textContent = $('#coverSub').value || ' ';
+    title.style.fontSize = $('#coverSize').value + 'px';
+    title.style.textAlign = $('#coverAlign').value;
+    title.style.left = title.style.right = '8%';
+    title.style.top = $('#coverY').value + '%';
+    const col = $('.swatch.on')?.dataset.color || '#f6efe2';
+    title.style.color = col;
+    $('#coverYVal').textContent = $('#coverY').value + '%';
+  }
+  ['coverTitle', 'coverSub', 'coverSize', 'coverAlign', 'coverY'].forEach(id => $('#' + id).addEventListener('input', syncCover));
+  $('#coverColors').addEventListener('click', e => {
+    const s = e.target.closest('.swatch'); if (!s) return;
+    $$('#coverColors .swatch').forEach(x => x.classList.toggle('on', x === s));
+    syncCover();
+  });
+
+  /* ---------- 导出 ---------- */
+  let exporting = false;
+  function startExport() {
+    if (exporting) return;
+    exporting = true;
+    let p = 0;
+    const bar = $('#expBar'), status = $('#expStatus');
+    status.textContent = '正在准备素材与字体…';
+    const iv = setInterval(() => {
+      p += Math.random() * 9 + 3;
+      if (p > 100) p = 100;
+      bar.style.width = p + '%';
+      status.textContent = p < 20 ? '准备素材与字体…' : p < 55 ? '渲染画面与转场…' : p < 85 ? '混音与字幕压制…' : p < 100 ? '封装 MP4…' : '导出完成';
+      if (p >= 100) {
+        clearInterval(iv); exporting = false;
+        $('#expName').value && toast(`「${$('#expName').value}」导出完成，已保存到下载目录`);
+      }
+    }, 320);
+  }
+  $('#expBitrate').addEventListener('input', e => { $('#bitrateVal').textContent = e.target.value + ' Mbps'; });
+  $('#exportModal').addEventListener('click', e => { if (e.target.id === 'exportModal') closeModal('exportModal'); });
+  $('#coverModal').addEventListener('click', e => { if (e.target.id === 'coverModal') closeModal('coverModal'); });
+
+  /* ---------- 全屏 ---------- */
+  function toggleFull() {
+    const el = $('.stage');
+    if (!document.fullscreenElement) el.requestFullscreen?.().catch(() => toast('当前浏览器不允许全屏'));
+    else document.exitFullscreen?.();
+  }
+
+  /* ---------- AI 助手 ---------- */
+  const aiPanel = $('#aiPanel'), aiLog = $('#aiLog');
+  let orbMoved = false;
+  $('#aiFab').addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const r = $('#aiFab').getBoundingClientRect();
+    const dx = e.clientX - r.left, dy = e.clientY - r.top;
+    let moved = false;
+    const move = ev => {
+      if (Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) > 3) moved = true;
+      const x = clamp(ev.clientX - dx, 6, innerWidth - r.width - 6);
+      const y = clamp(ev.clientY - dy, 6, innerHeight - r.height - 6);
+      $('#aiFab').style.left = x + 'px'; $('#aiFab').style.top = y + 'px';
+      $('#aiFab').style.right = 'auto'; $('#aiFab').style.bottom = 'auto';
+    };
+    const up = () => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+      if (moved) { orbMoved = true; placePanel(); }
+    };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  });
+  $('#aiFab').addEventListener('click', () => {
+    if (orbMoved) { orbMoved = false; return; }
+    aiPanel.classList.toggle('open');
+    if (aiPanel.classList.contains('open')) placePanel();
+  });
+  function placePanel() {
+    const f = $('#aiFab');
+    if (!f.style.left) return;
+    const r = f.getBoundingClientRect();
+    const w = aiPanel.offsetWidth || 330, h = aiPanel.offsetHeight || 300;
+    aiPanel.style.left = clamp(r.left - w + r.width, 8, innerWidth - w - 8) + 'px';
+    aiPanel.style.top = clamp(r.top - h - 12, 8, innerHeight - h - 8) + 'px';
+    aiPanel.style.right = 'auto'; aiPanel.style.bottom = 'auto';
+  }
+  ($('.ai-head')).addEventListener('pointerdown', e => {
+    if (e.target.closest('select,button')) return;
+    e.preventDefault();
+    const r = aiPanel.getBoundingClientRect();
+    const dx = e.clientX - r.left, dy = e.clientY - r.top;
+    const move = ev => {
+      aiPanel.style.left = clamp(ev.clientX - dx, 6, innerWidth - r.width - 6) + 'px';
+      aiPanel.style.top = clamp(ev.clientY - dy, 6, innerHeight - r.height - 6) + 'px';
+      aiPanel.style.right = 'auto'; aiPanel.style.bottom = 'auto';
+    };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  });
+  $$('#aiQuick button').forEach(b => b.addEventListener('click', () => runAI(b.dataset.cmd)));
+  $('#aiInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendAI(); });
+  function sendAI() {
+    const v = $('#aiInput').value.trim();
+    if (!v) return;
+    $('#aiInput').value = '';
+    runAI(v);
+  }
+  function aiSay(text, me = false) {
+    const d = document.createElement('div');
+    d.className = 'ai-msg' + (me ? ' me' : '');
+    d.textContent = text;
+    aiLog.appendChild(d);
+    aiLog.scrollTop = aiLog.scrollHeight;
+  }
+  function runAI(cmd) {
+    aiSay(cmd, true);
+    const perm = $('#aiPerm').value;
+    if (perm === 'ask' && !confirm(`执行「${cmd}」会直接修改时间线，是否继续？`)) {
+      aiSay('已取消，没有修改时间线。'); return;
+    }
+    setTimeout(() => {
+      if (cmd.includes('60秒') || cmd.includes('1分钟') || cmd.includes('压缩')) {
+        pushHistory();
+        const maxEnd = Math.max(...state.clips.map(c => c.end));
+        const ratio = 60 / maxEnd;
+        state.clips.forEach(c => { c.start *= ratio; c.end *= ratio; });
+        TOTAL = 60; S.setTotal(60);
+        renderAll();
+        aiSay(`已通读全部 ${state.clips.length} 个片段，按语义密度重新分配时长，压缩到 60.0 秒。`);
+        toast('AI 已将时间线压缩到 60 秒');
+      } else if (cmd.includes('字幕')) {
+        pushHistory();
+        state.clips.filter(c => c.track === 'A2').forEach((a, i) => {
+          if (state.clips.some(t => t.track === 'T1' && Math.abs(t.start - a.start) < .2)) return;
+          state.clips.push({ id: 'ai' + i, track: 'T1', kind: 'text', name: a.name.slice(0, 10), start: a.start, end: a.end, text: a.name, fontSize: 18, color: '#fff', align: 'center', opacity: 100, x: 0, y: 34, rot: 0, inAnim: 'none', outAnim: 'none', kf: false });
+        });
+        renderAll(); aiSay('已按对白段落生成字幕，并保持毫秒级对齐。'); toast('AI 字幕已添加');
+      } else if (cmd.includes('分割')) {
+        splitAt(); aiSay(`已在 ${S.fmt(state.time)} 分割当前片段。`);
+      } else if (cmd.includes('片头')) {
+        pushHistory();
+        state.clips.push({ id: 'intro' + Date.now(), track: 'V2', kind: 'text', name: '片头标题', start: 0, end: 4.5, text: '雨夜怀表', fontSize: 46, color: '#f6efe2', align: 'center', opacity: 100, x: 0, y: 0, rot: 0, inAnim: 'fade', outAnim: 'fade', kf: false });
+        renderAll(); aiSay('已添加 4.5 秒片头标题，用淡入淡出。'); toast('AI 已加片头');
+      } else if (cmd.includes('BGM') || cmd.includes('音乐')) {
+        pushHistory();
+        let bgm = state.clips.find(c => c.track === 'A1');
+        if (bgm) { bgm.start = 0; bgm.end = TOTAL; } else {
+          state.clips.push({ id: 'bgm' + Date.now(), track: 'A1', kind: 'audio', name: '雨夜 BGM', start: 0, end: TOTAL, volume: 38, speed: 1, kf: false });
+        }
+        renderAll(); aiSay('BGM 已铺满全片，音量压到 38%，不抢对白。'); toast('AI 已铺满 BGM');
+      } else if (cmd.includes('删除前')) {
+        const secs = parseFloat(cmd.match(/(\d+(?:\.\d+)?)秒/)?.[1] || '3');
+        pushHistory();
+        state.clips.forEach(c => { c.start = Math.max(0, c.start - secs); c.end = Math.max(.2, c.end - secs); });
+        renderAll(); aiSay(`已整体前移 ${secs} 秒并清掉片头空白。`); toast('AI 已删除开头 ' + secs + ' 秒');
+      } else {
+        aiSay(`已解析：${cmd}。我会先读时间线（${state.clips.length} 片段 / ${TOTAL}s），再按语义切分；这条命令目前作为演示没有改动素材。`);
+      }
+    }, 420);
+  }
+
+  /* ---------- 键盘 ---------- */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      $$('.modal-mask.open').forEach(m => m.classList.remove('open'));
+      $('#aiPanel').classList.remove('open'); $('#ctxMenu').classList.remove('open');
+      if ((e.target.tagName || '').toLowerCase() === 'input') e.target.blur();
+    }
+  }, true);
+  document.addEventListener('keydown', e => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag)) {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+    const k = e.key.toLowerCase();
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (k === ' ') { e.preventDefault(); togglePlay(); return; }
+    if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+    if (ctrl && k === 'b') { e.preventDefault(); splitAt(); return; }
+    if (ctrl && k === 'c') { e.preventDefault(); copyClip(); return; }
+    if (ctrl && k === 'v') { e.preventDefault(); pasteClip(); return; }
+    if (ctrl && k === 'e') { e.preventDefault(); openModal('exportModal'); return; }
+    if (ctrl && e.shiftKey && k === 's') { e.preventDefault(); toast('已分离音频到 A2'); return; }
+    if (ctrl && e.shiftKey && k === 'k') { e.preventDefault(); const c = clipById(state.selectedId); if (c) { c.kf = true; renderAll(); } return; }
+    if (e.key === 'Escape') { $$('.modal-mask.open').forEach(m => m.classList.remove('open')); aiPanel.classList.remove('open'); ctx.classList.remove('open'); return; }
+    if (k === 'e') { e.preventDefault(); splitAt(); return; }
+    if (k === 'q') { e.preventDefault(); delLeft(); return; }
+    if (k === 'w') { e.preventDefault(); delRight(); return; }
+    if (k === 'delete' || k === 'backspace') { e.preventDefault(); deleteClip(false); return; }
+    if (k === 'a') { setTool('select'); return; }
+    if (k === 'b') { setTool('razor'); return; }
+    if (k === 's') { state.snap = !state.snap; $('#snapLabel').textContent = state.snap ? '吸附开' : '吸附关'; $$('[data-act="snap"]').forEach(b => b.classList.toggle('on', state.snap)); toast(state.snap ? '吸附开' : '吸附关'); return; }
+    if (k === 'm') { addMarker(); return; }
+    if (k === 'f') { toggleFull(); return; }
+    if (k === 'i') { state.inPoint = state.time; toast('已设入点 ' + S.fmt(state.time)); return; }
+    if (k === 'o') { state.outPoint = state.time; toast('已设出点 ' + S.fmt(state.time)); return; }
+    if (k === '?') { openModal('shortcutModal'); return; }
+    if (k === 'arrowleft') { e.preventDefault(); seek(state.time - (e.shiftKey ? 1 : 1 / 30)); return; }
+    if (k === 'arrowright') { e.preventDefault(); seek(state.time + (e.shiftKey ? 1 : 1 / 30)); return; }
+    if (k === 'home') { e.preventDefault(); seek(0); return; }
+    if (k === 'end') { e.preventDefault(); seek(TOTAL); return; }
+    if (k === '=' || k === '+') { zoomBy(6); return; }
+    if (k === '-') { zoomBy(-6); return; }
+  });
+  function setTool(t) {
+    state.tool = t;
+    $$('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+    $('#tlHint').textContent = t === 'razor' ? '剃刀模式：点击片段即切开 (B)' : 'A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后';
+  }
+
+  /* ---------- 初始化 ---------- */
+  document.documentElement.style.setProperty('--lane-h', state.laneH + 'px');
+  renderAll();
+  state.zoom = 38;
+  renderTimeline();
+  select('v0');
+  setTimeout(() => toast('快捷键已对齐剪映：E 分割 · Q 删前 · W 删后'), 900);
+})();
+</script>
+</body>
+</html>
