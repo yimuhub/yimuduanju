@@ -84,7 +84,7 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { id: 'detach-audio', label: '分离 / 还原音频', keys: 'Ctrl+Shift+S', macKeys: '⌘⇧S', status: 'ready' },
       { id: 'speed-panel', label: '速度面板', keys: 'Ctrl+R', macKeys: '⌘R', status: 'ready', note: '聚焦属性条速度选择器' },
-      { id: 'curve-speed', label: '曲线变速', keys: 'Shift+B', status: 'todo', note: '需要关键帧速度曲线模型；当前仅支持匀速变速' },
+      { id: 'curve-speed', label: '曲线变速', keys: 'Shift+B', status: 'ready', note: '等长源片段逐段速度折线逼近；拆分后是真片段，可预览、保存与导出' },
       { id: 'volume-up', label: '音量微调 +', keys: 'Ctrl+.', macKeys: '⌘.', status: 'ready' },
       { id: 'volume-down', label: '音量微调 -', keys: 'Ctrl+,', macKeys: '⌘,', status: 'ready' },
       { id: 'group', label: '组合片段', keys: 'Ctrl+G', macKeys: '⌘G', status: 'ready', note: '以 bindGroup 实现整组同动' },

@@ -73,6 +73,7 @@ import { StudioImportDialog } from './StudioImportDialog';
 import { StudioCoverDialog } from './StudioCoverDialog';
 import { StudioTooltipLayer } from './StudioTooltipLayer';
 import { TimelineKeyframePanel } from './TimelineKeyframePanel';
+import { TimelineSpeedCurvePanel } from './TimelineSpeedCurvePanel';
 import { Filmstrip, StillFrame, useThumbnails, useWaveform, Waveform } from './timeline-media';
 import {
   exportTimeline,
@@ -581,6 +582,7 @@ export const StudioTimeline = () => {
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [kfOpen, setKfOpen] = useState(false);
+  const [curveOpen, setCurveOpen] = useState(false);
   /** 剪映 A/B 工具模式：select=选择，split=点击即切 */
   const [toolMode, setToolMode] = useState<'select' | 'split'>('select');
   const toolModeRef = useRef(toolMode);
@@ -1935,9 +1937,12 @@ export const StudioTimeline = () => {
       }
       if (e.shiftKey && key === 'b') {
         e.preventDefault();
-        toast.info('曲线变速尚未接入：当前速度属性为整段匀速；曲线需要速度关键帧模型', {
-          duration: 2400,
-        });
+        const clip = clipsRef.current.find((c) => c.id === selectedRef.current[0]);
+        if (!clip || clip.track !== 'video' || !clip.sourceUrl) {
+          toast.info('先选中一个画面片段，曲线变速只作用于画面', { duration: 1800 });
+          return;
+        }
+        setCurveOpen(true);
         return;
       }
       if (e.key === ' ') return;
@@ -2573,6 +2578,17 @@ export const StudioTimeline = () => {
         >
           <Gauge size={11} />
           关键帧{selectedClip.keyframes?.length ? ` ${selectedClip.keyframes.length}` : ''}
+        </button>
+      ) : null}
+      {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+        <button
+          type="button"
+          className="tl-prop-btn"
+          onClick={() => setCurveOpen(true)}
+          title="曲线变速：等长源片段逐段速度折线，拆分后可继续编辑"
+        >
+          <Gauge size={11} />
+          曲线变速
         </button>
       ) : null}
       {selectedClip.track === 'video' && selectedClip.sourceShotId ? (
@@ -3459,7 +3475,7 @@ export const StudioTimeline = () => {
             </div>
             <p className="tl-modal-note">
               本条总表与剪映专业版桌面端对齐：A/B 工具、E/⌘B 分割、Q/W 左右删除、←/→ 帧步进、↑/↓ 剪辑点、Shift+Z 适配、N 吸附、I/O 入出点。
-              关键帧（⌘K / Alt+K）已接入缩放/平移/旋转，预览与导出同一份数据；曲线变速（Shift+B）仍需速度曲线模型，未接入。
+              关键帧（⌘K / Alt+K）已接入缩放/平移/旋转；曲线变速（Shift+B）用等长源片段逐段速度折线逼近，拆分后即真片段，可预览与导出。
               片段属性（速度 / 音量 / 转场 / 锁定 / 启用）在时间线上方属性条调整；轨道头可重命名、静音、独奏、锁定。
             </p>
           </div>
@@ -3476,6 +3492,10 @@ export const StudioTimeline = () => {
           }}
           onClose={() => setKfOpen(false)}
         />
+      ) : null}
+
+      {curveOpen && selectedClip && selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+        <TimelineSpeedCurvePanel clip={selectedClip} onClose={() => setCurveOpen(false)} />
       ) : null}
 
       {pickerOpen ? (

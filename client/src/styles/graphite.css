@@ -14030,3 +14030,99 @@ select.nw-input {
   font-size: 10px;
   cursor: pointer;
 }
+
+/* 曲线变速（分段折线） */
+.tl-curve-modal {
+  width: min(680px, 94vw);
+}
+.tl-curve-tip {
+  margin: 0 0 10px;
+  color: var(--fg-3);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.tl-curve-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tl-curve-presets button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--fg-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.tl-curve-presets button:hover {
+  border-color: rgba(255, 196, 0, 0.5);
+  color: #ffc400;
+}
+.tl-curve-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tl-curve-bar {
+  display: grid;
+  grid-template-columns: 22px 1fr 62px 52px;
+  align-items: center;
+  gap: 8px;
+}
+.tl-curve-idx {
+  color: var(--fg-4);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+.tl-curve-bar input[type='range'] {
+  accent-color: #ffc400;
+}
+.tl-curve-num {
+  width: 100%;
+  height: 25px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.tl-curve-sec {
+  color: var(--fg-4);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: right;
+}
+.tl-curve-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.tl-curve-actions button {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: 10px;
+  cursor: pointer;
+}
+.tl-curve-spacer {
+  flex: 1;
+}
+.tl-curve-apply {
+  border-color: rgba(255, 196, 0, 0.55) !important;
+  background: rgba(255, 196, 0, 0.1) !important;
+  color: #ffc400 !important;
+  font-weight: 600 !important;
+}

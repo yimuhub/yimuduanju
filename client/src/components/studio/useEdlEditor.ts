@@ -182,6 +182,8 @@ export interface EdlEditor {
 
   /** 变速：同轨后续片段随长度变化整体平移 */
   setClipSpeed: (id: string, speed: number) => void;
+  /** 曲线变速：把选中画面按等长源片段拆成 N 段，逐段速度形成折线曲线（真实可导出） */
+  setClipSpeedCurve: (id: string, speeds: number[]) => boolean;
   setClipVolume: (id: string, volume: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
   setClipLocked: (id: string, locked: boolean) => void;
@@ -993,6 +995,60 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const setClipSpeedCurve = useCallback(
+    (id: string, speeds: number[]): boolean => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked || src.track !== 'video' || !src.sourceUrl) return false;
+      const list = speeds
+        .map((v) => Math.round(clamp(v, 0.25, 4) * 100) / 100)
+        .filter((v) => Number.isFinite(v));
+      if (list.length < 2) return false;
+      const srcDur = Math.max(0.1, src.outPoint - src.inPoint);
+      const slice = srcDur / list.length;
+      const oldSpan = clipSpan(src);
+      const end = src.timelineStart + oldSpan;
+      const pieces: TimelineClip[] = [];
+      let cursor = src.timelineStart;
+      for (let i = 0; i < list.length; i += 1) {
+        const inPoint = round3(src.inPoint + slice * i);
+        const outPoint = i === list.length - 1 ? src.outPoint : round3(src.inPoint + slice * (i + 1));
+        const span = Math.max(MIN_SPAN, (outPoint - inPoint) / list[i]);
+        const identity = newClipIdentity('clip');
+        pieces.push({
+          ...src,
+          ...identity,
+          inPoint,
+          outPoint,
+          speed: list[i],
+          timelineStart: round3(cursor),
+          // 分段后每段可见时间重新计时，旧关键帧不再成立
+          keyframes: null,
+          transition: i === list.length - 1 ? src.transition : null,
+          bindGroup: null,
+        });
+        cursor += span;
+      }
+      const delta = cursor - end;
+      const next = before
+        .filter((c) => c.id !== id)
+        .map((c) => {
+          if (
+            c.track === src.track &&
+            (c.lane ?? 0) === (src.lane ?? 0) &&
+            c.timelineStart >= end - 1e-6
+          ) {
+            return { ...c, timelineStart: round3(Math.max(0, c.timelineStart + delta)) };
+          }
+          return c;
+        })
+        .concat(pieces);
+      commit(next, `曲线变速 ${list.length} 段`, before);
+      return true;
+    },
+    [commit],
+  );
+
   const setClipVolume = useCallback(
     (id: string, volume: number) => {
       const before = clipsRef.current;
@@ -1372,6 +1428,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     attachAudio,
     packVideo,
     setClipSpeed,
+    setClipSpeedCurve,
     setClipVolume,
     setClipTransition,
     setClipLocked,
