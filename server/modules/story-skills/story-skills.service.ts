@@ -96,6 +96,13 @@ export interface BoardsShot {
   screenDirection?: string;
   durationSeconds: number;
   dialogue?: string;
+  /** Pavo 式分镜导演字段（缺省由旧数据兼容，不强制历史任务都有） */
+  shotTitle?: string;
+  dialogueSpeaker?: string;
+  dialogueTone?: string;
+  soundDesign?: string;
+  continuityNote?: string;
+  negativePrompt?: string;
   visualPrompt?: string;
   /** 逐镜场景环境（结构化中文事实），物化时经 normalizeSceneEnv 收敛后落库 */
   sceneEnv?: Record<string, string>;

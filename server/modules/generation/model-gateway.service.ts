@@ -459,8 +459,11 @@ export class ModelGatewayService {
   async generateImage(
     params: ImageGenerateParams,
     providerName?: string,
+    keyId?: string | null,
   ): Promise<{ url: string; width?: number; height?: number }[]> {
-    const provider = await this.getProvider(providerName, 'image');
+    // 一把 Key = 一条车道：图片也必须认领具体 Key，否则 4 把 Key 只会用最新一把，
+    // 并发数看起来是 4、实际全挤在同一条账号上。
+    const provider = await this.getProvider(providerName, 'image', keyId ?? undefined);
     // P2-3 mock 通道（免 Key）：占位 PNG 也必须按项目画幅出，否则演练时
     // 「16:9 项目全是方图」会一路带到时间线与导出，真出问题才发现不了。
     const imageAspect = normalizeAspect(params.aspectRatio ?? DEFAULT_ASPECT_RATIO);

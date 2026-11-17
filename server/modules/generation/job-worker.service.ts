@@ -229,7 +229,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
   }> {
     if (!this.started) return { mode: 'off', concurrency: 0, waiting: 0, active: 0 };
     if (this.inlineMode || !this.queue) {
-      return { mode: 'inline', concurrency: 1, waiting: 0, active: 0 };
+      return {
+        mode: 'inline',
+        concurrency: Math.max(1, this.inlineActive.size),
+        waiting: 0,
+        active: this.inlineActive.size,
+      };
     }
     const [waiting, active] = await Promise.all([
       this.queue.getWaitingCount().catch(() => 0),
@@ -726,6 +731,26 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
+    /*
+     * 图片走同一批 Agnes Key，也必须按「一把 Key 一条车道」刷新。
+     * 旧实现 image 固定 4：4 把 Key 时刚好相等，但 1 把 Key 时仍开 4 条并发，
+     * 4 个请求抢同一把 concurrency=1 的车道 → 3 个被判 busy 反复回队。
+     */
+    const imageBaseline = Math.max(
+      1,
+      Math.min(32, Number(process.env.JOB_CONCURRENCY_IMAGE) || 4),
+    );
+    const imageNext = Math.max(
+      1,
+      Math.min(32, capacity.slots > 0 ? capacity.slots : imageBaseline),
+    );
+    const imagePrev = GenerationService.typeCap('image');
+    if (imagePrev !== imageNext) {
+      GenerationService.setTypeCap('image', imageNext);
+      this.logger.log(
+        `图片并发上限 ${imagePrev} → ${imageNext}（图片车道：${capacity.keys} 把 Key / ${capacity.slots} 条额度）`,
+      );
+    }
     return next;
   }
 
@@ -872,13 +897,34 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         for (const [id, at] of this.recentlyClaimed) {
           if (now - at > 30_000) this.recentlyClaimed.delete(id);
         }
-        const exclude = [...this.recentlyClaimed.keys()];
-        const job = await this.generationService.claimNextPendingJob(exclude, isBlocked);
-        console.log(`[TICK] claim=${job?.id ?? 'null'}`);
-        if (job) {
+        /*
+         * 内联模式不是「只能跑一个」。旧实现 await this.process(job) 一张一张跑，
+         * 4 把 Key × concurrency=1 的 4 条车道永远只有 1 条在动 —— 用户点「生成全部」
+         * 也只能看着 16 张排队。这里改成按类型上限并行派发：认领后立刻返回继续认领，
+         * 由 claimNextPendingJob 按 running 数卡住每类上限（image 4 / video N）。
+         */
+        const maxDispatch = 12;
+        for (let i = 0; i < maxDispatch; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const job = await this.generationService.claimNextPendingJob(
+            [...this.recentlyClaimed.keys()],
+            isBlocked,
+          );
+          console.log(`[TICK] claim=${job?.id ?? 'null'}`);
+          if (!job) break;
           this.recentlyClaimed.set(job.id, Date.now());
           this.logger.log(`认领任务 ${job.id}（${job.jobType}）`);
-          await this.process(job);
+          this.inlineActive.set(job.id, job.jobType);
+          void this.process(job)
+            .catch((e: Error) => {
+              this.logger.error(`任务 ${job.id} 执行异常：${e.message}`);
+              return this.generationService
+                .settleJobFailure(job.id, e.message)
+                .catch(() => undefined);
+            })
+            .finally(() => {
+              this.inlineActive.delete(job.id);
+            });
         }
       }
     } finally {
@@ -904,7 +950,9 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    * 每 3 秒又被队首选中，后面的剧本/图片任务永远轮不到（running 0% 假死）。
    * 30 秒窗口足够让同队其它任务插进来，也不影响正常重试。
    */
-  private readonly recentlyClaimed = new Map<string, number>();
+  private recentlyClaimed = new Map<string, number>();
+  /** 内联模式在途任务（jobId → jobType）：用于并发可见性与不重复认领 */
+  private readonly inlineActive = new Map<string, string>();
   /** 进程启动时刻：前 20 秒不认领，避免「bootstrap 失败但 worker 已启动」的
    *  半死进程把任务改成 running 后退出，留下永久 0% 的孤儿任务。 */
   private readonly bootAt = Date.now();
@@ -1712,17 +1760,69 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       `图片任务 ${job.id} 画幅 ${effectiveAspect}（size 由网关按项目画幅推导）；` +
         `禁字/场景/构图约束已注入${isSheet ? '（四视图设定板固定 16:9 横版）' : ''}`,
     );
-    const images = await this.modelGateway.generateImage(
-      {
-        prompt: enrichedPrompt,
-        negativePrompt,
-        aspectRatio: effectiveAspect,
-        model: opts?.model,
-        referenceImages: refList.length > 0 ? refList : undefined,
-        seed,
-      },
-      providerName,
-    );
+    // 图片同样「一把 Key = 一条车道」：先领具体 Key，再带着它调网关。
+    // 旧实现只传 providerName，网关总是挑最新一条 Key —— 4 把 Key 只有 1 把在动，
+    // 界面上 4 条车道却全是 0，用户加 Key 也没有任何效果。
+    let leasedImageKeyId: string | undefined;
+    let imageProviderName = providerName;
+    {
+      /*
+       * 联邦池：4 把 Key 可能分散在「agnes13」「Agnes 官方 API」两个供应商下，
+       * 按单个 provider 租只能看到其中 2 把，另外 2 把永远闲置。
+       * 视频侧已经用 leaseForVideo 跨供应商并池，图片必须同源，否则用户看到的
+       * 「4 条车道」在图片环节仍然只有 2 条。
+       * 注意：providerName 为空时（路由走默认供应商）也必须进池，
+       * 否则 lease 整段被跳过，4 把 Key 一把都用不上。
+       */
+      const federated = await this.keyPool
+        .leaseForVideo(job.id, job.projectId)
+        .catch((e: Error) => {
+          this.logger.warn(`图片任务 ${job.id} 联邦池异常，回落单供应商：${e.message}`);
+          return null;
+        });
+      const lease = federated && federated.status !== 'no_keys'
+        ? federated
+        : providerName
+          ? await this.keyPool
+              .leaseByProviderName(providerName, job.id, job.projectId)
+              .catch((e: Error) => {
+                this.logger.warn(`图片任务 ${job.id} 领 Key 失败，退回供应商主 Key：${e.message}`);
+                return null;
+              })
+          : null;
+      if (lease && lease.status === 'leased') {
+        leasedImageKeyId = lease.keyId;
+        imageProviderName = lease.providerName ?? providerName;
+        this.logger.log(`图片任务 ${job.id} 认领密钥「${lease.label}」`);
+      } else if (lease && lease.status === 'busy') {
+        // 所有车道都在途：软等待，不把任务判失败，也不白扣一次生成。
+        await this.releaseTransient(job, '所有密钥车道均在途/冷却中', { soft: true });
+        return;
+      }
+    }
+    let images: { url: string; width?: number; height?: number }[];
+    try {
+      images = await this.modelGateway.generateImage(
+        {
+          prompt: enrichedPrompt,
+          negativePrompt,
+          aspectRatio: effectiveAspect,
+          model: opts?.model,
+          referenceImages: refList.length > 0 ? refList : undefined,
+          seed,
+        },
+        imageProviderName,
+        leasedImageKeyId,
+      );
+    } finally {
+      if (leasedImageKeyId) {
+        // 同步生图：请求结束即归还车道；不归还的话一把 Key 的 concurrency=1
+        // 会被一张图占满 30 分钟租约 TTL，后面 15 张全部排队等死。
+        await this.keyPool
+          .release(leasedImageKeyId)
+          .catch((e: Error) => this.logger.warn(`图片任务 ${job.id} 归还密钥失败：${e.message}`));
+      }
+    }
     const firstUrl = images[0]?.url;
     // data: 大 base64 不进 shots.startFrameUrl 也不原样塞入 outputData JSONB（防 TOAST 表膨胀）；统一先落盘成 /uploads/
     const stableUrl = firstUrl ? await this.ensureLocalUrl(job.projectId, firstUrl) : undefined;
@@ -2909,8 +3009,12 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
     const isVariant = (input: unknown) =>
       typeof (input as Record<string, unknown> | null)?.variantGroup === 'string';
 
-    // 旧数据兼容：未过门但已发起过视频生产的项目继续自动链；已过门的一律链
-    const hasVideoJobs = jobRows.some((j) => j.jobType === 'video');
+    // 旧数据兼容：未过门但已发起过视频生产的项目继续自动链；已过门的一律链。
+    // 注意必须排除 cancelled：历史清掉/用户取消的视频任务若还算「有视频任务」，
+    // 预览门会被永久绕过 —— 首帧没齐也直接开视频，正是用户反馈的「确认分镜就跳视频」。
+    const hasVideoJobs = jobRows.some(
+      (j) => j.jobType === 'video' && j.status !== 'cancelled',
+    );
     if (!approvals.storyboard && !hasVideoJobs) return;
 
     /* --------------------------------------------------------------
@@ -3956,6 +4060,24 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
             ...this.matchCastIds(cast, [`${b.visualPrompt ?? ''} ${b.dialogue ?? ''}`]),
           ]);
           const duration = b.durationSeconds;
+          // Pavo 式分镜：台词必须带说话人与语气，导演描述必须带声音/连续性。
+          // 旧实现只落 b.dialogue / b.visualPrompt 原文，UI 里就成了「不知道谁说的一句台词
+          // + 一句谁在做什么」，这是生成视频不伦不类的直接原因。
+          const speaker = (b.dialogueSpeaker ?? '').trim();
+          const tone = (b.dialogueTone ?? '').trim();
+          const dialogueLine = b.dialogue
+            ? speaker && speaker !== '无'
+              ? `${speaker}${tone ? `（${tone}）` : ''}：${b.dialogue}`
+              : b.dialogue
+            : '';
+          const detailedPrompt = [
+            b.shotTitle ? `【${b.shotTitle}】` : '',
+            b.visualPrompt ?? '',
+            b.soundDesign ? `声音设计：${b.soundDesign}` : '',
+            b.continuityNote ? `连续性：${b.continuityNote}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n');
           // eslint-disable-next-line no-await-in-loop
           await this.db.insert(shots).values({
             projectId: job.projectId,
@@ -3978,12 +4100,13 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
                     visualPrompt: b.visualPrompt,
                     shotSize: b.shotSize,
                   }),
-            dialogue: b.dialogue,
+            dialogue: dialogueLine,
             subtitleText: b.dialogue,
-            visualPrompt: b.visualPrompt,
+            visualPrompt: detailedPrompt,
+            negativePrompt: b.negativePrompt,
             // 逐镜场景环境（结构化事实）随分镜一起落库，首帧与视频提示词共用
             sceneEnv: normalizeSceneEnv(b.sceneEnv),
-            subject: b.visualPrompt?.slice(0, 200),
+            subject: (b.shotTitle || b.visualPrompt || '').slice(0, 200),
             characterIds: shotCast.length > 0 ? shotCast : sceneCast.slice(0, 2),
             status: 'draft',
             // 全局序号，不能写场内镜号：跨场重复会让时间线/画布按 [1,1,1,2,2,2,3]

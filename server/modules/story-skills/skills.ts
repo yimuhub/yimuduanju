@@ -258,7 +258,7 @@ export function renderAssetCatalog(catalog?: BoardsAssetCatalog | null): string 
  * 解析失败回落 parse_script。
  */
 export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出任何解释文字。数组每一项是**一个镜头**，按拍摄顺序排列，格式如下：
-[{"scene":"第一场 雨夜·外","location":"旧书店·内","segment":1,"segmentTitle":"推门而入","intent":"establish","spaceAnchor":"mid_mid","axisDirection":"left_to_right","cast":["林晚"],"props":["PROP001 怀表"],"shotSize":"wide","movement":"dolly","screenDirection":"left_to_right","durationSeconds":6,"dialogue":"","sceneEnv":{"timeOfDay":"雨夜 21:30","weather":"小雨","locationType":"内景","place":"旧书店，木书架沿左右墙排列，中央一张旧木桌，门在画面右后侧","lightSource":"门口暖黄台灯与窗外冷蓝天光","lightDirection":"暖光从画面左侧斜射，冷光从右后方窗透入","lightQuality":"柔和侧逆光，桌面有长条投影","colorPalette":"暖琥珀与冷蓝对比，低饱和","atmosphere":"雨雾与浮尘在光束里可见，玻璃上有水痕","spatialRelation":"林晚位于中景偏左，木桌在前景右下，门在右后方","composition":"三分法，左侧书架作前景遮挡","ambientSound":"雨打玻璃、木地板轻响、远处闷雷"},"visualPrompt":"林晚推门进来，雨从门缝灌进，暖黄台灯照亮左侧书架","beats":[{"from":0,"to":3,"description":"手推门，门缝透出暖光"},{"from":3,"to":6,"description":"跨进店内，回头看一眼门外"}]}]
+[{"scene":"第一场 雨夜·外","location":"旧书店·内","segment":1,"segmentTitle":"推门而入","shotTitle":"雨夜推门","intent":"establish","spaceAnchor":"mid_mid","axisDirection":"left_to_right","cast":["林晚"],"props":["PROP001 怀表"],"shotSize":"wide","movement":"dolly","screenDirection":"left_to_right","durationSeconds":6,"dialogue":"","dialogueSpeaker":"无","dialogueTone":"","soundDesign":"雨打玻璃、远处闷雷、门轴轻响","continuityNote":"林晚深蓝长衫保持湿润，怀表在她左手，光线由暖转冷","negativePrompt":"手指畸形、画面文字、字幕、现代物件、换脸","sceneEnv":{"timeOfDay":"雨夜 21:30","weather":"小雨","locationType":"内景","place":"旧书店，木书架沿左右墙排列，中央一张旧木桌，门在画面右后侧","lightSource":"门口暖黄台灯与窗外冷蓝天光","lightDirection":"暖光从画面左侧斜射，冷光从右后方窗透入","lightQuality":"柔和侧逆光，桌面有长条投影","colorPalette":"暖琥珀与冷蓝对比，低饱和","atmosphere":"雨雾与浮尘在光束里可见，玻璃上有水痕","spatialRelation":"林晚位于中景偏左，木桌在前景右下，门在右后方","composition":"三分法，左侧书架作前景遮挡","ambientSound":"雨打玻璃、木地板轻响、远处闷雷"},"visualPrompt":"中景，平视机位，35mm，镜头从门口向店内缓慢推入。林晚推门进来，雨从门缝灌进，湿发贴在额角；暖黄台灯把她左侧脸照亮，右后方窗透入冷蓝雨光，形成侧逆光轮廓；她跨过门槛、在木桌前停住、回头看一眼门外，最终落幅在门缝里一线冷雨。","beats":[{"from":0,"to":3,"description":"手推门，门缝透出暖光"},{"from":3,"to":6,"description":"跨进店内，回头看一眼门外"}]}]
 
 字段规则：
 - scene 相同 = 同一场；同一场里 segment 相同 = 同一片段。一段 = 同一空间内一段连续动作，时长 ≤15 秒、含 2-4 镜，超了就开新段。
@@ -269,6 +269,9 @@ export const BOARDS_JSON_CONTRACT = `只输出一个 JSON 数组，不要输出�
 - cast 只能写本镜真正出现在画面里的人物；props 只能写本镜真正看见的道具。清单外的名字一律不许写。
 - shotSize 只能是：extreme_close_up/close_up/medium_close_up/medium/wide/long；movement 只能是十种机位：static/pan/zoom/dolly/follow/retreat/orbit/crane/aerial/pov。
 - durationSeconds 4-15 整数；台词按约 4 字/秒估算，超 20 字必须拆镜或切听者反应镜。
+- shotTitle 给本镜起 4-8 字小标题；visualPrompt 必须是一段 120-220 字的导演描述，依次写清：景别→机位角度→镜头运动+焦段→主体动作起势/过程/落点→环境与光源方向/色温/明暗→色彩影调与质感→与上一镜的承接→最终落幅停在哪。禁止只写一句「谁在做什么」。
+- 有台词时 dialogueSpeaker 必填（角色名或「旁白」），dialogueTone 写语气与表演提示；无台词时 dialogueSpeaker 写「无」。
+- soundDesign 写清本镜环境音/BGM/关键音效的来源与强弱；continuityNote 写服装、道具、光线、时间的连续性；negativePrompt 写本镜必须避免的画面问题。
 - beats 每 3 秒一条，覆盖整镜时长，每条只写这一段的可见动作，台词放该段的 dialogue 里（无台词留空字符串）。
 - 【台词保真】dialogue 与 beats[].dialogue 必须逐字照抄剧本里的原句，不得翻译、改写、扩写或自行编造；剧本没写的台词一律留空字符串。
 - sceneEnv 是**每一镜必填**的结构化场景环境对象（字段见下方【场景描述】），字段值全部为简体中文字符串；没有剧本依据的字段写空字符串，不要省略对象、不要写 null、不要塞英文标签。`;
