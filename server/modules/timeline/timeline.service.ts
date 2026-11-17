@@ -29,6 +29,7 @@ import { buildTransitionFilter, planTransitions } from './transition-plan';
 import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
 import { scanTimelineIssues } from '@shared/timeline-issues';
 import { buildZoompanExpressions, normalizeVideoKeyframes } from '@shared/timeline-keyframes';
+import { expandCompounds } from '@shared/timeline-compound';
 import type {
   Asset,
   ExportTimelineResult,
@@ -301,6 +302,7 @@ export class TimelineService {
       text: row.text,
       keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
       reverse: Boolean(row.reverse),
+      compound: (row.compound as TimelineClip['compound']) ?? null,
       textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
       bindGroup: row.bindGroup,
       locked: row.locked,
@@ -377,6 +379,7 @@ export class TimelineService {
           text: c.text ?? null,
           keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
           reverse: Boolean(c.reverse),
+          compound: c.compound?.children?.length ? c.compound : null,
           bindGroup: c.bindGroup ?? null,
           textStyle: c.textStyle ?? null,
           locked: c.locked ?? false,
@@ -991,16 +994,22 @@ export class TimelineService {
     // overlay 模式：主链铺底，其余轨（非 alt、未关闭导出）按各自时间点叠加为画中画
     const overlayClips =
       dto.videoLaneMode === 'overlay'
-        ? allVideo.filter((c) => {
-            if (isMainLane(c)) return false;
-            const meta = metaOf(c);
-            return meta?.exportEnabled !== false && meta?.role !== 'alt';
-          })
+        ? expandCompounds(
+            allVideo.filter((c) => {
+              if (isMainLane(c)) return false;
+              const meta = metaOf(c);
+              return meta?.exportEnabled !== false && meta?.role !== 'alt';
+            }),
+          )
         : [];
-    const videoClips =
+    const pickedVideoClips =
       dto.videoLaneMode === 'main' || dto.videoLaneMode === 'overlay'
         ? allVideo.filter(isMainLane)
         : allVideo;
+    // 真复合片段在导出前展开成子片段：时间线只有一个整体，渲染仍是原素材
+    const videoClips = expandCompounds(pickedVideoClips).sort(
+      (a, b) => a.timelineStart - b.timelineStart,
+    );
     if (videoClips.length === 0) {
       throw new BadRequestException('主画面轨没有可导出的视频片段：请先生成镜头视频或把片段拖回主轨');
     }

@@ -89,7 +89,7 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
       { id: 'volume-down', label: '音量微调 -', keys: 'Ctrl+,', macKeys: '⌘,', status: 'ready' },
       { id: 'group', label: '组合片段', keys: 'Ctrl+G', macKeys: '⌘G', status: 'ready', note: '以 bindGroup 实现整组同动' },
       { id: 'ungroup', label: '取消组合', keys: 'Ctrl+Shift+G', macKeys: '⌘⇧G', status: 'ready' },
-      { id: 'compound', label: '新建复合片段', keys: 'Alt+G', status: 'partial', note: '当前等价于强绑定组：整组联动，但不能作为单个片段二次裁剪' },
+      { id: 'compound', label: '新建复合片段', keys: 'Alt+G', status: 'ready', note: '同轨相邻画面收成一个整体，可整体移动/裁剪；导出自动展开子片段' },
       { id: 'uncompound', label: '解除复合片段', keys: 'Alt+Shift+G', status: 'ready' },
       { id: 'keyframe', label: '添加关键帧', keys: 'Ctrl+K', macKeys: '⌘K', status: 'ready', note: '为选中画面在播放头添加运镜关键帧（缩放/平移/旋转），预览与导出共用数据' },
       { id: 'keyframe-panel', label: '关键帧面板', keys: 'Alt+K', status: 'ready', note: '逐帧编辑缩放/平移/旋转，可定位与删除' },

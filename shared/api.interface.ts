@@ -1771,6 +1771,24 @@ export function resolveTextStyle(style?: TimelineTextStyle | null) {
   return { ...DEFAULT_TEXT_STYLE, ...(style ?? {}) };
 }
 
+/** 复合片段内部子片段：媒体不复制，只存相对复合起点的偏移 */
+export interface TimelineCompoundChild {
+  key: string;
+  sourceUrl: string;
+  sourceShotId?: string | null;
+  text?: string | null;
+  inPoint: number;
+  outPoint: number;
+  /** 相对复合片段源起点的秒数 */
+  offset: number;
+  speed: number;
+  volume?: number;
+  reverse?: boolean | null;
+  keyframes?: TimelineVideoKeyframe[] | null;
+  transition?: { type: 'none' | 'crossfade' | 'fade'; duration: number } | null;
+  enabled?: boolean;
+}
+
 /** P3 EDL 片段（与生产 shots 解耦的剪辑决策表） */
 export interface TimelineClip {
   id: string;
@@ -1810,6 +1828,8 @@ export interface TimelineClip {
   keyframes?: TimelineVideoKeyframe[] | null;
   /** 倒放：视频画面与独立音频轨都反向播放 */
   reverse?: boolean | null;
+  /** 真复合片段：children 非空时本片段是嵌套序列，预览/导出按子片段展开 */
+  compound?: { children: TimelineCompoundChild[] } | null;
   /**
    * 字幕样式（字幕轨）。缺省走项目默认样式。
    * 只存「偏离默认」的字段，未填即继承，这样换主题时旧字幕不会全员打架。

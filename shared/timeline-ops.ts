@@ -341,6 +341,7 @@ export function applyTimelineOps(
           const c = resolveClip(next, op.target);
           if (!c) return fail(i, '找不到目标片段');
           if (c.locked) return fail(i, '目标片段已锁定');
+          if (c.compound?.children?.length) return fail(i, '复合片段需先解除再分割');
           const at = round3(num(op.atSec, -1));
           const offset = at - c.timelineStart;
           const span = clipSpan(c);

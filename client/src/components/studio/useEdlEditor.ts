@@ -33,6 +33,7 @@ import {
   type TimelineOp,
   type TimelineOpDiff,
 } from '@shared/timeline-ops';
+import { expandCompoundClip } from '@shared/timeline-compound';
 import { clipSpan, sameOrigin } from './model';
 import {
   clamp,
@@ -186,6 +187,10 @@ export interface EdlEditor {
   setClipSpeedCurve: (id: string, speeds: number[]) => boolean;
   /** 倒放开关（画面与独立音频） */
   toggleClipReverse: (id: string) => void;
+  /** 新建真复合片段：同轨相邻画面收成一个整体，失败返回原因 */
+  createCompound: (ids: string[]) => string | null;
+  /** 解除真复合片段，按子片段还原 */
+  ungroupCompound: (id: string) => string[];
   setClipVolume: (id: string, volume: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
   setClipLocked: (id: string, locked: boolean) => void;
@@ -1051,6 +1056,78 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const createCompound = useCallback(
+    (ids: string[]): string | null => {
+      const before = clipsRef.current;
+      const picked = before.filter(
+        (c) => ids.includes(c.id) && c.track === 'video' && c.sourceUrl && !c.compound && !c.locked,
+      );
+      if (picked.length < 2) return null;
+      const lane = picked[0].lane ?? 0;
+      if (picked.some((c) => (c.lane ?? 0) !== lane)) return null;
+      const order = [...picked].sort((a, b) => a.timelineStart - b.timelineStart);
+      for (let i = 1; i < order.length; i += 1) {
+        const prevEnd = order[i - 1].timelineStart + clipSpan(order[i - 1]);
+        if (order[i].timelineStart - prevEnd > 1e-3) return null;
+      }
+      const start = order[0].timelineStart;
+      const end = Math.max(...order.map((c) => c.timelineStart + clipSpan(c)));
+      const children = order.map((c) => ({
+        key: localId('cc'),
+        sourceUrl: c.sourceUrl as string,
+        sourceShotId: c.sourceShotId ?? null,
+        text: c.text ?? null,
+        inPoint: c.inPoint,
+        outPoint: c.outPoint,
+        offset: round3(c.timelineStart - start),
+        speed: c.speed,
+        volume: c.volume,
+        reverse: Boolean(c.reverse),
+        keyframes: c.keyframes ?? null,
+        transition: c.transition ?? null,
+        enabled: c.enabled !== false,
+      }));
+      const identity = newClipIdentity('clip');
+      const parent: TimelineClip = {
+        ...order[0],
+        ...identity,
+        timelineStart: start,
+        inPoint: 0,
+        outPoint: round3(end - start),
+        speed: 1,
+        reverse: false,
+        keyframes: null,
+        transition: order[order.length - 1].transition ?? null,
+        compound: { children },
+        bindGroup: null,
+        locked: false,
+      };
+      const next = before.filter((c) => !ids.includes(c.id)).concat(parent);
+      commit(next, `新建复合片段（${children.length} 段）`, before);
+      setSelection([parent.id]);
+      return parent.id;
+    },
+    [commit, setSelection],
+  );
+
+  const ungroupCompound = useCallback(
+    (id: string): string[] => {
+      const before = clipsRef.current;
+      const parent = before.find((c) => c.id === id);
+      if (!parent?.compound?.children?.length) return [];
+      const expanded = expandCompoundClip(parent).map((c) => ({
+        ...c,
+        ...newClipIdentity('clip'),
+        sortOrder: parent.sortOrder,
+      }));
+      const next = before.filter((c) => c.id !== id).concat(expanded);
+      commit(next, '解除复合片段', before);
+      setSelection(expanded.map((c) => c.id));
+      return expanded.map((c) => c.id);
+    },
+    [commit, setSelection],
+  );
+
   const toggleClipReverse = useCallback(
     (id: string) => {
       const before = clipsRef.current;
@@ -1447,6 +1524,8 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     setClipSpeed,
     setClipSpeedCurve,
     toggleClipReverse,
+    createCompound,
+    ungroupCompound,
     setClipVolume,
     setClipTransition,
     setClipLocked,

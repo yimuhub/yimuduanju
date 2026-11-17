@@ -21,6 +21,7 @@ import { listCharacters, listProps } from '@client/src/api/bible';
 import { isImageUrl } from '@client/src/lib/media-kind';
 import { previewProxyUrl } from '@client/src/lib/preview-proxy';
 import { sampleVideoTransform } from '@shared/timeline-keyframes';
+import { virtualCompoundClip } from '@shared/timeline-compound';
 import type { Prop } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1';
@@ -117,7 +118,8 @@ export const StudioPreview = () => {
       // 剪映式层序：V1 是底图，V2/V3/V4 越往上越先被识别。
       // 同一时间命中多条画面时，取 lane 最大（最上层）的一条作为当前画面。
       .sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0))[0];
-    return hit ?? null;
+    if (!hit) return null;
+    return hit.compound?.children?.length ? virtualCompoundClip(hit, curT) ?? hit : hit;
   }, [tlMode, videoClips, curT]);
 
   const activeAudio = useMemo(

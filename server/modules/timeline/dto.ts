@@ -107,6 +107,7 @@ export class SaveTimelineClipDto {
   @ArrayMaxSize(120)
   keyframes?: TimelineVideoKeyframe[] | null;
   reverse?: boolean | null;
+  compound?: { children: import('@shared/api.interface').TimelineCompoundChild[] } | null;
 
   /** 绑定组 id（同组一起平移）；null / 空 = 解绑 */
   @IsOptional()

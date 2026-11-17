@@ -1470,9 +1470,9 @@ export const StudioTimeline = () => {
     const t = curTRef.current;
     let targets = clipsRef.current.filter((c) => selectedRef.current.includes(c.id));
     if (targets.length === 0) targets = clipsAtPlayhead(t);
-    targets = targets.filter((c) => !c.locked);
+    targets = targets.filter((c) => !c.locked && !c.compound);
     if (targets.length === 0) {
-      toast.info('把播放头放到片段内，或先选中要分割的片段', { duration: 1600 });
+      toast.info('把播放头放到片段内，或先选中要分割的帧（复合片段需先解除）', { duration: 1800 });
       return;
     }
     let last: string | null = null;
@@ -1496,7 +1496,7 @@ export const StudioTimeline = () => {
     const t = curTRef.current;
     const id = selectedRef.current[0];
     const clip = clipsRef.current.find((c) => c.id === id);
-    if (!clip || clip.track !== 'video' || !clip.sourceUrl) {
+    if (!clip || clip.track !== 'video' || !clip.sourceUrl || clip.compound) {
       toast.info('先选中一个画面片段，关键帧只作用于画面/图片', { duration: 1800 });
       return false;
     }
@@ -1847,16 +1847,23 @@ export const StudioTimeline = () => {
       }
       if (!e.shiftKey && e.altKey && key === 'g') {
         e.preventDefault();
-        editorRef.current.bindSelection();
-        toast.info('本版复合片段以强绑定组实现：整组联动，暂不能作为单片段二次裁剪', {
-          duration: 2400,
-        });
+        const id = editorRef.current.createCompound(selectedRef.current);
+        if (id) toast.success('已新建复合片段：可整体移动/裁剪，导出自动展开', { duration: 1600 });
+        else toast.info('复合片段需要同一轨相邻的至少两个未锁定画面片段', { duration: 2200 });
         return;
       }
       if (e.shiftKey && e.altKey && key === 'g') {
         e.preventDefault();
-        editorRef.current.unbindSelection();
-        toast.success('已解除复合片段', { duration: 1400 });
+        const ids = selectedRef.current
+          .map((id) => clipsRef.current.find((c) => c.id === id))
+          .filter((c) => c?.compound?.children?.length)
+          .map((c) => c!.id);
+        if (ids.length === 0) {
+          toast.info('先选中一个复合片段', { duration: 1600 });
+          return;
+        }
+        const restored = ids.flatMap((id) => editorRef.current.ungroupCompound(id));
+        toast.success(`已解除复合片段，还原 ${restored.length} 段`, { duration: 1600 });
         return;
       }
       if (mod && key === '.') {
@@ -1938,7 +1945,7 @@ export const StudioTimeline = () => {
       if (e.shiftKey && key === 'b') {
         e.preventDefault();
         const clip = clipsRef.current.find((c) => c.id === selectedRef.current[0]);
-        if (!clip || clip.track !== 'video' || !clip.sourceUrl) {
+        if (!clip || clip.track !== 'video' || !clip.sourceUrl || clip.compound) {
           toast.info('先选中一个画面片段，曲线变速只作用于画面', { duration: 1800 });
           return;
         }
@@ -2531,7 +2538,7 @@ export const StudioTimeline = () => {
           ) : null}
         </label>
       ) : null}
-      {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+      {selectedClip.track === 'video' && selectedClip.sourceUrl && !selectedClip.compound ? (
         detachedAudioOf(selectedClip) ? (
           <button
             type="button"
@@ -2569,7 +2576,35 @@ export const StudioTimeline = () => {
           </button>
         )
       ) : null}
-      {(selectedClip.track === 'video' || selectedClip.track === 'audio') && selectedClip.sourceUrl ? (
+      {selectedClip.compound?.children?.length ? (
+        <button
+          type="button"
+          className="tl-prop-btn on"
+          onClick={() => {
+            const restored = editor.ungroupCompound(selectedClip.id);
+            toast.success(`已解除复合片段，还原 ${restored.length} 段`, { duration: 1600 });
+          }}
+          title="解除复合片段：按子片段还原到原轨道"
+        >
+          <Layers size={11} />
+          复合 {selectedClip.compound.children.length} 段 · 解除
+        </button>
+      ) : selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+        <button
+          type="button"
+          className="tl-prop-btn"
+          onClick={() => {
+            const id = editor.createCompound(editor.selectedIds);
+            if (id) toast.success('已新建复合片段', { duration: 1400 });
+            else toast.info('需要同一轨相邻的至少两个未锁定画面片段', { duration: 2000 });
+          }}
+          title="新建复合片段：只支持同轨相邻画面；导出自动展开"
+        >
+          <Layers size={11} />
+          复合片段
+        </button>
+      ) : null}
+      {(selectedClip.track === 'video' || selectedClip.track === 'audio') && selectedClip.sourceUrl && !selectedClip.compound ? (
         <button
           type="button"
           className={`tl-prop-btn${selectedClip.reverse ? ' on' : ''}`}
@@ -2580,7 +2615,7 @@ export const StudioTimeline = () => {
           {selectedClip.reverse ? '取消倒放' : '倒放'}
         </button>
       ) : null}
-      {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+      {selectedClip.track === 'video' && selectedClip.sourceUrl && !selectedClip.compound ? (
         <button
           type="button"
           className={`tl-prop-btn${selectedClip.keyframes?.length ? ' on' : ''}`}
@@ -2591,7 +2626,7 @@ export const StudioTimeline = () => {
           关键帧{selectedClip.keyframes?.length ? ` ${selectedClip.keyframes.length}` : ''}
         </button>
       ) : null}
-      {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+      {selectedClip.track === 'video' && selectedClip.sourceUrl && !selectedClip.compound ? (
         <button
           type="button"
           className="tl-prop-btn"
@@ -3493,7 +3528,7 @@ export const StudioTimeline = () => {
         </div>
       ) : null}
 
-      {kfOpen && selectedClip && selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+      {kfOpen && selectedClip && selectedClip.track === 'video' && selectedClip.sourceUrl && !selectedClip.compound ? (
         <TimelineKeyframePanel
           clip={selectedClip}
           curT={curT}
@@ -3505,7 +3540,7 @@ export const StudioTimeline = () => {
         />
       ) : null}
 
-      {curveOpen && selectedClip && selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+      {curveOpen && selectedClip && selectedClip.track === 'video' && selectedClip.sourceUrl && !selectedClip.compound ? (
         <TimelineSpeedCurvePanel clip={selectedClip} onClose={() => setCurveOpen(false)} />
       ) : null}
 
