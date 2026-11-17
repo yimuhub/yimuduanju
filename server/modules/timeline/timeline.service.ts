@@ -1075,8 +1075,10 @@ export class TimelineService {
       else if (g.filter === 'sharp') out.push('unsharp=5:5:1.0:5:5:0.0');
       return out;
     };
-    const allVideo = audible
-      .filter((c) => c.track === 'video' && c.sourceUrl)
+    // 画面不该被「静音」整轨摘掉：muted 只作用于声音；画面只受 enabled / exportEnabled 控制。
+    // 否则点了视频轨静音，导出会连画面一起消失，这是明确的语义错误。
+    const allVideo = doc.clips
+      .filter((c) => c.track === 'video' && c.sourceUrl && c.enabled !== false)
       .sort((a, b) => a.timelineStart - b.timelineStart);
     /** 主链：lane 0 或显式 role=main，且未被 track 关闭导出 */
     const isMainLane = (c: TimelineClip) => {
