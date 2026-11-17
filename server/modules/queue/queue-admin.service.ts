@@ -503,6 +503,57 @@ export class QueueAdminService {
     };
   }
 
+  /**
+   * 重启：终止/失败/暂停的任务重新回到队尾 pending。
+   * 用户诉求「暂停后还能再重启」：执行中任务只能先终止（不可暂停线程），
+   * 终止后由这里一键重启，不必重新建项目/重新拆任务。
+   */
+  async restartJob(id: string): Promise<QueueActionResult> {
+    const job = await this.requireJob(id);
+    if (job.status === 'succeeded') {
+      throw new BadRequestException('任务已成功，无需重启');
+    }
+    const restarted = await this.generationService.retryJob(id);
+    return {
+      id,
+      status: restarted.status as JobStatus,
+      queueSeq: Number(restarted.queueSeq),
+      message: `已重启（原状态 ${job.status}），重新进入排队`,
+    };
+  }
+
+  /**
+   * 全部冻结：未开始的任务批量暂停（可逐个恢复）；执行中的任务终止（可重启）。
+   * 这是队列页「暂停全站消费」之外的库级冻结：进程重启后依然保持冻结。
+   */
+  async pauseAllJobs(): Promise<{ paused: number; terminated: number; message: string }> {
+    const rows = await this.db
+      .select({ id: generationJobs.id, status: generationJobs.status })
+      .from(generationJobs)
+      .where(inArray(generationJobs.status, ['pending', 'queued', 'retrying', 'running']));
+    let paused = 0;
+    let terminated = 0;
+    for (const row of rows) {
+      try {
+        if (row.status === 'running') {
+          await this.terminateJob(row.id);
+          terminated += 1;
+        } else {
+          await this.pauseJob(row.id);
+          paused += 1;
+        }
+      } catch (e) {
+        this.logger.warn(`全部冻结跳过 ${row.id}（${row.status}）：${(e as Error).message}`);
+      }
+    }
+    this.setGlobalPause(true);
+    return {
+      paused,
+      terminated,
+      message: `已暂停 ${paused} 个排队任务、终止 ${terminated} 个执行中任务；全站消费已暂停，可逐个恢复或重启`,
+    };
+  }
+
   /** 终止：复用 cancelJob 的幂等 CAS；下游依赖任务一并终止，避免永久 blocked 死锁 */
   async terminateJob(id: string): Promise<QueueActionResult> {
     const job = await this.requireJob(id);

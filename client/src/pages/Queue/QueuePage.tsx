@@ -212,6 +212,17 @@ export default function QueuePage() {
   const onResume = (item: QueueItem) =>
     void run(`resume:${item.id}`, () => queueApi.resumeQueueJob(item.id), '任务已恢复到原排队位置');
 
+  const onRestart = (item: QueueItem) =>
+    void run(`restart:${item.id}`, () => queueApi.restartQueueJob(item.id), '任务已重启，重新进入排队');
+
+  const onPauseAll = async () => {
+    const ok = await showConfirm(
+      '将冻结全站：排队任务全部暂停、执行中任务终止。之后可在每行点「恢复」或「重启」。确定执行吗？',
+    );
+    if (!ok) return;
+    await run('pause-all', () => queueApi.pauseAllQueueJobs(), '全站已冻结');
+  };
+
   const onTerminate = async (item: QueueItem) => {
     const danger =
       item.status === 'running'
@@ -294,6 +305,15 @@ export default function QueuePage() {
             >
               {data?.globallyPaused ? <Play /> : <Pause />}
               {data?.globallyPaused ? '恢复全站消费' : '暂停全站消费'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onPauseAll()}
+              disabled={busy === 'pause-all'}
+            >
+              {busy === 'pause-all' ? <Loader2 className="animate-spin" /> : <Square />}
+              全部冻结
             </Button>
           </>
         }
@@ -657,6 +677,10 @@ export default function QueuePage() {
                   <span className="mx-1 h-5 w-px bg-border" />
                   {item.status === 'paused' ? (
                     <MoveButton title="恢复（回到原位置）" disabled={keyBusy} onClick={() => onResume(item)}>
+                      <CirclePlay />
+                    </MoveButton>
+                  ) : item.status === 'cancelled' || item.status === 'failed' ? (
+                    <MoveButton title="重启（重新进入排队）" disabled={keyBusy} onClick={() => onRestart(item)}>
                       <CirclePlay />
                     </MoveButton>
                   ) : (

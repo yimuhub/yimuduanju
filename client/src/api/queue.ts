@@ -66,3 +66,16 @@ export const recalculateRoutes = () =>
   axiosForBackend
     .post<{ updated: number; skipped: number; message: string }>('/api/queue/recalculate-routes')
     .then((res) => res.data);
+
+
+/** 重启：终止/失败/暂停的任务重新回到排队 */
+export const restartQueueJob = (id: string) =>
+  axiosForBackend
+    .post<QueueActionResult>(`/api/queue/jobs/${id}/restart`)
+    .then((res) => res.data);
+
+/** 全部冻结：排队任务暂停，执行中任务终止；之后可逐个恢复/重启 */
+export const pauseAllQueueJobs = () =>
+  axiosForBackend
+    .post<{ paused: number; terminated: number; message: string }>('/api/queue/jobs/pause-all')
+    .then((res) => res.data);

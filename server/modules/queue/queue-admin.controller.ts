@@ -68,6 +68,18 @@ export class QueueAdminController {
     return this.queue.terminateJob(id);
   }
 
+  /** 重启：终止 / 失败 / 暂停的任务重新入队 */
+  @Post('jobs/:id/restart')
+  restart(@Param('id', ParseUUIDPipe) id: string): Promise<QueueActionResult> {
+    return this.queue.restartJob(id);
+  }
+
+  /** 全部冻结：排队任务暂停、执行中任务终止，均可恢复/重启 */
+  @Post('jobs/pause-all')
+  pauseAll(): Promise<{ paused: number; terminated: number; message: string }> {
+    return this.queue.pauseAllJobs();
+  }
+
   /** 上移 / 下移 / 置顶 / 置底 */
   @Post('jobs/:id/move')
   move(
