@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clapperboard, Maximize2, Scan } from 'lucide-react';
 import { resolveTextStyle } from '@shared/api.interface';
 import { useStudio } from './StudioShell';
-import { clipSpan, shotLabel, stateShort, toTimecode } from './model';
+import { clipSpan, sameOrigin, shotLabel, stateShort, toTimecode } from './model';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
 import { listCharacters, listProps } from '@client/src/api/bible';
 import { isImageUrl } from '@client/src/lib/media-kind';
@@ -139,6 +139,12 @@ export const StudioPreview = () => {
     [tlMode, tlClips, curT],
   );
 
+  // 画面原声已被拆成独立音频轨时不重复出声：<video> 静音，只播音频片段
+  const detachedVideoAudio = useMemo(
+    () => Boolean(activeVideo && activeAudio.some((a) => sameOrigin(a, activeVideo))),
+    [activeVideo, activeAudio],
+  );
+
   const subtitles = useMemo(
     () =>
       tlMode
@@ -224,7 +230,7 @@ export const StudioPreview = () => {
       const reversePreview = Boolean(tlMode && activeVideo?.reverse);
       v.playbackRate = reversePreview ? 1 : tlMode && activeVideo ? speed : 1;
       v.volume = previewVolume;
-      v.muted = previewMuted || !originalAudio;
+      v.muted = previewMuted || !originalAudio || detachedVideoAudio;
       if (playing && playDir > 0 && !reversePreview) {
         if (v.paused) v.play().catch(() => {});
         if (v.readyState >= 1 && Math.abs(v.currentTime - videoT) > 0.12) {
@@ -284,7 +290,7 @@ export const StudioPreview = () => {
         if (a.readyState >= 1 && Math.abs(a.currentTime - t) > tol) a.currentTime = t;
       }
     }
-  }, [curT, playing, playDir, shot, videoBroken, tlMode, activeVideo, activeAudio, previewVolume, previewMuted, originalAudio, effectiveVideoUrl]);
+  }, [curT, playing, playDir, shot, videoBroken, tlMode, activeVideo, activeAudio, detachedVideoAudio, previewVolume, previewMuted, originalAudio, effectiveVideoUrl]);
 
   // ---------- 上/下区拖拽分割 ----------
   const onSplitStart = useCallback(

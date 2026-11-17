@@ -33,7 +33,7 @@ import { projectStatusMeta } from './projectStatus';
 export const StudioRail = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { data, stageView, setStageView, sel, projectId, chatMsgs, openNewWork } = useStudio();
+  const { data, stageView, setStageView, sel, projectId, chatMsgs, openNewWork, setProEdit, setTlCollapsed } = useStudio();
 
   const runningJobs = useMemo(
     () => data.jobs.filter((j) => j.status === 'running' || j.status === 'queued' || j.status === 'retrying'),
@@ -110,7 +110,10 @@ export const StudioRail = () => {
                 openNewWork();
                 return;
               }
+              // 全功能编辑态（proEdit）会盖住对话舞台：从任何剪辑页返回对话都必须先退出它
+              setProEdit(false);
               setStageView('chat');
+              setTlCollapsed(true);
               if (location.pathname !== `/project/${projectId}`) {
                 navigate(`/project/${projectId}`);
               }
@@ -219,7 +222,10 @@ export const StudioRail = () => {
                 <div
                   key={p.id}
                   className={`proj${activeProjectId === p.id ? ' on' : ''}`}
-                  onClick={() => navigate(`/project/${p.id}`)}
+                  onClick={() => {
+                    setProEdit(false);
+                    navigate(`/project/${p.id}`);
+                  }}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {

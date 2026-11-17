@@ -2995,13 +2995,13 @@ export const StudioTimeline = () => {
                 <div className="sep" />
                 <button
                   type="button"
-                  onClick={() => addSubtitleAt(clamp(maxLane('subtitle') + 1, 0, 19))}
+                  onClick={() => addSubtitleAt(maxLane('subtitle') + 1)}
                 >
                   <Layers size={12} /> 新增字幕轨
                 </button>
                 <button
                   type="button"
-                  onClick={() => openAudioPicker(clamp(maxLane('audio') + 1, 0, 19))}
+                  onClick={() => openAudioPicker(maxLane('audio') + 1)}
                 >
                   <Layers size={12} /> 新增音频轨
                 </button>

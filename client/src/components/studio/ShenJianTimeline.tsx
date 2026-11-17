@@ -11,7 +11,8 @@ import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clipSpan } from './model';
 import type { TimelineClip, TimelineTrackKind } from '@shared/api.interface';
-import { peekTimelineDrag, readTimelineDrag, trackOfDrag } from '@client/src/lib/timeline-dnd';
+import { mediaOfDrag, peekTimelineDrag, readTimelineDrag, trackOfDrag } from '@client/src/lib/timeline-dnd';
+import { probeVideoHasAudio } from '@client/src/lib/media-audio';
 
 type Row = {
   key: string;
@@ -77,20 +78,32 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   );
 
   const rows = useMemo<Row[]>(() => {
-    // 轨道行只由「实际有素材的 lane」决定；空轨道不会占行，删除/移走后自动消失
-    const videoLanes = Array.from(new Set(clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0)));
-    const audioLanes = Array.from(new Set(clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0)));
-    const subLanes = Array.from(new Set(clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0)));
-    // 默认主轨 V1/A1 常驻，保证空项目也有可落点
-    videoLanes.push(0);
-    audioLanes.push(0);
-    const maxVideoLanes = Array.from(new Set(videoLanes)).sort((a, b) => b - a);
-    const maxAudioLanes = Array.from(new Set(audioLanes)).sort((a, b) => a - b);
-    const subLanesSorted = Array.from(new Set(subLanes)).sort((a, b) => b - a);
+    // 轨道行只由「实际有素材的 lane」决定；某类素材一个都没有时，该类轨道完全不出现。
+    // 唯一例外：已有字幕但还没有主画面轨时，补一条空 V1 落点，保证字幕永远压在一个画面轨之上。
+    const videoSet = new Set(clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0));
+    const audioLanes = Array.from(new Set(clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0))).sort((a, b) => a - b);
+    const subLanesSorted = Array.from(new Set(clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0))).sort((a, b) => b - a);
+    if (subLanesSorted.length > 0) videoSet.add(0);
+    const overlayVideoLanes = Array.from(videoSet).filter((lane) => lane > 0).sort((a, b) => b - a);
+    const hasMainVideo = videoSet.has(0);
     const metaOf = (track: TimelineTrackKind, lane: number) =>
       (edl.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
     const out: Row[] = [];
-    // 基线以上：字幕在最上，画面 V1 紧贴基线，叠加画面继续往上
+    const pushVideo = (lane: number) => {
+      const meta = metaOf('video', lane);
+      out.push({
+        key: `video:${lane}`,
+        no: 0,
+        track: 'video',
+        lane,
+        label: `V${lane + 1}`,
+        name: meta?.name || (lane === 0 ? '画面主轨' : '叠加画面'),
+        muted: meta?.exportEnabled === false,
+        locked: meta?.locked === true,
+      });
+    };
+    // 上方：叠加画面 V2/V3… → 字幕 T1/T2… → 主画面 V1 → 音频 A1/A2… 最下
+    for (const lane of overlayVideoLanes) pushVideo(lane);
     for (const lane of subLanesSorted) {
       const meta = metaOf('subtitle', lane);
       out.push({
@@ -104,21 +117,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         locked: meta?.locked === true,
       });
     }
-    for (const lane of maxVideoLanes) {
-      const meta = metaOf('video', lane);
-      out.push({
-        key: `video:${lane}`,
-        no: 0,
-        track: 'video',
-        lane,
-        label: `V${lane + 1}`,
-        name: meta?.name || (lane === 0 ? '画面主轨' : '叠加画面'),
-        muted: meta?.exportEnabled === false,
-        locked: meta?.locked === true,
-      });
-    }
-    // 基线以下：对白 A1 紧贴基线，音乐/音效依次向下
-    for (const lane of maxAudioLanes) {
+    if (hasMainVideo) pushVideo(0);
+    for (const lane of audioLanes) {
       const meta = metaOf('audio', lane);
       out.push({
         key: `audio:${lane}`,
@@ -126,7 +126,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         track: 'audio',
         lane,
         label: `A${lane + 1}`,
-        name: meta?.name || (lane === 0 ? '对白 / 配音' : lane === 1 ? '音乐' : '音效'),
+        name: meta?.name || (lane === 0 ? '原声 / 对白' : lane === 1 ? '音乐' : '音效'),
         muted: meta?.muted === true,
         locked: meta?.locked === true,
       });
@@ -143,7 +143,10 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   const ticks = useMemo(() => Array.from({ length: Math.ceil((total + step) / step) + 1 }, (_, i) => i * step), [total, step]);
 
   const maxLaneOf = useCallback(
-    (track: TimelineTrackKind) => Math.max(0, ...clips.filter((c) => c.track === track).map((c) => c.lane ?? 0)),
+    (track: TimelineTrackKind) => {
+      const lanes = clips.filter((c) => c.track === track).map((c) => c.lane ?? 0);
+      return lanes.length ? Math.max(...lanes) : -1;
+    },
     [clips],
   );
 
@@ -237,7 +240,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   useEffect(() => {
     const used = new Set(clips.map((c) => `${c.track}:${c.lane ?? 0}`));
     const extras = (edl.tracks ?? []).filter(
-      (t) => !used.has(`${t.track}:${t.lane ?? 0}`) && !((t.track === 'video' || t.track === 'audio') && (t.lane ?? 0) === 0),
+      (t) => !used.has(`${t.track}:${t.lane ?? 0}`),
     );
     if (!extras.length) return;
     for (const t of extras) edl.removeTrack(t.track, t.lane ?? 0);
@@ -343,8 +346,14 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
       <div className="tl-body">
         <div className="track-heads">
-          <div className="head-ruler"><span>轨道</span><span>{rows.length} 轨</span></div>
+          <div className="head-ruler"><span>轨道</span><span>{rows.length || 1} 轨</span></div>
           <div className="heads-inner" style={{ transform: `translateY(-${scrollTop}px)` }}>
+            {rows.length === 0 ? (
+              <div className="track-head empty-head" style={{ height: laneH }}>
+                <span className="tname">—</span>
+                <span className="tlabel"><em>轨道 1</em><b>空白 · 拖入即定型</b></span>
+              </div>
+            ) : null}
             {rows.map((row) => (
               <div className={`track-head${drag?.targetRowKey === row.key ? ' droptarget' : ''}`} key={row.key} style={{ height: laneH }}>
                 <span className="tname">{row.label}</span>
@@ -414,7 +423,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
           onDrop={(e) => {
             e.preventDefault();
             const payload = readTimelineDrag(e);
-            if (!payload?.url) return;
+            const media = payload ? mediaOfDrag(payload) : undefined;
+            if (!payload || !media) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const at = Math.max(0, (e.clientX - rect.left + e.currentTarget.scrollLeft) / zoom);
             const y = e.clientY - rect.top + e.currentTarget.scrollTop - 24;
@@ -423,11 +433,23 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const want = trackOfDrag(payload);
             const sameType = row?.track === want;
             const lane = sameType ? row.lane : maxLaneOf(want) + 1;
-            if (want === 'audio') edl.addAudio({ name: payload.name, url: payload.url, durationSeconds: payload.durationSeconds }, at, lane);
-            else edl.addVideo({ name: payload.name, url: payload.url, durationSeconds: payload.durationSeconds || 5, shotId: payload.shotId }, at, lane);
             setDragOver(null);
             const prefix = want === 'audio' ? 'A' : 'V';
-            toast.success(sameType ? `已放入 ${prefix}${lane + 1}` : `已新建 ${prefix}${lane + 1} 并放入`);
+            const where = sameType ? `已放入 ${prefix}${lane + 1}` : `已新建 ${prefix}${lane + 1} 并放入`;
+            if (want === 'audio') {
+              edl.addAudio({ name: payload.name, url: media, durationSeconds: payload.durationSeconds }, at, lane);
+              toast.success(where);
+              return;
+            }
+            // 先探测源视频有没有声音：有声音才自动生成原声轨，没有就绝不造空轨
+            void probeVideoHasAudio(media).then((hasAudio) => {
+              edl.addVideo(
+                { name: payload.name, url: media, durationSeconds: payload.durationSeconds || 5, shotId: payload.shotId, hasAudio },
+                at,
+                lane,
+              );
+              toast.success(hasAudio ? `${where} · 已带原声轨` : where);
+            });
           }}
         >
           <div className="lanes-inner" style={{ width }}>
@@ -451,6 +473,11 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
               <span>时间轴基线 · 画面/字幕向上 · 音频向下</span>
             </div>
             <div className="lanes">
+              {rows.length === 0 ? (
+                <div className="lane empty-lane" style={{ height: laneH }}>
+                  <span>把视频 / 图片 / 音频 / 字幕拖进来 · 第一段素材是什么，第一条轨道就是什么</span>
+                </div>
+              ) : null}
               {rows.map((row) => (
                 <div
                   key={row.key}
@@ -557,7 +584,16 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
           <button type="button" onClick={() => { edl.copySelection([ctx.id]); setCtx(null); }}><Copy />复制片段<span className="kbd2">⌘C</span></button>
           <button type="button" onClick={() => { edl.rippleDelete([ctx.id]); setCtx(null); }}><Trash2 />波纹删除<span className="kbd2">⌫</span></button>
           <button type="button" onClick={() => { const c = clips.find((x) => x.id === ctx.id); if (c) edl.toggleClipReverse(c.id); setCtx(null); }}><Undo2 />倒放</button>
-          <button type="button" onClick={() => { const c = clips.find((x) => x.id === ctx.id); if (c) edl.detachAudio(c.id); setCtx(null); }}><Volume2Ico />分离音频<span className="kbd2">⌘⇧S</span></button>
+          <button type="button" onClick={() => { const c = clips.find((x) => x.id === ctx.id); if (c) edl.detachAudio(c.id); setCtx(null); }}><Volume2Ico />音轨分离<span className="kbd2">⌘⇧S</span></button>
+          <button type="button" onClick={() => {
+            const c = clips.find((x) => x.id === ctx.id);
+            if (!c) return;
+            const audioId = edl.detachAudio(c.id);
+            if (!audioId) { toast.info('该画面已有独立原声轨'); setCtx(null); return; }
+            edl.setClipText(audioId, `♪ 人声 · ${c.text?.trim() || '对白'}`.slice(0, 120));
+            toast.success('已拆出独立人声轨');
+            setCtx(null);
+          }}><span style={{ fontSize: 11 }}>♪</span>人声分离</button>
           <div className="line" />
           <button type="button" onClick={() => { const c = clips.find((x) => x.id === ctx.id); if (c) edl.setClipLocked(c.id, !c.locked); setCtx(null); }}><Lock />锁定 / 解锁</button>
           <button type="button" onClick={() => { const c = clips.find((x) => x.id === ctx.id); if (c) edl.setClipEnabled(c.id, c.enabled === false); setCtx(null); }}><Eye />启用 / 停用<span className="kbd2">V</span></button>

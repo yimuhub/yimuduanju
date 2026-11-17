@@ -168,6 +168,7 @@ export interface EdlEditor {
       url: string;
       durationSeconds?: number;
       shotId?: string | null;
+      hasAudio?: boolean;
     },
     at: number,
     lane?: number,
@@ -396,9 +397,9 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       const curTracks = docRef.current.tracks ?? [];
       const requestedTracks = tracks ? tracks.next : curTracks;
       const used = new Set(next.map((c) => `${c.track}:${c.lane ?? 0}`));
-      // 空轨自动回收：默认主轨 V0/A0 保留，其余没有素材的轨道直接移除
+      // 空轨自动回收：任何没有素材的轨道都移除（主轨也不常驻，杜绝空轨道残留）
       const nextTracks = requestedTracks.filter(
-        (t) => used.has(`${t.track}:${t.lane ?? 0}`) || ((t.track === 'video' || t.track === 'audio') && (t.lane ?? 0) === 0),
+        (t) => used.has(`${t.track}:${t.lane ?? 0}`),
       );
       const beforeTracks = tracks ? tracks.before : curTracks;
       const tracksChanged =
@@ -880,6 +881,8 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         url: string;
         durationSeconds?: number;
         shotId?: string | null;
+        /** 探测到源视频自带音轨：同一份源自动生成一条原声轨 */
+        hasAudio?: boolean;
       },
       at: number,
       lane = 0,
@@ -890,15 +893,17 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         asset.durationSeconds && asset.durationSeconds > 0
           ? round3(asset.durationSeconds)
           : 5;
+      const startAt = quantizeToFrame(Math.max(0, at), fpsRef.current);
+      const videoIdentity = newClipIdentity('local-video');
       const clip: TimelineClip = {
-        ...newClipIdentity('local-video'),
+        ...videoIdentity,
         projectId: projectId ?? '',
         track: 'video',
         sourceShotId: asset.shotId ?? null,
         sourceUrl: asset.url,
         inPoint: 0,
         outPoint: duration,
-        timelineStart: quantizeToFrame(Math.max(0, at), fpsRef.current),
+        timelineStart: startAt,
         lane,
         speed: 1,
         volume: 1,
@@ -909,7 +914,45 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      commit([...before, clip], '拖入画面', before);
+      const next = [...before, clip];
+      let addedAudio = false;
+      if (asset.hasAudio) {
+        // 画面自带声音：立刻生成一条同源音频轨，时间/入出点与画面完全一致。
+        // 预览层检测到「同源音频存在」会自动静音 <video> 的原声，避免双声道。
+        const occupied = before
+          .filter((c) => c.track === 'audio')
+          .map((c) => ({
+            lane: c.lane ?? 0,
+            start: c.timelineStart,
+            end: c.timelineStart + clipSpan(c),
+          }));
+        const picked = pickFreeLane(occupied, 0, startAt, startAt + duration);
+        const bindGroup = `av:${videoIdentity.clientKey}`;
+        const audioClip: TimelineClip = {
+          ...newClipIdentity('local-audio'),
+          projectId: projectId ?? '',
+          track: 'audio',
+          sourceShotId: asset.shotId ?? null,
+          sourceUrl: asset.url,
+          inPoint: 0,
+          outPoint: duration,
+          timelineStart: startAt,
+          lane: picked.lane,
+          speed: 1,
+          volume: 1,
+          transition: { type: 'none', duration: 0 },
+          text: `♪ 原声 · ${asset.name}`.slice(0, 120),
+          bindGroup,
+          locked: false,
+          sortOrder: before.length + 1,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        clip.bindGroup = bindGroup;
+        next.push(audioClip);
+        addedAudio = true;
+      }
+      commit(next, addedAudio ? '拖入画面（自动带原声轨）' : '拖入画面', before);
       return clip.id;
     },
     [commit, projectId],
@@ -1393,7 +1436,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         (c) => c.track === track && (c.lane ?? 0) === lane,
       ).length;
       if (used > 0) return `该轨道上还有 ${used} 个片段，先清空再删除`;
-      if ((docRef.current.tracks ?? []).length === 0 && lane === 0) return '这是唯一的基础轨道，不能删除';
+
       const nextTracks = (docRef.current.tracks ?? []).filter(
         (t) => !(t.track === track && (t.lane ?? 0) === lane),
       );

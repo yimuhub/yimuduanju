@@ -75,7 +75,6 @@ export class SaveTimelineClipDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(19)
   lane?: number;
 
   @IsOptional()
@@ -153,7 +152,6 @@ export class TimelineTrackMetaDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(19)
   lane!: number;
 
   @IsOptional()

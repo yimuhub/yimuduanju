@@ -132,12 +132,9 @@ export const ProjectSectionNav = () => {
   const go = (s: Section) => {
     setMenuOpen(false);
     if (s.action === 'timeline') {
-      // 一个入口、一个数据源：只操作底部真时间线，不再跳到会写 shots.duration 的旧页
-      setTlCollapsed(false);
-      window.dispatchEvent(new CustomEvent('yimu:timeline-focus'));
-      setPulse(true);
-      if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
-      pulseTimer.current = window.setTimeout(() => setPulse(false), 2200);
+      // 时间线入口统一进「神剪」：旧底部固定轨道编辑器不再作为入口暴露，
+      // 避免用户在左侧菜单点到老界面、与神剪的动态多轨各写一套手感。
+      navigate(`/project/${projectId}/shenjian`);
       return;
     }
     navigate(`/project/${projectId}/${s.seg}`);

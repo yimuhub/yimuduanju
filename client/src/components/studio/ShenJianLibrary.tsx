@@ -20,6 +20,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { probeVideoHasAudio } from '@client/src/lib/media-audio';
 import MediaPreviewDialog, { type MediaKind } from '@client/src/components/MediaPreviewDialog';
 import { deleteAsset, listAssets, listByProject, mediaUrl } from '@client/src/api/assets';
 import type { Asset } from '@shared/api.interface';
@@ -158,10 +159,13 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
     const name = a.name || '未命名素材';
     if (kind === 'audio') {
       edl.addAudio({ name, url, durationSeconds: a.durationSeconds }, at);
-    } else {
-      edl.addVideo({ name, url, durationSeconds: a.durationSeconds || 5, shotId: null }, at);
+      toast.success('已插入播放头位置');
+      return;
     }
-    toast.success('已插入播放头位置');
+    void probeVideoHasAudio(url).then((hasAudio) => {
+      edl.addVideo({ name, url, durationSeconds: a.durationSeconds || 5, shotId: null, hasAudio }, at);
+      toast.success(hasAudio ? '已插入播放头位置 · 自动带原声轨' : '已插入播放头位置');
+    });
   };
 
   return (

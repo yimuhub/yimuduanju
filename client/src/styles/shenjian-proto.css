@@ -435,3 +435,10 @@
 /* 动态多轨：拖到空白/异类轨道时提示即将新建的同类型轨道 */
 .sj2 .new-track-hint{position:sticky;left:12px;top:28px;z-index:9;display:inline-flex;align-items:center;gap:5px;width:max-content;padding:3px 8px;border-radius:4px;background:#12312dee;border:1px solid #37d6c866;color:#bff7ee;font-size:10px;pointer-events:none}
 .sj2 .tl-newhint{font-size:9px;color:#6f7681;white-space:nowrap;margin-left:2px}
+
+/* 空项目：只留一条可直接承接任意素材的空白轨道 */
+.sj2 .lane.empty-lane{display:flex;align-items:center;padding-left:16px;border-bottom:1px solid #1c222b;background:linear-gradient(90deg,#12171e,#0f141a)}
+.sj2 .lane.empty-lane span{font-size:10px;color:#5f6875;letter-spacing:.02em;pointer-events:none}
+
+.sj2 .track-head.empty-head{opacity:.72}
+.sj2 .track-head.empty-head .tlabel b{color:#7b8492}

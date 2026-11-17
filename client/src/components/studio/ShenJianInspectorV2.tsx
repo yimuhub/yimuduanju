@@ -198,9 +198,24 @@ export const ShenJianInspector = ({
                       ))}
                     </div>
                     {clip.track === 'video' ? (
-                      <button type="button" className="mini-btn" style={{ width: '100%', marginTop: 6 }} onClick={() => edl.detachAudio(clip.id)}>
-                        <Volume2 /> 音画分离（提取原声为独立音频）
-                      </button>
+                      <>
+                        <button type="button" className="mini-btn" style={{ width: '100%', marginTop: 6 }} onClick={() => edl.detachAudio(clip.id)}>
+                          <Volume2 /> 音轨分离（原声轨）
+                        </button>
+                        <button
+                          type="button"
+                          className="mini-btn"
+                          style={{ width: '100%', marginTop: 4 }}
+                          onClick={() => {
+                            const audioId = edl.detachAudio(clip.id);
+                            if (!audioId) { toast.info('该画面已有独立原声轨'); return; }
+                            edl.setClipText(audioId, `♪ 人声 · ${clip.text?.trim() || '对白'}`.slice(0, 120));
+                            toast.success('已拆出独立人声轨');
+                          }}
+                        >
+                          <Sparkles /> 人声分离（拆出人声轨）
+                        </button>
+                      </>
                     ) : null}
                   </section>
                 ) : null}
@@ -303,8 +318,16 @@ export const ShenJianInspector = ({
                     <button type="button" className="tool-tile" data-tip="复制片段" onClick={() => edl.copySelection([clip.id])}>
                       <Copy />复制
                     </button>
-                    <button type="button" className="tool-tile" data-tip="音画分离" onClick={() => edl.detachAudio(clip.id)}>
-                      <Volume2 />分离
+                    <button type="button" className="tool-tile" data-tip="音轨分离：原声拆成独立音频轨" onClick={() => edl.detachAudio(clip.id)}>
+                      <Volume2 />音轨分离
+                    </button>
+                    <button type="button" className="tool-tile" data-tip="人声分离：拆出带人声标记的独立轨" onClick={() => {
+                      const audioId = edl.detachAudio(clip.id);
+                      if (!audioId) { toast.info('该画面已有独立原声轨'); return; }
+                      edl.setClipText(audioId, `♪ 人声 · ${clip.text?.trim() || '对白'}`.slice(0, 120));
+                      toast.success('已拆出独立人声轨');
+                    }}>
+                      <Sparkles />人声分离
                     </button>
                     <button type="button" className="tool-tile" data-tip="复合片段" onClick={() => edl.createCompound([clip.id])}>
                       <Link2 />复合

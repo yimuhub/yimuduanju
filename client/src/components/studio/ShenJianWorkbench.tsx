@@ -43,6 +43,9 @@ export const ShenJianWorkbench = () => {
     previewQuality,
     setPreviewQuality,
     setPlayDir,
+    setProEdit,
+    setStageView,
+    setTlCollapsed,
   } = useStudio();
   const edl = useEdl();
   const navigate = useNavigate();
@@ -82,6 +85,12 @@ export const ShenJianWorkbench = () => {
   }, [data.timeline, edl.selectedIds]);
 
   const goProject = () => {
+    // 退出神通剪辑时同时退出全功能编辑态：否则返回项目根仍会停在老 proEdit 壳里，
+    // 看不到项目对话。返回后必须是「项目根 + 对话舞台」。
+    setProEdit(false);
+    setStageView('chat');
+    // 项目根默认是对话主界面，旧底部时间线收起，避免一返回就看到老剪辑界面
+    setTlCollapsed(true);
     if (projectId) navigate(`/project/${projectId}`);
   };
   const goExport = () => {
