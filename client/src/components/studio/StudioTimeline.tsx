@@ -583,6 +583,8 @@ export const StudioTimeline = () => {
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [kfOpen, setKfOpen] = useState(false);
+  const [mainMagnet, setMainMagnet] = useState(false);
+  const mainMagnetRef = useRef(false);
   const [curveOpen, setCurveOpen] = useState(false);
   /** 剪映 A/B 工具模式：select=选择，split=点击即切 */
   const [toolMode, setToolMode] = useState<'select' | 'split'>('select');
@@ -1074,6 +1076,7 @@ export const StudioTimeline = () => {
       return collectSnapTargets({
         clips: clipsRef.current
           .filter((c) => !exclude.has(c.id))
+          .filter((c) => !mainMagnetRef.current || (c.track === 'video' && (c.lane ?? 0) === 0))
           .map((c) => ({
             id: c.id,
             start: c.timelineStart,
@@ -2002,8 +2005,10 @@ export const StudioTimeline = () => {
       }
       if (key === 'p') {
         e.preventDefault();
-        toggleSnap();
-        toast.info('主轨磁吸与吸附共用同一策略，已切换', { duration: 1400 });
+        const next = !mainMagnetRef.current;
+        mainMagnetRef.current = next;
+        setMainMagnet(next);
+        toast.info(next ? '主轨磁吸已开启：只吸附 V1 主轨剪辑点' : '主轨磁吸已关闭：恢复全轨吸附', { duration: 1600 });
         return;
       }
       if (key === 's') {
