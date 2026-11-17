@@ -12,6 +12,7 @@ import type { ServerResponse } from 'http';
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { JobWorkerService } from './modules/generation/job-worker.service';
 // 修复（分层）：uploadDir 是路径工具，不该由 Controller 再导出。
 // 旧写法 `export { uploadDir } from './upload-dir'` 写在 uploads.controller.ts 里，
 // 逼着 main.ts 和 model-gateway.service.ts 去 import 一个 Controller 模块，
@@ -91,6 +92,8 @@ async function bootstrap() {
   });
 
   await app.listen(port, host);
+  // 端口绑定成功后才允许消费：避免半死进程抢任务后退出留下 running 0%。
+  app.get(JobWorkerService).startConsuming();
   logger.log(`Server running on ${host}:${port}`);
   logger.log(`API endpoints ready at http://${host}:${port}/api`);
 }

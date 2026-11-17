@@ -343,6 +343,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         `Redis 不可用（${(e as Error).message}），降级为进程内串行消费；如需并发请启动 Redis 并配置 REDIS_URL`,
       );
     }
+  }
+
+  /**
+   * 真正开始消费。必须由 main.ts 在 app.listen() 成功之后调用。
+   * 为什么不能放在 onModuleInit：Nest 的模块初始化早于端口绑定，watch 重启
+   * 或端口被占用时，子进程会先启动 worker 抢到任务、再因 bootstrap 失败退出，
+   * 数据库里留下 running 0% 的孤儿任务，后续进程永远跳过它。
+   */
+  public startConsuming(): void {
+    if (this.started) return;
     const intervalMs = Math.max(
       2000,
       Number(process.env.JOB_WORKER_INTERVAL_MS) || 10000,
@@ -353,12 +363,6 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`消费器轮询异常: ${(err as Error).message}`),
       );
     }, intervalMs);
-
-    /*
-     * 流水线自动链驱动（图→视频→配音→剪辑→质检）独立跑低频定时器。
-     * 它是「对账/补链」性质的慢活，不是出片关键路径；runStep 自带
-     * stepInFlight 防重入，超时后下一周期再试，不会堆积并发。
-     */
     const pipelineMs = Math.max(
       15_000,
       Number(process.env.JOB_WORKER_PIPELINE_INTERVAL_MS) || 60_000,
@@ -367,6 +371,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       if (this.queuePaused) return;
       void this.runStep('流水线驱动', 30_000, () => this.drivePipeline());
     }, pipelineMs);
+    this.logger.log('服务已监听，任务消费正式启动');
   }
 
   async onModuleDestroy() {
@@ -869,6 +874,7 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
         }
         const exclude = [...this.recentlyClaimed.keys()];
         const job = await this.generationService.claimNextPendingJob(exclude, isBlocked);
+        console.log(`[TICK] claim=${job?.id ?? 'null'}`);
         if (job) {
           this.recentlyClaimed.set(job.id, Date.now());
           this.logger.log(`认领任务 ${job.id}（${job.jobType}）`);

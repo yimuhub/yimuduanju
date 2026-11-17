@@ -648,6 +648,8 @@ export class GenerationService {
       .returning();
     // 并发认领冲突（单机多实例）时返回 null，本轮跳过
     if (claimed.length === 0) return null;
+    // 诊断：任何调用方都能在日志看到实际认领到的 job id 与类型。
+    console.log(`[CLAIM] picked=${claimed[0].id} type=${claimed[0].jobType}`);
     return this.mapJob(claimed[0]);
   }
 
