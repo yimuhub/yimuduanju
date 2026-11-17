@@ -870,6 +870,8 @@ export const timelineClips = pgTable("timeline_clips", {
   lane: integer("lane").notNull().default(0),
   speed: numeric("speed").notNull().default('1'),
   volume: numeric("volume").notNull().default('1'),
+  /** 音高倍率：1.12 = 升 2 个半音；导出用 asetrate + atempo 保持时长 */
+  pitch: numeric("pitch").notNull().default('1'),
   /**
    * @type { type: 'none' | 'crossfade' | 'fade', duration: number } | null
    */

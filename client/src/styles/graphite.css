@@ -5215,15 +5215,30 @@ button.tl-tc:hover {
   pointer-events: none;
   line-height: 1.38;
 }
-/* 每条字幕按自己的样式定位：top 是归一化 y，水平靠左右 padding 收窄到 maxWidth */
+/* 每条字幕按自己的样式定位：left/top 是归一化坐标，宽度是 maxWidth，中心对齐 */
 .pv-sub-item {
   position: absolute;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
   white-space: pre-wrap;
   word-break: break-word;
   border-radius: 4px;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  box-sizing: border-box;
+}
+.pv-sub-item:hover {
+  outline: 1px dashed rgba(55, 214, 194, 0.55);
+  outline-offset: 3px;
+}
+.pv-sub-item.dragging {
+  cursor: grabbing;
+  outline: 1px solid rgba(55, 214, 194, 0.9);
+  outline-offset: 3px;
+}
+.pv-sub-item.selected {
+  outline: 1px solid rgba(255, 180, 70, 0.85);
+  outline-offset: 3px;
 }
 .pv-gap {
   position: absolute;

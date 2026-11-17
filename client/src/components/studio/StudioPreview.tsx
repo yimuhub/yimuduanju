@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clapperboard, Maximize2, Scan } from 'lucide-react';
 import { resolveTextStyle } from '@shared/api.interface';
 import { useStudio } from './StudioShell';
+import { useEdl } from './EdlContext';
 import { clipSpan, sameOrigin, shotLabel, stateShort, toTimecode } from './model';
 import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
 import { listCharacters, listProps } from '@client/src/api/bible';
@@ -25,6 +26,14 @@ import { virtualCompoundClip } from '@shared/timeline-compound';
 import type { Prop } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1';
+
+const PREVIEW_FONTS: Record<string, string> = {
+  'source-han-sans': '"PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+  pingfang: '"PingFang SC", "Microsoft YaHei", sans-serif',
+  songti: '"Songti SC", "SimSun", "Noto Serif SC", serif',
+  kaiti: '"Kaiti SC", "KaiTi", "STKaiti", serif',
+  mono: 'Menlo, Consolas, monospace',
+};
 
 const PV_H_KEY = 'yimu.previewHeight';
 const readPreviewH = (): number => {
@@ -56,6 +65,7 @@ export const StudioPreview = () => {
     previewQuality,
     setPreviewQuality,
   } = useStudio();
+  const edl = useEdl();
   const [charNames, setCharNames] = useState<Record<string, string>>({});
   const [propByCode, setPropByCode] = useState<Record<string, Prop>>({});
   const [ratio, setRatio] = useState<Ratio>('9:16');
@@ -65,7 +75,9 @@ export const StudioPreview = () => {
   const [splitting, setSplitting] = useState(false);
   const [safeOn, setSafeOn] = useState(false);
   const pvRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [subDrag, setSubDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasOn, setCanvasOn] = useState(false);
@@ -158,9 +170,52 @@ export const StudioPreview = () => {
                 curT < c.timelineStart + clipSpan(c),
             )
             .sort((a, b) => (a.lane ?? 0) - (b.lane ?? 0))
-            .map((c) => ({ text: (c.text ?? '').trim(), style: c.textStyle ?? null }))
+            .map((c) => ({
+              id: c.id,
+              lane: c.lane ?? 0,
+              text: (c.text ?? '').trim(),
+              style: c.textStyle ?? null,
+            }))
         : [],
     [tlMode, tlClips, curT],
+  );
+
+  /** 帧内拖拽字幕：按归一化坐标实时预览，松手只落一次库（避免拖动时每帧保存） */
+  const startSubtitleDrag = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, id: string, style: unknown) => {
+      if (e.button !== 0) return;
+      const frame = frameRef.current;
+      if (!frame) return;
+      const rect = frame.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const st = resolveTextStyle(style as never);
+      const px = (e.clientX - rect.left) / rect.width;
+      const py = (e.clientY - rect.top) / rect.height;
+      const offsetX = px - st.x;
+      const offsetY = py - st.y;
+      let last = { x: st.x, y: st.y };
+      e.preventDefault();
+      e.stopPropagation();
+      edl.setSelection([id]);
+      setSubDrag({ id, x: last.x, y: last.y });
+      const move = (ev: PointerEvent) => {
+        const nx = (ev.clientX - rect.left) / rect.width - offsetX;
+        const ny = (ev.clientY - rect.top) / rect.height - offsetY;
+        last = {
+          x: Math.min(0.98, Math.max(0.02, nx)),
+          y: Math.min(0.96, Math.max(0.04, ny)),
+        };
+        setSubDrag({ id, x: last.x, y: last.y });
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        edl.updateTextStyle(id, { x: last.x, y: last.y });
+        setSubDrag(null);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up, { once: true });
+    },
+    [edl],
   );
 
   const activeShot = activeVideo?.sourceShotId
@@ -278,7 +333,11 @@ export const StudioPreview = () => {
             Math.max(clip.inPoint + localA * rate, clip.inPoint),
             Math.max(clip.inPoint, clip.outPoint),
           );
-      a.playbackRate = rate;
+      const pitch = Math.min(2, Math.max(0.5, clip.pitch ?? 1));
+      // 试听：pitch 直接改播放速率（preservesPitch=false 才会真的变调）；
+      // 导出端用 asetrate + atempo，保持片段时间线时长。
+      a.preservesPitch = pitch !== 1;
+      a.playbackRate = Math.min(4, rate * pitch);
       a.volume = Math.max(0, Math.min(1, clip.volume)) * previewVolume;
       a.muted = previewMuted;
       if (playing && playDir > 0 && !clip.reverse) {
@@ -484,7 +543,7 @@ export const StudioPreview = () => {
         </div>
 
         <div className="pv-stage">
-          <div className="pv-frame" data-ratio={ratio} data-tag={shot.tag} data-st={shot.st}>
+          <div className="pv-frame" ref={frameRef} data-ratio={ratio} data-tag={shot.tag} data-st={shot.st}>
             {showStill ? (
               <div className="pv-media-xf" style={videoXfStyle}>
                 <img
@@ -579,23 +638,32 @@ export const StudioPreview = () => {
                 preload="auto"
               />
             ) : null}
-            {subtitles.length > 0 ? (
+            {subtitles.length > 0 && !(activeVideo && (activeVideo.lane ?? 0) > 0) ? (
               <div className="pv-subtitle">
-                {subtitles.map((t, i) => {
+                {subtitles.map((t) => {
                   const st = resolveTextStyle(t.style);
-                  const side = ((1 - Math.min(1, Math.max(0.1, st.maxWidth))) / 2) * 100;
+                  const dragging = subDrag?.id === t.id;
+                  const x = dragging ? subDrag.x : Math.min(1, Math.max(0, st.x));
+                  const y = dragging ? subDrag.y : Math.min(1, Math.max(0, st.y));
+                  const fontFamily = PREVIEW_FONTS[st.fontFamily] ?? PREVIEW_FONTS['source-han-sans'];
                   return (
                     <div
-                      key={i}
-                      className="pv-sub-item"
+                      key={t.id}
+                      className={`pv-sub-item${dragging ? ' dragging' : ''}${edl.selectedIds.includes(t.id) ? ' selected' : ''}`}
+                      data-subtitle-id={t.id}
+                      onPointerDown={(e) => startSubtitleDrag(e, t.id, t.style)}
+                      title="拖动字幕到画面任意位置"
                       style={{
-                        top: `${Math.min(1, Math.max(0, st.y)) * 100}%`,
-                        paddingLeft: `${side}%`,
-                        paddingRight: `${side}%`,
+                        left: `${x * 100}%`,
+                        top: `${y * 100}%`,
+                        width: `${Math.min(1, Math.max(0.2, st.maxWidth)) * 100}%`,
+                        transform: 'translate(-50%, -50%)',
+                        zIndex: 100 + t.lane,
                         textAlign: st.align,
                         // cqh = 预览框高度的 1%：与后端「字号按画幅高度百分比」同一套语义，
                         // 所以 9:16 / 16:9 下看到的比例和烧进成片的一致
                         fontSize: `${st.fontSize}cqh`,
+                        fontFamily,
                         color: st.color,
                         fontWeight: st.bold ? 700 : 400,
                         fontStyle: st.italic ? 'italic' : undefined,

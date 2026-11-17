@@ -88,6 +88,7 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   lane: c.lane ?? 0,
   speed: c.speed,
   volume: c.volume,
+  pitch: c.pitch ?? 1,
   transition: c.transition ?? null,
   text: c.text ?? null,
   // 绑定组与字幕样式必须一起落库，否则一保存就「解绑」、样式回默认
@@ -193,6 +194,8 @@ export interface EdlEditor {
   /** 解除真复合片段，按子片段还原 */
   ungroupCompound: (id: string) => string[];
   setClipVolume: (id: string, volume: number) => void;
+  /** 音高倍率 0.5–2（1=原音）；预览/导出共用 */
+  setClipPitch: (id: string, pitch: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
   setClipLocked: (id: string, locked: boolean) => void;
   /** 启用/停用片段（剪映 V）：保留在时间线，但预览与导出跳过 */
@@ -1227,6 +1230,22 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const setClipPitch = useCallback(
+    (id: string, pitch: number) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      const p = clamp(pitch, 0.5, 2);
+      if (Math.abs(p - (src.pitch ?? 1)) < 1e-3) return;
+      commit(
+        before.map((c) => (c.id === id ? { ...c, pitch: p } : c)),
+        '调整音高',
+        before,
+      );
+    },
+    [commit],
+  );
+
   const setClipTransition = useCallback(
     (id: string, transition: TimelineClip['transition']) => {
       const before = clipsRef.current;
@@ -1595,6 +1614,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     createCompound,
     ungroupCompound,
     setClipVolume,
+    setClipPitch,
     setClipTransition,
     setClipLocked,
     setClipEnabled,

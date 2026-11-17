@@ -71,6 +71,7 @@ function diffChangedClientKeys(prev: SaveTimelineClipDto[], next: SaveTimelineCl
       c.timelineStart,
       c.speed ?? 1,
       c.volume ?? 1,
+      c.pitch ?? 1,
       c.text ?? '',
       c.bindGroup ?? '',
       c.locked ? 1 : 0,
@@ -323,6 +324,7 @@ export class TimelineService {
       lane: row.lane ?? 0,
       speed: num(row.speed, 1) || 1,
       volume: num(row.volume, 1),
+      pitch: num(row.pitch, 1) || 1,
       transition: (row.transition as TimelineClip['transition']) ?? null,
       text: row.text,
       keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
@@ -421,6 +423,7 @@ export class TimelineService {
           lane: c.lane ?? 0,
           speed: String(c.speed ?? 1),
           volume: String(c.volume ?? 1),
+          pitch: String(c.pitch ?? 1),
           transition: c.transition ?? null,
           text: c.text ?? null,
           keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
@@ -800,7 +803,28 @@ export class TimelineService {
   }
 
   /** 字幕轨 → SRT（时间线坐标，供软字幕封装） */
-  private buildSrt(clips: TimelineClip[]): string {
+  /**
+   * 覆盖逻辑：轨道列表越靠上层级越高。overlay 画面轨在字幕轨之上，
+   * 只要字幕中点被 overlay 画面覆盖，这条字幕就不应烧录/出现在成片里。
+   */
+  private coveredByOverlay(
+    sub: TimelineClip,
+    overlayClips: TimelineClip[],
+  ): boolean {
+    if (overlayClips.length === 0) return false;
+    const start = sub.timelineStart;
+    const end = start + clipSpan(sub);
+    const probe = start + Math.max(0.05, end - start) / 2;
+    return overlayClips.some(
+      (v) =>
+        v.track === 'video' &&
+        (v.lane ?? 0) > 0 &&
+        probe >= v.timelineStart &&
+        probe < v.timelineStart + clipSpan(v),
+    );
+  }
+
+  private buildSrt(clips: TimelineClip[], overlayClips: TimelineClip[] = []): string {
     const fmt = (sec: number) => {
       const ms = Math.round(Math.max(0, sec) * 1000);
       const p = (v: number, n: number) => String(v).padStart(n, '0');
@@ -811,6 +835,7 @@ export class TimelineService {
     };
     const subs = clips
       .filter((c) => c.track === 'subtitle' && c.text && c.text.trim())
+      .filter((c) => !this.coveredByOverlay(c, overlayClips))
       .sort((a, b) => a.timelineStart - b.timelineStart);
     return subs
       .map((c, i) => {
@@ -829,7 +854,12 @@ export class TimelineService {
    * 所以按「样式指纹」生成多条 Style 复用，事件只引用名字。位置用 \an5 + \pos
    * 精确落在用户选的那一点上（Alignment 只有 9 个档，满足不了自由摆放）。
    */
-  private buildAss(clips: TimelineClip[], width: number, height: number): string {
+  private buildAss(
+    clips: TimelineClip[],
+    width: number,
+    height: number,
+    overlayClips: TimelineClip[] = [],
+  ): string {
     const fmt = (sec: number) => {
       const cs = Math.round(Math.max(0, sec) * 100);
       const p = (v: number, n: number) => String(v).padStart(n, '0');
@@ -840,6 +870,7 @@ export class TimelineService {
     };
     const subs = clips
       .filter((c) => c.track === 'subtitle' && c.text && c.text.trim())
+      .filter((c) => !this.coveredByOverlay(c, overlayClips))
       .sort((a, b) => a.timelineStart - b.timelineStart);
 
     const styles: string[] = [];
@@ -1078,7 +1109,7 @@ export class TimelineService {
     const audioClips = audible
       .filter((c) => c.track === 'audio' && c.sourceUrl)
       .sort((a, b) => a.timelineStart - b.timelineStart);
-    const srt = this.buildSrt(audible);
+    const srt = this.buildSrt(audible, overlayClips);
     // 选区导出时软字幕时间戳仍是全片时间轴，必须强制烧录后再裁，否则字幕整体错位
     const wantRange = dto.startSec != null || dto.endSec != null;
     const burn = (dto.burnSubtitles !== false || wantRange) && Boolean(srt.trim());
@@ -1324,18 +1355,35 @@ export class TimelineService {
             this.logger.warn(`音频片段 ${i + 1} 下载失败，跳过`);
             continue;
           }
-          const span = Math.max(0.05, a.outPoint - a.inPoint);
+          // 时间线有效时长 = 源区间 / 变速；音高用 asetrate 移位后 atempo 还原时长
+          const speed = a.speed > 0 ? a.speed : 1;
+          const pitch = Math.min(2, Math.max(0.5, a.pitch ?? 1));
+          const span = Math.max(0.05, (a.outPoint - a.inPoint) / speed);
           const delayMs = Math.max(0, Math.round(a.timelineStart * 1000));
           const part = join(work, `a_seg_${String(i).padStart(3, '0')}.wav`);
           cleanup.push(part);
+          const tempo = speed / pitch;
+          const atempo: number[] = [];
+          // atempo 单段只接受 0.5–2；超出时串联多段，仍保持总倍率
+          let rest = tempo;
+          while (rest > 2) { atempo.push(2); rest /= 2; }
+          while (rest < 0.5) { atempo.push(0.5); rest /= 0.5; }
+          if (rest !== 1 || atempo.length === 0) atempo.push(rest);
+          const audioFilters = [
+            a.reverse ? 'areverse' : '',
+            pitch !== 1 ? `asetrate=44100*${pitch},aresample=44100` : '',
+            ...atempo.map((v) => `atempo=${Math.min(2, Math.max(0.5, v))}`),
+            `volume=${Math.min(1, Math.max(0, a.volume))}`,
+            `adelay=${delayMs}|${delayMs}`,
+          ].filter(Boolean).join(',');
           // eslint-disable-next-line no-await-in-loop
           const pOk = await run([
             '-y',
             '-ss', String(Math.max(0, a.inPoint)),
             '-i', src,
-            '-t', String(span),
+            '-t', String(Math.max(0.05, a.outPoint - a.inPoint)),
             '-vn',
-            '-af', `${a.reverse ? 'areverse,' : ''}volume=${Math.min(1, Math.max(0, a.volume))},adelay=${delayMs}|${delayMs}`,
+            '-af', audioFilters,
             '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le',
             part,
           ]);
@@ -1368,7 +1416,7 @@ export class TimelineService {
       if (burn && burnBin) {
         const assPath = join(work, 'subs.ass');
         cleanup.push(assPath);
-        await writeFile(assPath, this.buildAss(audible, width, height), 'utf8');
+        await writeFile(assPath, this.buildAss(audible, width, height, overlayClips), 'utf8');
         const fdir = this.fontDir();
         const vf = `ass=filename=subs.ass${fdir ? `:fontsdir=${fdir}` : ''}`;
         const audioIn = audioPath ? ['-i', audioPath] : [];

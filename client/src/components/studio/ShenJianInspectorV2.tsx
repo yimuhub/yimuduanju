@@ -13,6 +13,27 @@ import { sampleVideoTransform } from '@shared/timeline-keyframes';
 
 type Grade = { brightness: number; contrast: number; saturation: number; filter: string };
 
+const gainToDb = (gain: number) => 20 * Math.log10(Math.max(0.001, gain));
+const dbToGain = (db: number) => (db <= -60 ? 0 : Math.min(1, Math.pow(10, db / 20)));
+const pitchToSemitone = (pitch: number) => Math.round(12 * Math.log2(Math.max(0.5, pitch)));
+const semitoneToPitch = (semi: number) => Math.min(2, Math.max(0.5, Math.pow(2, semi / 12)));
+
+const TEXT_FONTS = [
+  { value: 'source-han-sans', label: '思源黑体' },
+  { value: 'pingfang', label: '苹方' },
+  { value: 'songti', label: '宋体' },
+  { value: 'kaiti', label: '楷体' },
+  { value: 'mono', label: '等宽' },
+];
+
+const TEXT_TEMPLATES: Array<{ name: string; patch: Record<string, unknown> }> = [
+  { name: '经典白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0.08, bgColor: '', bold: true } },
+  { name: '综艺黄', patch: { color: '#FFE45C', strokeColor: '#000000', strokeWidth: 0.12, bgColor: '', bold: true } },
+  { name: '电影字幕', patch: { color: '#F4F1EA', strokeColor: '#000000', strokeWidth: 0.03, bgColor: '', bold: false } },
+  { name: '黑底白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0, bgColor: '#000000', bgOpacity: 0.55, bold: true } },
+  { name: '极简小字', patch: { color: '#DDE3EA', strokeColor: '#000000', strokeWidth: 0.02, bgColor: '', bold: false, fontSize: 4.2 } },
+];
+
 export const ShenJianInspector = ({
   grade,
   setGrade,
@@ -186,16 +207,42 @@ export const ShenJianInspector = ({
                     />
                     <Slider
                       label="音量"
-                      value={Math.round((clip.volume ?? 1) * 100)}
-                      min={0}
-                      max={100}
-                      suffix="%"
-                      onChange={(v) => edl.setClipVolume(clip.id, v / 100)}
+                      value={Number(gainToDb(clip.volume ?? 1).toFixed(1))}
+                      min={-60}
+                      max={0}
+                      step={0.5}
+                      suffix=" dB"
+                      onChange={(v) => edl.setClipVolume(clip.id, dbToGain(v))}
                     />
                     <div className="grid2" style={{ marginTop: 6 }}>
                       {[0.5, 1, 1.5, 2].map((v) => (
                         <button key={v} type="button" className={`mini-btn${Math.abs((clip.speed ?? 1) - v) < 0.01 ? ' on' : ''}`} onClick={() => edl.setClipSpeed(clip.id, v)}>{v}× 变速</button>
                       ))}
+                    </div>
+                    <div className="row" style={{ marginTop: 6 }}>
+                      <label>音量预设</label>
+                      <div className="seg" style={{ marginLeft: 'auto', flexWrap: 'wrap' }}>
+                        {[-24, -12, -6, -3, 0].map((db) => (
+                          <button key={db} type="button" className={Math.abs(gainToDb(clip.volume ?? 1) - db) < 0.6 ? 'on' : ''} onClick={() => edl.setClipVolume(clip.id, dbToGain(db))}>{db === 0 ? '0' : db} dB</button>
+                        ))}
+                      </div>
+                    </div>
+                    <Slider
+                      label="音高"
+                      value={pitchToSemitone(clip.pitch ?? 1)}
+                      min={-12}
+                      max={12}
+                      step={1}
+                      suffix=" 半音"
+                      onChange={(v) => edl.setClipPitch(clip.id, semitoneToPitch(v))}
+                    />
+                    <div className="grid2" style={{ marginTop: 6 }}>
+                      {[-12, -6, 0, 6, 12].map((semi) => (
+                        <button key={semi} type="button" className={`mini-btn${pitchToSemitone(clip.pitch ?? 1) === semi ? ' on' : ''}`} onClick={() => edl.setClipPitch(clip.id, semitoneToPitch(semi))}>{semi > 0 ? `+${semi}` : semi} 半音</button>
+                      ))}
+                    </div>
+                    <div className="mini-note" style={{ marginTop: 4 }}>
+                      当前 {(clip.pitch ?? 1).toFixed(3)}× · 导出用 asetrate + atempo 保持片段时长
                     </div>
                     {clip.track === 'video' ? (
                       <>
@@ -220,7 +267,7 @@ export const ShenJianInspector = ({
                   </section>
                 ) : null}
 
-                {clip.text !== undefined && clip.text !== null || clip.track === 'subtitle' ? (
+                {clip.track === 'subtitle' ? (
                   <section className="section">
                     <h4>字幕文本</h4>
                     <textarea
@@ -229,6 +276,27 @@ export const ShenJianInspector = ({
                       onChange={(e) => edl.editSubtitle(clip.id, e.target.value)}
                       placeholder="输入字幕 / 对白…"
                     />
+                    <div className="row">
+                      <label>字体</label>
+                      <select
+                        value={clip.textStyle?.fontFamily ?? 'source-han-sans'}
+                        onChange={(e) => edl.updateTextStyle(clip.id, { fontFamily: e.target.value })}
+                      >
+                        {TEXT_FONTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="row" style={{ marginTop: 4 }}>
+                      <label>模板</label>
+                      <div className="seg" style={{ marginLeft: 'auto', flexWrap: 'wrap' }}>
+                        {TEXT_TEMPLATES.map((tpl) => (
+                          <button
+                            key={tpl.name}
+                            type="button"
+                            onClick={() => edl.updateTextStyle(clip.id, tpl.patch as never)}
+                          >{tpl.name}</button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="row">
                       <label>字号</label>
                       <input

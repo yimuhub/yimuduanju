@@ -13,6 +13,7 @@ import { clipSpan } from './model';
 import type { TimelineClip, TimelineTrackKind } from '@shared/api.interface';
 import { mediaOfDrag, peekTimelineDrag, readTimelineDrag, trackOfDrag } from '@client/src/lib/timeline-dnd';
 import { probeVideoHasAudio } from '@client/src/lib/media-audio';
+import { useWaveform, Waveform } from './timeline-media';
 
 type Row = {
   key: string;
@@ -57,8 +58,51 @@ const clipLabel = (c: TimelineClip) => {
   return c.text?.slice(0, 16) || '画面';
 };
 
+/**
+ * 真实音频波形：按项目 + 媒体地址请求后端 peaks，并按片段区间/当前缩放重采样。
+ * 加载中也有明确文案，绝不把音频片段画成空白色块。
+ */
+const AudioClipWave = ({
+  projectId,
+  clip,
+  span,
+  pxPerSec,
+}: {
+  projectId: string;
+  clip: TimelineClip;
+  span: number;
+  pxPerSec: number;
+}) => {
+  const wave = useWaveform(projectId, clip.sourceUrl);
+  if (!wave) {
+    return (
+      <div className="wave" aria-label="音频波形加载中">
+        <span className="wave-empty">波形解析中…</span>
+      </div>
+    );
+  }
+  if (wave.peaks.length === 0) {
+    return (
+      <div className="wave" aria-label="音频没有可解析的波形">
+        <span className="wave-empty">无可解析波形</span>
+      </div>
+    );
+  }
+  return (
+    <div className="wave" aria-label="音频波形">
+      <Waveform
+        wave={wave}
+        span={span}
+        inPoint={clip.inPoint}
+        outPoint={clip.outPoint}
+        pxPerSec={pxPerSec}
+      />
+    </div>
+  );
+};
+
 export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSnapOn: (v: boolean) => void }) => {
-  const { data, curT, setCurT, setPreviewMode } = useStudio();
+  const { data, projectId, curT, setCurT, setPreviewMode } = useStudio();
   const edl = useEdl();
 
   const [zoom, setZoom] = useState(38);
@@ -523,11 +567,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                       >
                         {thumb ? <img className="thumb" src={thumb} alt="" /> : null}
                         {clip.track === 'audio' ? (
-                          <div className="wave">
-                            {Array.from({ length: Math.max(6, Math.floor(w / 4)) }, (_, i) => (
-                              <i key={i} style={{ height: `${18 + ((i * 13 + Math.floor(clip.timelineStart * 7)) % 70)}%` }} />
-                            ))}
-                          </div>
+                          <AudioClipWave projectId={projectId} clip={clip} span={span} pxPerSec={zoom} />
                         ) : null}
                         {clip.track === 'subtitle' ? <div className="t"><b>T1 字幕</b>{clip.text || '字幕'}</div> : null}
                         <span className="shade" />

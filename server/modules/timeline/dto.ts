@@ -91,6 +91,14 @@ export class SaveTimelineClipDto {
   @Max(1)
   volume?: number;
 
+  /** 音高倍率 0.5–2（1=原音）；只用于音频/视频原声 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.5)
+  @Max(2)
+  pitch?: number;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => ClipTransitionDto)

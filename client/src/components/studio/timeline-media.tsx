@@ -254,6 +254,7 @@ export const Waveform = ({
       viewBox={`0 0 ${peaks.length} ${h}`}
       preserveAspectRatio="none"
       aria-hidden
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     >
       <path d={`${up}${down}Z`} fill="currentColor" />
     </svg>

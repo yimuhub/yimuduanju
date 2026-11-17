@@ -9,8 +9,18 @@ import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clipSpan } from './model';
 import { sampleVideoTransform } from '@shared/timeline-keyframes';
+import type { TimelineClip, TimelineTextStyle } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1';
+
+// 预览字体映射，与检查器里的字体 id 一一对应
+const PREVIEW_FONTS: Record<string, string> = {
+  'source-han-sans': '"Noto Sans SC", "Source Han Sans SC", "PingFang SC", sans-serif',
+  'pingfang': '"PingFang SC", "Noto Sans SC", sans-serif',
+  'songti': '"Songti SC", "Noto Serif SC", serif',
+  'kaiti': '"Kaiti SC", "STKaiti", serif',
+  'mono': '"SFMono-Regular", "Menlo", monospace',
+};
 
 export const ShenJianStage = ({
   ratio,
@@ -38,16 +48,43 @@ export const ShenJianStage = ({
   } = useStudio();
   const edl = useEdl();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
   const [videoBroken, setVideoBroken] = useState(false);
+  const [subDrag, setSubDrag] = useState<{ id: string; x: number; y: number } | null>(null);
+  const lastSubDrag = useRef<{ id: string; x: number; y: number } | null>(null);
 
   const total = Math.max(1, data.totalSec || 0);
 
+  const trackMeta = (track: string, lane: number) =>
+    (data.timeline?.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
+
   const active = useMemo(() => {
     const clips = (data.timeline?.clips ?? []).filter(
-      (c) => c.track === 'video' && c.enabled !== false && curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c),
+      (c) =>
+        c.track === 'video' &&
+        c.enabled !== false &&
+        trackMeta('video', c.lane ?? 0)?.exportEnabled !== false &&
+        curT >= c.timelineStart &&
+        curT < c.timelineStart + clipSpan(c),
     );
     return clips.sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0))[0] ?? null;
-  }, [data.timeline?.clips, curT]);
+  }, [data.timeline?.clips, data.timeline?.tracks, curT]);
+
+  const audioClips = useMemo(
+    () => (data.timeline?.clips ?? []).filter((c) => c.track === 'audio' && c.sourceUrl && c.enabled !== false),
+    [data.timeline?.clips],
+  );
+  const activeAudio = useMemo(
+    () =>
+      audioClips.filter(
+        (c) =>
+          trackMeta('audio', c.lane ?? 0)?.muted !== true &&
+          curT >= c.timelineStart &&
+          curT < c.timelineStart + clipSpan(c),
+      ),
+    [audioClips, data.timeline?.tracks, curT],
+  );
 
   const activeSubs = useMemo(() => {
     return (data.timeline?.clips ?? [])
@@ -80,14 +117,42 @@ export const ShenJianStage = ({
         try { v.currentTime = sourceTime; } catch { /* 元数据未就绪 */ }
       }
       v.volume = previewVolume;
-      v.muted = previewMuted;
+      // 有独立音频轨在出声时，画面本体静音，避免同一条对白重复播放
+      v.muted = previewMuted || activeAudio.length > 0;
       if (playing) void v.play().catch(() => undefined);
       else v.pause();
     };
     if (v.readyState >= 1) sync();
     else v.addEventListener('loadedmetadata', sync, { once: true });
     return () => v.removeEventListener('loadedmetadata', sync);
-  }, [sourceTime, playing, previewVolume, previewMuted, isStill, active?.id]);
+  }, [sourceTime, playing, previewVolume, previewMuted, isStill, active?.id, activeAudio.length]);
+
+  // 音频轨真实播放：时间线每帧对齐 sourceTime，音量/速度/音高实时生效
+  useEffect(() => {
+    for (const c of audioClips) {
+      const a = audioRefs.current.get(c.id);
+      if (!a) continue;
+      const inRange = curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c);
+      const laneMuted = trackMeta('audio', c.lane ?? 0)?.muted === true;
+      if (!inRange || laneMuted) {
+        a.pause();
+        continue;
+      }
+      const rate = Math.max(0.1, c.speed ?? 1);
+      const pitch = Math.min(2, Math.max(0.5, c.pitch ?? 1));
+      const local = Math.max(0, curT - c.timelineStart);
+      const st = c.reverse ? Math.max(c.inPoint, c.outPoint - local * rate) : c.inPoint + local * rate;
+      if (Number.isFinite(st) && Math.abs(a.currentTime - st) > 0.2) {
+        try { a.currentTime = st; } catch { /* 元数据未就绪 */ }
+      }
+      a.volume = Math.max(0, Math.min(1, c.volume ?? 1)) * previewVolume;
+      a.preservesPitch = pitch === 1;
+      a.playbackRate = Math.min(4, rate * pitch);
+      if (previewMuted) a.pause();
+      else if (playing) void a.play().catch(() => undefined);
+      else a.pause();
+    }
+  }, [audioClips, curT, playing, previewVolume, previewMuted]);
 
   const filter = [
     previewQuality === 'fast' ? 'saturate(.92) contrast(.96) brightness(.97)' : '',
@@ -105,22 +170,27 @@ export const ShenJianStage = ({
     .join(' ');
 
   const title = data.project?.title || '未命名项目';
-  const caption = subtitle?.text || active?.text || shot?.dialogue || '';
+  const caption = subtitle?.text || shot?.dialogue || '';
   const hexRgba = (hex: string | undefined, alpha: number) => {
     const h = (hex || '#000000').replace('#', '');
     const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.padEnd(6, '0').slice(0, 6);
     return `rgba(${parseInt(full.slice(0, 2), 16)},${parseInt(full.slice(2, 4), 16)},${parseInt(full.slice(4, 6), 16)},${alpha})`;
   };
-  const styleFor = (subStyle: (typeof activeSubs)[number]['textStyle']) => {
+  const styleFor = (subStyle: TimelineTextStyle | null | undefined, id?: string) => {
     if (!subStyle) return undefined;
+    const dragging = subDrag?.id === id;
+    const x = dragging ? subDrag.x : (subStyle.x ?? 0.5);
+    const y = dragging ? subDrag.y : (subStyle.y ?? 0.86);
     return {
-      top: `${(subStyle.y ?? 0.86) * 100}%`,
-      left: `${(subStyle.x ?? 0.5) * 100}%`,
+      top: `${y * 100}%`,
+      left: `${x * 100}%`,
+      right: 'auto',
       bottom: 'auto',
       width: `${Math.max(20, (subStyle.maxWidth ?? 0.86) * 100)}%`,
       transform: 'translate(-50%, -50%)',
       textAlign: subStyle.align ?? 'center',
       fontSize: `${subStyle.fontSize ?? 7}cqh`,
+      fontFamily: PREVIEW_FONTS[subStyle.fontFamily ?? 'source-han-sans'] ?? PREVIEW_FONTS['source-han-sans'],
       color: subStyle.color || '#ffffff',
       fontWeight: subStyle.bold ? 800 : 600,
       fontStyle: subStyle.italic ? 'italic' : 'normal',
@@ -128,8 +198,45 @@ export const ShenJianStage = ({
       background: (subStyle.bgOpacity ?? 0) > 0 ? hexRgba(subStyle.bgColor, subStyle.bgOpacity ?? 0) : 'transparent',
       borderRadius: (subStyle.bgOpacity ?? 0) > 0 ? 4 : 0,
       padding: (subStyle.bgOpacity ?? 0) > 0 ? '0.18em 0.3em' : 0,
+      cursor: 'grab',
+      touchAction: 'none',
+      pointerEvents: 'auto',
     } as const;
   };
+
+  const startSubtitleDrag = (e: React.PointerEvent, clipId: string, style?: TimelineTextStyle | null) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const frame = canvasRef.current?.getBoundingClientRect();
+    if (!frame) return;
+    const norm = (cx: number, cy: number) => ({
+      x: Math.max(0.04, Math.min(0.96, (cx - frame.left) / frame.width)),
+      y: Math.max(0.1, Math.min(0.9, (cy - frame.top) / frame.height)),
+    });
+    const start = norm(e.clientX, e.clientY);
+    const seed = { id: clipId, x: start.x, y: start.y };
+    lastSubDrag.current = seed;
+    setSubDrag(seed);
+    const onMove = (ev: PointerEvent) => {
+      const p = norm(ev.clientX, ev.clientY);
+      const next = { id: clipId, x: p.x, y: p.y };
+      lastSubDrag.current = next;
+      setSubDrag(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      const last = lastSubDrag.current;
+      setSubDrag(null);
+      if (last && last.id === clipId) edl.updateTextStyle(clipId, { x: last.x, y: last.y });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const renderSubs = activeSubs.length > 0 && !(active && (active.lane ?? 0) > 0);
 
   return (
     <section className="stage">
@@ -161,6 +268,7 @@ export const ShenJianStage = ({
       <div className="canvas-wrap">
         <div className={`canvas-frame${ratio === '16:9' ? ' wide' : ratio === '1:1' ? ' square' : ''}`}>
           <div
+            ref={canvasRef}
             className={`canvas${previewQuality === 'fast' ? ' fast' : ''}${safe ? ' safe-on' : ''}`}
             onClick={() => setPlaying(!playing)}
             role="button"
@@ -177,7 +285,7 @@ export const ShenJianStage = ({
                   className="bg"
                   src={url}
                   playsInline
-                  muted={previewMuted}
+                  muted={previewMuted || activeAudio.length > 0}
                   onError={() => setVideoBroken(true)}
                   style={{ filter, transform: `scale(${transform.scale}) translate(${transform.x * 100}%, ${transform.y * 100}%) rotate(${transform.rotate}deg)` }}
                 />
@@ -191,13 +299,34 @@ export const ShenJianStage = ({
             <div className="grade" />
             <div className="vignette" />
             <div className="layer-title">{title}</div>
-            {activeSubs.length ? (
+            {renderSubs ? (
               activeSubs.map((c) => (
-                <div key={c.id} className="layer-sub" style={styleFor(c.textStyle)}><span>{c.text}</span></div>
+                <div
+                  key={c.id}
+                  className={`layer-sub${subDrag?.id === c.id ? ' dragging' : ''}${edl.selectedIds.includes(c.id) ? ' selected' : ''}`}
+                  style={styleFor(c.textStyle, c.id)}
+                  data-subtitle-id={c.id}
+                  title="拖动字幕到画面任意位置"
+                  onPointerDown={(e) => startSubtitleDrag(e, c.id, c.textStyle)}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span>{c.text}</span>
+                </div>
               ))
-            ) : caption ? (
+            ) : caption && !(active && (active.lane ?? 0) > 0) ? (
               <div className="layer-sub"><span>{caption}</span></div>
             ) : null}
+            {audioClips.map((c) => (
+              <audio
+                key={c.id}
+                ref={(el) => {
+                  if (el) audioRefs.current.set(c.id, el);
+                  else audioRefs.current.delete(c.id);
+                }}
+                src={c.sourceUrl ?? undefined}
+                preload="auto"
+              />
+            ))}
             <div className="layer-watermark">一幕 · 神剪</div>
             <div className="safe" />
             {previewQuality === 'fast' ? <div className="quality-badge">流畅预览 · 代理 540p</div> : null}
