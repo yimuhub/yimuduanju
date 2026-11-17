@@ -2,7 +2,8 @@
  * 一幕·神剪 · 右侧检查器（原型 基础 / 调节 / 动画 三页）
  * 所有数值都写回同一份 EDL：时间、变速、音量、转场、字幕样式、运镜关键帧。
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { Copy, Diamond, Link2, Scissors, Sparkles, Split, Trash2, Undo2, Volume2 } from 'lucide-react';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
@@ -22,6 +23,14 @@ export const ShenJianInspector = ({
   const { data, curT, setCurT } = useStudio();
   const edl = useEdl();
   const [tab, setTab] = useState<'basic' | 'color' | 'anim'>('basic');
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d === 'basic' || d === 'color' || d === 'anim') setTab(d);
+    };
+    window.addEventListener('yimu:shenjian-inspector-tab', h);
+    return () => window.removeEventListener('yimu:shenjian-inspector-tab', h);
+  }, []);
 
   const clip = useMemo(() => {
     const ids = edl.selectedIds;
@@ -55,6 +64,17 @@ export const ShenJianInspector = ({
     if (idx >= 0) frames[idx] = { ...frames[idx], ...next };
     else frames.push(next);
     edl.setClipKeyframes(clip.id, frames);
+  };
+
+  const setMotion = (
+    from: Partial<{ scale: number; x: number; y: number; rotate: number }>,
+    to: Partial<{ scale: number; x: number; y: number; rotate: number }>,
+  ) => {
+    if (!clip) return;
+    const a = { time: 0, scale: 1, x: 0, y: 0, rotate: 0, ...from };
+    const b = { time: Math.max(0.1, duration), scale: 1, x: 0, y: 0, rotate: 0, ...to };
+    edl.setClipKeyframes(clip.id, [a, b] as never);
+    toast.success('运镜已写入：预览与导出共用同一份关键帧');
   };
 
   const setStart = (v: number) => {
@@ -143,7 +163,12 @@ export const ShenJianInspector = ({
                     <Slider label="X 位置" value={Math.round(transform.x * 100)} min={-100} max={100} suffix="%" onChange={(v) => writeTransform({ x: v / 100 })} />
                     <Slider label="Y 位置" value={Math.round(transform.y * 100)} min={-100} max={100} suffix="%" onChange={(v) => writeTransform({ y: v / 100 })} />
                     <Slider label="旋转" value={Math.round(transform.rotate)} min={-180} max={180} suffix="°" onChange={(v) => writeTransform({ rotate: v })} />
-                    <Slider label="不透明度" value={100} min={0} max={100} suffix="%" onChange={() => undefined} disabled />
+                    <div className="grid2" style={{ marginTop: 6 }}>
+                      <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 1, x: 0, y: 0 })}>适应画面</button>
+                      <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 1.08, x: 0, y: 0 })}>填充画面</button>
+                      <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 0.86, x: 0, y: 0 })}>原始尺寸</button>
+                      <button type="button" className="mini-btn" onClick={() => edl.setClipKeyframes(clip.id, [])}>重置运镜</button>
+                    </div>
                   </section>
                 ) : null}
 
@@ -167,14 +192,16 @@ export const ShenJianInspector = ({
                       suffix="%"
                       onChange={(v) => edl.setClipVolume(clip.id, v / 100)}
                     />
-                    <div className="row">
-                      <label>混合</label>
-                      <select defaultValue="normal" onChange={() => undefined}>
-                        <option value="normal">正常</option>
-                        <option value="overlay">叠加</option>
-                        <option value="screen">滤色</option>
-                      </select>
+                    <div className="grid2" style={{ marginTop: 6 }}>
+                      {[0.5, 1, 1.5, 2].map((v) => (
+                        <button key={v} type="button" className={`mini-btn${Math.abs((clip.speed ?? 1) - v) < 0.01 ? ' on' : ''}`} onClick={() => edl.setClipSpeed(clip.id, v)}>{v}× 变速</button>
+                      ))}
                     </div>
+                    {clip.track === 'video' ? (
+                      <button type="button" className="mini-btn" style={{ width: '100%', marginTop: 6 }} onClick={() => edl.detachAudio(clip.id)}>
+                        <Volume2 /> 音画分离（提取原声为独立音频）
+                      </button>
+                    ) : null}
                   </section>
                 ) : null}
 
@@ -220,6 +247,28 @@ export const ShenJianInspector = ({
                         ))}
                       </div>
                     </div>
+                    <div className="row">
+                      <label>字重</label>
+                      <div className="seg">
+                        <button type="button" className={(clip.textStyle?.bold ?? false) ? 'on' : ''} onClick={() => edl.updateTextStyle(clip.id, { bold: !(clip.textStyle?.bold ?? false) })}>B 粗</button>
+                        <button type="button" className={(clip.textStyle?.italic ?? false) ? 'on' : ''} onClick={() => edl.updateTextStyle(clip.id, { italic: !(clip.textStyle?.italic ?? false) })}>I 斜</button>
+                      </div>
+                    </div>
+                    <div className="row">
+                      <label>描边</label>
+                      <input type="color" value={clip.textStyle?.strokeColor || '#000000'} onChange={(e) => edl.updateTextStyle(clip.id, { strokeColor: e.target.value })} style={{ height: 26, padding: 2 }} />
+                      <input type="range" min="0" max="12" step="1" value={clip.textStyle?.strokeWidth ?? 0} onChange={(e) => edl.updateTextStyle(clip.id, { strokeWidth: Number(e.target.value) })} />
+                      <span className="mini-note">{clip.textStyle?.strokeWidth ?? 0}</span>
+                    </div>
+                    <div className="row">
+                      <label>底色</label>
+                      <input type="color" value={clip.textStyle?.bgColor || '#000000'} onChange={(e) => edl.updateTextStyle(clip.id, { bgColor: e.target.value })} style={{ height: 26, padding: 2 }} />
+                      <input type="range" min="0" max="100" step="1" value={Math.round((clip.textStyle?.bgOpacity ?? 0) * 100)} onChange={(e) => edl.updateTextStyle(clip.id, { bgOpacity: Number(e.target.value) / 100 })} />
+                      <span className="mini-note">{Math.round((clip.textStyle?.bgOpacity ?? 0) * 100)}%</span>
+                    </div>
+                    <Slider label="X 位置" value={Math.round((clip.textStyle?.x ?? 0.5) * 100)} min={0} max={100} suffix="%" onChange={(v) => edl.updateTextStyle(clip.id, { x: v / 100 })} />
+                    <Slider label="Y 位置" value={Math.round((clip.textStyle?.y ?? 0.86) * 100)} min={0} max={100} suffix="%" onChange={(v) => edl.updateTextStyle(clip.id, { y: v / 100 })} />
+                    <Slider label="最大行宽" value={Math.round((clip.textStyle?.maxWidth ?? 0.86) * 100)} min={20} max={100} suffix="%" onChange={(v) => edl.updateTextStyle(clip.id, { maxWidth: v / 100 })} />
                   </section>
                 ) : null}
 
@@ -334,8 +383,12 @@ export const ShenJianInspector = ({
                     </div>
                   )}
                   <div className="grid2" style={{ marginTop: 8 }}>
-                    <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 1.12 })}>缓慢推近</button>
-                    <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 0.94 })}>缓慢拉远</button>
+                    <button type="button" className="mini-btn" onClick={() => setMotion({ scale: 1 }, { scale: 1.12 })}>推近</button>
+                    <button type="button" className="mini-btn" onClick={() => setMotion({ scale: 1.12 }, { scale: 1 })}>拉远</button>
+                    <button type="button" className="mini-btn" onClick={() => setMotion({ x: 0 }, { x: -0.06 })}>左移</button>
+                    <button type="button" className="mini-btn" onClick={() => setMotion({ x: 0 }, { x: 0.06 })}>右移</button>
+                    <button type="button" className="mini-btn" onClick={() => setMotion({ rotate: -2 }, { rotate: 2 })}>微旋</button>
+                    <button type="button" className="mini-btn" onClick={() => setMotion({ y: 0.04, scale: 1.06 }, { y: -0.02, scale: 1.14 })}>呼吸</button>
                   </div>
                 </section>
                 <section className="section">

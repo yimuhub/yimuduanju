@@ -1029,6 +1029,21 @@ export class TimelineService {
     // 画面轨语义（缺省 sequence = 历史行为，保证老项目导出不变）
     const metaOf = (c: TimelineClip) =>
       (doc.tracks ?? []).find((t) => t.track === c.track && (t.lane ?? 0) === (c.lane ?? 0));
+    const gradeOf = (c: TimelineClip) => metaOf(c)?.grade ?? null;
+    const gradeFilters = (c: TimelineClip): string[] => {
+      const g = gradeOf(c);
+      if (!g) return [];
+      const b = ((g.brightness ?? 100) - 100) / 100;
+      const ct = (g.contrast ?? 100) / 100;
+      const st = (g.saturation ?? 100) / 100;
+      const out = [`eq=brightness=${b.toFixed(3)}:contrast=${ct.toFixed(3)}:saturation=${st.toFixed(3)}`];
+      if (g.filter === 'warm') out.push('colorbalance=rs=0.10:gs=0.03:bs=-0.10');
+      else if (g.filter === 'cool') out.push('colorbalance=rs=-0.08:gs=0:bs=0.10');
+      else if (g.filter === 'cinematic') out.push('colorbalance=rs=0.04:gs=0.01:bs=-0.04', 'eq=contrast=1.06');
+      else if (g.filter === 'fade') out.push('eq=saturation=0.68:contrast=0.92');
+      else if (g.filter === 'sharp') out.push('unsharp=5:5:1.0:5:5:0.0');
+      return out;
+    };
     const allVideo = audible
       .filter((c) => c.track === 'video' && c.sourceUrl)
       .sort((a, b) => a.timelineStart - b.timelineStart);
@@ -1121,6 +1136,7 @@ export class TimelineService {
         const kf = buildZoompanExpressions(clip.keyframes, fps, visibleSpan);
         const vf = [
           ...(clip.reverse ? ['reverse'] : []),
+          ...gradeFilters(clip),
           `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
           `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`,
           'setsar=1',

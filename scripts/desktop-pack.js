@@ -212,7 +212,7 @@ function main() {
     }
   }
 
-  fs.rmSync(OUT, { recursive: true, force: true });
+  fs.rmSync(OUT, { recursive: true, force: true, maxRetries: 20, retryDelay: 300 });
   fs.mkdirSync(OUT, { recursive: true });
 
   log('复制前端/后端产物');

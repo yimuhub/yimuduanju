@@ -13,7 +13,8 @@
  * Safari/Firefox 无此 API，退化为页内拖拽小球。全平台透明置顶宠物仍需 Tauri 壳。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Grip, MessageCircle, MonitorUp, Send, X } from 'lucide-react';
+import { Grip, MonitorUp, Send, X } from 'lucide-react';
+import { IconShenJianAssistant } from './ShenJianIcons';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
 import { ChatTurns } from './chat/ChatTurns';
@@ -220,7 +221,7 @@ export const StudioFloatingChat = () => {
         <div className="pro-chat-win" onPointerDown={(e) => e.stopPropagation()}>
           <div className="pro-chat-win-head" onPointerDown={onGripDown}>
             <Grip size={13} className="pro-chat-grip" />
-            <b>AI 剪辑助手</b>
+            <b>神剪助手</b>
             <span className="spacer" />
             <button
               type="button"
@@ -298,8 +299,8 @@ export const StudioFloatingChat = () => {
         <button
           type="button"
           className={`pro-chat-orb${chatBusy ? ' is-active' : ''}`}
-          title="AI 剪辑助手：可在整个屏幕任意拖动；点击继续对话"
-          aria-label="AI 剪辑助手，可拖动"
+          title="神剪助手：可在整个屏幕任意拖动；点击继续对话"
+          aria-label="神剪助手，可拖动"
           onPointerDown={onGripDown}
           onClick={() => {
             if (suppressClickRef.current) {
@@ -309,7 +310,8 @@ export const StudioFloatingChat = () => {
             setChatOpen(true);
           }}
         >
-          <MessageCircle size={20} />
+          <IconShenJianAssistant width={26} height={26} />
+          <span className="pro-chat-orb-label">神剪助手</span>
           {chatBusy ? <i className="pro-chat-dot" /> : null}
         </button>
       )}

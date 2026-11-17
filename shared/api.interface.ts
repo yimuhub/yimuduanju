@@ -1891,6 +1891,13 @@ export interface TimelineTrackMeta {
   role?: 'main' | 'alt' | 'overlay';
   /** 该轨是否参与导出（缺省 true；画面 alt 轨缺省 false） */
   exportEnabled?: boolean;
+  /** 画面轨调色：亮度/对比度/饱和度 + 滤镜预设；预览与导出共用 */
+  grade?: {
+    brightness?: number;
+    contrast?: number;
+    saturation?: number;
+    filter?: string;
+  } | null;
 }
 
 /** P3 剪辑工程文档 */

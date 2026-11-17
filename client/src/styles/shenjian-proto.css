@@ -376,3 +376,44 @@
 .sj2 .shot-pool2 .insp-tabs{grid-template-columns:1fr 1fr}
 .sj2 .shot-pool2 .insp-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .sj2 .shot-pool2 .sp2-list{flex:1;min-height:0}
+/* 抖音式单基线：去掉左侧固定轨道头，字幕/画面在上，音频在下 */
+.sj2 .tl-body{grid-template-columns:1fr}
+.sj2 .track-heads{display:none}
+.sj2 .baseline{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,#37d6c8aa,#37d6c833 62%,#37d6c800);z-index:2;pointer-events:none}
+.sj2 .baseline span{position:sticky;left:8px;top:-16px;font-size:9px;color:#5c9992;background:#0b0d11d9;padding:1px 5px;border-radius:3px;white-space:nowrap}
+.sj2 .lane{padding:0}
+/* 左侧九类真实面板 */
+.sj2 .preset-panel{padding:2px 0 14px}
+.sj2 .preset-section-title{font-size:10px;color:#6f7681;margin:10px 0 6px;letter-spacing:.04em}
+.sj2 .preset-panel .sj2-textarea{min-height:54px}
+.sj2 .preset-add{width:100%;height:28px;border-radius:5px;border:1px solid var(--acc);background:#12312d;color:#bff7ee;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;margin-top:6px}
+.sj2 .preset-add svg{width:13px;height:13px}
+.sj2 .preset-list{display:flex;flex-direction:column;gap:5px}
+.sj2 .preset-row{display:flex;align-items:center;justify-content:space-between;gap:6px;height:34px;padding:0 8px;border:1px solid #262a32;border-radius:5px;background:#101216;cursor:pointer;text-align:left}
+.sj2 .preset-row:hover,.sj2 .preset-row.on{border-color:var(--acc);background:#14302c}
+.sj2 .preset-row:disabled{opacity:.5;cursor:not-allowed}
+.sj2 .preset-sample{font-size:11px;color:#e5e8ed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sj2 .preset-note{font-size:9px;color:#7d848f;white-space:nowrap;flex:none}
+.sj2 .preset-caption{font-size:9px;color:#6f7681;line-height:1.5}
+.sj2 .sticker-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+.sj2 .sticker-tile{height:58px;border:1px solid #262a32;border-radius:5px;background:#101216;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer}
+.sj2 .sticker-tile:hover{border-color:var(--acc);background:#14302c}
+.sj2 .sticker-tile b{font-size:19px;line-height:1}
+.sj2 .sticker-tile span{font-size:8px;color:#8a919c}
+.sj2 .effect-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.sj2 .effect-tile{height:62px;border:1px solid #262a32;border-radius:5px;background:#101216;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:7px 8px;cursor:pointer;text-align:left}
+.sj2 .effect-tile:hover{border-color:var(--acc);background:#14302c}
+.sj2 .effect-ico{color:#57d8c8;display:flex}
+.sj2 .effect-ico svg{width:13px;height:13px}
+.sj2 .effect-tile b{font-size:10px;color:#e5e8ed}
+.sj2 .effect-tile em{font-style:normal;font-size:8px;color:#6f7681}
+/* 神剪助手：更醒目的浮动球 */
+.sj2 .pro-chat-orb{width:56px;height:56px;border-radius:16px;background:linear-gradient(140deg,#ff604f,#ff9a3e);color:#fff;box-shadow:0 10px 28px #ff5d4a88,0 0 0 1px #ffd0a855 inset;position:relative;display:grid;place-items:center;border:0}
+.sj2 .pro-chat-orb:hover{transform:translateY(-1px) scale(1.03);box-shadow:0 14px 34px #ff5d4a99}
+.sj2 .pro-chat-orb-label{position:absolute;left:50%;bottom:-18px;transform:translateX(-50%);font-size:9px;color:#ffd9b0;white-space:nowrap;text-shadow:0 1px 4px #000}
+.sj2 .pro-chat-orb.is-active{animation:pulseOrb 1.6s infinite}
+@keyframes pulseOrb{0%,100%{box-shadow:0 10px 28px #ff5d4a88}50%{box-shadow:0 10px 34px #ffb15fcc}}
+/* 字幕样式与时间线/导出共用：canvas 作为尺寸容器，字号用 cqh 相对高度 */
+.sj2 .canvas{container-type:size}
+.sj2 .layer-sub{white-space:pre-wrap;line-height:1.24;text-shadow:0 2px 10px #000000aa}
+.sj2 .layer-sub span{display:inline}

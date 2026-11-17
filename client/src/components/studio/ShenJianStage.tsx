@@ -3,17 +3,8 @@
  * 预览内容来自真实 EDL：当前播放头命中哪条画面轨，就渲染哪条片段的真实媒体。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Eye,
-  Fullscreen,
-  Maximize2,
-  Pause,
-  Play,
-  SkipBack,
-  SkipForward,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
+import { Eye, Maximize2, Volume2, VolumeX } from 'lucide-react';
+import { IconFrameNext, IconFramePrev, IconFullscreen, IconPause, IconPlay, IconSkipEnd, IconSkipStart } from './ShenJianIcons';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clipSpan } from './model';
@@ -58,12 +49,15 @@ export const ShenJianStage = ({
     return clips.sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0))[0] ?? null;
   }, [data.timeline?.clips, curT]);
 
-  const subtitle = useMemo(() => {
-    const subs = (data.timeline?.clips ?? []).filter(
-      (c) => c.track === 'subtitle' && c.enabled !== false && curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c),
-    );
-    return subs.sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0))[0] ?? null;
+  const activeSubs = useMemo(() => {
+    return (data.timeline?.clips ?? [])
+      .filter((c) => c.track === 'subtitle' && c.enabled !== false && curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c))
+      .sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }, [data.timeline?.clips, curT]);
+  const subtitle = activeSubs[0] ?? null;
+  // 轨道调色优先：左侧特效/滤镜与右侧调节都写进 tracks[].grade，预览和导出共用
+  const trackGrade = (data.timeline?.tracks ?? []).find((t) => t.track === 'video' && (t.lane ?? 0) === (active?.lane ?? 0))?.grade ?? null;
+  const effectiveGrade = { ...grade, ...(trackGrade ?? {}) };
 
   const shot = useMemo(
     () => (active?.sourceShotId ? data.shots.find((s) => s.id === active.sourceShotId) : null),
@@ -97,18 +91,45 @@ export const ShenJianStage = ({
 
   const filter = [
     previewQuality === 'fast' ? 'saturate(.92) contrast(.96) brightness(.97)' : '',
-    grade.filter === 'cinematic' ? 'sepia(.12) contrast(1.08)' : '',
-    grade.filter === 'warm' ? 'sepia(.2) saturate(1.08)' : '',
-    grade.filter === 'cool' ? 'hue-rotate(10deg) saturate(.9)' : '',
-    grade.brightness !== 100 ? `brightness(${grade.brightness}%)` : '',
-    grade.contrast !== 100 ? `contrast(${grade.contrast}%)` : '',
-    grade.saturation !== 100 ? `saturate(${grade.saturation}%)` : '',
+    effectiveGrade.filter === 'cinematic' ? 'sepia(.12) contrast(1.08)' : '',
+    effectiveGrade.filter === 'warm' ? 'sepia(.2) saturate(1.08)' : '',
+    effectiveGrade.filter === 'cool' ? 'hue-rotate(10deg) saturate(.9)' : '',
+    effectiveGrade.filter === 'soft' ? 'brightness(1.06) contrast(.92) saturate(.96)' : '',
+    effectiveGrade.filter === 'sharp' ? 'contrast(1.14) saturate(1.08)' : '',
+    effectiveGrade.filter === 'fade' ? 'sepia(.16) saturate(.68) contrast(.92)' : '',
+    effectiveGrade.brightness !== 100 ? `brightness(${effectiveGrade.brightness}%)` : '',
+    effectiveGrade.contrast !== 100 ? `contrast(${effectiveGrade.contrast}%)` : '',
+    effectiveGrade.saturation !== 100 ? `saturate(${effectiveGrade.saturation}%)` : '',
   ]
     .filter(Boolean)
     .join(' ');
 
   const title = data.project?.title || '未命名项目';
   const caption = subtitle?.text || active?.text || shot?.dialogue || '';
+  const hexRgba = (hex: string | undefined, alpha: number) => {
+    const h = (hex || '#000000').replace('#', '');
+    const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.padEnd(6, '0').slice(0, 6);
+    return `rgba(${parseInt(full.slice(0, 2), 16)},${parseInt(full.slice(2, 4), 16)},${parseInt(full.slice(4, 6), 16)},${alpha})`;
+  };
+  const styleFor = (subStyle: (typeof activeSubs)[number]['textStyle']) => {
+    if (!subStyle) return undefined;
+    return {
+      top: `${(subStyle.y ?? 0.86) * 100}%`,
+      left: `${(subStyle.x ?? 0.5) * 100}%`,
+      bottom: 'auto',
+      width: `${Math.max(20, (subStyle.maxWidth ?? 0.86) * 100)}%`,
+      transform: 'translate(-50%, -50%)',
+      textAlign: subStyle.align ?? 'center',
+      fontSize: `${subStyle.fontSize ?? 7}cqh`,
+      color: subStyle.color || '#ffffff',
+      fontWeight: subStyle.bold ? 800 : 600,
+      fontStyle: subStyle.italic ? 'italic' : 'normal',
+      WebkitTextStroke: (subStyle.strokeWidth ?? 0) > 0 ? `${(subStyle.strokeWidth ?? 0)}em ${subStyle.strokeColor || '#000000'}` : undefined,
+      background: (subStyle.bgOpacity ?? 0) > 0 ? hexRgba(subStyle.bgColor, subStyle.bgOpacity ?? 0) : 'transparent',
+      borderRadius: (subStyle.bgOpacity ?? 0) > 0 ? 4 : 0,
+      padding: (subStyle.bgOpacity ?? 0) > 0 ? '0.18em 0.3em' : 0,
+    } as const;
+  };
 
   return (
     <section className="stage">
@@ -170,7 +191,13 @@ export const ShenJianStage = ({
             <div className="grade" />
             <div className="vignette" />
             <div className="layer-title">{title}</div>
-            {caption ? <div className="layer-sub"><span>{caption}</span></div> : null}
+            {activeSubs.length ? (
+              activeSubs.map((c) => (
+                <div key={c.id} className="layer-sub" style={styleFor(c.textStyle)}><span>{c.text}</span></div>
+              ))
+            ) : caption ? (
+              <div className="layer-sub"><span>{caption}</span></div>
+            ) : null}
             <div className="layer-watermark">一幕 · 神剪</div>
             <div className="safe" />
             {previewQuality === 'fast' ? <div className="quality-badge">流畅预览 · 代理 540p</div> : null}
@@ -193,13 +220,13 @@ export const ShenJianStage = ({
           <span>{fmt(curT)}</span><em> / </em><span>{fmt(total)}</span>
         </div>
         <div className="mid">
-          <button type="button" className="icon-btn" data-tip="跳到片头 (Home)" onClick={() => setCurT(0)}><SkipBack /></button>
-          <button type="button" className="icon-btn" data-tip="上一帧 (←)" onClick={() => setCurT(Math.max(0, curT - 1 / edl.fps))}><SkipForward style={{ transform: 'rotate(180deg)' }} /></button>
+          <button type="button" className="icon-btn" data-tip="跳到片头 (Home)" onClick={() => setCurT(0)}><IconSkipStart /></button>
+          <button type="button" className="icon-btn" data-tip="上一帧 (←)" onClick={() => setCurT(Math.max(0, curT - 1 / edl.fps))}><IconFramePrev /></button>
           <button type="button" className="icon-btn play-btn" data-tip="播放 / 暂停 (Space)" onClick={() => setPlaying(!playing)}>
-            {playing ? <Pause /> : <Play />}
+            {playing ? <IconPause /> : <IconPlay />}
           </button>
-          <button type="button" className="icon-btn" data-tip="下一帧 (→)" onClick={() => setCurT(Math.min(total, curT + 1 / edl.fps))}><SkipForward /></button>
-          <button type="button" className="icon-btn" data-tip="跳到片尾 (End)" onClick={() => setCurT(total)}><SkipForward /></button>
+          <button type="button" className="icon-btn" data-tip="下一帧 (→)" onClick={() => setCurT(Math.min(total, curT + 1 / edl.fps))}><IconFrameNext /></button>
+          <button type="button" className="icon-btn" data-tip="跳到片尾 (End)" onClick={() => setCurT(total)}><IconFrameNext /></button>
         </div>
         <div className="right">
           <button
@@ -228,7 +255,7 @@ export const ShenJianStage = ({
               else void document.documentElement.requestFullscreen?.();
             }}
           >
-            <Fullscreen />
+            <IconFullscreen />
           </button>
           <span className="save-pill" title={projectId ? '时间线自动保存' : ''}>
             {edl.saving ? '保存中' : edl.dirty ? '待保存' : '已保存'}

@@ -26,6 +26,7 @@ import type { Asset } from '@shared/api.interface';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clearTimelineDrag, startTimelineDrag } from '@client/src/lib/timeline-dnd';
+import { ShenJianPresets } from './ShenJianPresets';
 
 type RailTab = 'media' | 'audio' | 'text' | 'sticker' | 'effect' | 'transition' | 'caption' | 'filter' | 'adjust';
 type SubTab = 'all' | 'video' | 'image' | 'audio' | 'text';
@@ -130,6 +131,8 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
     return rows;
   }, [pool, rail, sub]);
 
+  const isAssetTab = rail === 'media' || rail === 'audio';
+
   const folders = useMemo(() => {
     const map = new Map<string, number>();
     for (const a of projectAssets) {
@@ -196,14 +199,16 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
             >
               <Folder />
             </button>
-            <button type="button" className="import-btn" data-tip="导入本地视频/图片/音频，或从其他项目、平台资产库导入" onClick={onImport}>
-              <Upload />
-              导入
-            </button>
+            {isAssetTab ? (
+              <button type="button" className="import-btn" data-tip="导入本地视频/图片/音频，或从其他项目、平台资产库导入" onClick={onImport}>
+                <Upload />
+                导入
+              </button>
+            ) : null}
           </div>
         </div>
 
-        <div className="lib-subtabs">
+        {isAssetTab ? <div className="lib-subtabs">
           {(['all', 'video', 'image', 'audio', 'text'] as SubTab[]).map((s) => (
             <button
               key={s}
@@ -214,9 +219,11 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
               {s === 'all' ? '全部' : s === 'video' ? '视频' : s === 'image' ? '图片' : s === 'audio' ? '音频' : '文本'}
             </button>
           ))}
-        </div>
+        </div> : null}
 
         <div className="lib-scroll">
+          {isAssetTab ? (<>
+
           <button type="button" className={`folder${folder === 'project' ? ' on' : ''}`} onClick={() => setFolder('project')}>
             <ChevronDown />
             <Folder />
@@ -317,13 +324,16 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
               );
             })}
           </div>
+          </>) : (
+            <ShenJianPresets rail={rail as 'text' | 'sticker' | 'effect' | 'transition' | 'caption' | 'filter' | 'adjust'} />
+          )}
         </div>
 
-        <div className="lib-foot">
+        {isAssetTab ? <div className="lib-foot">
           <span>{folder === 'project' ? '本项目资产' : folder === 'platform' ? '平台资产库' : '其他任务'}</span>
           <div className="progressbar"><i style={{ width: `${Math.min(100, Math.round((visible.length / Math.max(1, pool.length)) * 100))}%` }} /></div>
           <span>{visible.length}/{pool.length}</span>
-        </div>
+        </div> : <div className="lib-foot"><span>真实面板</span><span className="grow" /><span>{RAIL_TITLE[rail]}</span></div>}
       </div>
 
       {preview ? (

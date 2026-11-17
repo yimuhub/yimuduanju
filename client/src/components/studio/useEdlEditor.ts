@@ -155,7 +155,7 @@ export interface EdlEditor {
   splitClip: (id: string, at: number) => string | null;
   splitAtPlayhead: (at: number, id?: string) => string | null;
   editSubtitle: (id: string, text: string) => void;
-  addSubtitle: (at: number, lane?: number, text?: string) => string | null;
+  addSubtitle: (at: number, lane?: number, text?: string, style?: TimelineClip['textStyle']) => string | null;
   addAudio: (
     asset: { name: string; url: string; durationSeconds?: number },
     at: number,
@@ -782,11 +782,24 @@ export function useEdlEditor(data: StudioData): EdlEditor {
   );
 
   const addSubtitle = useCallback(
-    (at: number, lane = 0, text = '新字幕'): string | null => {
+    (at: number, lane = 0, text = '新字幕', textStyle?: TimelineClip['textStyle']): string | null => {
       const before = clipsRef.current;
       if (!docRef.current) return null;
       const duration = 3;
       const startAt = quantizeToFrame(Math.max(0, at), fpsRef.current);
+      let targetLane = lane;
+      // 同一时刻已有字幕时不覆盖，自动向上找空 lane；字幕/贴纸可以同时叠多层
+      for (let i = 0; i < 24; i += 1) {
+        const occupied = before.some(
+          (c) =>
+            c.track === 'subtitle' &&
+            (c.lane ?? 0) === targetLane &&
+            startAt < c.timelineStart + (c.outPoint - c.inPoint) / Math.max(0.01, c.speed || 1) &&
+            startAt + duration > c.timelineStart,
+        );
+        if (!occupied) break;
+        targetLane += 1;
+      }
       const clip: TimelineClip = {
         ...newClipIdentity('local-sub'),
         projectId: projectId ?? '',
@@ -796,11 +809,12 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         inPoint: 0,
         outPoint: duration,
         timelineStart: startAt,
-        lane,
+        lane: targetLane,
         speed: 1,
         volume: 1,
         transition: { type: 'none', duration: 0 },
         text,
+        ...(textStyle ? { textStyle } : {}),
         locked: false,
         sortOrder: before.length,
         createdAt: new Date().toISOString(),

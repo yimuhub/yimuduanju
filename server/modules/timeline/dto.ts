@@ -179,6 +179,16 @@ export class TimelineTrackMetaDto {
   @Min(18)
   @Max(120)
   height?: number;
+
+  /** 画面轨调色参数（亮度/对比度/饱和度/滤镜预设），预览与导出共用 */
+  @IsOptional()
+  @IsObject()
+  grade?: {
+    brightness?: number;
+    contrast?: number;
+    saturation?: number;
+    filter?: string;
+  } | null;
 }
 
 /** PUT /timeline：整体替换该项目 EDL（事务写入） */

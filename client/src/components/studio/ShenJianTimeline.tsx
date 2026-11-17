@@ -4,20 +4,8 @@
  * 轨道显隐/锁定、缩放与行高全部走 useEdlEditor 的已有方法。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Copy,
-  Eye,
-  Lock,
-  Magnet,
-  MapPin,
-  Minus,
-  MousePointer2,
-  Plus,
-  Redo2,
-  Scissors,
-  Trash2,
-  Undo2,
-} from 'lucide-react';
+import { Copy, Eye, Lock, Magnet, MapPin, Minus, Plus, Redo2, Trash2, Undo2 } from 'lucide-react';
+import { IconRazor, IconRippleDelete, IconSelect, IconSplit, IconTrimLeft, IconTrimRight } from './ShenJianIcons';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
@@ -85,12 +73,28 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   );
 
   const rows = useMemo<Row[]>(() => {
-    const maxVideo = Math.max(2, ...clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0));
-    const maxAudio = Math.max(1, ...clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0));
-    const maxSub = Math.max(0, ...clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0));
+    const videoLanes = clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0);
+    const audioLanes = clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0);
+    const subLanes = clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0);
+    const maxVideo = videoLanes.length ? Math.max(...videoLanes) : 0;
+    const maxAudio = audioLanes.length ? Math.max(...audioLanes) : 0;
+    const maxSub = subLanes.length ? Math.max(...subLanes) : -1;
     const metaOf = (track: TimelineTrackKind, lane: number) =>
       (edl.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
     const out: Row[] = [];
+    // 基线以上：字幕在最上，画面 V1 紧贴基线，V2/V3 继续往上叠
+    for (let lane = maxSub; lane >= 0; lane -= 1) {
+      const meta = metaOf('subtitle', lane);
+      out.push({
+        key: `subtitle:${lane}`,
+        track: 'subtitle',
+        lane,
+        label: `T${lane + 1}`,
+        name: meta?.name || '字幕 / 文本',
+        muted: meta?.muted === true,
+        locked: meta?.locked === true,
+      });
+    }
     for (let lane = maxVideo; lane >= 0; lane -= 1) {
       const meta = metaOf('video', lane);
       out.push({
@@ -98,11 +102,12 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         track: 'video',
         lane,
         label: `V${lane + 1}`,
-        name: meta?.name || (lane === 0 ? '主画面' : '叠加层'),
+        name: meta?.name || (lane === 0 ? '画面主轨' : '叠加画面'),
         muted: meta?.exportEnabled === false,
         locked: meta?.locked === true,
       });
     }
+    // 基线以下：对白 A1 紧贴基线，音乐/音效依次向下
     for (let lane = 0; lane <= maxAudio; lane += 1) {
       const meta = metaOf('audio', lane);
       out.push({
@@ -110,19 +115,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         track: 'audio',
         lane,
         label: `A${lane + 1}`,
-        name: meta?.name || (lane === 0 ? '对白 / 配音' : '音乐 / 音效'),
-        muted: meta?.muted === true,
-        locked: meta?.locked === true,
-      });
-    }
-    for (let lane = 0; lane <= maxSub; lane += 1) {
-      const meta = metaOf('subtitle', lane);
-      out.push({
-        key: `subtitle:${lane}`,
-        track: 'subtitle',
-        lane,
-        label: `T${lane + 1}`,
-        name: meta?.name || '字幕',
+        name: meta?.name || (lane === 0 ? '对白 / 配音' : lane === 1 ? '音乐' : '音效'),
         muted: meta?.muted === true,
         locked: meta?.locked === true,
       });
@@ -130,6 +123,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     return out;
   }, [clips, edl.tracks]);
 
+  const aboveRows = rows.filter((r) => r.track !== 'audio').length;
+  const baselineTop = 24 + aboveRows * laneH;
   const width = Math.max(900, total * zoom + 260);
   const step = zoom >= 60 ? 1 : zoom >= 30 ? 5 : zoom >= 16 ? 10 : 20;
   const ticks = useMemo(() => Array.from({ length: Math.ceil((total + step) / step) + 1 }, (_, i) => i * step), [total, step]);
@@ -245,6 +240,22 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     setScrollLeft(0);
   };
 
+  // 快捷键桥：A/B 切工具、Shift+Z 适配、Ctrl+滚轮缩放都由工作台键盘层派发
+  useEffect(() => {
+    const onTool = (e: Event) => setTool((e as CustomEvent).detail === 'razor' ? 'razor' : 'select');
+    const onZoom = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d === 'fit') fit();
+      else setZoom((z) => Math.max(14, Math.min(120, z + (d === 'out' ? -4 : 4))));
+    };
+    window.addEventListener('yimu:shenjian-tool', onTool);
+    window.addEventListener('yimu:shenjian-zoom', onZoom);
+    return () => {
+      window.removeEventListener('yimu:shenjian-tool', onTool);
+      window.removeEventListener('yimu:shenjian-zoom', onZoom);
+    };
+  });
+
   const rowClips = (row: Row) =>
     clips
       .filter((c) => c.track === row.track && (c.lane ?? 0) === row.lane)
@@ -257,16 +268,16 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     <section className="tl2 timeline">
       <div className="tl-tools">
         <button type="button" className={`tl-tool${tool === 'select' ? ' on' : ''}`} data-tip="选择工具 (A)：点选/拖动片段" onClick={() => setTool('select')}>
-          <MousePointer2 /><span className="dotmark" />
+          <IconSelect /><span className="dotmark" />
         </button>
         <button type="button" className={`tl-tool${tool === 'razor' ? ' on' : ''}`} data-tip="剃刀工具 (B)：在点击处切开片段" onClick={() => setTool('razor')}>
-          <Scissors /><span className="dotmark" />
+          <IconRazor /><span className="dotmark" />
         </button>
         <div className="sep" />
-        <button type="button" className="tl-tool" data-tip="分割 (E / Ctrl+B)：在播放头处切成两段" onClick={splitAtPlayhead}><Scissors /></button>
-        <button type="button" className="tl-tool" data-tip="删除前半段 (Q)：保留播放头之后" onClick={deleteLeft}><span className="trim-ico l">▥</span></button>
-        <button type="button" className="tl-tool" data-tip="删除后半段 (W)：保留播放头之前" onClick={deleteRight}><span className="trim-ico r">▥</span></button>
-        <button type="button" className="tl-tool" data-tip="波纹删除：删除并自动合拢空隙" onClick={() => selected && edl.rippleDelete([selected.id])}><Trash2 /></button>
+        <button type="button" className="tl-tool" data-tip="分割 (E / Ctrl+B)：在播放头处切成两段" onClick={splitAtPlayhead}><IconSplit /></button>
+        <button type="button" className="tl-tool" data-tip="删除前半段 (Q)：保留播放头之后" onClick={deleteLeft}><IconTrimLeft /></button>
+        <button type="button" className="tl-tool" data-tip="删除后半段 (W)：保留播放头之前" onClick={deleteRight}><IconTrimRight /></button>
+        <button type="button" className="tl-tool" data-tip="波纹删除：删除并自动合拢空隙" onClick={() => selected && edl.rippleDelete([selected.id])}><IconRippleDelete /></button>
         <button type="button" className="tl-tool" data-tip="删除选中片段 (Delete)" onClick={() => selected && edl.rippleDelete([selected.id])}><span className="del-ico">✕</span></button>
         <div className="sep" />
         <button type="button" className="tl-tool" data-tip="撤销 (Ctrl+Z)" onClick={() => edl.undo()}><Undo2 /></button>
@@ -325,6 +336,16 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             setScrollTop(e.currentTarget.scrollTop);
             setScrollLeft(e.currentTarget.scrollLeft);
           }}
+          onWheel={(e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              setZoom((z) => Math.max(14, Math.min(120, z + (e.deltaY < 0 ? 4 : -4))));
+            } else if (e.altKey) {
+              e.preventDefault();
+              e.currentTarget.scrollLeft += e.deltaY;
+              setScrollLeft(e.currentTarget.scrollLeft);
+            }
+          }}
           onClick={(e) => {
             if (!(e.target as HTMLElement).closest('.clip')) seekFromEvent(e, e.currentTarget);
           }}
@@ -337,7 +358,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const y = e.clientY - rect.top + e.currentTarget.scrollTop - 24;
             const idx = Math.max(0, Math.min(rows.length - 1, Math.floor(y / laneH)));
             const row = rows[idx];
-            if (row) setDragOver({ track: trackOfDrag(payload), lane: row.track === trackOfDrag(payload) ? row.lane : row.lane, at });
+            const want = trackOfDrag(payload);
+            const lane = want === 'audio' ? (row?.track === 'audio' ? row.lane : 0) : (row?.track === 'video' ? row.lane : 0);
+            setDragOver({ track: want, lane, at });
           }}
           onDragLeave={() => setDragOver(null)}
           onDrop={(e) => {
@@ -350,7 +373,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const idx = Math.max(0, Math.min(rows.length - 1, Math.floor(y / laneH)));
             const row = rows[idx];
             const want = trackOfDrag(payload);
-            const lane = row && row.track === want ? row.lane : 0;
+            const lane = want === 'audio' ? (row?.track === 'audio' ? row.lane : 0) : (row?.track === 'video' ? row.lane : 0);
             if (want === 'audio') edl.addAudio({ name: payload.name, url: payload.url, durationSeconds: payload.durationSeconds }, at, lane);
             else edl.addVideo({ name: payload.name, url: payload.url, durationSeconds: payload.durationSeconds || 5, shotId: payload.shotId }, at, lane);
             setDragOver(null);
@@ -367,6 +390,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                   {t % (step * 2) === 0 ? fmtSec(t) : ''}
                 </div>
               ))}
+            </div>
+            <div className="baseline" style={{ top: baselineTop }}>
+              <span>时间轴基线 · 画面/字幕向上 · 音频向下</span>
             </div>
             <div className="lanes">
               {rows.map((row) => (
@@ -471,7 +497,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
       {ctx ? (
         <div className="ctx open" style={{ left: ctx.x, top: ctx.y }} onPointerDown={(e) => e.stopPropagation()}>
-          <button type="button" onClick={() => { splitAtPlayhead(); setCtx(null); }}><Scissors />在播放头分割<span className="kbd2">E</span></button>
+          <button type="button" onClick={() => { splitAtPlayhead(); setCtx(null); }}><IconSplit />在播放头分割<span className="kbd2">E</span></button>
           <button type="button" onClick={() => { edl.copySelection([ctx.id]); setCtx(null); }}><Copy />复制片段<span className="kbd2">⌘C</span></button>
           <button type="button" onClick={() => { edl.rippleDelete([ctx.id]); setCtx(null); }}><Trash2 />波纹删除<span className="kbd2">⌫</span></button>
           <button type="button" onClick={() => { const c = clips.find((x) => x.id === ctx.id); if (c) edl.toggleClipReverse(c.id); setCtx(null); }}><Undo2 />倒放</button>
