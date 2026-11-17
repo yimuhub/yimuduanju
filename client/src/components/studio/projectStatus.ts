@@ -27,6 +27,8 @@ export function projectStatusMeta(status: ProjectStatus): ProjectStatusMeta {
       return { cls: 'ok', text: '已导出' };
     case 'failed':
       return { cls: 'warn', text: '失败' };
+    case 'paused':
+      return { cls: 'warn', text: '暂停中' };
     default:
       return { cls: 'idle', text: '草稿' };
   }
