@@ -9,6 +9,8 @@ import { useNavigate } from 'react-router-dom';
 import { HelpCircle, ImageIcon, Redo2, Share2, Undo2 } from 'lucide-react';
 import { useStudio } from './StudioShell';
 import { APP_VERSION } from '@client/src/lib/version';
+import { exportJianyingDraft } from '@client/src/api/timeline';
+import { toast } from 'sonner';
 
 export const StudioProTopBar = () => {
   const { data, projectId, setProEdit } = useStudio();
@@ -74,6 +76,28 @@ export const StudioProTopBar = () => {
         >
           <ImageIcon size={13} />
           封面
+        </button>
+        <button
+          type="button"
+          className="pro-btn"
+          title="导出剪映草稿 ZIP：draft_content.json + Resources，可放进剪映草稿目录继续精修"
+          onClick={async () => {
+            if (!projectId) return;
+            try {
+              const blob = await exportJianyingDraft(projectId);
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${data.project?.title ?? '神剪草稿'}-剪映草稿.zip`;
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 30_000);
+              toast.success('剪映草稿已导出：解压后放进剪映草稿目录', { duration: 3200 });
+            } catch (err) {
+              toast.error((err as Error)?.message ?? '剪映草稿导出失败', { duration: 4200 });
+            }
+          }}
+        >
+          剪映草稿
         </button>
         <button
           type="button"

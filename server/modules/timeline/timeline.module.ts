@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ExportModule } from '../export/export.module';
 import { TimelineController } from './timeline.controller';
+import { AsrService } from './asr.service';
+import { JianyingDraftService } from './jianying-draft.service';
 import { TimelineMediaService } from './media-analysis.service';
 import { PreviewProxyService } from './preview-proxy.service';
 import { TimelineService } from './timeline.service';
@@ -9,7 +11,7 @@ import { TimelineService } from './timeline.service';
   // 复用 ExportService 的 ffmpeg 探测 / 媒体物化 / 下载守卫
   imports: [ExportModule],
   controllers: [TimelineController],
-  providers: [TimelineService, TimelineMediaService, PreviewProxyService],
+  providers: [TimelineService, TimelineMediaService, PreviewProxyService, AsrService, JianyingDraftService],
   exports: [TimelineService, TimelineMediaService],
 })
 export class TimelineModule {}

@@ -35,6 +35,7 @@ import type {
   ExportTimelineResult,
   TimelineClip,
   TimelineDocument,
+  TimelineTranscriptSegment,
   TimelineTrackMeta,
 } from '@shared/api.interface';
 import { uploadDir } from '../assets/upload-dir';
@@ -133,6 +134,30 @@ function opTargetKeys(ops: TimelineOp[]): Set<string> | null {
 
 const iso = (d: unknown): string =>
   d instanceof Date ? d.toISOString() : typeof d === 'string' ? d : new Date().toISOString();
+
+/** ASR 段落归一化：去空、时间单调、夹紧到非负，避免脏数据进入索引 */
+export function normalizeTranscriptSegments(
+  raw: TimelineTranscriptSegment[] | null | undefined,
+): TimelineTranscriptSegment[] {
+  if (!raw?.length) return [];
+  const out: TimelineTranscriptSegment[] = [];
+  for (const seg of raw) {
+    const text = String(seg?.text ?? '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const start = Number.isFinite(seg?.start) ? Math.max(0, seg.start) : 0;
+    const end = Number.isFinite(seg?.end) ? Math.max(start, seg.end) : start;
+    const item: TimelineTranscriptSegment = {
+      start: Math.round(start * 1000) / 1000,
+      end: Math.round(end * 1000) / 1000,
+      text,
+    };
+    if (Number.isFinite(seg?.confidence)) {
+      item.confidence = Math.max(0, Math.min(1, seg.confidence as number));
+    }
+    out.push(item);
+  }
+  return out.sort((a, b) => a.start - b.start || a.end - b.end);
+}
 
 /**
  * 静帧素材（首帧/图片）也允许拖进画面轨：导出时用 `-loop 1` 铺成一段视频，
@@ -303,6 +328,7 @@ export class TimelineService {
       keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
       reverse: Boolean(row.reverse),
       compound: (row.compound as TimelineClip['compound']) ?? null,
+      transcript: (row.transcript as TimelineClip['transcript']) ?? null,
       textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
       bindGroup: row.bindGroup,
       locked: row.locked,
@@ -337,6 +363,26 @@ export class TimelineService {
       tracks: (doc.tracks as TimelineDocument['tracks']) ?? [],
       updatedAt: iso(doc.updatedAt),
     };
+  }
+
+  /**
+   * 写回单片段 ASR 转写（不改时间线版本，不触发整单重建）。
+   * 返回归一化后的段落，供控制器与前端直接展示。
+   */
+  async setClipTranscript(
+    projectId: string,
+    clipId: string,
+    segments: TimelineTranscriptSegment[],
+  ): Promise<TimelineTranscriptSegment[]> {
+    await this.requireProject(projectId);
+    const clean = normalizeTranscriptSegments(segments);
+    const rows = await this.db
+      .update(timelineClips)
+      .set({ transcript: clean, updatedAt: new Date() })
+      .where(and(eq(timelineClips.id, clipId), eq(timelineClips.projectId, projectId)))
+      .returning({ id: timelineClips.id });
+    if (rows.length === 0) throw new NotFoundException('时间线片段不存在');
+    return clean;
   }
 
   /**
@@ -380,6 +426,7 @@ export class TimelineService {
           keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
           reverse: Boolean(c.reverse),
           compound: c.compound?.children?.length ? c.compound : null,
+          transcript: c.transcript ?? null,
           bindGroup: c.bindGroup ?? null,
           textStyle: c.textStyle ?? null,
           locked: c.locked ?? false,

@@ -24,6 +24,7 @@ import type {
   ExportTimelineResult,
   TimelineThumbnails,
   TimelineWaveform,
+  TimelineAsrResult,
 } from '@shared/api.interface';
 
 /** P2：按数组顺序重排镜头（服务端重编 sortOrder/shotNumber），返回全量镜头 */
@@ -176,5 +177,31 @@ export const getWaveform = (projectId: string, url: string, points = 1000) =>
   axiosForBackend
     .get<TimelineWaveform>(`/api/projects/${projectId}/timeline/waveform`, {
       params: { url, points },
+    })
+    .then((res) => res.data);
+/** ASR 能力状态 */
+export const getAsrStatus = (projectId: string) =>
+  axiosForBackend
+    .get<{ available: boolean; provider: string | null; model: string | null; reason: string | null }>(
+      `/api/projects/${projectId}/timeline/asr/status`,
+    )
+    .then((res) => res.data);
+
+/** 单片段语音转写（写回 transcript，不改时间线版本） */
+export const transcribeClip = (projectId: string, clipId: string, language?: string) =>
+  axiosForBackend
+    .post<TimelineAsrResult>(`/api/projects/${projectId}/timeline/asr`, {
+      clipId,
+      language: language ?? null,
+    })
+    .then((res) => res.data);
+
+
+/** 导出剪映草稿 ZIP（POST 带 CSRF，返回二进制） */
+export const exportJianyingDraft = (projectId: string) =>
+  axiosForBackend
+    .post<Blob>(`/api/projects/${projectId}/timeline/jianying-draft`, null, {
+      responseType: 'blob',
+      timeout: 300_000,
     })
     .then((res) => res.data);

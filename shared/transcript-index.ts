@@ -15,7 +15,7 @@
  */
 import type { Shot, TimelineClip, TimelineDocument } from './api.interface';
 
-export type TranscriptSource = 'subtitle' | 'shot';
+export type TranscriptSource = 'subtitle' | 'shot' | 'asr';
 export type BoundaryQuality = 'exact-clip' | 'estimated-sentence' | 'estimated-word';
 
 export interface TranscriptWord {
@@ -221,12 +221,45 @@ export function buildTranscriptIndex(
     });
   }
 
-  // 2) 画面片段补对白/字幕：同一镜已有字幕就不重复
+  // 2) ASR 转写：时间戳相对源媒体，换算到时间线；有字幕的镜头不重复
+  const asrClipKeys = new Set<string>();
+  for (const c of enabledClips) {
+    if (c.track !== 'video' && c.track !== 'audio') continue;
+    const segs = c.transcript;
+    if (!segs?.length) continue;
+    if (c.sourceShotId && subtitleShotIds.has(c.sourceShotId)) continue;
+    const speed = c.speed > 0 ? c.speed : 1;
+    let used = false;
+    for (const seg of segs) {
+      const text = cleanText(seg.text);
+      if (!text) continue;
+      const overlapStart = Math.max(seg.start, c.inPoint);
+      const overlapEnd = Math.min(seg.end, c.outPoint);
+      if (overlapEnd - overlapStart <= EPS) continue;
+      const startMs = (c.timelineStart + (overlapStart - c.inPoint) / speed) * 1000;
+      const endMs = (c.timelineStart + (overlapEnd - c.inPoint) / speed) * 1000;
+      if (endMs - startMs < EPS) continue;
+      used = true;
+      pushSentenceCues(cues, {
+        clipKey: c.clientKey ?? c.id,
+        shotId: c.sourceShotId ?? null,
+        source: 'asr',
+        clipText: text,
+        startMs,
+        endMs,
+        baseKey: `asr:${c.clientKey ?? c.id}`,
+      });
+    }
+    if (used) asrClipKeys.add(c.clientKey ?? c.id);
+  }
+
+  // 3) 画面片段补对白/字幕：同一镜已有字幕或 ASR 就不重复
   for (const c of enabledClips) {
     if (c.track !== 'video') continue;
     const shot = c.sourceShotId ? shotById.get(c.sourceShotId) : undefined;
     if (!shot) continue;
     if (c.sourceShotId && subtitleShotIds.has(c.sourceShotId)) continue;
+    if (asrClipKeys.has(c.clientKey ?? c.id)) continue;
     const text = cleanText(shot.subtitleText || shot.dialogue);
     if (!text) continue;
     const start = c.timelineStart;
@@ -255,6 +288,7 @@ export function buildTranscriptIndex(
     counts: {
       subtitle: cues.filter((c) => c.source === 'subtitle').length,
       shot: cues.filter((c) => c.source === 'shot').length,
+      asr: cues.filter((c) => c.source === 'asr').length,
     },
     hasEstimatedBoundaries: cues.some((c) => c.boundary !== 'exact-clip'),
   };

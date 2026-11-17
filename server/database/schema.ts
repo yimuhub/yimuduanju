@@ -882,6 +882,11 @@ export const timelineClips = pgTable("timeline_clips", {
   keyframes: jsonb("keyframes"),
   reverse: boolean("reverse").default(false),
   compound: jsonb("compound"),
+  /**
+   * ASR 转写段落：[{ start, end, text, confidence? }]，时间相对源媒体。
+   * Agent 全文索引优先读它，实现「通读后再剪」。
+   */
+  transcript: jsonb("transcript"),
   /** 绑定组 id：同组片段一起平移（画面 ↔ 对白 / 配乐 / 字幕），空 = 未绑定 */
   bindGroup: text("bind_group"),
   /**

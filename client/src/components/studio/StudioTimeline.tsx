@@ -78,6 +78,7 @@ import { Filmstrip, StillFrame, useThumbnails, useWaveform, Waveform } from './t
 import {
   exportTimeline,
   listTimelineAgentOps,
+  transcribeClip,
   type TimelineAgentOpRecord,
 } from '@client/src/api/timeline';
 import { listProjectAssets, mediaUrl } from '@client/src/api/assets';
@@ -586,6 +587,7 @@ export const StudioTimeline = () => {
   const [mainMagnet, setMainMagnet] = useState(false);
   const mainMagnetRef = useRef(false);
   const [curveOpen, setCurveOpen] = useState(false);
+  const [asrBusy, setAsrBusy] = useState(false);
   /** 剪映 A/B 工具模式：select=选择，split=点击即切 */
   const [toolMode, setToolMode] = useState<'select' | 'split'>('select');
   const toolModeRef = useRef(toolMode);
@@ -2619,6 +2621,42 @@ export const StudioTimeline = () => {
         >
           <RotateCcw size={11} />
           {selectedClip.reverse ? '取消倒放' : '倒放'}
+        </button>
+      ) : null}
+      {(selectedClip.track === 'video' || selectedClip.track === 'audio') && selectedClip.sourceUrl && !selectedClip.compound ? (
+        <button
+          type="button"
+          className={`tl-prop-btn${selectedClip.transcript?.length ? ' on' : ''}`}
+          disabled={asrBusy}
+          onClick={async () => {
+            setAsrBusy(true);
+            try {
+              const r = await transcribeClip(projectId, selectedClip.id);
+              toast.success(`已转写 ${r.segments.length} 段，Agent 可按毫秒选段`, {
+                duration: 2400,
+              });
+              await data.reloadTimeline(true);
+            } catch (err) {
+              const status = (err as { response?: { status?: number } })?.response?.status;
+              const msg =
+                (err as { response?: { data?: { message?: string } }; message?: string })?.response
+                  ?.data?.message ??
+                (status === 503
+                  ? '未配置语音转写：设置 YIMU_ASR_API_KEY，或安装 whisper 并设置 YIMU_WHISPER_BIN'
+                  : (err as Error)?.message ?? '转写失败');
+              toast.error(String(msg), { duration: 4200 });
+            } finally {
+              setAsrBusy(false);
+            }
+          }}
+          title="语音转写：只转当前片段，结果写给 Agent 做全文选段；未配置时提示缺少 ASR 密钥或 whisper"
+        >
+          <AudioLines size={11} />
+          {asrBusy
+            ? '转写中…'
+            : selectedClip.transcript?.length
+              ? `转写 ${selectedClip.transcript.length} 段`
+              : '语音转写'}
         </button>
       ) : null}
       {selectedClip.track === 'video' && selectedClip.sourceUrl && !selectedClip.compound ? (

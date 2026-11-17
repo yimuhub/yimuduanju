@@ -109,6 +109,12 @@ export class SaveTimelineClipDto {
   reverse?: boolean | null;
   compound?: { children: import('@shared/api.interface').TimelineCompoundChild[] } | null;
 
+  /** ASR 转写段落（服务端写回；保存时间线时原样保留） */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(4000)
+  transcript?: import('@shared/api.interface').TimelineTranscriptSegment[] | null;
+
   /** 绑定组 id（同组一起平移）；null / 空 = 解绑 */
   @IsOptional()
   @IsString()
@@ -290,4 +296,15 @@ export class AgentTimelineOpsDto {
   @IsOptional()
   @IsUUID('all')
   messageId?: string;
+}
+/** 单片段 ASR：clipId 传 id 或 clientKey 均可 */
+export class TranscribeClipDto {
+  @IsString()
+  @MaxLength(120)
+  clipId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  language?: string | null;
 }

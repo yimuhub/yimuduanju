@@ -15,8 +15,10 @@ import type { Response } from 'express';
 import type { TimelineDocument } from '@shared/api.interface';
 import { TimelineMediaService } from './media-analysis.service';
 import { PreviewProxyService } from './preview-proxy.service';
+import { AsrService } from './asr.service';
+import { JianyingDraftService } from './jianying-draft.service';
 import { TimelineService } from './timeline.service';
-import { AgentTimelineOpsDto, ExportTimelineDto, SaveTimelineDto } from './dto';
+import { AgentTimelineOpsDto, ExportTimelineDto, SaveTimelineDto, TranscribeClipDto } from './dto';
 
 const numOrUndef = (raw?: string): number | undefined => {
   if (raw == null || raw.trim() === '') return undefined;
@@ -30,6 +32,8 @@ export class TimelineController {
     private readonly timelineService: TimelineService,
     private readonly mediaService: TimelineMediaService,
     private readonly previewProxy: PreviewProxyService,
+    private readonly asr: AsrService,
+    private readonly jianyingDraft: JianyingDraftService,
   ) {}
 
   /** 读取 EDL：未保存过则从镜头台账派生默认工程（只读） */
@@ -107,9 +111,43 @@ export class TimelineController {
   }
 
   /** 时间线体检：blocking / warning / info，Agent 与 UI 共用 */
+  /** 时间线体检：blocking / warning / info */
   @Get('issues')
   async issues(@Param('projectId', ParseUUIDPipe) projectId: string) {
     return this.timelineService.issues(projectId);
+  }
+
+  /** ASR 能力状态：前端据此提示「未配置转写」而不是点完才报错 */
+  @Get('asr/status')
+  asrStatus() {
+    return this.asr.status();
+  }
+
+  /** 导出剪映草稿 ZIP（draft_content.json + Resources） */
+  @Post('jianying-draft')
+  async jianyingDraftFile(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { filename, path, cleanup } = await this.jianyingDraft.exportZip(projectId);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    res.download(path, filename, (err) => {
+      void cleanup();
+      if (err && !res.headersSent) res.status(500).end();
+    });
+  }
+
+  /** 单片段语音转写：写回 timeline_clips.transcript，不改时间线版本 */
+  @Post('asr')
+  async transcribe(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: TranscribeClipDto,
+  ) {
+    return this.asr.transcribeClip(projectId, body.clipId, body.language ?? null);
   }
 
   /** 修订历史（不含快照） */

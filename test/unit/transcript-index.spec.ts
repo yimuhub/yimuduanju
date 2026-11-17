@@ -86,4 +86,32 @@ describe('transcript-index: 毫秒索引与选段', () => {
     expect(total).toBeLessThanOrEqual(9);
     expect(describeRoughCut(ranges)).toContain('段');
   });
+
+  it('ASR 段落按源媒体入点换算成成片毫秒，并优先于镜头对白', () => {
+    const d = doc([
+      clip({
+        id: 'v1',
+        clientKey: 'v1',
+        track: 'video',
+        sourceShotId: 'shot-1',
+        sourceUrl: '/uploads/a.mp4',
+        inPoint: 10,
+        outPoint: 20,
+        timelineStart: 5,
+        speed: 2,
+        transcript: [
+          { start: 10, end: 13, text: '第一句转写' },
+          { start: 16, end: 20, text: '第二句转写' },
+        ],
+      }),
+    ]);
+    const index = buildTranscriptIndex(d, [
+      { id: 'shot-1', dialogue: '镜头对白不应重复', subtitleText: null },
+    ]);
+    expect(index.counts.asr).toBe(2);
+    expect(index.counts.shot).toBe(0);
+    expect(index.cues[0].startMs).toBe(5000);
+    expect(index.cues[0].endMs).toBe(6500);
+    expect(index.cues[1].startMs).toBe(8000);
+  });
 });

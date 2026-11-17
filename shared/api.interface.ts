@@ -1789,6 +1789,24 @@ export interface TimelineCompoundChild {
   enabled?: boolean;
 }
 
+/** ASR 段落：start/end 相对「源媒体」起点，单位秒；词级时间戳存在时体现在 text 内 */
+export interface TimelineTranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+  /** 识别置信度 0–1；供应商不返回时缺省 */
+  confidence?: number;
+}
+
+/** 单片段 ASR 转写结果（服务端写回 timeline_clips.transcript） */
+export interface TimelineAsrResult {
+  clipId: string;
+  provider: string;
+  language: string | null;
+  durationSec: number;
+  segments: TimelineTranscriptSegment[];
+}
+
 /** P3 EDL 片段（与生产 shots 解耦的剪辑决策表） */
 export interface TimelineClip {
   id: string;
@@ -1830,6 +1848,11 @@ export interface TimelineClip {
   reverse?: boolean | null;
   /** 真复合片段：children 非空时本片段是嵌套序列，预览/导出按子片段展开 */
   compound?: { children: TimelineCompoundChild[] } | null;
+  /**
+   * ASR 转写段落（视频/音频片段）：时间相对源媒体，供 Agent 按毫秒选段。
+   * 未转写为空；字幕/对白索引优先使用它。
+   */
+  transcript?: TimelineTranscriptSegment[] | null;
   /**
    * 字幕样式（字幕轨）。缺省走项目默认样式。
    * 只存「偏离默认」的字段，未填即继承，这样换主题时旧字幕不会全员打架。
