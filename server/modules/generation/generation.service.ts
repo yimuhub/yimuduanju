@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { generationJobs, projects, shots, modelProviders } from '@server/database/schema';
-import { eq, asc, desc, and, count, sql, inArray } from 'drizzle-orm';
+import { eq, asc, desc, and, count, sql, inArray, notInArray } from 'drizzle-orm';
 import { isFreeAgnesModel } from '@shared/agnes';
 import { stageOfJobType } from '@shared/stage-bindings';
 // 产物形态硬校验：变体采纳同样不允许把图片当视频设成成片
@@ -602,7 +602,9 @@ export class GenerationService {
           eq(generationJobs.status, 'pending'),
           dependencyReady,
           retryGateReady,
-          excludeIds.length ? sql`${generationJobs.id}::text <> all(${excludeIds})` : undefined,
+          // 数组参数不能直接拼进 `<> all(($n))`，Postgres 会把它当成单个数组值报错，
+          // 表现是「认领轮询异常 + 所有任务永远 pending」。必须走 Drizzle notInArray。
+          excludeIds.length ? notInArray(generationJobs.id, excludeIds) : undefined,
         ),
       )
       .orderBy(asc(generationJobs.queueSeq))

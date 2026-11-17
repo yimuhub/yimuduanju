@@ -745,6 +745,20 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       // V8 全站消费暂停：排队页一键冻结消费。只停这一轮，不改任何任务状态，
       // 也不动 queue_seq —— 恢复后仍从原来的队首接着跑，在途任务不受影响。
       if (this.queuePaused) return;
+      if (Date.now() - this.bootAt < 20_000) return;
+      // 孤儿 running 回收：进程认领后崩溃会留下 running 0%，下一轮永远跳过。
+      // 只回收无外部任务的本地/文本任务，远端视频有 externalTaskId 不误伤。
+      await this.db
+        .update(generationJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(
+          and(
+            eq(generationJobs.status, 'running'),
+            isNull(generationJobs.externalTaskId),
+            sql`${generationJobs.startedAt} < now() - interval '3 minutes'`,
+          ),
+        )
+        .catch(() => undefined);
       // 超预算时暂停认领新任务（在途任务继续推进，避免半截浪费）
       const cap = this.budgetCap.getCap();
       if (cap !== null) {
@@ -849,8 +863,17 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
           const holdKey = `${providerName ?? DEFAULT_PROVIDER_KEY}|${jobType}`;
           return (this.providerHoldUntil.get(holdKey) ?? 0) > Date.now();
         };
-        const job = await this.generationService.claimNextPendingJob([], isBlocked);
-        if (job) await this.process(job);
+        const now = Date.now();
+        for (const [id, at] of this.recentlyClaimed) {
+          if (now - at > 30_000) this.recentlyClaimed.delete(id);
+        }
+        const exclude = [...this.recentlyClaimed.keys()];
+        const job = await this.generationService.claimNextPendingJob(exclude, isBlocked);
+        if (job) {
+          this.recentlyClaimed.set(job.id, Date.now());
+          this.logger.log(`认领任务 ${job.id}（${job.jobType}）`);
+          await this.process(job);
+        }
       }
     } finally {
       this.running = false;
@@ -869,6 +892,16 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
    *   - 超时只代表「这一轮不等了」，不会让 tick 整体卡死；
    *   - 上一轮未结束则本轮跳过，避免同一个驱动被跑两遍（重复建单=重复扣费）。
    */
+  /**
+   * 反饿死：刚被认领执行过的任务在短窗口内不再优先认领。
+   * 事故：视频 503 会立刻 releaseTransient 回 pending，queueSeq 仍最小，
+   * 每 3 秒又被队首选中，后面的剧本/图片任务永远轮不到（running 0% 假死）。
+   * 30 秒窗口足够让同队其它任务插进来，也不影响正常重试。
+   */
+  private readonly recentlyClaimed = new Map<string, number>();
+  /** 进程启动时刻：前 20 秒不认领，避免「bootstrap 失败但 worker 已启动」的
+   *  半死进程把任务改成 running 后退出，留下永久 0% 的孤儿任务。 */
+  private readonly bootAt = Date.now();
   private readonly stepInFlight = new Set<string>();
   /** 当前这一轮 tick 的开始时刻（看门狗用）；0 表示没在跑 */
   private runningSince = 0;
