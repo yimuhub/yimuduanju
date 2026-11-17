@@ -4352,7 +4352,7 @@ dependencies = [
 
 [[package]]
 name = "yimu-desktop"
-version = "3.19.1"
+version = "3.19.2"
 dependencies = [
  "serde",
  "serde_json",

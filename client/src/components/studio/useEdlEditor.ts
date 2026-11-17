@@ -737,7 +737,6 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         before
           .filter(
             (c) =>
-              c.track !== 'subtitle' &&
               !c.locked &&
               at > c.timelineStart + 0.02 &&
               at < c.timelineStart + clipSpan(c) - 0.02,

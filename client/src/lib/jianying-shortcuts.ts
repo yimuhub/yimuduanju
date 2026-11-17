@@ -30,7 +30,8 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: '剪辑与选择',
     items: [
-      { id: 'split', label: '分割（播放头处）', keys: 'Ctrl+B', macKeys: '⌘B', status: 'ready' },
+      { id: 'split', label: '分割 / 分开（播放头处）', keys: 'E', status: 'ready', note: '剪映常用自定义键位；同 Ctrl+B，按 E 直接切开选中片段' },
+      { id: 'split-b', label: '分割（默认键）', keys: 'Ctrl+B', macKeys: '⌘B', status: 'ready', note: '剪映专业版默认键；与 E 等价' },
       { id: 'batch-split', label: '批量分割（所有轨）', keys: 'Ctrl+Shift+B', macKeys: '⌘⇧B', status: 'ready' },
       { id: 'select-mode', label: '选择模式', keys: 'A', status: 'ready' },
       { id: 'split-mode', label: '分割模式（点击即切）', keys: 'B', status: 'ready' },
@@ -71,7 +72,7 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
       { id: 'snap', label: '吸附开关', keys: 'N', status: 'ready' },
       { id: 'preview-axis', label: '预览轴开关', keys: 'S', status: 'partial', note: '当前映射为播放头参考线显隐；剪辑点吸附仍由 N 控制' },
       { id: 'magnet', label: '主轨磁吸', keys: 'P', status: 'partial', note: '与 N 吸附共用编辑器吸附策略，P 作为主轨磁吸别名' },
-      { id: 'link', label: '音视频联动', keys: '~', status: 'ready', note: '绑定 / 解绑选中片段（bindGroup）' },
+      { id: 'link', label: '音视频联动', keys: '~', status: 'partial', note: '当前用 bindGroup 绑定/解绑选中片段；与剪映的“音画联动开关”语义仍有差异' },
       { id: 'marker', label: '添加标记点', keys: 'M', status: 'ready', note: '内部标记；非剪映标准键位，剪映手动踩点为 Ctrl+J' },
       { id: 'beat', label: '手动踩点', keys: 'Ctrl+J', macKeys: '⌘J', status: 'ready', note: '在播放头打踩点并显示标记' },
       { id: 'mute', label: '静音 / 取消静音片段', keys: 'Shift+M', status: 'ready' },
@@ -92,8 +93,8 @@ export const JIANYING_SHORTCUT_GROUPS: ShortcutGroup[] = [
       { id: 'uncompound', label: '解除复合片段', keys: 'Alt+Shift+G', status: 'ready' },
       { id: 'keyframe', label: '添加关键帧', keys: 'Ctrl+K', macKeys: '⌘K', status: 'todo', note: '需要位置/缩放/透明度关键帧模型与预览插值；当前未接入' },
       { id: 'keyframe-panel', label: '关键帧面板', keys: 'Alt+K', status: 'todo', note: '同上；不提供假面板' },
-      { id: 'attr-copy', label: '复制属性', keys: 'Ctrl+Shift+C', macKeys: '⌘⇧C', status: 'partial', note: '当前复制片段，属性级复制待属性模型统一' },
-      { id: 'attr-paste', label: '粘贴属性', keys: 'Ctrl+Shift+V', macKeys: '⌘⇧V', status: 'partial', note: '同上' },
+      { id: 'attr-copy', label: '复制片段属性', keys: 'Ctrl+Shift+C', macKeys: '⌘⇧C', status: 'ready', note: '复制速度/音量/转场/字幕样式，不复制片段本体' },
+      { id: 'attr-paste', label: '粘贴片段属性', keys: 'Ctrl+Shift+V', macKeys: '⌘⇧V', status: 'ready', note: '粘贴到选中片段，可 ⌘Z 撤销' },
     ],
   },
   {

@@ -1460,6 +1460,32 @@ export const StudioTimeline = () => {
     });
   }, []);
 
+  /** 剪映常用自定义键 E：在播放头处切开选中片段；没选中就切播放头命中的片段 */
+  const splitSelectedAtPlayhead = useCallback(() => {
+    const t = curTRef.current;
+    let targets = clipsRef.current.filter((c) => selectedRef.current.includes(c.id));
+    if (targets.length === 0) targets = clipsAtPlayhead(t);
+    targets = targets.filter((c) => !c.locked);
+    if (targets.length === 0) {
+      toast.info('把播放头放到片段内，或先选中要分割的片段', { duration: 1600 });
+      return;
+    }
+    let last: string | null = null;
+    let count = 0;
+    for (const c of targets) {
+      const end = c.timelineStart + clipSpan(c);
+      if (t <= c.timelineStart + 1e-4 || t >= end - 1e-4) continue;
+      const created = editorRef.current.splitAtPlayhead(t, c.id);
+      if (created) {
+        last = created;
+        count += 1;
+      }
+    }
+    if (last) editorRef.current.setSelection([last]);
+    if (count === 0) toast.info('播放头不在可分割的片段内', { duration: 1600 });
+    else toast.success(`已分开 ${count} 个片段`, { duration: 1200 });
+  }, [clipsAtPlayhead]);
+
   /** Q：把选中片段（未选则播放头命中的片段）从播放头处向左裁掉 */
   const deleteLeftOfPlayhead = useCallback(() => {
     const t = curTRef.current;
@@ -1899,6 +1925,11 @@ export const StudioTimeline = () => {
         toggleSplitMode('select');
         return;
       }
+      if (key === 'e') {
+        e.preventDefault();
+        splitSelectedAtPlayhead();
+        return;
+      }
       if (key === 'b') {
         e.preventDefault();
         toggleSplitMode('split');
@@ -2059,6 +2090,7 @@ export const StudioTimeline = () => {
     clipsAtPlayhead,
     deleteLeftOfPlayhead,
     deleteRightOfPlayhead,
+    splitSelectedAtPlayhead,
     splitAllAtPlayhead,
     jumpToCut,
     selectByPlayhead,
