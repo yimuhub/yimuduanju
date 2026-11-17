@@ -2177,7 +2177,7 @@ export const StudioTimeline = () => {
 
   const openAudioPicker = (lane: number) => {
     setAddOpen(false);
-    setPickLane(clamp(lane, 0, 19));
+    setPickLane(Math.max(0, lane));
     setPickerOpen(true);
     if (!data.projectId) return;
     setLoadingAssets(true);

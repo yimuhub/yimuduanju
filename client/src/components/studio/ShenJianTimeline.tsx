@@ -4,7 +4,7 @@
  * 轨道显隐/锁定、缩放与行高全部走 useEdlEditor 的已有方法。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Eye, Lock, Magnet, MapPin, Minus, Plus, Redo2, Trash2, Undo2 } from 'lucide-react';
+import { Copy, Eye, EyeOff, Lock, Magnet, MapPin, Minus, Plus, Redo2, Trash2, Undo2, Volume2, VolumeX } from 'lucide-react';
 import { IconRazor, IconRippleDelete, IconSelect, IconSplit, IconTrimLeft, IconTrimRight } from './ShenJianIcons';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
@@ -15,6 +15,7 @@ import { peekTimelineDrag, readTimelineDrag, trackOfDrag } from '@client/src/lib
 
 type Row = {
   key: string;
+  no: number;
   track: TimelineTrackKind;
   lane: number;
   label: string;
@@ -27,9 +28,12 @@ type DragState = {
   id: string;
   kind: 'move' | 'trim-l' | 'trim-r';
   startX: number;
+  startY: number;
   origStart: number;
   origSpan: number;
   lane: number;
+  targetRowKey?: string;
+  created?: boolean;
   track: TimelineTrackKind;
   dx: number;
   span: number;
@@ -63,7 +67,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   const [scrollLeft, setScrollLeft] = useState(0);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [ctx, setCtx] = useState<CtxState>(null);
-  const [dragOver, setDragOver] = useState<{ track: TimelineTrackKind; lane: number; at: number } | null>(null);
+  const [dragOver, setDragOver] = useState<{ track: TimelineTrackKind; lane: number; at: number; created: boolean } | null>(null);
 
   const lanesRef = useRef<HTMLDivElement | null>(null);
   const clips = data.timeline?.clips ?? [];
@@ -73,20 +77,25 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   );
 
   const rows = useMemo<Row[]>(() => {
-    const videoLanes = clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0);
-    const audioLanes = clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0);
-    const subLanes = clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0);
-    const maxVideo = videoLanes.length ? Math.max(...videoLanes) : 0;
-    const maxAudio = audioLanes.length ? Math.max(...audioLanes) : 0;
-    const maxSub = subLanes.length ? Math.max(...subLanes) : -1;
+    // 轨道行只由「实际有素材的 lane」决定；空轨道不会占行，删除/移走后自动消失
+    const videoLanes = Array.from(new Set(clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0)));
+    const audioLanes = Array.from(new Set(clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0)));
+    const subLanes = Array.from(new Set(clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0)));
+    // 默认主轨 V1/A1 常驻，保证空项目也有可落点
+    videoLanes.push(0);
+    audioLanes.push(0);
+    const maxVideoLanes = Array.from(new Set(videoLanes)).sort((a, b) => b - a);
+    const maxAudioLanes = Array.from(new Set(audioLanes)).sort((a, b) => a - b);
+    const subLanesSorted = Array.from(new Set(subLanes)).sort((a, b) => b - a);
     const metaOf = (track: TimelineTrackKind, lane: number) =>
       (edl.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
     const out: Row[] = [];
-    // 基线以上：字幕在最上，画面 V1 紧贴基线，V2/V3 继续往上叠
-    for (let lane = maxSub; lane >= 0; lane -= 1) {
+    // 基线以上：字幕在最上，画面 V1 紧贴基线，叠加画面继续往上
+    for (const lane of subLanesSorted) {
       const meta = metaOf('subtitle', lane);
       out.push({
         key: `subtitle:${lane}`,
+        no: 0,
         track: 'subtitle',
         lane,
         label: `T${lane + 1}`,
@@ -95,10 +104,11 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         locked: meta?.locked === true,
       });
     }
-    for (let lane = maxVideo; lane >= 0; lane -= 1) {
+    for (const lane of maxVideoLanes) {
       const meta = metaOf('video', lane);
       out.push({
         key: `video:${lane}`,
+        no: 0,
         track: 'video',
         lane,
         label: `V${lane + 1}`,
@@ -108,10 +118,11 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       });
     }
     // 基线以下：对白 A1 紧贴基线，音乐/音效依次向下
-    for (let lane = 0; lane <= maxAudio; lane += 1) {
+    for (const lane of maxAudioLanes) {
       const meta = metaOf('audio', lane);
       out.push({
         key: `audio:${lane}`,
+        no: 0,
         track: 'audio',
         lane,
         label: `A${lane + 1}`,
@@ -120,6 +131,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         locked: meta?.locked === true,
       });
     }
+    // 轨道编号与顺序绑定：上下滑动、增删轨道后仍跟随
+    out.forEach((r, i) => { r.no = i + 1; });
     return out;
   }, [clips, edl.tracks]);
 
@@ -128,6 +141,11 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   const width = Math.max(900, total * zoom + 260);
   const step = zoom >= 60 ? 1 : zoom >= 30 ? 5 : zoom >= 16 ? 10 : 20;
   const ticks = useMemo(() => Array.from({ length: Math.ceil((total + step) / step) + 1 }, (_, i) => i * step), [total, step]);
+
+  const maxLaneOf = useCallback(
+    (track: TimelineTrackKind) => Math.max(0, ...clips.filter((c) => c.track === track).map((c) => c.lane ?? 0)),
+    [clips],
+  );
 
   /** 拖动时按其他片段边缘/播放头磁吸 */
   const snapStart = useCallback(
@@ -156,7 +174,25 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     const dx = (e.clientX - drag.startX) / zoom;
     if (drag.kind === 'move') {
       const snapped = snapStart(drag.id, drag.origStart + dx, drag.origSpan);
-      setDrag({ ...drag, dx: snapped - drag.origStart, span: drag.origSpan });
+      // 垂直跨轨：以鼠标落在左侧轨道头的同一行判定，实时给出目标轨道
+      let targetRowKey = drag.targetRowKey;
+      let lane = drag.lane;
+      const wrap = lanesRef.current;
+      if (wrap) {
+        const rect = wrap.getBoundingClientRect();
+        const y = e.clientY - rect.top + wrap.scrollTop - 24;
+        const idx = Math.floor(y / laneH);
+        const row = rows[idx];
+        if (row && row.track === drag.track && !row.locked) {
+          targetRowKey = row.key;
+          lane = row.lane;
+        } else if (!row || row.track !== drag.track) {
+          // 空白区或别的类型轨道：自动落到该类轨道的下一条新轨
+          targetRowKey = undefined;
+          lane = maxLaneOf(drag.track) + 1;
+        }
+      }
+      setDrag({ ...drag, dx: snapped - drag.origStart, span: drag.origSpan, lane, targetRowKey, created: !targetRowKey });
     } else if (drag.kind === 'trim-l') {
       const d = Math.max(-drag.origSpan + 0.15, Math.min(drag.origSpan - 0.15, dx));
       setDrag({ ...drag, dx: d, span: drag.origSpan - d, origStart: drag.origStart + d });
@@ -164,12 +200,19 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       const d = Math.max(0.15 - drag.origSpan, dx);
       setDrag({ ...drag, dx: d, span: drag.origSpan + d });
     }
-  }, [drag, snapStart, zoom]);
+  }, [drag, lanesRef, laneH, maxLaneOf, rows, snapStart, zoom]);
 
   const finishDrag = useCallback(() => {
     if (!drag) return;
-    if (drag.kind === 'move' && Math.abs(drag.dx) > 0.01) {
-      edl.moveClipToLane(drag.id, Math.max(0, drag.origStart + drag.dx), drag.lane, drag.lane !== (clips.find((c) => c.id === drag.id)?.lane ?? 0));
+    if (drag.kind === 'move' && (Math.abs(drag.dx) > 0.01 || drag.lane !== (clips.find((c) => c.id === drag.id)?.lane ?? 0))) {
+      const sourceClip = clips.find((c) => c.id === drag.id);
+      const sameLane = drag.lane === (sourceClip?.lane ?? 0);
+      edl.moveClipToLane(drag.id, Math.max(0, drag.origStart + drag.dx), drag.lane, !sameLane);
+      if (!sameLane) {
+        const prefix = drag.track === 'audio' ? 'A' : drag.track === 'subtitle' ? 'T' : 'V';
+        const exists = clips.some((c) => c.track === drag.track && (c.lane ?? 0) === drag.lane && c.id !== drag.id);
+        toast.success(exists ? `已放入 ${prefix}${drag.lane + 1}` : `已新建 ${prefix}${drag.lane + 1} 并放入`);
+      }
     } else if (drag.kind === 'trim-l' && Math.abs(drag.dx) > 0.01) {
       edl.trimClip(drag.id, 'left', drag.dx);
     } else if (drag.kind === 'trim-r' && Math.abs(drag.dx) > 0.01) {
@@ -189,6 +232,16 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       window.removeEventListener('pointerup', finishDrag);
     };
   }, [drag, onPointerMove, finishDrag]);
+
+  // 空轨自动回收：除默认 V1/A1 外，没有素材的轨道元信息也一并删除
+  useEffect(() => {
+    const used = new Set(clips.map((c) => `${c.track}:${c.lane ?? 0}`));
+    const extras = (edl.tracks ?? []).filter(
+      (t) => !used.has(`${t.track}:${t.lane ?? 0}`) && !((t.track === 'video' || t.track === 'audio') && (t.lane ?? 0) === 0),
+    );
+    if (!extras.length) return;
+    for (const t of extras) edl.removeTrack(t.track, t.lane ?? 0);
+  }, [clips, edl]);
 
   useEffect(() => {
     if (!ctx) return;
@@ -226,12 +279,6 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   const deleteRight = () => {
     if (!selected) { toast.info('先选中一个片段'); return; }
     edl.rippleTrimAt(selected.id, 'right', curT);
-  };
-
-  const addTrack = () => {
-    const lane = edl.addTrack('video');
-    if (lane == null) toast.error('新建轨道失败');
-    else toast.success(`已新建 V${lane + 1}`);
   };
 
   const fit = () => {
@@ -286,7 +333,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         <button type="button" className="tl-tool" data-tip="添加标记 (M)" onClick={() => edl.addMarker(curT)}><MapPin /></button>
         <div className="tl-caption">A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后</div>
         <div className="grow">
-          <button type="button" className="mini-btn" data-tip="新增轨道：可以无限往上叠 V4/V5…" onClick={addTrack}><Plus /> 轨道</button>
+          <span className="tl-newhint">拖到空白自动建轨</span>
           <button type="button" className="icon-btn" data-tip="时间线缩小 (-)" onClick={() => setZoom((z) => Math.max(14, z - 4))}><Minus /></button>
           <input className="tl-zoom" type="range" min="14" max="120" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
           <button type="button" className="icon-btn" data-tip="时间线放大 (+)" onClick={() => setZoom((z) => Math.min(120, z + 4))}><Plus /></button>
@@ -296,24 +343,24 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
       <div className="tl-body">
         <div className="track-heads">
+          <div className="head-ruler"><span>轨道</span><span>{rows.length} 轨</span></div>
           <div className="heads-inner" style={{ transform: `translateY(-${scrollTop}px)` }}>
-            <div className="head-ruler"><span>轨道</span><span>{rows.length} 轨</span></div>
             {rows.map((row) => (
-              <div className="track-head" key={row.key} style={{ height: laneH }}>
+              <div className={`track-head${drag?.targetRowKey === row.key ? ' droptarget' : ''}`} key={row.key} style={{ height: laneH }}>
                 <span className="tname">{row.label}</span>
-                <span className="tlabel">{row.name}</span>
+                <span className="tlabel"><em>轨道 {row.no}</em><b>{row.name}</b></span>
                 <span className="locks">
                   <button
                     type="button"
                     className={row.muted ? 'on' : ''}
-                    title={row.muted ? '恢复显示/发声' : '停用该轨'}
+                    title={row.muted ? (row.track === 'audio' ? '恢复声音' : '恢复显示') : (row.track === 'audio' ? '静音该轨' : '隐藏该轨')}
                     onClick={() =>
                       row.track === 'video'
                         ? edl.updateTrack('video', row.lane, { exportEnabled: row.muted })
                         : edl.updateTrack(row.track, row.lane, { muted: !row.muted })
                     }
                   >
-                    <Eye />
+                    {row.track === 'audio' ? (row.muted ? <VolumeX /> : <Volume2 />) : (row.muted ? <EyeOff /> : <Eye />)}
                   </button>
                   <button
                     type="button"
@@ -359,8 +406,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const idx = Math.max(0, Math.min(rows.length - 1, Math.floor(y / laneH)));
             const row = rows[idx];
             const want = trackOfDrag(payload);
-            const lane = want === 'audio' ? (row?.track === 'audio' ? row.lane : 0) : (row?.track === 'video' ? row.lane : 0);
-            setDragOver({ track: want, lane, at });
+            const sameType = row?.track === want;
+            const lane = sameType ? row.lane : maxLaneOf(want) + 1;
+            setDragOver({ track: want, lane, at, created: !sameType });
           }}
           onDragLeave={() => setDragOver(null)}
           onDrop={(e) => {
@@ -373,14 +421,22 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const idx = Math.max(0, Math.min(rows.length - 1, Math.floor(y / laneH)));
             const row = rows[idx];
             const want = trackOfDrag(payload);
-            const lane = want === 'audio' ? (row?.track === 'audio' ? row.lane : 0) : (row?.track === 'video' ? row.lane : 0);
+            const sameType = row?.track === want;
+            const lane = sameType ? row.lane : maxLaneOf(want) + 1;
             if (want === 'audio') edl.addAudio({ name: payload.name, url: payload.url, durationSeconds: payload.durationSeconds }, at, lane);
             else edl.addVideo({ name: payload.name, url: payload.url, durationSeconds: payload.durationSeconds || 5, shotId: payload.shotId }, at, lane);
             setDragOver(null);
-            toast.success(`已放入 ${row?.label ?? want}`);
+            const prefix = want === 'audio' ? 'A' : 'V';
+            toast.success(sameType ? `已放入 ${prefix}${lane + 1}` : `已新建 ${prefix}${lane + 1} 并放入`);
           }}
         >
           <div className="lanes-inner" style={{ width }}>
+            {(drag?.created || dragOver?.created) ? (
+              <div className="new-track-hint">
+                松开新建 {(drag?.track ?? dragOver?.track) === 'audio' ? 'A' : (drag?.track ?? dragOver?.track) === 'subtitle' ? 'T' : 'V'}
+                {((drag?.lane ?? dragOver?.lane ?? 0) + 1)}
+              </div>
+            ) : null}
             <div
               className="ruler"
               onClick={(e) => seekFromEvent(e, e.currentTarget.parentElement?.parentElement as HTMLElement)}
@@ -398,7 +454,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
               {rows.map((row) => (
                 <div
                   key={row.key}
-                  className={`lane ${row.track}`}
+                  className={`lane ${row.track}${drag?.targetRowKey === row.key ? ' droptarget' : ''}`}
                   style={{ height: laneH }}
                   onDoubleClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
@@ -425,7 +481,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                           setPreviewMode('timeline');
                           if (row.locked || clip.locked) return;
                           const start = clip.timelineStart;
-                          setDrag({ id: clip.id, kind: 'move', startX: e.clientX, origStart: start, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span });
+                          setDrag({ id: clip.id, kind: 'move', startX: e.clientX, startY: e.clientY, origStart: start, origSpan: span, lane: clip.lane ?? 0, targetRowKey: row.key, track: clip.track, dx: 0, span });
                         }}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
@@ -458,7 +514,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                             e.stopPropagation();
                             edl.setSelection([clip.id]);
                             if (row.locked || clip.locked) return;
-                            setDrag({ id: clip.id, kind: 'trim-l', startX: e.clientX, origStart: clip.timelineStart, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span });
+                            setDrag({ id: clip.id, kind: 'trim-l', startX: e.clientX, startY: e.clientY, origStart: clip.timelineStart, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span });
                           }}
                         />
                         <span
@@ -467,7 +523,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                             e.stopPropagation();
                             edl.setSelection([clip.id]);
                             if (row.locked || clip.locked) return;
-                            setDrag({ id: clip.id, kind: 'trim-r', startX: e.clientX, origStart: clip.timelineStart, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span });
+                            setDrag({ id: clip.id, kind: 'trim-r', startX: e.clientX, startY: e.clientY, origStart: clip.timelineStart, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span });
                           }}
                         />
                       </div>

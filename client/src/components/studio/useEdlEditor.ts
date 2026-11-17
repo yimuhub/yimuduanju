@@ -393,10 +393,21 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       tracks?: { next: TimelineTrackMeta[]; before: TimelineTrackMeta[] },
     ) => {
       if (!docRef.current) return;
+      const curTracks = docRef.current.tracks ?? [];
+      const requestedTracks = tracks ? tracks.next : curTracks;
+      const used = new Set(next.map((c) => `${c.track}:${c.lane ?? 0}`));
+      // 空轨自动回收：默认主轨 V0/A0 保留，其余没有素材的轨道直接移除
+      const nextTracks = requestedTracks.filter(
+        (t) => used.has(`${t.track}:${t.lane ?? 0}`) || ((t.track === 'video' || t.track === 'audio') && (t.lane ?? 0) === 0),
+      );
+      const beforeTracks = tracks ? tracks.before : curTracks;
+      const tracksChanged =
+        nextTracks.length !== curTracks.length ||
+        nextTracks.some((t, i) => t.track !== curTracks[i]?.track || (t.lane ?? 0) !== (curTracks[i]?.lane ?? 0));
       const nextDoc = {
         ...docRef.current,
         clips: next,
-        ...(tracks ? { tracks: tracks.next } : {}),
+        tracks: nextTracks,
         updatedAt: new Date().toISOString(),
       };
       docRef.current = nextDoc;
@@ -405,8 +416,8 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         label,
         before,
         after: next,
-        ...(tracks
-          ? { tracksBefore: tracks.before, tracksAfter: tracks.next }
+        ...(tracksChanged
+          ? { tracksBefore: beforeTracks, tracksAfter: nextTracks }
           : {}),
       });
       if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
@@ -1327,7 +1338,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
           ...trackClips.map((c) => c.lane ?? 0),
           ...meta.filter((t) => t.track === track).map((t) => t.lane ?? 0),
         ) + 1;
-      if (lane > 19) return null;
+
       updateTrack(track, lane, { height: ROW_HEIGHT_DEFAULT[track] });
       return lane;
     },
@@ -1345,7 +1356,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     (id: string, timelineStart: number, lane: number, createTrack: boolean): void => {
       const before = clipsRef.current;
       const src = before.find((c) => c.id === id);
-      if (!src || src.locked || lane < 0 || lane > 19) return;
+      if (!src || src.locked || lane < 0) return;
       const fpsNow = fpsRef.current;
       const nextStart = quantizeToFrame(Math.max(0, timelineStart), fpsNow);
       if (Math.abs(nextStart - src.timelineStart) < 1e-6 && lane === (src.lane ?? 0)) return;

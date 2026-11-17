@@ -376,9 +376,23 @@
 .sj2 .shot-pool2 .insp-tabs{grid-template-columns:1fr 1fr}
 .sj2 .shot-pool2 .insp-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .sj2 .shot-pool2 .sp2-list{flex:1;min-height:0}
-/* 抖音式单基线：去掉左侧固定轨道头，字幕/画面在上，音频在下 */
-.sj2 .tl-body{grid-template-columns:1fr}
-.sj2 .track-heads{display:none}
+/* 抖音式单基线 + 固定轨道头：轨道名与行同滚，画面/字幕在上，音频在下 */
+.sj2 .tl-body{grid-template-columns:176px minmax(0,1fr)}
+.sj2 .track-heads{display:block;background:#101116;border-right:1px solid #292c33;position:relative;z-index:7}
+.sj2 .track-heads .head-ruler{position:absolute;left:0;right:0;top:0;z-index:2;background:#121318}
+.sj2 .track-heads .heads-inner{position:absolute;left:0;right:0;top:24px}
+.sj2 .track-head{height:44px;display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:7px;padding:0 8px;border-bottom:1px solid #202329;background:#101116;transition:background .12s}
+.sj2 .track-head .tname{font-size:11px;font-weight:800;color:#c6ccd5;letter-spacing:.02em}
+.sj2 .track-head .tlabel{min-width:0;display:flex;flex-direction:column;line-height:1.28}
+.sj2 .track-head .tlabel em{font-style:normal;font-size:9px;color:#7c8490;white-space:nowrap}
+.sj2 .track-head .tlabel b{font-size:10px;font-weight:500;color:#aeb5bf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sj2 .track-head .locks{display:flex;gap:2px}
+.sj2 .track-head .locks button{width:19px;height:19px;display:grid;place-items:center;color:#6d7480;border-radius:4px}
+.sj2 .track-head .locks button:hover{color:#fff;background:#262a31}
+.sj2 .track-head .locks button.on{color:#ff8066;background:#3a211f}
+.sj2 .track-head .locks button svg{width:12px;height:12px}
+.sj2 .track-head.droptarget{background:#153b37;box-shadow:inset 3px 0 0 var(--acc),inset 0 0 0 1px #37d6c855}
+.sj2 .lane.droptarget{background-color:#12312d;box-shadow:inset 0 0 0 1px #37d6c855}
 .sj2 .baseline{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,#37d6c8aa,#37d6c833 62%,#37d6c800);z-index:2;pointer-events:none}
 .sj2 .baseline span{position:sticky;left:8px;top:-16px;font-size:9px;color:#5c9992;background:#0b0d11d9;padding:1px 5px;border-radius:3px;white-space:nowrap}
 .sj2 .lane{padding:0}
@@ -417,3 +431,7 @@
 .sj2 .canvas{container-type:size}
 .sj2 .layer-sub{white-space:pre-wrap;line-height:1.24;text-shadow:0 2px 10px #000000aa}
 .sj2 .layer-sub span{display:inline}
+
+/* 动态多轨：拖到空白/异类轨道时提示即将新建的同类型轨道 */
+.sj2 .new-track-hint{position:sticky;left:12px;top:28px;z-index:9;display:inline-flex;align-items:center;gap:5px;width:max-content;padding:3px 8px;border-radius:4px;background:#12312dee;border:1px solid #37d6c866;color:#bff7ee;font-size:10px;pointer-events:none}
+.sj2 .tl-newhint{font-size:9px;color:#6f7681;white-space:nowrap;margin-left:2px}

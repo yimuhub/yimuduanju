@@ -100,7 +100,7 @@ const firstLaneOf = (
  *   1. 只能落到同类型轨道（画面→画面、字幕→字幕），跨类型是非法落点；
  *   2. 命中行被占时自动找空档 / 新建轨，绝不覆盖 —— 原轨其它片段保持不动；
  *   3. 拖到轨道区底部空白 = 明确新建一条同类型轨；
- *   4. 轨道数上限 20（lane 0..19）。
+ *   4. 不设固定轨道数上限，空白区永远返回 maxLane + 1。
  * 组件层不再用 elementFromPoint（拖到空白区会命中不到任何行），改用这里的
  * 几何命中，保证「往外一拖就开新轨」的手感。
  */
@@ -142,7 +142,7 @@ export interface MoveLanePick extends LanePick {
 }
 
 /**
- * 跨轨移动的最终落点：几何命中 + 碰撞检测 + 上限保护。
+ * 跨轨移动的最终落点：几何命中 + 碰撞检测，不设固定轨道上限。
  * `occupied` 不含被拖片段自己（及绑定搭档，纵向不联动）。
  */
 export function resolveMoveLane(
@@ -160,6 +160,5 @@ export function resolveMoveLane(
   // （一条空轨没有片段，occupied 里就没有它，不能因此误判为新建）
   const existingLanes = new Set(rows.filter((r) => r.track === track).map((r) => r.lane));
   const pick = pickFreeLane(occupied, hit.lane, start, end);
-  if (pick.lane > 19) return { lane: -1, created: false, rejected: 'limit' };
   return { lane: pick.lane, created: !existingLanes.has(pick.lane) };
 }

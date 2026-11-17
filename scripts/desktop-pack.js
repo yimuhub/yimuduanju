@@ -212,7 +212,18 @@ function main() {
     }
   }
 
-  fs.rmSync(OUT, { recursive: true, force: true, maxRetries: 20, retryDelay: 300 });
+  try {
+    fs.rmSync(OUT, { recursive: true, force: true, maxRetries: 20, retryDelay: 300 });
+  } catch (err) {
+    // Windows/macOS 偶发句柄占用导致 ENOTEMPTY：把旧目录整体挪走，构建必须继续
+    const trash = `${OUT}.old-${Date.now()}`;
+    fs.renameSync(OUT, trash);
+    try {
+      fs.rmSync(trash, { recursive: true, force: true, maxRetries: 20, retryDelay: 300 });
+    } catch {
+      log(`旧运行时未能立即删除，已移至 ${trash}`);
+    }
+  }
   fs.mkdirSync(OUT, { recursive: true });
 
   log('复制前端/后端产物');

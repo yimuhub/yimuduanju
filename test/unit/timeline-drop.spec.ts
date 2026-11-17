@@ -211,14 +211,13 @@ describe('resolveMoveLane（跨轨移动落点）', () => {
     expect(resolveMoveLane(locked, 70, 'video', [], 0, 4)).toMatchObject({ rejected: 'locked' });
   });
 
-  it('超出 20 条上限 → 拒绝', () => {
+  it('无固定轨道上限：拖到第 21 条空白仍继续新建', () => {
     const many: MoveRow[] = Array.from({ length: 21 }, (_, lane) => ({
       track: 'video',
       lane,
       height: 10,
     }));
-    // 空白区 → lane 21 > 19
-    expect(resolveMoveLane(many, 500, 'video', [], 0, 4)).toMatchObject({ rejected: 'limit' });
+    expect(resolveMoveLane(many, 500, 'video', [], 0, 4)).toEqual({ lane: 21, created: true });
   });
 
   it('首尾相接不算重叠：目标行前一段恰好结束 → 可落该行', () => {
