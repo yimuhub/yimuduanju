@@ -28,6 +28,7 @@ import { resolveTextStyle } from '@shared/api.interface';
 import { buildTransitionFilter, planTransitions } from './transition-plan';
 import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
 import { scanTimelineIssues } from '@shared/timeline-issues';
+import { buildZoompanExpressions, normalizeVideoKeyframes } from '@shared/timeline-keyframes';
 import type {
   Asset,
   ExportTimelineResult,
@@ -298,6 +299,7 @@ export class TimelineService {
       volume: num(row.volume, 1),
       transition: (row.transition as TimelineClip['transition']) ?? null,
       text: row.text,
+      keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
       textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
       bindGroup: row.bindGroup,
       locked: row.locked,
@@ -372,6 +374,7 @@ export class TimelineService {
           volume: String(c.volume ?? 1),
           transition: c.transition ?? null,
           text: c.text ?? null,
+          keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
           bindGroup: c.bindGroup ?? null,
           textStyle: c.textStyle ?? null,
           locked: c.locked ?? false,
@@ -1057,12 +1060,20 @@ export class TimelineService {
             : [];
         const seg = join(work, `v_seg_${String(i).padStart(3, '0')}.mp4`);
         cleanup.push(seg);
+        const kf = buildZoompanExpressions(clip.keyframes, fps, visibleSpan);
         const vf = [
           `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
           `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`,
           'setsar=1',
           `fps=${fps}`,
           ...(Math.abs(speed - 1) > 1e-3 ? [`setpts=PTS/${speed}`] : []),
+          // 运镜关键帧：zoompan 用输出帧 on 做线性插值，和浏览器预览读同一份数据
+          ...(kf.hasKeyframes
+            ? [
+                `zoompan=z='${kf.z}':x='${kf.x}':y='${kf.y}':d=1:s=${width}x${height}:fps=${fps}`,
+                `rotate=a='${kf.rotate}':c=black`,
+              ]
+            : []),
           ...fadeFilters,
           // 叠化尾巴：源素材够长时是真实画面（handle），不够长时克隆末帧补足，
           // 保证 xfade 的 offset+duration 一定落在这一段之内，否则 ffmpeg 直接报错

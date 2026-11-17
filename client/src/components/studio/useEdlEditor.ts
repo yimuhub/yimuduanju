@@ -196,6 +196,8 @@ export interface EdlEditor {
   updateTextStyle: (id: string, patch: Partial<TimelineTextStyle>) => void;
   /** 字幕文本 */
   setClipText: (id: string, text: string) => void;
+  /** 运镜关键帧：整组替换（内部已排序去重） */
+  setClipKeyframes: (id: string, keyframes: TimelineClip['keyframes']) => void;
 
   /** 新建同类型轨道（返回新 lane，失败返回 null） */
   addTrack: (track: TimelineTrackMeta['track']) => number | null;
@@ -1092,6 +1094,21 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const setClipKeyframes = useCallback(
+    (id: string, keyframes: TimelineClip['keyframes']) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      const nextFrames = keyframes && keyframes.length > 0 ? keyframes : null;
+      commit(
+        before.map((c) => (c.id === id ? { ...c, keyframes: nextFrames } : c)),
+        nextFrames ? '调整运镜关键帧' : '清除运镜关键帧',
+        before,
+      );
+    },
+    [commit],
+  );
+
   const setClipText = useCallback(
     (id: string, text: string) => {
       const before = clipsRef.current;
@@ -1363,6 +1380,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     unbindSelection,
     updateTextStyle,
     setClipText,
+    setClipKeyframes,
     addTrack,
     removeTrack,
     updateTrack,

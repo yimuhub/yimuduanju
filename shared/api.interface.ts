@@ -1,4 +1,5 @@
 import type { PipelineReadiness } from './pipeline-readiness';
+import type { TimelineVideoKeyframe } from './timeline-keyframes';
 
 export type ProjectStatus =
   | 'draft'
@@ -1802,6 +1803,11 @@ export interface TimelineClip {
   transition?: { type: 'none' | 'crossfade' | 'fade'; duration: number } | null;
   /** 字幕文本（字幕轨） */
   text?: string | null;
+  /**
+   * 运镜关键帧（画面轨）：缩放 / 平移 / 旋转。
+   * time 是相对片段起点的秒数；导出与预览读同一份数据。
+   */
+  keyframes?: TimelineVideoKeyframe[] | null;
   /**
    * 字幕样式（字幕轨）。缺省走项目默认样式。
    * 只存「偏离默认」的字段，未填即继承，这样换主题时旧字幕不会全员打架。

@@ -20,6 +20,7 @@ import MediaPreviewDialog from '@client/src/components/MediaPreviewDialog';
 import { listCharacters, listProps } from '@client/src/api/bible';
 import { isImageUrl } from '@client/src/lib/media-kind';
 import { previewProxyUrl } from '@client/src/lib/preview-proxy';
+import { sampleVideoTransform } from '@shared/timeline-keyframes';
 import type { Prop } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1';
@@ -364,6 +365,14 @@ export const StudioPreview = () => {
   const scene = data.scenes.find((s) => s.id === displayShot.sceneId);
   const videoUrl = effectiveVideoUrl;
   const activeIsStill = previewIsStill;
+  const clipLocalT =
+    tlMode && activeVideo ? Math.max(0, curT - activeVideo.timelineStart) : 0;
+  const videoXf = tlMode && activeVideo ? sampleVideoTransform(activeVideo.keyframes, clipLocalT) : null;
+  const videoXfStyle = videoXf
+    ? {
+        transform: `translate(${(-videoXf.x * 100) / videoXf.scale}%, ${(-videoXf.y * 100) / videoXf.scale}%) scale(${videoXf.scale}) rotate(${videoXf.rotate}deg)`,
+      }
+    : undefined;
   const showVideo = Boolean(videoUrl) && !videoBroken && !activeIsStill;
   const showStill = Boolean(videoUrl) && !videoBroken && activeIsStill;
 
@@ -451,21 +460,23 @@ export const StudioPreview = () => {
         <div className="pv-stage">
           <div className="pv-frame" data-ratio={ratio} data-tag={shot.tag} data-st={shot.st}>
             {showStill ? (
-              <img
-                src={videoUrl}
-                alt={(activeVideo?.text || activeVideo?.sourceUrl || '').slice(0, 40)}
-                onError={() => setVideoBroken(true)}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  background: '#000',
-                }}
-              />
+              <div className="pv-media-xf" style={videoXfStyle}>
+                <img
+                  src={videoUrl}
+                  alt={(activeVideo?.text || activeVideo?.sourceUrl || '').slice(0, 40)}
+                  onError={() => setVideoBroken(true)}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    background: '#000',
+                  }}
+                />
+              </div>
             ) : showVideo ? (
-              <>
+              <div className="pv-media-xf" style={videoXfStyle}>
               <video
                 ref={videoRef}
                 src={videoUrl}
@@ -491,7 +502,7 @@ export const StudioPreview = () => {
                 className="pv-fast"
                 style={{ display: canvasOn ? 'block' : 'none' }}
               />
-              </>
+              </div>
             ) : tlMode ? (
               <div className="pv-gap">
                 <span>时间线空隙</span>

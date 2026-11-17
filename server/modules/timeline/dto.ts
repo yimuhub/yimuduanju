@@ -18,6 +18,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import type { TimelineTextStyle, TimelineTrackKind } from '@shared/api.interface';
+import type { TimelineVideoKeyframe } from '@shared/timeline-keyframes';
 
 /** 片段转场（与下一片段之间）；Phase 4 导出暂按硬切渲染，EDL 先存决策 */
 export class ClipTransitionDto {
@@ -99,6 +100,12 @@ export class SaveTimelineClipDto {
   @IsOptional()
   @IsString()
   text?: string | null;
+
+  /** 运镜关键帧（画面轨）；逐项数值在服务端归一化，非法值夹紧而不是整单报错 */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(120)
+  keyframes?: TimelineVideoKeyframe[] | null;
 
   /** 绑定组 id（同组一起平移）；null / 空 = 解绑 */
   @IsOptional()

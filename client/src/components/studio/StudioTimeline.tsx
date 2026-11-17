@@ -68,9 +68,11 @@ import {
   type AudioRole,
 } from './model';
 import { useEdl } from './EdlContext';
+import { sampleVideoTransform, upsertVideoKeyframe } from '@shared/timeline-keyframes';
 import { StudioImportDialog } from './StudioImportDialog';
 import { StudioCoverDialog } from './StudioCoverDialog';
 import { StudioTooltipLayer } from './StudioTooltipLayer';
+import { TimelineKeyframePanel } from './TimelineKeyframePanel';
 import { Filmstrip, StillFrame, useThumbnails, useWaveform, Waveform } from './timeline-media';
 import {
   exportTimeline,
@@ -578,6 +580,7 @@ export const StudioTimeline = () => {
     h: number;
   } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [kfOpen, setKfOpen] = useState(false);
   /** 剪映 A/B 工具模式：select=选择，split=点击即切 */
   const [toolMode, setToolMode] = useState<'select' | 'split'>('select');
   const toolModeRef = useRef(toolMode);
@@ -1486,6 +1489,36 @@ export const StudioTimeline = () => {
     else toast.success(`已分开 ${count} 个片段`, { duration: 1200 });
   }, [clipsAtPlayhead]);
 
+  /** ⌘K：在播放头为选中画面片段添加一个运镜关键帧（当前值作为起点，不跳变） */
+  const addKeyframeAtPlayhead = useCallback(() => {
+    const t = curTRef.current;
+    const id = selectedRef.current[0];
+    const clip = clipsRef.current.find((c) => c.id === id);
+    if (!clip || clip.track !== 'video' || !clip.sourceUrl) {
+      toast.info('先选中一个画面片段，关键帧只作用于画面/图片', { duration: 1800 });
+      return false;
+    }
+    if (clip.locked) {
+      toast.info('片段已锁定，先解锁再加关键帧', { duration: 1600 });
+      return false;
+    }
+    const span = clipSpan(clip);
+    const local = Math.max(0, Math.min(span, t - clip.timelineStart));
+    const cur = sampleVideoTransform(clip.keyframes, local);
+    editorRef.current.setClipKeyframes(
+      clip.id,
+      upsertVideoKeyframe(clip.keyframes, local, {
+        scale: cur.scale,
+        x: cur.x,
+        y: cur.y,
+        rotate: cur.rotate,
+        easing: 'linear',
+      }),
+    );
+    toast.success(`已在 ${local.toFixed(2)}s 添加运镜关键帧`, { duration: 1400 });
+    return true;
+  }, []);
+
   /** Q：把选中片段（未选则播放头命中的片段）从播放头处向左裁掉 */
   const deleteLeftOfPlayhead = useCallback(() => {
     const t = curTRef.current;
@@ -1852,14 +1885,17 @@ export const StudioTimeline = () => {
       }
       if (mod && key === 'k') {
         e.preventDefault();
-        toast.info('关键帧尚未接入：当前属性条只支持整段变速/音量，关键帧需要位置/缩放/透明度模型', {
-          duration: 2600,
-        });
+        addKeyframeAtPlayhead();
         return;
       }
       if (e.altKey && !e.shiftKey && key === 'k') {
         e.preventDefault();
-        toast.info('关键帧面板尚未接入；不会用假面板占位', { duration: 2200 });
+        const clip = clipsRef.current.find((c) => c.id === selectedRef.current[0]);
+        if (!clip || clip.track !== 'video' || !clip.sourceUrl) {
+          toast.info('先选中一个画面片段再打开关键帧面板', { duration: 1800 });
+          return;
+        }
+        setKfOpen(true);
         return;
       }
       if (mod) return;
@@ -2527,6 +2563,17 @@ export const StudioTimeline = () => {
             分离音轨
           </button>
         )
+      ) : null}
+      {selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+        <button
+          type="button"
+          className={`tl-prop-btn${selectedClip.keyframes?.length ? ' on' : ''}`}
+          onClick={() => setKfOpen(true)}
+          title="运镜关键帧：缩放 / 平移 / 旋转，预览与导出共用同一份数据"
+        >
+          <Gauge size={11} />
+          关键帧{selectedClip.keyframes?.length ? ` ${selectedClip.keyframes.length}` : ''}
+        </button>
       ) : null}
       {selectedClip.track === 'video' && selectedClip.sourceShotId ? (
         <button
@@ -3412,11 +3459,23 @@ export const StudioTimeline = () => {
             </div>
             <p className="tl-modal-note">
               本条总表与剪映专业版桌面端对齐：A/B 工具、E/⌘B 分割、Q/W 左右删除、←/→ 帧步进、↑/↓ 剪辑点、Shift+Z 适配、N 吸附、I/O 入出点。
-              电影级关键帧（⌘K / Alt+K）与曲线变速（Shift+B）需要属性关键帧模型，本版不提供假面板；其余常用键位已接通。
+              关键帧（⌘K / Alt+K）已接入缩放/平移/旋转，预览与导出同一份数据；曲线变速（Shift+B）仍需速度曲线模型，未接入。
               片段属性（速度 / 音量 / 转场 / 锁定 / 启用）在时间线上方属性条调整；轨道头可重命名、静音、独奏、锁定。
             </p>
           </div>
         </div>
+      ) : null}
+
+      {kfOpen && selectedClip && selectedClip.track === 'video' && selectedClip.sourceUrl ? (
+        <TimelineKeyframePanel
+          clip={selectedClip}
+          curT={curT}
+          onSeek={(t) => {
+            setPlaying(false);
+            setCurT(clamp(quantizeToFrame(t, fps), 0, total));
+          }}
+          onClose={() => setKfOpen(false)}
+        />
       ) : null}
 
       {pickerOpen ? (

@@ -5133,6 +5133,13 @@ button.tl-tc:hover {
   display: flex;
   justify-content: center;
 }
+.pv-media-xf {
+  position: absolute;
+  inset: 0;
+  transform-origin: center center;
+  will-change: transform;
+  overflow: hidden;
+}
 .pv-frame {
   position: relative;
   /* 尺寸容器：字幕字号用 cqh（容器高度 1%）表达，与后端「按画幅高度百分比」同一语义 */
@@ -13928,3 +13935,98 @@ select.nw-input {
   color: var(--fg);
 }
 .thp-restore:disabled { opacity: 0.5; cursor: default; }
+
+/* 运镜关键帧面板 */
+.tl-kf-modal {
+  width: min(760px, 94vw);
+}
+.tl-kf-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.tl-kf-add {
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 196, 0, 0.45);
+  border-radius: 6px;
+  background: rgba(255, 196, 0, 0.08);
+  color: #ffc400;
+  font-size: 11px;
+  cursor: pointer;
+}
+.tl-kf-empty {
+  margin: 10px 0;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--fg-3);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.tl-kf-table {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.tl-kf-row {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr;
+  align-items: center;
+  gap: 6px;
+}
+.tl-kf-head {
+  color: var(--fg-4);
+  font-size: 10px;
+}
+.tl-kf-row input {
+  width: 100%;
+  height: 25px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.tl-kf-ops {
+  display: flex;
+  gap: 4px;
+}
+.tl-kf-ops button {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-3);
+  font-size: 10px;
+  cursor: pointer;
+}
+.tl-kf-ops button:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+.tl-kf-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-4);
+  font-size: 10px;
+}
+.tl-kf-foot button {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--danger, #ff6b66);
+  font-size: 10px;
+  cursor: pointer;
+}
