@@ -1023,6 +1023,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             normArgs.push('-i', candidateVoice);
           }
         }
+        // AI 视频是音画一体的：没有 TTS 配音时必须保留素材自带原声，
+        // 只有素材本身无声才补一条静音轨。旧实现无配音就 -an，成片全静音。
+        // eslint-disable-next-line no-await-in-loop
+        const sourceHasAudio = await this.probeHasAudio(rawLocal);
         if (hasAnyVoice) {
           if (!voiceLocal) {
             normArgs.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
@@ -1034,11 +1038,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             '-c:a', 'aac', '-ar', '44100', '-ac', '2',
             '-r', '30', '-shortest', normLocal,
           );
-        } else {
+        } else if (sourceHasAudio) {
           normArgs.push(
+            '-map', '0:v:0', '-map', '0:a:0',
             '-vf', scaleFilter,
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-            '-r', '30', '-an', normLocal,
+            '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '128k',
+            '-af', 'apad',
+            '-r', '30', '-shortest', normLocal,
+          );
+        } else {
+          normArgs.push(
+            '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+            '-map', '0:v:0', '-map', '1:a:0',
+            '-vf', scaleFilter,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+            '-r', '30', '-shortest', normLocal,
           );
         }
         // eslint-disable-next-line no-await-in-loop
@@ -1090,7 +1106,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
           '-vf', scaleFilter,
           '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
-          ...(hasAnyVoice ? ['-c:a', 'aac', '-b:a', '128k'] : ['-an']),
+          '-c:a', 'aac', '-b:a', '128k',
           ...aigcMeta,
           joinedPath,
         ];
@@ -1236,12 +1252,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         sourceId: `assemble-${randomUUID()}`,
         generationPrompt:
           `服务端拼接 ${downloaded} 条镜头成片（${tw}x${th} @ ${project.aspectRatio ?? '16:9'}，` +
-          `${hasAnyVoice ? '含配音音轨混流' : '纯画面'}` +
+          `${hasAnyVoice ? '含配音音轨混流' : '保留素材原声（无声补静音）'}` +
           `${burnedSubtitles ? `+硬字幕烧录(${subtitleStyle})` : hasSrt ? '+内嵌软字幕轨' : ''}` +
           `${bgmApplied ? '+BGM混音(对白自动压低)' : ''}）`,
         metadata: {
           aigcGenerated: true,
-          hasAudio: hasAnyVoice,
+          hasAudio: true,
           hasSubtitles: hasSrt || burnedSubtitles,
           burnedSubtitles,
           subtitleStyle: burnedSubtitles ? subtitleStyle : undefined,
@@ -1975,6 +1991,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         });
       } catch {
         resolve(0);
+      }
+    });
+  }
+
+  /** 探测素材是否自带音频流；ffprobe 不可用时返回 false，走静音轨兜底 */
+  private async probeHasAudio(file: string): Promise<boolean> {
+    const probeBin = this.resolveFfmpegBin().replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+    return new Promise<boolean>((resolve) => {
+      try {
+        const child = spawn(
+          probeBin,
+          [
+            '-v', 'error',
+            '-select_streams', 'a:0',
+            '-show_entries', 'stream=index',
+            '-of', 'csv=p=0',
+            file,
+          ],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        let out = '';
+        child.stdout?.on('data', (d: Buffer) => {
+          out += d.toString();
+        });
+        child.on('error', () => resolve(false));
+        child.on('close', () => resolve(String(out).trim().length > 0));
+      } catch {
+        resolve(false);
       }
     });
   }
