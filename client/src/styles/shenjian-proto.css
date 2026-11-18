@@ -542,12 +542,10 @@
 .sj2 .kf-badge{position:absolute;left:4px;bottom:3px;font-size:9px;font-weight:600;color:#fff;background:#000000b3;padding:1px 4px;border-radius:3px}
 .sj2 .kf-meta{display:flex;align-items:center;gap:6px;padding:3px 6px;font-size:9px;color:#9aa3af}
 .sj2 .kf-meta i{margin-left:auto;font-style:normal;color:#ff8b8b;cursor:pointer;font-size:11px}
-/* 时间线上的画面关键帧：直接贴该帧画面 + 红色定位针（看得清内容） */
-.sj2 .clip2 .kf-frame{position:absolute;top:10px;height:calc(100% - 14px);transform:translateX(-50%);border:2px solid #ff4d4f;border-radius:2px;background-repeat:no-repeat;z-index:5;box-shadow:0 0 6px #000c;cursor:ew-resize;overflow:visible}
-.sj2 .clip2 .kf-frame:hover{border-color:#ffd166;box-shadow:0 0 8px #ff4d4f99}
-.sj2 .clip2 .kf-pin{position:absolute;left:50%;top:-10px;width:1px;height:10px;background:#ff4d4f;pointer-events:none}
-.sj2 .clip2 .kf-pin:after{content:"";position:absolute;left:-2px;top:-3px;width:5px;height:5px;border-radius:50%;background:#ff4d4f;box-shadow:0 0 4px #ff4d4f}
-.sj2 .clip2 .kf-time{position:absolute;left:1px;bottom:1px;font-size:8px;line-height:1;padding:1px 3px;border-radius:2px;background:#b3261eb3;color:#fff;pointer-events:none}
+/* 画面关键帧：完全按参考图，只在帧带上打一根细红色竖标记，不贴大图 */
+.sj2 .clip2 .kfm{position:absolute;top:1px;width:3px;height:13px;background:#ff3b30;border-radius:1px;z-index:6;cursor:ew-resize;box-shadow:0 0 0 1px #00000040}
+.sj2 .clip2 .kfm::after{content:"";position:absolute;left:-5px;right:-5px;top:-3px;bottom:-3px}
+.sj2 .clip2 .kfm:hover{width:4px;background:#ff6257;box-shadow:0 0 5px #ff3b3099}
 
 /* ===== 神剪助手 · 与原型融合：执行规则、精简时长弹窗、纯星悬浮球 ===== */
 .sj2 .pro-chat-win{height:min(620px,calc(100vh - 110px))}
@@ -588,4 +586,3 @@
 .sj2 .track-head .hctl button:hover{color:#fff;background:#252b34;border-color:#3e4653}
 .sj2 .track-head .hctl button svg{width:10px;height:10px}
 .sj2 .track-head .hctl button:active{background:#1c3a37;border-color:#37d6c2;color:#8effee}
-.sj2 .clip2 .kf-frame{max-width:calc(100% - 4px);min-height:34px}

@@ -216,24 +216,19 @@ const GainLine = ({
  * 点击跳到该关键帧；按住左右拖可直接改关键帧时间，落库走 setClipKeyframes。
  */
 const ClipKeyframes = ({
-  projectId,
   clip,
   span,
   pxPerSec,
-  rowHeight,
   onSeek,
   onChange,
 }: {
-  projectId: string;
   clip: TimelineClip;
   span: number;
   pxPerSec: number;
-  rowHeight: number;
   onSeek: (t: number) => void;
   onChange: (frames: NonNullable<TimelineClip['keyframes']>) => void;
 }) => {
   const frames = clip.keyframes ?? [];
-  const thumb = useThumbnails(projectId, clip.sourceUrl);
   if (!frames.length) return null;
   const bind = (i: number, f: NonNullable<TimelineClip['keyframes']>[number]) => ({
     onPointerDown: (e: React.PointerEvent) => {
@@ -261,38 +256,15 @@ const ClipKeyframes = ({
   });
   return (
     <>
-      {frames.map((f, i) => {
-        const src = clip.reverse
-          ? Math.max(clip.inPoint, clip.outPoint - f.time * (clip.speed ?? 1))
-          : clip.inPoint + f.time * (clip.speed ?? 1);
-        const tile = thumb && thumb.tileWidth > 0 && thumb.tileHeight > 0;
-        if (!tile) {
-          return <b key={`${f.time}-${i}`} className="kfd" style={{ left: Math.max(3, Math.min(span * pxPerSec - 9, f.time * pxPerSec - 3.5)) }} title={`关键帧 ${f.time.toFixed(2)}s`} {...bind(i, f)} />;
-        }
-        const idx = Math.max(0, Math.min(thumb.count - 1, Math.floor(src / thumb.interval)));
-        const col = idx % thumb.columns;
-        const row = Math.floor(idx / thumb.columns);
-        return (
-          <div
-            key={`${f.time}-${i}`}
-            className="kf-frame"
-            style={{
-              left: f.time * pxPerSec,
-              // 关键帧随轨道行高放大，但不超过片段宽度可容纳的尺寸。
-              height: Math.min(rowHeight - 22, Math.max(34, (span * pxPerSec) * (thumb.tileHeight / thumb.tileWidth))),
-              aspectRatio: `${thumb.tileWidth} / ${thumb.tileHeight}`,
-              backgroundImage: `url("${thumb.spriteUrl}")`,
-              backgroundSize: `${thumb.columns * 100}% ${thumb.rows * 100}%`,
-              backgroundPosition: `${(col / Math.max(1, thumb.columns - 1)) * 100}% ${(row / Math.max(1, thumb.rows - 1)) * 100}%`,
-            }}
-            title={`画面关键帧 ${f.time.toFixed(2)}s · 缩放 ${Math.round((f.scale ?? 1) * 100)}%（点击定位，左右拖改时间）`}
-            {...bind(i, f)}
-          >
-            <i className="kf-pin" />
-            <b className="kf-time">{f.time.toFixed(1)}s</b>
-          </div>
-        );
-      })}
+      {frames.map((f, i) => (
+        <b
+          key={`${f.time}-${i}`}
+          className="kfm"
+          style={{ left: Math.max(1, Math.min(span * pxPerSec - 4, f.time * pxPerSec - 1.5)) }}
+          title={`画面关键帧 ${f.time.toFixed(2)}s · 缩放 ${Math.round((f.scale ?? 1) * 100)}% · X ${Math.round((f.x ?? 0) * 100)}% · Y ${Math.round((f.y ?? 0) * 100)}%（点击定位，左右拖改时间）`}
+          {...bind(i, f)}
+        />
+      ))}
     </>
   );
 };
@@ -453,20 +425,12 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     return out;
   }, [clips, edl.tracks, edl.fps]);
 
-  // 关键帧轨道默认展开到能看清帧图的高度（原型 V2 为 200px、关键帧 150px）；
-  // 其他轨道跟随全局行高。用户按轨道头 −/＋ 后，单独值覆盖默认值。
-  const keyframeLanes = useMemo(
-    () => new Set(clips.filter((c) => c.track === 'video' && (c.keyframes?.length ?? 0) > 0).map((c) => c.lane ?? 0)),
-    [clips],
-  );
+  // 所有轨道默认跟随全局行高；用户按轨道头 −/＋ 后，单独值覆盖默认值。
   const rowH = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
-    for (const r of rows) {
-      const base = r.track === 'video' && keyframeLanes.has(r.lane) ? Math.max(laneH, 168) : laneH;
-      map[r.key] = rowHeights[r.key] ?? base;
-    }
+    for (const r of rows) map[r.key] = rowHeights[r.key] ?? laneH;
     return map;
-  }, [rows, rowHeights, laneH, keyframeLanes]);
+  }, [rows, rowHeights, laneH]);
   const rowTops = useMemo(() => {
     let top = 0;
     return rows.map((r) => {
@@ -939,11 +903,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         {clip.transition && clip.transition.type !== 'none' ? <span className="xf">{clip.transition.type === 'crossfade' ? '叠' : '淡'}</span> : null}
                         {clip.track === 'video' && clip.keyframes?.length ? (
                           <ClipKeyframes
-                            projectId={projectId}
                             clip={clip}
                             span={span}
                             pxPerSec={zoom}
-                            rowHeight={rowHeightNow}
                             onSeek={setCurT}
                             onChange={(frames) => edl.setClipKeyframes(clip.id, frames)}
                           />
