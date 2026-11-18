@@ -6,7 +6,7 @@
  * · data:/blob: 地址无法给后端解码，直接降级为纯色块；
  * · 渲染失败只影响该片段，不阻断整条时间线。
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { TimelineThumbnails, TimelineWaveform } from '@shared/api.interface';
 import { getThumbnails, getWaveform } from '@client/src/api/timeline';
 import { clamp, slicePeaks } from '@client/src/lib/timeline-frame';
@@ -213,8 +213,9 @@ export const StillFrame = ({
   );
 };
 /**
- * 音频波形：上下对称的填充折线，viewBox 横向拉伸到片段宽度。
- * peaks 由 slicePeaks 按片段区间切好，点数按 2px 一柱计算。
+ * 剪映式音频波形：中线为 0，每 2px 一根上下对称的竖柱。
+ * 用 canvas 而不是一条长折线，密度、峰谷和低电平细节更接近剪映；
+ * peaks 仍按片段 in/out 与当前缩放重新取样，缩放后不会拉伸变形。
  */
 export const Waveform = ({
   wave,
@@ -229,34 +230,39 @@ export const Waveform = ({
   outPoint: number;
   pxPerSec: number;
 }): ReactNode => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !wave || wave.peaks.length === 0) return;
+    const width = Math.max(8, Math.ceil(span * pxPerSec));
+    const count = clamp(Math.ceil(width / 2), 12, 900);
+    const peaks = slicePeaks(wave.peaks, wave.duration, inPoint, outPoint, count);
+    if (peaks.length === 0) return;
+    const cssH = 44;
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    canvas.width = Math.max(8, Math.round(width * dpr));
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, cssH);
+    const color = getComputedStyle(canvas).color || '#2f9bff';
+    ctx.fillStyle = color;
+    const mid = cssH / 2;
+    const barW = width / peaks.length;
+    for (let i = 0; i < peaks.length; i += 1) {
+      const amp = Math.max(0.06, Math.min(1, peaks[i]));
+      const barH = Math.max(1, amp * (mid - 1));
+      ctx.fillRect(i * barW, mid - barH, Math.max(1, barW - 0.35), barH * 2);
+    }
+  }, [wave, span, inPoint, outPoint, pxPerSec]);
   if (!wave || wave.peaks.length === 0) return null;
-  const width = Math.max(8, span * pxPerSec);
-  const count = clamp(Math.ceil(width / 2), 12, 900);
-  const peaks = slicePeaks(wave.peaks, wave.duration, inPoint, outPoint, count);
-  if (peaks.length === 0) return null;
-  const h = 22;
-  const mid = h / 2;
-  let up = '';
-  let down = '';
-  for (let i = 0; i < peaks.length; i += 1) {
-    const amp = Math.min(1, Math.max(0, peaks[i]));
-    const y = mid - amp * (mid - 1);
-    up += `${i === 0 ? 'M' : 'L'}${i} ${y.toFixed(2)}`;
-  }
-  for (let i = peaks.length - 1; i >= 0; i -= 1) {
-    const amp = Math.min(1, Math.max(0, peaks[i]));
-    const y = mid + amp * (mid - 1);
-    down += `L${i} ${y.toFixed(2)}`;
-  }
   return (
-    <svg
+    <canvas
+      ref={ref}
       className="tl-wave"
-      viewBox={`0 0 ${peaks.length} ${h}`}
-      preserveAspectRatio="none"
       aria-hidden
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-    >
-      <path d={`${up}${down}Z`} fill="currentColor" />
-    </svg>
+    />
   );
 };

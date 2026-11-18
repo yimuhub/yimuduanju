@@ -165,9 +165,11 @@ const AudioClipWave = ({
 const GainLine = ({
   clip,
   onChange,
+  showLabel = true,
 }: {
   clip: TimelineClip;
   onChange: (v: number) => void;
+  showLabel?: boolean;
 }) => {
   const [vol, setVol] = useState(() => Math.max(0, Math.min(2, clip.volume ?? 1)));
   useEffect(() => setVol(Math.max(0, Math.min(2, clip.volume ?? 1))), [clip.id, clip.volume]);
@@ -201,7 +203,7 @@ const GainLine = ({
       }}
     >
       <i />
-      <span>{db} dB</span>
+      {showLabel ? <span>{db} dB</span> : null}
     </div>
   );
 };
@@ -225,7 +227,6 @@ const EmbeddedAudio = ({
   if (!wave || wave.peaks.length === 0) return null;
   return (
     <div className="embed-wave" aria-label="画面内置原声">
-      <b>♪ 原声</b>
       <Waveform
         wave={wave}
         span={span}
@@ -752,6 +753,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         sameOrigin(a, clip, edl.fps)
                       ),
                     );
+                    const hasEmbeddedAudio = clip.track === 'video' && laneH >= 58 && !audioDetached;
                     return (
                       <div
                         key={clip.id}
@@ -784,13 +786,15 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                           span={span}
                           pxPerSec={zoom}
                           rowHeight={laneH - 10}
-                          embeddedAudio={clip.track === 'video' && laneH >= 58 && !audioDetached}
+                          embeddedAudio={hasEmbeddedAudio}
                         />
                         {clip.track === 'audio' ? (
                           <AudioClipWave projectId={projectId} clip={clip} span={span} pxPerSec={zoom} />
                         ) : null}
                         {clip.track === 'audio' ? (
                           <GainLine clip={clip} onChange={(v) => edl.setClipVolume(clip.id, v)} />
+                        ) : hasEmbeddedAudio ? (
+                          <GainLine clip={clip} onChange={(v) => edl.setClipVolume(clip.id, v)} showLabel={false} />
                         ) : null}
                         {clip.track === 'subtitle' ? <div className="t"><b>T1 字幕</b>{clip.text || '字幕'}</div> : null}
                         <span className="shade" />

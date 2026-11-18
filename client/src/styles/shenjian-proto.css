@@ -310,8 +310,8 @@
 .sj2 .clip2 .xf{position:absolute;right:5px;top:4px;font-size:8px;background:#000000a6;color:#9de9dd;border-radius:3px;padding:1px 4px;pointer-events:none}
 .sj2 .clip2 .kf{position:absolute;top:50%;width:5px;height:5px;margin-top:-2px;background:var(--warn);transform:rotate(45deg);box-shadow:0 0 0 1px #000;pointer-events:none}
 .sj2 .clip2.audio{background:var(--audio);border-color:#2f5c4e}
-.sj2 .clip2 .wave{position:absolute;inset:3px 5px 2px;display:block;opacity:.92;pointer-events:none;color:#69e0bd}
-.sj2 .clip2 .wave svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+.sj2 .clip2 .wave{position:absolute;inset:3px 5px 2px;display:block;opacity:.95;pointer-events:none;color:#2f9bff}
+.sj2 .clip2 .wave canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .sj2 .clip2 .wave-empty{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:9px;color:#9bb8ad;white-space:nowrap}
 .sj2 .clip2.text{background:var(--text);border-color:#6a573a}
 .sj2 .clip2.text .t{position:absolute;inset:0;padding:6px;font-size:9px;color:#ffe7bf;line-height:1.35;overflow:hidden;pointer-events:none}
@@ -466,9 +466,9 @@
 
 
 /* 未分离的原声：画面片段在轨道拉高后，底部直接显示同源波形；分离后此条消失 */
-.sj2 .clip2 .embed-wave{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:2;color:#69e0bd;background:linear-gradient(180deg,#08110f00,#08110fd9 38%);border-top:1px solid #69e0bd33;pointer-events:none}
+.sj2 .clip2 .embed-wave{position:absolute;left:0;right:0;bottom:0;height:44%;z-index:2;color:#2f9bff;background:linear-gradient(180deg,#00000000 0%,#05101bb8 58%);pointer-events:none}
 .sj2 .clip2 .embed-wave b{position:absolute;left:5px;top:1px;z-index:3;font-size:8px;font-weight:500;color:#a9f0dc;text-shadow:0 1px 2px #000}
-.sj2 .clip2 .embed-wave svg{position:absolute;inset:0;width:100%;height:100%;opacity:.85}
+.sj2 .clip2 .embed-wave canvas{position:absolute;inset:0;width:100%;height:100%;opacity:.92}
 
 
 /* ===== 剪映式时间线视觉：深灰底、青色画面、蓝色原声波形、白色播放头 ===== */
@@ -499,8 +499,8 @@
 .sj2 .clip2{background:#223237;border-color:#33505a;box-shadow:0 1px 4px #0008}
 .sj2 .clip2.selected{border-color:#35d6c8;box-shadow:0 0 0 1px #35d6c8,0 0 16px #35d6c833}
 .sj2 .clip2.audio{background:#12364b;border-color:#2e6d8e}
-.sj2 .clip2 .wave{color:#4aa8ff}
-.sj2 .clip2 .embed-wave{color:#4aa8ff;border-top-color:#4aa8ff38;background:linear-gradient(180deg,#0a182200,#0a1822e6 38%)}
+.sj2 .clip2 .wave{color:#2f9bff}
+.sj2 .clip2 .embed-wave{color:#2f9bff;background:linear-gradient(180deg,#00000000 0%,#05101bb8 58%)}
 .sj2 .clip2 .embed-wave b{color:#9ad8ff}
 .sj2 .clip2 .tagline{background:#000000a0;color:#dceff4}
 .sj2 .clip2 .shade{background:linear-gradient(180deg,#00000000 38%,#00000080)}

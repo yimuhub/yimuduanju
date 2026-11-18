@@ -1253,9 +1253,17 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       const src = before.find((c) => c.id === id);
       if (!src) return;
       const v = clamp(volume, 0, 2);
-      if (Math.abs(v - src.volume) < 1e-3) return;
+      // 画面内置原声：视频片段的音量线必须同步到 auto: 音频，否则 UI 改了、导出还是旧音量。
+      const autoIds = src.track === 'video'
+        ? before
+            .filter((c) => c.track === 'audio' && c.bindGroup === `auto:${src.id}`)
+            .map((c) => c.id)
+        : [];
+      const ids = new Set([id, ...autoIds]);
+      const changed = before.some((c) => ids.has(c.id) && Math.abs(v - c.volume) >= 1e-3);
+      if (!changed) return;
       commit(
-        before.map((c) => (c.id === id ? { ...c, volume: v } : c)),
+        before.map((c) => (ids.has(c.id) ? { ...c, volume: v } : c)),
         '调整音量',
         before,
       );

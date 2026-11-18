@@ -1112,9 +1112,22 @@ export class TimelineService {
     if (videoClips.length === 0) {
       throw new BadRequestException('主画面轨没有可导出的视频片段：请先生成镜头视频或把片段拖回主轨');
     }
-    const audioClips = audible
-      .filter((c) => c.track === 'audio' && c.sourceUrl)
-      .sort((a, b) => a.timelineStart - b.timelineStart);
+    const audioFromTracks = audible.filter((c) => c.track === 'audio' && c.sourceUrl);
+    // 画面片段自带的原声也参与导出：未分离成 A 轨时直接从视频源抽音轨，
+    // 这样时间线里「波形叠在画面上、拖动白色音量线」的改动才会真正进成片。
+    const stillRe = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#]|$)/i;
+    const embeddedAudio = audible.filter((c) => {
+      if (c.track !== 'video' || !c.sourceUrl || stillRe.test(c.sourceUrl)) return false;
+      // 已经有同源 A 轨（含 auto: 内嵌音频）时不重复混音
+      return !audioFromTracks.some(
+        (a) =>
+          a.sourceUrl === c.sourceUrl &&
+          Math.abs((a.timelineStart ?? 0) - (c.timelineStart ?? 0)) < 0.08,
+      );
+    }).map((c) => ({ ...c, track: 'audio' as const }));
+    const audioClips = [...audioFromTracks, ...embeddedAudio].sort(
+      (a, b) => a.timelineStart - b.timelineStart,
+    );
     const srt = this.buildSrt(audible, overlayClips);
     // 选区导出时软字幕时间戳仍是全片时间轴，必须强制烧录后再裁，否则字幕整体错位
     const wantRange = dto.startSec != null || dto.endSec != null;
