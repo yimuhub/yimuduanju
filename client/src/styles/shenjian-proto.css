@@ -531,3 +531,14 @@
 .sj2 .kf-toggle{margin-left:6px;padding:0 6px;line-height:16px;color:#9aa3af}
 .sj2 .kf-toggle.on{color:#37d6c2;border-color:#37d6c2}
 .sj2 .kf-toggle:hover{color:#fff}
+/* 画面关键帧条：每帧一张真实缩略图 + 时间 + 运镜数值 */
+.sj2 .kf-pick{margin-left:6px;padding:0 6px;line-height:16px;font-size:9px}
+.sj2 .kf-strip{display:flex;gap:8px;overflow-x:auto;padding:4px 0 6px}
+.sj2 .kf-card{flex:0 0 auto;width:104px;border:1px solid #2e333c;border-radius:6px;overflow:hidden;background:#0f1216;cursor:pointer;transition:border-color .12s}
+.sj2 .kf-card:hover{border-color:#4a8cff}
+.sj2 .kf-card.on{border-color:#37d6c2;box-shadow:0 0 0 1px #37d6c255}
+.sj2 .kf-shot{position:relative;height:58px;display:flex;align-items:center;justify-content:center;background-color:#080a0d;background-repeat:no-repeat;background-size:auto}
+.sj2 .kf-shot-fallback{font-size:9px;color:#6b7280}
+.sj2 .kf-badge{position:absolute;left:4px;bottom:3px;font-size:9px;font-weight:600;color:#fff;background:#000000b3;padding:1px 4px;border-radius:3px}
+.sj2 .kf-meta{display:flex;align-items:center;gap:6px;padding:3px 6px;font-size:9px;color:#9aa3af}
+.sj2 .kf-meta i{margin-left:auto;font-style:normal;color:#ff8b8b;cursor:pointer;font-size:11px}
