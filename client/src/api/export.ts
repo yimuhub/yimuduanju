@@ -31,7 +31,12 @@ export const mediaProxyUrl = (projectId: string, url: string): string => {
  * 旧实现下载下来必然叫 final_tl_xxx.mp4，与「文件名＝项目名」冲突。
  */
 export const downloadDeliverable = async (url: string, preferredName?: string): Promise<void> => {
-  const res = await axiosForBackend.get(url, { responseType: 'blob' });
+  // 同名成片会复用同一个 /uploads URL；浏览器与网关会把旧响应缓存下来，
+  // 重新导出后点下载仍拿到上一版画面。下载时追加一次性参数击穿缓存。
+  const requestUrl = /\/uploads\//.test(url)
+    ? `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}`
+    : url;
+  const res = await axiosForBackend.get(requestUrl, { responseType: 'blob' });
   const disposition = String(res.headers?.['content-disposition'] ?? '');
   const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
   const plain = /filename="([^"]+)"/i.exec(disposition);

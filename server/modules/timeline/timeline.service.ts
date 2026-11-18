@@ -881,13 +881,20 @@ export class TimelineService {
     const styles: string[] = [];
     const styleIndex = new Map<string, string>();
 
+    // ASS 不会对中文自动换行，长句按百分比字号会直接铺出画外。
+    // 按「最大行宽 / 字符数」把字号收到能放下的上限；预览的 CSS 自动换行
+    // 与导出画面因此都不会截字。maxWidth 缺省与前端一致为 86%。
+    const fitFontSize = (st: ReturnType<typeof resolveTextStyle>, text: string): number => {
+      const raw = Math.round((height * Math.min(40, Math.max(1, st.fontSize))) / 100);
+      const maxWidthPx = width * Math.max(0.2, Math.min(1, st.maxWidth ?? 0.86));
+      const chars = Math.max(1, Array.from(text.trim()).length);
+      return Math.max(12, Math.min(raw, Math.floor(maxWidthPx / chars)));
+    };
+
     const styleFor = (clip: TimelineClip): string => {
       const st = resolveTextStyle(clip.textStyle);
       const font = this.assFont(st.fontFamily);
-      const fontSize = Math.max(
-        12,
-        Math.round((height * Math.min(40, Math.max(1, st.fontSize))) / 100),
-      );
+      const fontSize = fitFontSize(st, clip.text ?? '');
       const outline = Math.max(0, Math.min(12, Math.round(st.strokeWidth * fontSize)));
       const boxed = Boolean(st.bgColor && st.bgOpacity > 0);
       const key = [
@@ -931,7 +938,14 @@ export class TimelineService {
         .trim()
         .replace(/\r?\n/g, '\\N')
         .replace(/[{}]/g, '');
-      const px = Math.round(Math.min(1, Math.max(0, st.x)) * width);
+      // 按实际字号与字数估算字幕半宽，把中心夹回画面内；
+      // 否则用户把字幕拖到 30% 时，长句左半边会被裁掉。
+      const fontSize = fitFontSize(st, text);
+      const maxWidthPx = width * Math.max(0.2, Math.min(1, st.maxWidth ?? 0.86));
+      const half = Math.min(maxWidthPx, Math.max(1, Array.from(text).length) * fontSize) / 2;
+      const px = Math.round(
+        Math.min(width - half, Math.max(half, Math.min(1, Math.max(0, st.x)) * width)),
+      );
       const py = Math.round(Math.min(1, Math.max(0, st.y)) * height);
       const tag = `{\\an5\\pos(${px},${py})}`;
       return `Dialogue: 0,${fmt(c.timelineStart)},${fmt(end)},${styleFor(c)},,0,0,0,,${tag}${text}`;

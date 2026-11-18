@@ -223,12 +223,16 @@ export const ShenJianStage = ({
     const dragging = subDrag?.id === id;
     const x = dragging ? subDrag.x : (subStyle.x ?? 0.5);
     const y = dragging ? subDrag.y : (subStyle.y ?? 0.86);
+    const widthPct = Math.max(20, (subStyle.maxWidth ?? 0.86) * 100);
+    // 字幕框按中心定位；用户把 X 拖得太靠边时，宽字幕会有一半跑出画外。
+    // 按当前宽度把中心夹在画面内，保证导出/预览都不会截字。
+    const clampedX = Math.min(1 - widthPct / 200, Math.max(widthPct / 200, x));
     // 字幕底色必须随模板走：CSS 里 span 旧实现硬编码 #0000008c，
     // 选「经典白字/极简小字」也永远带一条黑底，和剪映不一致。
     const subBg = (subStyle.bgOpacity ?? 0) > 0 ? hexRgba(subStyle.bgColor, subStyle.bgOpacity ?? 0) : 'transparent';
     return {
       top: `${y * 100}%`,
-      left: `${x * 100}%`,
+      left: `${clampedX * 100}%`,
       right: 'auto',
       bottom: 'auto',
       width: `${Math.max(20, (subStyle.maxWidth ?? 0.86) * 100)}%`,
