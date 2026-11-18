@@ -51,14 +51,10 @@ export const IconRazor = (p: SVGProps<SVGSVGElement>) => (
   <Base {...p}><path d="M7.2 4.8 16.8 19.2" /><path d="M5 9.2c0-1.5 1.2-2.7 2.7-2.7M19 14.8c0 1.5-1.2 2.7-2.7 2.7" opacity=".55" /><path d="M3.8 12h3.4M16.8 12h3.4" opacity=".35" /></Base>
 );
 
-/** 神剪助手：剪辑板 + 四角星，专用于悬浮球（青金配色，去掉旧的橙色方块） */
+/** 神剪助手：纯四角星，简洁大方；用于悬浮球与对话窗 */
 export const IconShenJianAssistant = (p: SVGProps<SVGSVGElement>) => (
   <Base {...p} strokeWidth="1.8">
-    <rect x="3.8" y="7.2" width="11.1" height="9.9" rx="2.7" fill="currentColor" opacity=".14" stroke="none" />
-    <rect x="3.8" y="7.2" width="11.1" height="9.9" rx="2.7" />
-    <path d="M4.3 10.1h10.1" opacity=".55" />
-    <path d="M7 12.6h3.7M7 15h2.3" opacity=".75" />
-    <path d="m17.4 4.1 1.1 2.8 2.8 1.1-2.8 1.1-1.1 2.8-1.1-2.8-2.8-1.1 2.8-1.1z" fill="currentColor" stroke="none" />
-    <path d="m18.2 12.1.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z" fill="currentColor" opacity=".5" stroke="none" />
+    <path d="M12 3.1l2.12 6.78L20.9 12l-6.78 2.12L12 20.9l-2.12-6.78L3.1 12l6.78-2.12z" fill="currentColor" stroke="none" />
+    <path d="M18.7 3.4l.62 1.98 1.98.62-1.98.62-.62 1.98-.62-1.98-1.98-.62 1.98-.62z" fill="currentColor" opacity=".5" stroke="none" />
   </Base>
 );

@@ -10,7 +10,6 @@ import { useEdl } from './EdlContext';
 import { clipSpan, toTimecode } from './model';
 import type { TimelineClip } from '@shared/api.interface';
 import { sampleVideoTransform } from '@shared/timeline-keyframes';
-import { ShenJianKeyframes } from './ShenJianKeyframes';
 
 type Grade = { brightness: number; contrast: number; saturation: number; filter: string };
 
@@ -198,7 +197,7 @@ export const ShenJianInspector = ({
 
                 {clip.track !== 'audio' && clip.track !== 'subtitle' ? (
                   <section className="section">
-                    <h4>变换<span className="val">关键帧 {clip.keyframes?.length ?? 0}</span></h4>
+                    <h4>变换</h4>
                     <Slider label="缩放" value={Math.round(transform.scale * 100)} min={50} max={300} suffix="%" onChange={(v) => writeTransform({ scale: v / 100 })} />
                     <Slider label="X 位置" value={Math.round(transform.x * 100)} min={-100} max={100} suffix="%" onChange={(v) => writeTransform({ x: v / 100 })} />
                     <Slider label="Y 位置" value={Math.round(transform.y * 100)} min={-100} max={100} suffix="%" onChange={(v) => writeTransform({ y: v / 100 })} />
@@ -210,10 +209,6 @@ export const ShenJianInspector = ({
                       <button type="button" className="mini-btn" onClick={() => edl.setClipKeyframes(clip.id, [])}>重置运镜</button>
                     </div>
                   </section>
-                ) : null}
-
-                {clip.track === 'video' ? (
-                  <ShenJianKeyframes clip={clip} curT={curT} onSeek={setCurT} />
                 ) : null}
 
                 {clip.track !== 'subtitle' ? (
@@ -472,30 +467,7 @@ export const ShenJianInspector = ({
             {tab === 'anim' ? (
               <>
                 <section className="section">
-                  <h4>运镜关键帧<span className="val">{clip.keyframes?.length ?? 0} 个</span></h4>
-                  {(clip.keyframes?.length ?? 0) === 0 ? (
-                    <div className="keyframe-bar">
-                      <span>在播放头添加第一个关键帧</span>
-                      <button type="button" className="mini-btn" onClick={() => writeTransform({})}>添加</button>
-                    </div>
-                  ) : (
-                    <div className="kf-list">
-                      {(clip.keyframes ?? []).map((f) => (
-                        <div key={f.time} className="kf-row">
-                          <b>{f.time.toFixed(2)}s</b>
-                          <span>缩放 {Math.round((f.scale ?? 1) * 100)}% · X {Math.round((f.x ?? 0) * 100)}% · Y {Math.round((f.y ?? 0) * 100)}% · {Math.round(f.rotate ?? 0)}°</span>
-                          <button
-                            type="button"
-                            className="icon-btn"
-                            title="删除关键帧"
-                            onClick={() => edl.setClipKeyframes(clip.id, (clip.keyframes ?? []).filter((x) => x !== f))}
-                          >
-                            <Trash2 />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <h4>运镜预设</h4>
                   <div className="grid2" style={{ marginTop: 8 }}>
                     <button type="button" className="mini-btn" onClick={() => setMotion({ scale: 1 }, { scale: 1.12 })}>推近</button>
                     <button type="button" className="mini-btn" onClick={() => setMotion({ scale: 1.12 }, { scale: 1 })}>拉远</button>

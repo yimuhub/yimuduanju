@@ -46,7 +46,7 @@ const clampPos = (p: Pos, open: boolean): Pos => {
   const w = window.innerWidth;
   const h = window.innerHeight;
   const width = open ? Math.min(WIN_W, w - 16) : ORB_SIZE;
-  const height = open ? Math.min(560, h - 110) : ORB_SIZE;
+  const height = open ? Math.min(620, h - 110) : ORB_SIZE;
   const baseLeft = w - 24 - width;
   const baseTop = h - 76 - height;
   const minX = 8 - baseLeft;
@@ -73,11 +73,13 @@ const readPos = (): Pos => {
 };
 
 export const StudioFloatingChat = () => {
-  const { chatMsgs, chatBusy, sendChat, stopChat } = useStudio();
+  const { chatMsgs, chatBusy, sendChat, stopChat, data } = useStudio();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<Pos>(readPos);
   const [autonomy, setAutonomy] = useState<AgentAutonomy>(readAgentAutonomy);
   const [draft, setDraft] = useState('');
+  const [durOpen, setDurOpen] = useState(false);
+  const [durSec, setDurSec] = useState(30);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(
     null,
   );
@@ -208,6 +210,17 @@ export const StudioFloatingChat = () => {
     }
   };
 
+  const normDur = (v: number) => Math.max(10, Math.min(180, Math.round(v || 30)));
+  const sendTrimPrompt = (target: number) => {
+    if (chatBusy) { toast.info('神剪助手正在执行，稍后再生成'); return; }
+    const sec = normDur(target);
+    setDurOpen(false);
+    void sendChat(
+      `请按语义提炼精彩片段，生成一条总时长约 ${sec} 秒的精简时间线。规则：先读取全部素材的转写、关键帧与镜头，按「钩子→冲突→反转→金句→揭示→收尾」重排，不要简单截断；去掉独立语气助词但保留句子完整；音画保持同轨，不要自动分离。先给出 diff 预览，再执行。`,
+    );
+    toast.success(`已提交 ${sec} 秒精简任务`);
+  };
+
   const submit = () => {
     const text = draft.trim();
     if (!text || chatBusy) return;
@@ -216,6 +229,7 @@ export const StudioFloatingChat = () => {
   };
 
   return (
+    <>
     <div className="pro-chat-float" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
       {open ? (
         <div className="pro-chat-win" onPointerDown={(e) => e.stopPropagation()}>
@@ -233,6 +247,12 @@ export const StudioFloatingChat = () => {
             <button type="button" title="收起" onClick={() => setChatOpen(false)}>
               <X size={14} />
             </button>
+          </div>
+          <div className="pro-chat-rules">
+            <b>执行规则</b>
+            <span><em>去语气助词</em> 只删独立词，贴语义边界切，字幕同步</span>
+            <span><em>精简</em> 先选时长，按钩子→冲突→反转→金句→揭示→收尾重排</span>
+            <span><em>音画</em> 不自动分离，波形始终在画面下半部</span>
           </div>
           <div className="pro-chat-thread">
             <ChatTurns
@@ -261,21 +281,15 @@ export const StudioFloatingChat = () => {
             <small>{autonomy === 'full' ? '直接执行' : autonomy === 'reduced' ? '低风险直执' : '先确认'}</small>
           </div>
           <div className="pro-chat-quick" aria-label="深度剪辑快捷指令">
-            {[
-              '把当前时间线剪成 1 分钟宣传片：通读全部对白，选开场钩子、核心信息、情绪高点、结尾，直接给粗剪方案',
-              '通读全部素材，剪一个 30 秒高光版，不要只取开头',
-              '删掉所有空白和语气词，把节奏压紧',
-            ].map((q) => (
-              <button
-                key={q}
-                type="button"
-                disabled={chatBusy}
-                onClick={() => void sendChat(q)}
-                title={q}
-              >
-                {q.startsWith('把当前时间线') ? '1 分钟宣传片' : q.startsWith('通读全部素材') ? '30 秒高光' : '压紧节奏'}
-              </button>
-            ))}
+            <button type="button" disabled={chatBusy} onClick={() => setDurOpen(true)} title="先选目标时长，再按语义重排精简">
+              一键生成精简
+            </button>
+            <button type="button" disabled={chatBusy} onClick={() => { setDurSec(30); setDurOpen(true); }} title="30 秒高光：不是只取开头">
+              30 秒高光
+            </button>
+            <button type="button" disabled={chatBusy} onClick={() => void sendChat('删除所有独立语气助词（嗯/啊/呀/呃/哦/诶），贴语义边界切，不要破坏句子；字幕同步删除。')} title="只删独立语气助词，保留语义">
+              去语气助词
+            </button>
           </div>
           <div className="pro-chat-compose">
             <textarea
@@ -287,7 +301,7 @@ export const StudioFloatingChat = () => {
                   submit();
                 }
               }}
-              placeholder="例：删掉空白片段 / 每段加 0.3 秒淡入 / 压到 30 秒…"
+              placeholder="直接用自然语言：开头剪掉 3 秒 / 去语气助词 / 第 10 秒加关键帧 / 生成 30 秒精简…"
               rows={2}
             />
             <button type="button" onClick={submit} disabled={chatBusy || !draft.trim()}>
@@ -316,5 +330,35 @@ export const StudioFloatingChat = () => {
         </button>
       )}
     </div>
+    {durOpen ? (
+      <div className="sj-dur-mask" onClick={() => setDurOpen(false)}>
+        <div className="sj-dur" onClick={(e) => e.stopPropagation()}>
+          <div className="sj-dur-head">
+            <b>一键生成精简</b>
+            <button type="button" className="x" onClick={() => setDurOpen(false)}><X size={15} /></button>
+          </div>
+          <div className="sj-dur-body">
+            <div className="sj-dur-src">源素材 {Math.round(data.totalSec || 0)}s · 当前时间线保留 6 个语义关键段</div>
+            <div className="sj-dur-label">选择目标时长</div>
+            <div className="sj-dur-presets">
+              {[15, 30, 45, 60, 90, 120].map((n) => (
+                <button key={n} type="button" className={normDur(durSec) === n ? 'on' : ''} onClick={() => setDurSec(n)}>{n} 秒</button>
+              ))}
+            </div>
+            <div className="sj-dur-custom">
+              自定义
+              <input type="number" min={10} max={180} value={durSec} onChange={(e) => setDurSec(normDur(Number(e.target.value)))} />
+              秒
+            </div>
+            <div className="sj-dur-note">按钩子→冲突→反转→金句→揭示→收尾重排，不做固定截断；音画保持同轨。</div>
+          </div>
+          <div className="sj-dur-foot">
+            <button type="button" onClick={() => setDurOpen(false)}>取消</button>
+            <button type="button" className="primary" onClick={() => sendTrimPrompt(durSec)}>生成精简</button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 };

@@ -548,3 +548,35 @@
 .sj2 .clip2 .kf-pin{position:absolute;left:50%;top:-10px;width:1px;height:10px;background:#ff4d4f;pointer-events:none}
 .sj2 .clip2 .kf-pin:after{content:"";position:absolute;left:-2px;top:-3px;width:5px;height:5px;border-radius:50%;background:#ff4d4f;box-shadow:0 0 4px #ff4d4f}
 .sj2 .clip2 .kf-time{position:absolute;left:1px;bottom:1px;font-size:8px;line-height:1;padding:1px 3px;border-radius:2px;background:#b3261eb3;color:#fff;pointer-events:none}
+
+/* ===== 神剪助手 · 与原型融合：执行规则、精简时长弹窗、纯星悬浮球 ===== */
+.sj2 .pro-chat-win{height:min(620px,calc(100vh - 110px))}
+.sj2 .pro-chat-rules{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 8px;padding:7px 10px 8px;border-bottom:1px solid #232a33;background:#0f1419;flex:0 0 auto}
+.sj2 .pro-chat-rules b{grid-row:1/span 3;align-self:center;color:#8d99a7;font-size:9.5px;font-weight:600;letter-spacing:.08em;writing-mode:vertical-rl}
+.sj2 .pro-chat-rules span{font-size:10.5px;line-height:1.45;color:#98a4b2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sj2 .pro-chat-rules em{font-style:normal;color:#5fe6d3;margin-right:4px}
+.sj2 .pro-chat-orb{background:radial-gradient(circle at 34% 26%,#273a42 0%,#141d23 44%,#080b0f 78%);box-shadow:0 0 0 1px #74f4e1b8,0 0 0 4px #090c10,0 14px 34px #000c,0 0 26px #37d6c22e}
+.sj2 .pro-chat-orb:hover{box-shadow:0 0 0 1px #a0fff1,0 0 0 4px #090c10,0 18px 40px #000d,0 0 34px #37d6c24d}
+.sj2 .pro-chat-orb svg{width:30px;height:30px;color:#e9fffc;filter:drop-shadow(0 0 8px #6ff5e399)}
+
+.sj2 .sj-dur-mask{position:fixed;inset:0;z-index:1200;display:grid;place-items:center;background:#000000b8;backdrop-filter:blur(4px)}
+.sj2 .sj-dur{width:min(460px,92vw);background:#14181e;border:1px solid #343d49;border-radius:12px;box-shadow:0 26px 80px #000;overflow:hidden}
+.sj2 .sj-dur-head{display:flex;align-items:center;height:42px;padding:0 14px;border-bottom:1px solid #262d37;background:#181e25}
+.sj2 .sj-dur-head b{font-size:13px;color:#edf3f7;letter-spacing:.02em}
+.sj2 .sj-dur-head .x{margin-left:auto;display:flex;border:0;background:none;color:#8b96a3;cursor:pointer;padding:4px}
+.sj2 .sj-dur-head .x:hover{color:#fff}
+.sj2 .sj-dur-body{padding:14px}
+.sj2 .sj-dur-src{font-size:10.5px;color:#7f8b99;margin-bottom:12px}
+.sj2 .sj-dur-label{font-size:11px;color:#c9d2dc;margin-bottom:7px}
+.sj2 .sj-dur-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.sj2 .sj-dur-presets button{height:34px;border:1px solid #303844;border-radius:7px;background:#10151b;color:#b8c2ce;font-size:12px;cursor:pointer;transition:.12s}
+.sj2 .sj-dur-presets button:hover{border-color:#4a5a68;color:#fff}
+.sj2 .sj-dur-presets button.on{border-color:#37d6c2;background:#12312d;color:#8effee;box-shadow:0 0 0 1px #37d6c255 inset}
+.sj2 .sj-dur-custom{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:11px;color:#98a4b2}
+.sj2 .sj-dur-custom input{width:74px;height:29px;border:1px solid #303844;border-radius:6px;background:#0f141a;color:#eaf3f7;padding:0 8px;font-size:12px;outline:none}
+.sj2 .sj-dur-custom input:focus{border-color:#37d6c2}
+.sj2 .sj-dur-note{margin-top:12px;padding:8px 9px;border-left:2px solid #37d6c255;background:#0f1a1b;color:#8ea7a5;font-size:10.5px;line-height:1.55}
+.sj2 .sj-dur-foot{display:flex;justify-content:flex-end;gap:8px;padding:0 14px 14px}
+.sj2 .sj-dur-foot button{height:32px;padding:0 16px;border:1px solid #333b47;border-radius:6px;background:#1a2028;color:#c7d0da;font-size:12px;cursor:pointer}
+.sj2 .sj-dur-foot button.primary{border-color:#2ecfbe;background:#1b6f68;color:#fff}
+.sj2 .sj-dur-foot button.primary:hover{background:#23847c}
