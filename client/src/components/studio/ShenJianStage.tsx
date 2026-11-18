@@ -359,7 +359,7 @@ export const ShenJianStage = ({
             {playing ? <IconPause /> : <IconPlay />}
           </button>
           <button type="button" className="icon-btn" data-tip="下一帧 (→)" onClick={() => setCurT(Math.min(total, curT + 1 / edl.fps))}><IconFrameNext /></button>
-          <button type="button" className="icon-btn" data-tip="跳到片尾 (End)" onClick={() => setCurT(total)}><IconFrameNext /></button>
+          <button type="button" className="icon-btn" data-tip="跳到片尾 (End)" onClick={() => setCurT(total)}><IconSkipEnd /></button>
         </div>
         <div className="right">
           <button

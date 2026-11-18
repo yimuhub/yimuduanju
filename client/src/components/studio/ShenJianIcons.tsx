@@ -12,22 +12,22 @@ const Base = ({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 );
 
 export const IconPlay = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p}><path d="M8.4 5.8c0-.8.9-1.3 1.6-.8l9 6.2c.6.4.6 1.2 0 1.6l-9 6.2c-.7.5-1.6 0-1.6-.8V5.8Z" fill="currentColor" stroke="none" /></Base>
+  <Base {...p}><path d="M9 5.7c0-1 .99-1.55 1.76-1.07l8.2 5.02c.73.45.73 1.51 0 1.96l-8.2 5.02c-.77.48-1.76-.07-1.76-1.07V5.7Z" fill="currentColor" stroke="none" /></Base>
 );
 export const IconPause = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p}><rect x="7" y="5" width="3.4" height="14" rx="1.4" fill="currentColor" stroke="none" /><rect x="13.6" y="5" width="3.4" height="14" rx="1.4" fill="currentColor" stroke="none" /></Base>
+  <Base {...p}><rect x="7.2" y="5.2" width="3.1" height="13.6" rx="1.3" fill="currentColor" stroke="none" /><rect x="13.7" y="5.2" width="3.1" height="13.6" rx="1.3" fill="currentColor" stroke="none" /></Base>
 );
 export const IconFramePrev = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p}><path d="M6 5v14" strokeWidth="2.2" /><path d="M18.5 6.2 10.6 12l7.9 5.8V6.2Z" fill="currentColor" stroke="none" /></Base>
+  <Base {...p}><rect x="5.2" y="5.2" width="2.1" height="13.6" rx=".8" fill="currentColor" stroke="none" /><path d="M18.6 6.3 10.9 12l7.7 5.7V6.3Z" fill="currentColor" stroke="none" /></Base>
 );
 export const IconFrameNext = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p}><path d="M18 5v14" strokeWidth="2.2" /><path d="M5.5 6.2 13.4 12l-7.9 5.8V6.2Z" fill="currentColor" stroke="none" /></Base>
+  <Base {...p}><rect x="16.7" y="5.2" width="2.1" height="13.6" rx=".8" fill="currentColor" stroke="none" /><path d="M5.4 6.3 13.1 12l-7.7 5.7V6.3Z" fill="currentColor" stroke="none" /></Base>
 );
 export const IconSkipStart = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p}><path d="M6 5v14" strokeWidth="2.2" /><path d="M18.5 6.2 10.6 12l7.9 5.8V6.2Z" fill="currentColor" stroke="none" /><path d="M13 8.8 8.8 12l4.2 3.2" opacity=".55" /></Base>
+  <Base {...p}><rect x="5.2" y="5.2" width="2.1" height="13.6" rx=".8" fill="currentColor" stroke="none" /><path d="M10.2 6.3 15.5 12l-5.3 5.7V6.3Z" fill="currentColor" stroke="none" /><path d="M15.6 6.3 20.9 12l-5.3 5.7V6.3Z" fill="currentColor" opacity=".55" stroke="none" /></Base>
 );
 export const IconSkipEnd = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p}><path d="M18 5v14" strokeWidth="2.2" /><path d="M5.5 6.2 13.4 12l-7.9 5.8V6.2Z" fill="currentColor" stroke="none" /><path d="M11 8.8 15.2 12l-4.2 3.2" opacity=".55" /></Base>
+  <Base {...p}><rect x="16.7" y="5.2" width="2.1" height="13.6" rx=".8" fill="currentColor" stroke="none" /><path d="M13.8 6.3 8.5 12l5.3 5.7V6.3Z" fill="currentColor" stroke="none" /><path d="M8.4 6.3 3.1 12l5.3 5.7V6.3Z" fill="currentColor" opacity=".55" stroke="none" /></Base>
 );
 export const IconFullscreen = (p: SVGProps<SVGSVGElement>) => (
   <Base {...p}><path d="M8.5 4.5H6a1.5 1.5 0 0 0-1.5 1.5v2.5M15.5 4.5H18a1.5 1.5 0 0 1 1.5 1.5v2.5M8.5 19.5H6a1.5 1.5 0 0 1-1.5-1.5v-2.5M15.5 19.5H18a1.5 1.5 0 0 0 1.5-1.5v-2.5" strokeWidth="2" /></Base>
@@ -51,14 +51,14 @@ export const IconRazor = (p: SVGProps<SVGSVGElement>) => (
   <Base {...p}><path d="M7.2 4.8 16.8 19.2" /><path d="M5 9.2c0-1.5 1.2-2.7 2.7-2.7M19 14.8c0 1.5-1.2 2.7-2.7 2.7" opacity=".55" /><path d="M3.8 12h3.4M16.8 12h3.4" opacity=".35" /></Base>
 );
 
-/** 神剪助手：胶片 + 剪刀 + 星光，专用于悬浮球 */
+/** 神剪助手：剪辑板 + 四角星，专用于悬浮球（青金配色，去掉旧的橙色方块） */
 export const IconShenJianAssistant = (p: SVGProps<SVGSVGElement>) => (
-  <Base {...p} strokeWidth="1.9">
-    <rect x="3.6" y="5.2" width="12.8" height="13.6" rx="3.2" fill="currentColor" opacity=".18" stroke="none" />
-    <rect x="3.6" y="5.2" width="12.8" height="13.6" rx="3.2" />
-    <path d="M3.6 8.6h12.8M3.6 13.4h12.8" opacity=".55" />
-    <path d="M17.6 7.2 21 12l-3.4 4.8" />
-    <path d="M19.1 9.3l1.3 2.7-1.3 2.7" opacity=".5" />
-    <path d="M9 10.2c1.2 0 2.2.9 2.2 2.1S10.2 14.4 9 14.4M9 10.2l4.2 4.2M9 14.4l4.2-4.2" />
+  <Base {...p} strokeWidth="1.8">
+    <rect x="3.8" y="7.2" width="11.1" height="9.9" rx="2.7" fill="currentColor" opacity=".14" stroke="none" />
+    <rect x="3.8" y="7.2" width="11.1" height="9.9" rx="2.7" />
+    <path d="M4.3 10.1h10.1" opacity=".55" />
+    <path d="M7 12.6h3.7M7 15h2.3" opacity=".75" />
+    <path d="m17.4 4.1 1.1 2.8 2.8 1.1-2.8 1.1-1.1 2.8-1.1-2.8-2.8-1.1 2.8-1.1z" fill="currentColor" stroke="none" />
+    <path d="m18.2 12.1.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z" fill="currentColor" opacity=".5" stroke="none" />
   </Base>
 );

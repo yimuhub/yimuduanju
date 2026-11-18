@@ -9,7 +9,7 @@ import { IconRazor, IconRippleDelete, IconSelect, IconSplit, IconTrimLeft, IconT
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
-import { clipSpan } from './model';
+import { clipSpan, sameOrigin } from './model';
 import type { TimelineClip, TimelineTrackKind } from '@shared/api.interface';
 import { mediaOfDrag, peekTimelineDrag, readTimelineDrag, trackOfDrag } from '@client/src/lib/timeline-dnd';
 import { probeVideoHasAudio } from '@client/src/lib/media-audio';
@@ -25,6 +25,8 @@ type Row = {
   visible: boolean;
   muted: boolean;
   locked: boolean;
+  /** 音画分离出的 A 轨：绑定到哪条画面轨，行紧贴在它下面 */
+  pairedVideoLane?: number;
 };
 
 type DragState = {
@@ -74,6 +76,7 @@ const ClipVisual = ({
   span,
   pxPerSec,
   rowHeight,
+  embeddedAudio,
 }: {
   projectId: string;
   clip: TimelineClip;
@@ -81,25 +84,32 @@ const ClipVisual = ({
   span: number;
   pxPerSec: number;
   rowHeight: number;
+  embeddedAudio?: boolean;
 }) => {
   const url = clip.sourceUrl || fallbackUrl || '';
   const still = IMAGE_RE.test(url);
   const thumb = useThumbnails(projectId, still ? null : url);
   if (!url) return null;
-  if (still) return <StillFrame url={url} span={span} pxPerSec={pxPerSec} />;
-  if (thumb) {
-    return (
-      <Filmstrip
-        thumb={thumb}
-        span={span}
-        inPoint={clip.inPoint}
-        outPoint={clip.outPoint}
-        pxPerSec={pxPerSec}
-        rowHeight={rowHeight}
-      />
-    );
-  }
-  return <img className="thumb" src={url} alt="" loading="lazy" draggable={false} />;
+  const base = still ? (
+    <StillFrame url={url} span={span} pxPerSec={pxPerSec} />
+  ) : thumb ? (
+    <Filmstrip
+      thumb={thumb}
+      span={span}
+      inPoint={clip.inPoint}
+      outPoint={clip.outPoint}
+      pxPerSec={pxPerSec}
+      rowHeight={rowHeight}
+    />
+  ) : (
+    <img className="thumb" src={url} alt="" loading="lazy" draggable={false} />
+  );
+  return (
+    <>
+      {base}
+      {embeddedAudio ? <EmbeddedAudio projectId={projectId} clip={clip} span={span} pxPerSec={pxPerSec} /> : null}
+    </>
+  );
 };
 
 /**
@@ -145,6 +155,37 @@ const AudioClipWave = ({
   );
 };
 
+/**
+ * 画面轨内置原声：未做音画分离时，轨道拉高后在画面片段底部显示同源波形。
+ * 分离出独立音频轨后，这个条不再出现，避免同一段声音在两条轨上重复显示。
+ */
+const EmbeddedAudio = ({
+  projectId,
+  clip,
+  span,
+  pxPerSec,
+}: {
+  projectId: string;
+  clip: TimelineClip;
+  span: number;
+  pxPerSec: number;
+}) => {
+  const wave = useWaveform(projectId, clip.sourceUrl);
+  if (!wave || wave.peaks.length === 0) return null;
+  return (
+    <div className="embed-wave" aria-label="画面内置原声">
+      <b>♪ 原声</b>
+      <Waveform
+        wave={wave}
+        span={span}
+        inPoint={clip.inPoint}
+        outPoint={clip.outPoint}
+        pxPerSec={pxPerSec}
+      />
+    </div>
+  );
+};
+
 export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSnapOn: (v: boolean) => void }) => {
   const { data, projectId, curT, setCurT, setPreviewMode } = useStudio();
   const edl = useEdl();
@@ -176,7 +217,41 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     const hasMainVideo = videoSet.has(0);
     const metaOf = (track: TimelineTrackKind, lane: number) =>
       (edl.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
+    // 画面片段的稳定业务标识 → 画面轨。音画分离后 A 轨要贴在原画面轨旁边，
+    // id 每次落库会重生成，所以优先用 clientKey/originClipKey，老数据再用同源时间回退。
+    const videoByKey = new Map<string, TimelineClip>();
+    for (const v of clips.filter((c) => c.track === 'video')) {
+      videoByKey.set(v.id, v);
+      if (v.clientKey) videoByKey.set(v.clientKey, v);
+    }
+    const pairLaneOf = (audioLane: number): number | undefined => {
+      const a = clips.find((c) => c.track === 'audio' && (c.lane ?? 0) === audioLane);
+      if (!a) return undefined;
+      if (a.bindGroup?.startsWith('av:')) {
+        const v = videoByKey.get(a.bindGroup.slice(3));
+        if (v) return v.lane ?? 0;
+      }
+      const v = clips.find((c) => c.track === 'video' && sameOrigin(a, c, edl.fps));
+      return v ? (v.lane ?? 0) : undefined;
+    };
+    const audioRows: Row[] = audioLanes.map((lane) => {
+      const meta = metaOf('audio', lane);
+      const paired = pairLaneOf(lane);
+      return {
+        key: `audio:${lane}`,
+        no: 0,
+        track: 'audio' as const,
+        lane,
+        label: `A${lane + 1}`,
+        name: meta?.name || (paired != null ? `原声 · V${paired + 1}` : lane === 0 ? '原声 / 对白' : lane === 1 ? '音乐' : '音效'),
+        visible: true,
+        muted: meta?.muted === true,
+        locked: meta?.locked === true,
+        pairedVideoLane: paired,
+      };
+    });
     const out: Row[] = [];
+    const pushAudio = (row: Row) => out.push(row);
     const pushVideo = (lane: number) => {
       const meta = metaOf('video', lane);
       out.push({
@@ -190,8 +265,10 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         muted: meta?.muted === true,
         locked: meta?.locked === true,
       });
+      // 音画分离后的原声紧贴这条画面轨，不再沉到所有轨道最底部。
+      for (const a of audioRows) if (a.pairedVideoLane === lane) pushAudio(a);
     };
-    // 上方：叠加画面 V2/V3… → 字幕 T1/T2… → 主画面 V1 → 音频 A1/A2… 最下
+    // 上方：叠加画面 V2/V3… → 字幕 T1/T2… → 主画面 V1；分离原声跟随各自画面轨。
     for (const lane of overlayVideoLanes) pushVideo(lane);
     for (const lane of subLanesSorted) {
       const meta = metaOf('subtitle', lane);
@@ -208,26 +285,16 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       });
     }
     if (hasMainVideo) pushVideo(0);
-    for (const lane of audioLanes) {
-      const meta = metaOf('audio', lane);
-      out.push({
-        key: `audio:${lane}`,
-        no: 0,
-        track: 'audio',
-        lane,
-        label: `A${lane + 1}`,
-        name: meta?.name || (lane === 0 ? '原声 / 对白' : lane === 1 ? '音乐' : '音效'),
-        visible: true,
-        muted: meta?.muted === true,
-        locked: meta?.locked === true,
-      });
-    }
+    // 没有画面来源的音频（配乐/音效/独立导入）仍按底部音频区排列。
+    for (const a of audioRows) if (a.pairedVideoLane == null) pushAudio(a);
     // 轨道编号与顺序绑定：上下滑动、增删轨道后仍跟随
     out.forEach((r, i) => { r.no = i + 1; });
     return out;
-  }, [clips, edl.tracks]);
+  }, [clips, edl.tracks, edl.fps]);
 
-  const aboveRows = rows.filter((r) => r.track !== 'audio').length;
+  // 只有「不挂在画面旁」的底部音频才需要基线；分离原声已经并排，不压基线。
+  const unpairedAudioRows = rows.filter((r) => r.track === 'audio' && r.pairedVideoLane == null).length;
+  const aboveRows = rows.length - unpairedAudioRows;
   const baselineTop = 24 + aboveRows * laneH;
   const width = Math.max(900, total * zoom + 260);
   const step = zoom >= 60 ? 1 : zoom >= 30 ? 5 : zoom >= 16 ? 10 : 20;
@@ -559,7 +626,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                 at,
                 lane,
               );
-              toast.success(hasAudio ? `${where} · 已带原声轨` : where);
+              toast.success(hasAudio ? `${where} · 已带原声（拉高轨道可看波形，音画分离后紧贴画面）` : where);
             });
           }}
         >
@@ -606,6 +673,13 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                     const isSelected = edl.selectedIds.includes(clip.id);
                     const w = Math.max(8, span * zoom);
                     const shot = clip.sourceShotId ? data.shots.find((s) => s.id === clip.sourceShotId) : null;
+                    // 已分离的画面不再显示内置原声，避免同一条声音上下重复
+                    const audioDetached = clip.track === 'video' && clips.some(
+                      (a) => a.track === 'audio' && (
+                        (clip.clientKey && a.bindGroup === `av:${clip.clientKey}`) ||
+                        sameOrigin(a, clip, edl.fps)
+                      ),
+                    );
                     return (
                       <div
                         key={clip.id}
@@ -638,6 +712,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                           span={span}
                           pxPerSec={zoom}
                           rowHeight={laneH - 10}
+                          embeddedAudio={clip.track === 'video' && laneH >= 58 && !audioDetached}
                         />
                         {clip.track === 'audio' ? (
                           <AudioClipWave projectId={projectId} clip={clip} span={span} pxPerSec={zoom} />

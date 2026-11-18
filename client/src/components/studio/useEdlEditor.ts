@@ -535,7 +535,8 @@ export function useEdlEditor(data: StudioData): EdlEditor {
   /** 同绑定组、可一起移动的搭档（不含自己） */
   const boundPartners = useCallback((clip: TimelineClip, all: TimelineClip[]): TimelineClip[] => {
     const group = clip.bindGroup;
-    if (!group) return [];
+    // av: 只是「音画并排」的稳定关联标记，不是同步拖动组；分离后两条轨各自可独立移动。
+    if (!group || group.startsWith('av:')) return [];
     return all.filter((c) => c.id !== clip.id && c.bindGroup === group && !c.locked);
   }, []);
 
@@ -583,7 +584,9 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       // 选中集合自动扩展到「选中片段的全部绑定搭档」：绑了就该一起走
       const picked = new Set(ids);
       const groups = new Set(
-        before.filter((c) => picked.has(c.id) && c.bindGroup).map((c) => c.bindGroup as string),
+        before
+          .filter((c) => picked.has(c.id) && c.bindGroup && !c.bindGroup.startsWith('av:'))
+          .map((c) => c.bindGroup as string),
       );
       for (const c of before) {
         if (c.bindGroup && groups.has(c.bindGroup)) picked.add(c.id);
@@ -918,44 +921,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         updatedAt: new Date().toISOString(),
       };
       const next = [...before, clip];
-      let addedAudio = false;
-      if (asset.hasAudio) {
-        // 画面自带声音：立刻生成一条同源音频轨，时间/入出点与画面完全一致。
-        // 预览层检测到「同源音频存在」会自动静音 <video> 的原声，避免双声道。
-        const occupied = before
-          .filter((c) => c.track === 'audio')
-          .map((c) => ({
-            lane: c.lane ?? 0,
-            start: c.timelineStart,
-            end: c.timelineStart + clipSpan(c),
-          }));
-        const picked = pickFreeLane(occupied, 0, startAt, startAt + duration);
-        const bindGroup = `av:${videoIdentity.clientKey}`;
-        const audioClip: TimelineClip = {
-          ...newClipIdentity('local-audio'),
-          projectId: projectId ?? '',
-          track: 'audio',
-          sourceShotId: asset.shotId ?? null,
-          sourceUrl: asset.url,
-          inPoint: 0,
-          outPoint: duration,
-          timelineStart: startAt,
-          lane: picked.lane,
-          speed: 1,
-          volume: 1,
-          transition: { type: 'none', duration: 0 },
-          text: `♪ 原声 · ${asset.name}`.slice(0, 120),
-          bindGroup,
-          locked: false,
-          sortOrder: before.length + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        clip.bindGroup = bindGroup;
-        next.push(audioClip);
-        addedAudio = true;
-      }
-      commit(next, addedAudio ? '拖入画面（自动带原声轨）' : '拖入画面', before);
+      commit(next, '拖入画面', before);
       return clip.id;
     },
     [commit, projectId],
@@ -980,7 +946,15 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       const occupied = before
         .filter((c) => c.track === 'audio')
         .map((c) => ({ lane: c.lane ?? 0, start: c.timelineStart, end: c.timelineStart + clipSpan(c) }));
-      const { lane } = pickFreeLane(occupied, 0, src.timelineStart, src.timelineStart + clipSpan(src));
+      // 分离出的原声优先占用源画面自己的 lane：这样它天生和画面并排，
+      // 不会被塞进 A1 后跟一整排无关音频混在一起。只有该 lane 已有重叠音频时才另找空道。
+      const preferred = Math.max(0, src.lane ?? 0);
+      const overlap = occupied.some(
+        (o) => o.lane === preferred && src.timelineStart < o.end && src.timelineStart + clipSpan(src) > o.start,
+      );
+      const { lane } = overlap
+        ? pickFreeLane(occupied, 0, src.timelineStart, src.timelineStart + clipSpan(src))
+        : { lane: preferred };
       const label = src.text?.trim() || '画面原声';
       const clip: TimelineClip = {
         ...src,
@@ -993,7 +967,8 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         // 分离出来的音频保留 sourceShotId，时间线上可以显示「♪ 镜号」而不是一串文件名
         text: `♪ ${label}`.slice(0, 120),
         locked: false,
-        bindGroup: null,
+        // 同一 av: 组 = 画面和它分离出的原声绑定；行渲染据此并排，拖动也保持同步。
+        bindGroup: `av:${src.clientKey ?? src.id}`,
         textStyle: null,
         sortOrder: before.length,
         createdAt: new Date().toISOString(),
