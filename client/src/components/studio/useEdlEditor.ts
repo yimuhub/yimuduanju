@@ -752,7 +752,14 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       const offset = cutAt - src.timelineStart;
       if (offset <= 1 / fpsNow || offset >= span - 1 / fpsNow) return null;
       const speed = src.speed > 0 ? src.speed : 1;
+      const sourceEnd = src.sourceDuration && src.sourceDuration > 0 ? src.sourceDuration : Number.POSITIVE_INFINITY;
       const cut = round3(quantizeToFrame(src.inPoint + offset * speed, fpsNow));
+      // 导入素材的元数据时长可能比真实流略长；在素材末端之后分割会生成
+      // 一段没有画面的空片段，时间线显示 5s、导出却只有 4.48s。
+      if (cut >= sourceEnd - 1 / fpsNow) {
+        toast.info('分割点超出素材实际长度');
+        return null;
+      }
       const idx = before.findIndex((c) => c.id === id);
       const left: TimelineClip = { ...src, outPoint: cut };
       const right: TimelineClip = {

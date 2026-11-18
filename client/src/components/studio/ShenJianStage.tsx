@@ -2,7 +2,7 @@
  * 一幕·神剪 · 中舞台（原型同款画布 + 走带）
  * 预览内容来自真实 EDL：当前播放头命中哪条画面轨，就渲染哪条片段的真实媒体。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Eye, Maximize2, Volume2, VolumeX } from 'lucide-react';
 import { IconFrameNext, IconFramePrev, IconFullscreen, IconPause, IconPlay, IconSkipEnd, IconSkipStart } from './ShenJianIcons';
 import { useStudio } from './StudioShell';
@@ -57,7 +57,16 @@ export const ShenJianStage = ({
   const [subDrag, setSubDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const lastSubDrag = useRef<{ id: string; x: number; y: number } | null>(null);
 
-  const total = Math.max(1, data.totalSec || 0);
+  // 剪映式时间轴长度＝内容末端，而不是项目参数里的固定时长。
+  // 新建项目 durationSeconds 默认 50s，旧实现会让 5s 素材后面挂 45s 黑场，
+  // 播放头、走带和字幕拖拽全部落进空白区。
+  const total = useMemo(() => {
+    let end = 0;
+    for (const c of data.timeline?.clips ?? []) {
+      end = Math.max(end, c.timelineStart + clipSpan(c));
+    }
+    return Math.max(1, end || data.totalSec || 0);
+  }, [data.timeline?.clips, data.totalSec]);
 
   // 轨道属性以本地 EDL 为准：静音/显隐点完立即生效，不等一次刷新。
   const timelineTracks = edl.tracks?.length ? edl.tracks : (data.timeline?.tracks ?? []);
@@ -214,6 +223,9 @@ export const ShenJianStage = ({
     const dragging = subDrag?.id === id;
     const x = dragging ? subDrag.x : (subStyle.x ?? 0.5);
     const y = dragging ? subDrag.y : (subStyle.y ?? 0.86);
+    // 字幕底色必须随模板走：CSS 里 span 旧实现硬编码 #0000008c，
+    // 选「经典白字/极简小字」也永远带一条黑底，和剪映不一致。
+    const subBg = (subStyle.bgOpacity ?? 0) > 0 ? hexRgba(subStyle.bgColor, subStyle.bgOpacity ?? 0) : 'transparent';
     return {
       top: `${y * 100}%`,
       left: `${x * 100}%`,
@@ -228,13 +240,14 @@ export const ShenJianStage = ({
       fontWeight: subStyle.bold ? 800 : 600,
       fontStyle: subStyle.italic ? 'italic' : 'normal',
       WebkitTextStroke: (subStyle.strokeWidth ?? 0) > 0 ? `${(subStyle.strokeWidth ?? 0)}em ${subStyle.strokeColor || '#000000'}` : undefined,
-      background: (subStyle.bgOpacity ?? 0) > 0 ? hexRgba(subStyle.bgColor, subStyle.bgOpacity ?? 0) : 'transparent',
-      borderRadius: (subStyle.bgOpacity ?? 0) > 0 ? 4 : 0,
-      padding: (subStyle.bgOpacity ?? 0) > 0 ? '0.18em 0.3em' : 0,
+      ['--sub-bg']: subBg,
+      background: 'transparent',
+      borderRadius: 0,
+      padding: 0,
       cursor: 'grab',
       touchAction: 'none',
       pointerEvents: 'auto',
-    } as const;
+    } as CSSProperties;
   };
 
   const startSubtitleDrag = (e: React.PointerEvent, clipId: string, style?: TimelineTextStyle | null) => {

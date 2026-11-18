@@ -40,6 +40,28 @@ const modeTabs: { key: CreationMode; label: string; icon: typeof Zap }[] = [
 // 时长展示：整分钟显示「N 分钟」，否则显示秒
 const fmtDuration = (s: number) => (s % 60 === 0 ? `${s / 60} 分钟` : `${s} 秒`);
 
+/**
+ * 剧本建项目时的标题：只取第一行有效内容。
+ * 旧实现 slice(0, 20) 会把换行和下一场场景名一起塞进标题，
+ * 项目列表与导出文件名都会变成多行剧本摘要。
+ */
+const projectTitleFromScript = (text: string): string => {
+  const first = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) ?? '';
+  const clean = first
+    .replace(/^#+\s*/, '')
+    .replace(/^《(.+)》$/, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // 剧本首行常见「《片名》 场景1 夜晚·地铁站台」，项目名应只取书名号里的片名，
+  // 而不是把场景信息一起截进项目名（项目列表与导出文件名都会被污染）。
+  const bookTitle = clean.match(/《([^》]{1,40})》/)?.[1]?.trim();
+  const title = (bookTitle || clean).replace(/\s+/g, ' ').replace(/[·:：\-—]+$/g, '').trim();
+  return title.slice(0, 20) || '剧本项目';
+};
+
 // 右栏摘要行
 const SummaryRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex items-center justify-between gap-3 text-xs">
@@ -114,7 +136,7 @@ const CreateWizardPage = () => {
   const ensureScriptProject = async (): Promise<string> => {
     if (projectId) return projectId;
     const project = await projects.createProject({
-      title: scriptText.slice(0, 20) || '剧本项目',
+      title: projectTitleFromScript(scriptText),
       mode: 'script',
       scriptText,
     });
@@ -371,7 +393,7 @@ const CreateWizardPage = () => {
       setParsing(true);
       setError('');
       const project = await projects.createProject({
-        title: scriptText.slice(0, 20) || '剧本项目',
+        title: projectTitleFromScript(scriptText),
         mode: 'script',
         scriptText,
       });

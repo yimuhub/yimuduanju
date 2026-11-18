@@ -19,6 +19,9 @@ import {
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
+import { exportTimeline } from '@client/src/api/timeline';
+import { downloadDeliverable } from '@client/src/api/export';
+import { projectExportFileName } from '@shared/file-name';
 import { ShenJianLibrary } from './ShenJianLibrary';
 import { ShenJianStage } from './ShenJianStage';
 import { ShenJianInspector } from './ShenJianInspectorV2';
@@ -56,6 +59,11 @@ export const ShenJianWorkbench = () => {
   const [importOpen, setImportOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportBurnSubs, setExportBurnSubs] = useState(true);
+  const [exportLaneMode, setExportLaneMode] = useState<'sequence' | 'main' | 'overlay'>('overlay');
+  const [exportAsset, setExportAsset] = useState<{ name: string; fileUrl?: string; durationSeconds?: number } | null>(null);
   const [rightTab, setRightTab] = useState<'inspector' | 'pool'>('inspector');
   const [grade, setGradeState] = useState({ brightness: 100, contrast: 100, saturation: 100, filter: 'none' });
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -73,7 +81,11 @@ export const ShenJianWorkbench = () => {
     return () => window.removeEventListener('yimu:shenjian-grade', onGrade);
   }, []);
 
-  const total = Math.max(1, data.totalSec || 0, ...(data.timeline?.clips ?? []).map((c) => c.timelineStart + clipSpan(c)));
+  const total = useMemo(() => {
+    const ends = (data.timeline?.clips ?? []).map((c) => c.timelineStart + clipSpan(c));
+    if (!ends.length) return Math.max(1, data.totalSec || 0);
+    return Math.max(1, ...ends);
+  }, [data.timeline?.clips, data.totalSec]);
   useEffect(() => {
     if (edl.selectedIds.length) setRightTab('inspector');
   }, [edl.selectedIds]);
@@ -94,7 +106,32 @@ export const ShenJianWorkbench = () => {
     if (projectId) navigate(`/project/${projectId}`);
   };
   const goExport = () => {
-    if (projectId) navigate(`/project/${projectId}/export`);
+    if (!projectId) return;
+    // 剪映是从工作台直接弹导出面板，而不是把用户踢到另一个 0/7 镜头的交付页。
+    // 这里保留时间线精剪导出（EDL）作为唯一入口，参数与导出页同一套 API。
+    setExportAsset(null);
+    setExportOpen(true);
+  };
+
+  const runTimelineExport = async () => {
+    if (!projectId || exportBusy) return;
+    setExportBusy(true);
+    try {
+      const res = await exportTimeline(projectId, {
+        burnSubtitles: exportBurnSubs,
+        videoLaneMode: exportLaneMode,
+      });
+      setExportAsset(res.asset);
+      toast.success(`精剪成片已生成：${res.clips} 段 · ${res.durationSeconds.toFixed(1)}s`);
+    } catch (e) {
+      const msg =
+        typeof e === 'object' && e && 'response' in e
+          ? ((e as { response?: { data?: { message?: string } } }).response?.data?.message ?? '')
+          : '';
+      toast.error(msg || (e as Error).message || '时间线导出失败');
+    } finally {
+      setExportBusy(false);
+    }
   };
 
   const split = () => {
@@ -385,6 +422,92 @@ export const ShenJianWorkbench = () => {
             <div className="modal-foot">
               <span className="mini-note" style={{ marginRight: 'auto' }}>输入框内按键不会触发剪辑命令</span>
               <button type="button" className="btn primary" onClick={() => setShortcutsOpen(false)}>知道了</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {exportOpen ? (
+        <div className="modal-mask open" onClick={() => { if (!exportBusy) setExportOpen(false); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 'min(560px,94vw)' }}>
+            <div className="modal-head">
+              导出精剪成片
+              <button
+                type="button"
+                className="x icon-btn"
+                disabled={exportBusy}
+                onClick={() => setExportOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="mini-note" style={{ marginBottom: 12 }}>
+                按底部时间线的 EDL 导出：片段顺序 / 裁剪 / 变速 / 音轨 / 字幕轨，尊重轨道静音与独奏。
+              </div>
+              <div style={{ display: 'grid', gap: 10, fontSize: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={exportBurnSubs}
+                    disabled={exportBusy}
+                    onChange={(e) => setExportBurnSubs(e.target.checked)}
+                  />
+                  烧录字幕轨到画面
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  画面轨策略
+                  <select
+                    value={exportLaneMode}
+                    disabled={exportBusy}
+                    onChange={(e) => setExportLaneMode(e.target.value as 'sequence' | 'main' | 'overlay')}
+                  >
+                    <option value="overlay">叠加合成（画中画）</option>
+                    <option value="main">只导主链</option>
+                    <option value="sequence">全部串行</option>
+                  </select>
+                </label>
+              </div>
+              {exportAsset ? (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: '10px 12px',
+                    border: '1px solid #2c4a45',
+                    borderRadius: 8,
+                    background: '#12201d',
+                    fontSize: 12,
+                  }}
+                >
+                  <b style={{ display: 'block', marginBottom: 4 }}>{exportAsset.name}</b>
+                  <span style={{ color: '#9aa3af' }}>
+                    已生成 · {exportAsset.durationSeconds ? `${exportAsset.durationSeconds.toFixed(1)}s` : '成片已归档'}
+                  </span>
+                  {exportAsset.fileUrl ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ marginTop: 8 }}
+                      onClick={() =>
+                        downloadDeliverable(
+                          exportAsset.fileUrl as string,
+                          projectExportFileName(data.project?.title, 'mp4', '成片'),
+                        ).catch(() => toast.error('下载失败'))
+                      }
+                    >
+                      <Download size={13} /> 下载成片
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-foot">
+              <button type="button" className="btn" disabled={exportBusy} onClick={() => setExportOpen(false)}>
+                取消
+              </button>
+              <button type="button" className="btn primary" disabled={exportBusy} onClick={() => void runTimelineExport()}>
+                {exportBusy ? '导出中…' : exportAsset ? '重新导出' : '开始导出'}
+              </button>
             </div>
           </div>
         </div>

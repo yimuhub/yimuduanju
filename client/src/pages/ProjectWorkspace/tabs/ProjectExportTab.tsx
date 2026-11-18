@@ -596,7 +596,10 @@ const ProjectExportTab = () => {
                 onClick={() => {
                   if (tlAsset.fileUrl) {
                     exportApi
-                      .downloadDeliverable(tlAsset.fileUrl)
+                      .downloadDeliverable(
+                        tlAsset.fileUrl,
+                        projectExportFileName(projectTitle, 'mp4', '成片'),
+                      )
                       .catch(() => toast.error('下载失败'));
                   }
                 }}

@@ -26,6 +26,7 @@ import {
 } from '@server/database/schema';
 import { resolveTextStyle } from '@shared/api.interface';
 import { buildTransitionFilter, planTransitions } from './transition-plan';
+import { projectExportFileName } from '@shared/file-name';
 import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
 import { scanTimelineIssues } from '@shared/timeline-issues';
 import { buildZoompanExpressions, normalizeVideoKeyframes } from '@shared/timeline-keyframes';
@@ -1426,7 +1427,13 @@ export class TimelineService {
       }
 
       // 3) 字幕 + 最终封装
-      const outName = `final_tl_${randomUUID().slice(0, 8)}.mp4`;
+      // 文件名＝项目名（唯一真源 shared/file-name.ts）：旧实现落 final_tl_<uuid>.mp4，
+      // 时间线导出的成片在素材箱/下载目录里认不出是哪个项目。
+      const outName = projectExportFileName(
+        project.title,
+        'mp4',
+        `final_tl_${randomUUID().slice(0, 8)}`,
+      );
       const outDir = join(uploadDir(), projectId);
       await mkdir(outDir, { recursive: true });
       const outAbs = join(outDir, outName);
@@ -1509,29 +1516,36 @@ export class TimelineService {
 
       const st = await stat(outAbs);
       const fileUrl = `/uploads/${projectId}/${outName}`;
-      const rows = await this.db
-        .insert(assets)
-        .values({
-          projectId,
-          assetType: 'video',
-          name: `精剪成片-${project.title}`.slice(0, 120),
-          fileUrl,
-          filePath: outAbs,
-          mimeType: 'video/mp4',
-          fileSize: st.size,
-          durationSeconds: String(finalDuration),
-          sourceType: 'generated',
-          sourceId: `timeline-export-${randomUUID()}`,
-          generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}${wantRange ? '·选区' : ''}）`,
-          metadata: {
-            aigcGenerated: true,
-            hasAudio: Boolean(audioPath),
-            hasSubtitles: Boolean(srt.trim()),
-            timelineExport: true,
-          } as never,
-          status: 'ready',
-        })
-        .returning();
+      const values = {
+        projectId,
+        assetType: 'video' as const,
+        name: `精剪成片-${project.title}`.slice(0, 120),
+        fileUrl,
+        filePath: outAbs,
+        mimeType: 'video/mp4',
+        fileSize: st.size,
+        durationSeconds: String(finalDuration),
+        sourceType: 'generated' as const,
+        sourceId: `timeline-export-${randomUUID()}`,
+        generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}${wantRange ? '·选区' : ''}）`,
+        metadata: {
+          aigcGenerated: true,
+          hasAudio: Boolean(audioPath),
+          hasSubtitles: Boolean(srt.trim()),
+          timelineExport: true,
+        } as never,
+        status: 'ready' as const,
+      };
+      // 同一项目、同一成片文件名（outName 已固定为项目名）重复导出时必须复用同一条资产，
+      // 否则素材库会不断累积「精剪成片」，前端也无法稳定回填最新成片。
+      const [existing] = await this.db
+        .select({ id: assets.id })
+        .from(assets)
+        .where(and(eq(assets.projectId, projectId), eq(assets.fileUrl, fileUrl)))
+        .limit(1);
+      const rows = existing
+        ? await this.db.update(assets).set(values).where(eq(assets.id, existing.id)).returning()
+        : await this.db.insert(assets).values(values).returning();
       const asset = this.mapAsset(rows[0]);
       const totalClips = segments.length + overlayCount;
       this.logger.log(

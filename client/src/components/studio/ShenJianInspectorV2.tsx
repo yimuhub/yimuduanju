@@ -27,8 +27,8 @@ const TEXT_FONTS = [
 ];
 
 const TEXT_TEMPLATES: Array<{ name: string; patch: Record<string, unknown> }> = [
-  { name: '经典白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0.08, bgColor: '', bold: true } },
-  { name: '综艺黄', patch: { color: '#FFE45C', strokeColor: '#000000', strokeWidth: 0.12, bgColor: '', bold: true } },
+  { name: '经典白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0.04, bgColor: '', bold: true } },
+  { name: '综艺黄', patch: { color: '#FFE45C', strokeColor: '#000000', strokeWidth: 0.05, bgColor: '', bold: true } },
   { name: '电影字幕', patch: { color: '#F4F1EA', strokeColor: '#000000', strokeWidth: 0.03, bgColor: '', bold: false } },
   { name: '黑底白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0, bgColor: '#000000', bgOpacity: 0.55, bold: true } },
   { name: '极简小字', patch: { color: '#DDE3EA', strokeColor: '#000000', strokeWidth: 0.02, bgColor: '', bold: false, fontSize: 4.2 } },

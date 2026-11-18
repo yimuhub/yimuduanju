@@ -322,9 +322,15 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
   const lanesRef = useRef<HTMLDivElement | null>(null);
   const clips = data.timeline?.clips ?? [];
+  // 内容末端与「时间轴最小可滚动长度」是两件事：20s 只是空白基线，
+  // 不能拿来当片长显示，否则 5s 成片会在 footer 里写成 20s。
+  const contentTotal = useMemo(
+    () => Math.max(0, ...clips.map((c) => c.timelineStart + clipSpan(c))),
+    [clips],
+  );
   const total = useMemo(
-    () => Math.max(20, data.totalSec || 0, ...clips.map((c) => c.timelineStart + clipSpan(c))),
-    [clips, data.totalSec],
+    () => Math.max(20, data.totalSec || 0, contentTotal),
+    [data.totalSec, contentTotal],
   );
 
   const rows = useMemo<Row[]>(() => {
@@ -985,6 +991,12 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         className={`clip2 ${clipColor(clip)}${isSelected ? ' selected' : ''}${drag?.id === clip.id && drag.kind === 'move' ? ' dragging' : ''}`}
                         style={{ left: left * zoom, width: w, height: rowHeightNow - 10 }}
                         title={`${clipLabel(clip)} · ${clip.timelineStart.toFixed(2)}s → ${(clip.timelineStart + clipSpan(clip)).toFixed(2)}s`}
+                        onPointerDownCapture={() => {
+                          // 剪映里点片段任何位置都先选中。音量线/关键帧条会 stopPropagation，
+                          // 旧实现点片段正中会直接进入音量拖拽、右侧检查器始终空白。
+                          edl.setSelection([clip.id]);
+                          setPreviewMode('timeline');
+                        }}
                         onPointerDown={(e) => {
                           e.stopPropagation();
                           edl.setSelection([clip.id]);
@@ -1071,7 +1083,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       </div>
 
       <div className="tl-foot">
-        <span>{fmtSec(curT)} / {fmtSec(total)} · {rows.length} 轨 · {clips.length} 片段</span>
+        <span>{fmtSec(curT)} / {fmtSec(contentTotal)} · {rows.length} 轨 · {clips.length} 片段</span>
         <span>·</span><span>缩放 <b>{zoom}</b> px/s</span>
         <span>·</span><span>行高</span>
         <input className="tl-zoom" type="range" min="30" max="96" value={laneH} onChange={(e) => { setLaneH(Number(e.target.value)); setRowHeights({}); }} />

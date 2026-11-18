@@ -91,7 +91,7 @@
 .sj2 .canvas .vignette{position:absolute;inset:0;box-shadow:inset 0 0 90px 30px #00000099;pointer-events:none}
 .sj2 .canvas .layer-title{position:absolute;left:8%;top:11%;font-size:7.5cqw;font-weight:800;letter-spacing:2px;color:#f6efe2;text-shadow:0 2px 12px #000;opacity:.92}
 .sj2 .canvas .layer-sub{position:absolute;left:0;right:0;bottom:13%;text-align:center;font-size:4.2cqw;color:#fff;text-shadow:0 2px 6px #000;padding:0 7%;line-height:1.55}
-.sj2 .canvas .layer-sub span{background:#0000008c;padding:2px 6px;border-radius:3px;box-decoration-break:clone}
+.sj2 .canvas .layer-sub span{background:var(--sub-bg, #0000008c);padding:2px 6px;border-radius:3px;box-decoration-break:clone}
 .sj2 .canvas .layer-watermark{position:absolute;right:5%;bottom:5%;font-size:2.6cqw;color:#ffffff8a;letter-spacing:1px}
 .sj2 .canvas .safe{position:absolute;inset:6%;border:1px dashed #ffffff59;display:none;pointer-events:none}
 .sj2 .canvas.safe-on .safe{display:block}
