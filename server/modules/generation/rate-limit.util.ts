@@ -36,9 +36,26 @@ export const VIDEO_QUEUE_FULL_RETRY_MS = 10_000;
 export const VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS = 3_000;
 export const VIDEO_QUEUE_FULL_KEY_JITTER_MS = 5_000;
 
+/**
+ * 上游账户「额度为 0」的冻结时长。
+ *
+ * 这是**计费状态**，不是 Key 失效：403 文案为 insufficient_user_quota /
+ * remaining: $0.000000。旧实现把它和 401/403 鉴权失败混在一起 markInvalid，
+ * 四把 Key 会被永久停用，界面只剩「所有密钥车道均在途/冷却中」，真正的
+ * 「余额不足」被埋掉。冻结 10 分钟后重新探测，给充值留出恢复窗口。
+ */
+export const QUOTA_EXHAUSTED_KEY_COOLDOWN_MS = 10 * 60_000;
+
 /** Agnes 免费视频队列饱和：与账号/Key 无关的全局容量拒绝 */
 export function isVideoQueueFullMessage(message: string): boolean {
   return /video_queue_full|video queue is full/i.test(message);
+}
+
+/** 上游账户余额/额度不足：可充值恢复，绝不能当 Key 鉴权失败处理 */
+export function isQuotaExhaustedMessage(message: string): boolean {
+  return /insufficient_user_quota|insufficient\s+quota|remaining:\s*[＄$]?0\.0|余额不足|额度不足|欠费/i.test(
+    message,
+  );
 }
 /** 未被路由到具体 provider 的任务在冷却表里的占位键 */
 export const DEFAULT_PROVIDER_KEY = '__default__';

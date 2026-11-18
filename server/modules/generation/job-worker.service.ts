@@ -116,8 +116,10 @@ import IORedis from 'ioredis';
 import {
   DEFAULT_PROVIDER_KEY,
   isMissingProviderMessage,
+  isQuotaExhaustedMessage,
   isRateLimitMessage,
   isVideoQueueFullMessage,
+  QUOTA_EXHAUSTED_KEY_COOLDOWN_MS,
   RATE_LIMIT_COOLDOWN_MAX_MS,
   RATE_LIMIT_COOLDOWN_MS,
   VIDEO_QUEUE_FULL_KEY_COOLDOWN_MS,
@@ -2324,6 +2326,25 @@ export class JobWorkerService implements OnModuleInit, OnModuleDestroy {
       } catch (e) {
         const message = (e as Error)?.message ?? '未知错误';
         try {
+          /*
+           * 账户余额/额度为 0 必须先于 401/403 分支处理。
+           * Agnes 把「额度不足」放在 HTTP 403 里（insufficient_user_quota，
+           * remaining: $0.000000）。旧实现按 403 = 鉴权失败 markInvalid，
+           * 四把 Key 全被永久停用，任务只剩「所有车道在途/冷却」，用户看不到
+           * 真正原因。额度不足是可充值恢复的状态，冻结 Key 10 分钟后重探即可。
+           */
+          if (keyId && isQuotaExhaustedMessage(message)) {
+            // eslint-disable-next-line no-await-in-loop
+            await this.keyPool.cooldown(keyId, QUOTA_EXHAUSTED_KEY_COOLDOWN_MS, message);
+            settled = true;
+            lastErr = new Error(
+              'Agnes 账户额度不足（余额 $0.00）：请为该账户充值，或更换有额度的 Key 后重试',
+            );
+            this.logger.error(
+              `任务 ${job.id} 密钥额度不足，已冻结该车道 10 分钟（不再误判为 Key 失效）：${message.slice(0, 160)}`,
+            );
+            continue;
+          }
           if (keyId && (isRateLimitMessage(message) || /503|429/.test(message))) {
             const queueFull = isVideoQueueFullMessage(message);
             /*
