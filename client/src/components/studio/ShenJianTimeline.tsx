@@ -42,6 +42,8 @@ type DragState = {
   track: TimelineTrackKind;
   dx: number;
   span: number;
+  /** 右边缘最多能拉到的时长（源媒体完整时长 - 入点）/ 速度 */
+  maxSpan?: number;
 };
 
 type CtxState = { x: number; y: number; id: string } | null;
@@ -151,6 +153,55 @@ const AudioClipWave = ({
         outPoint={clip.outPoint}
         pxPerSec={pxPerSec}
       />
+    </div>
+  );
+};
+
+/**
+ * 剪映式白色增益线：上下拖动直接改片段音量。
+ * 中线 = 0dB（volume 1），最上 = +6dB（volume 2），最下 = 静音（volume 0）。
+ * 拖动时实时写回 EDL，预览与导出共用同一份 volume。
+ */
+const GainLine = ({
+  clip,
+  onChange,
+}: {
+  clip: TimelineClip;
+  onChange: (v: number) => void;
+}) => {
+  const [vol, setVol] = useState(() => Math.max(0, Math.min(2, clip.volume ?? 1)));
+  useEffect(() => setVol(Math.max(0, Math.min(2, clip.volume ?? 1))), [clip.id, clip.volume]);
+  const db = vol <= 0 ? '-∞' : `${vol > 1 ? '+' : ''}${(20 * Math.log10(vol)).toFixed(1)}`;
+  const top = 10 + (1 - Math.min(2, vol) / 2) * 80;
+  const apply = (clientY: number, rect: DOMRect) => {
+    const p = Math.max(0.1, Math.min(0.9, (clientY - rect.top) / Math.max(1, rect.height)));
+    const next = Math.max(0, Math.min(2, 2 * (1 - (p - 0.1) / 0.8)));
+    setVol(next);
+    onChange(next);
+  };
+  return (
+    <div
+      className="gain-line"
+      style={{ top: `${top}%` }}
+      title={`音量 ${db} dB（向上增大，向下减小）`}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+        apply(e.clientY, rect);
+        const move = (ev: PointerEvent) => apply(ev.clientY, rect);
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          window.removeEventListener('pointercancel', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
+      }}
+    >
+      <i />
+      <span>{db} dB</span>
     </div>
   );
 };
@@ -375,8 +426,10 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       const d = Math.max(-drag.origSpan + 0.15, Math.min(drag.origSpan - 0.15, dx));
       setDrag({ ...drag, dx: d, span: drag.origSpan - d, origStart: drag.origStart + d });
     } else {
-      const d = Math.max(0.15 - drag.origSpan, dx);
-      setDrag({ ...drag, dx: d, span: drag.origSpan + d });
+      // 右边缘只能拉到源视频结尾：20s 素材最多 20s，不能无限延长。
+      const maxSpan = drag.maxSpan ?? Number.POSITIVE_INFINITY;
+      const d = Math.max(0.15 - drag.origSpan, Math.min(maxSpan - drag.origSpan, dx));
+      setDrag({ ...drag, dx: d, span: Math.min(maxSpan, drag.origSpan + d) });
     }
   }, [drag, lanesRef, laneH, maxLaneOf, rows, snapStart, zoom]);
 
@@ -736,6 +789,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         {clip.track === 'audio' ? (
                           <AudioClipWave projectId={projectId} clip={clip} span={span} pxPerSec={zoom} />
                         ) : null}
+                        {clip.track === 'audio' ? (
+                          <GainLine clip={clip} onChange={(v) => edl.setClipVolume(clip.id, v)} />
+                        ) : null}
                         {clip.track === 'subtitle' ? <div className="t"><b>T1 字幕</b>{clip.text || '字幕'}</div> : null}
                         <span className="shade" />
                         <span className="cname">{clipLabel(clip)}</span>
@@ -757,7 +813,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                             e.stopPropagation();
                             edl.setSelection([clip.id]);
                             if (row.locked || clip.locked) return;
-                            setDrag({ id: clip.id, kind: 'trim-r', startX: e.clientX, startY: e.clientY, origStart: clip.timelineStart, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span });
+                            const sourceDuration = clip.sourceDuration ?? clip.outPoint;
+                            const maxSpan = Math.max(0.15, (sourceDuration - clip.inPoint) / Math.max(0.01, clip.speed || 1));
+                            setDrag({ id: clip.id, kind: 'trim-r', startX: e.clientX, startY: e.clientY, origStart: clip.timelineStart, origSpan: span, lane: clip.lane ?? 0, track: clip.track, dx: 0, span, maxSpan });
                           }}
                         />
                       </div>

@@ -84,6 +84,7 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   sourceUrl: c.sourceUrl ?? null,
   inPoint: c.inPoint,
   outPoint: c.outPoint,
+  sourceDuration: c.sourceDuration,
   timelineStart: c.timelineStart,
   lane: c.lane ?? 0,
   speed: c.speed,
@@ -625,8 +626,13 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       } else {
         const d = quantizeToFrame(deltaSec, fpsNow);
         if (Math.abs(d) < 1 / fpsNow / 2) return;
-        const newOut = round3(quantizeToFrame(src.outPoint + d * speed, fpsNow));
+        const sourceDuration = src.sourceDuration ?? src.outPoint;
+        const newOut = Math.min(
+          sourceDuration,
+          round3(quantizeToFrame(src.outPoint + d * speed, fpsNow)),
+        );
         if ((newOut - src.inPoint) / speed < MIN_SPAN) return;
+        if (Math.abs(newOut - src.outPoint) < 1e-4) return;
         nextClip = { ...src, outPoint: newOut };
       }
       const next = before.map((c) => (c.id === id ? nextClip : c));
@@ -826,6 +832,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         sourceUrl: null,
         inPoint: 0,
         outPoint: duration,
+        sourceDuration: duration,
         timelineStart: startAt,
         lane: targetLane,
         speed: 1,
@@ -909,6 +916,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         sourceUrl: asset.url,
         inPoint: 0,
         outPoint: duration,
+        sourceDuration: duration,
         timelineStart: startAt,
         lane,
         speed: 1,
@@ -933,6 +941,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
           sourceUrl: asset.url,
           inPoint: 0,
           outPoint: duration,
+          sourceDuration: duration,
           timelineStart: startAt,
           lane,
           speed: 1,
@@ -1007,6 +1016,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         transition: { type: 'none', duration: 0 },
         // 分离出来的音频保留 sourceShotId，时间线上可以显示「♪ 镜号」而不是一串文件名
         text: `♪ ${label}`.slice(0, 120),
+        sourceDuration: src.sourceDuration ?? src.outPoint,
         locked: false,
         // 同一 av: 组 = 画面和它分离出的原声绑定；行渲染据此并排，拖动也保持同步。
         bindGroup: `av:${src.clientKey ?? src.id}`,
@@ -1242,7 +1252,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       const before = clipsRef.current;
       const src = before.find((c) => c.id === id);
       if (!src) return;
-      const v = clamp(volume, 0, 1);
+      const v = clamp(volume, 0, 2);
       if (Math.abs(v - src.volume) < 1e-3) return;
       commit(
         before.map((c) => (c.id === id ? { ...c, volume: v } : c)),

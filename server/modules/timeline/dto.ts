@@ -65,6 +65,12 @@ export class SaveTimelineClipDto {
   @Min(0)
   outPoint!: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  sourceDuration?: number;
+
   @Type(() => Number)
   @IsNumber()
   @Min(0)
@@ -88,7 +94,7 @@ export class SaveTimelineClipDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  @Max(1)
+  @Max(2)
   volume?: number;
 
   /** 音高倍率 0.5–2（1=原音）；只用于音频/视频原声 */

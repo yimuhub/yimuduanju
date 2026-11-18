@@ -50,6 +50,9 @@ export const ShenJianStage = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
+  // >0dB（volume>1）需要 WebAudio GainNode；普通音量直接走元素 volume，避免破坏跨域媒体。
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioGainRef = useRef<Map<string, GainNode>>(new Map());
   const [videoBroken, setVideoBroken] = useState(false);
   const [subDrag, setSubDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const lastSubDrag = useRef<{ id: string; x: number; y: number } | null>(null);
@@ -95,18 +98,13 @@ export const ShenJianStage = ({
       .filter((c) => c.track === 'subtitle' && c.enabled !== false && curT >= c.timelineStart && curT < c.timelineStart + clipSpan(c))
       .sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }, [data.timeline?.clips, curT]);
-  const subtitle = activeSubs[0] ?? null;
   // 轨道调色优先：左侧特效/滤镜与右侧调节都写进 tracks[].grade，预览和导出共用
   const trackGrade = (data.timeline?.tracks ?? []).find((t) => t.track === 'video' && (t.lane ?? 0) === (active?.lane ?? 0))?.grade ?? null;
   const effectiveGrade = { ...grade, ...(trackGrade ?? {}) };
 
-  const shot = useMemo(
-    () => (active?.sourceShotId ? data.shots.find((s) => s.id === active.sourceShotId) : null),
-    [active?.sourceShotId, data.shots],
-  );
-  const fallbackUrl = shot?.frameUrl || data.shots[0]?.frameUrl || '';
-  const url = active?.sourceUrl || fallbackUrl;
-  const isStill = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#]|$)/i.test(url) || (!active && !!fallbackUrl);
+  // 真预览：只显示播放头命中的真实片段，不用项目封面/首帧冒充当前画面。
+  const url = active?.sourceUrl || '';
+  const isStill = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#]|$)/i.test(url);
   const transform = sampleVideoTransform(active?.keyframes, active ? curT - active.timelineStart : 0);
   const local = active ? Math.max(0, curT - active.timelineStart) : 0;
   const sourceTime = active ? (active.reverse ? Math.max(active.inPoint, active.outPoint - local * active.speed) : active.inPoint + local * active.speed) : 0;
@@ -149,7 +147,32 @@ export const ShenJianStage = ({
       if (Number.isFinite(st) && Math.abs(a.currentTime - st) > 0.2) {
         try { a.currentTime = st; } catch { /* 元数据未就绪 */ }
       }
-      a.volume = Math.max(0, Math.min(1, c.volume ?? 1)) * previewVolume;
+      const gain = Math.max(0, Math.min(2, c.volume ?? 1));
+      let node = audioGainRef.current.get(c.id);
+      if (!node && gain > 1) {
+        try {
+          const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (Ctx) {
+            const ctx = audioCtxRef.current ?? new Ctx();
+            audioCtxRef.current = ctx;
+            const src = ctx.createMediaElementSource(a);
+            node = ctx.createGain();
+            src.connect(node);
+            node.connect(ctx.destination);
+            audioGainRef.current.set(c.id, node);
+          }
+        } catch {
+          // 跨域未给 CORS 时无法建 MediaElementSource，退回元素最大音量
+          node = undefined;
+        }
+      }
+      if (node) {
+        a.volume = 1;
+        node.gain.value = previewMuted ? 0 : Math.min(2, gain * previewVolume);
+        if (playing && audioCtxRef.current?.state === 'suspended') void audioCtxRef.current.resume();
+      } else {
+        a.volume = Math.min(1, gain) * previewVolume;
+      }
       a.preservesPitch = pitch === 1;
       a.playbackRate = Math.min(4, rate * pitch);
       if (previewMuted) a.pause();
@@ -157,6 +180,13 @@ export const ShenJianStage = ({
       else a.pause();
     }
   }, [audioClips, curT, playing, previewVolume, previewMuted]);
+
+  useEffect(() => () => {
+    for (const a of audioRefs.current.values()) a.pause();
+    audioGainRef.current.clear();
+    void audioCtxRef.current?.close().catch(() => undefined);
+    audioCtxRef.current = null;
+  }, []);
 
   const filter = [
     previewQuality === 'fast' ? 'saturate(.92) contrast(.96) brightness(.97)' : '',
@@ -173,8 +203,6 @@ export const ShenJianStage = ({
     .filter(Boolean)
     .join(' ');
 
-  const title = data.project?.title || '未命名项目';
-  const caption = subtitle?.text || shot?.dialogue || '';
   const hexRgba = (hex: string | undefined, alpha: number) => {
     const h = (hex || '#000000').replace('#', '');
     const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.padEnd(6, '0').slice(0, 6);
@@ -300,9 +328,6 @@ export const ShenJianStage = ({
                 <small>从左侧素材库拖入时间线，或选择已有镜头</small>
               </div>
             )}
-            <div className="grade" />
-            <div className="vignette" />
-            <div className="layer-title">{title}</div>
             {renderSubs ? (
               activeSubs.map((c) => (
                 <div
@@ -317,8 +342,6 @@ export const ShenJianStage = ({
                   <span>{c.text}</span>
                 </div>
               ))
-            ) : caption && !(active && (active.lane ?? 0) > 0) ? (
-              <div className="layer-sub"><span>{caption}</span></div>
             ) : null}
             {audioClips.map((c) => (
               <audio
@@ -331,7 +354,6 @@ export const ShenJianStage = ({
                 preload="auto"
               />
             ))}
-            <div className="layer-watermark">一幕 · 神剪</div>
             <div className="safe" />
             {previewQuality === 'fast' ? <div className="quality-badge">流畅预览 · 代理 540p</div> : null}
           </div>

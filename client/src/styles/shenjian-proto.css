@@ -513,3 +513,9 @@
 /* 剪映式片段标注：名称左上、类型右下角小字 */
 .sj2 .clip2:not(.text) .cname{top:3px;bottom:auto;right:auto;max-width:calc(100% - 34px);font-size:9px;line-height:1.2}
 .sj2 .clip2:not(.text) .tagline{left:auto;right:4px;top:3px;font-size:8px;background:#00000066}
+
+/* 剪映式白色音量增益线：中线 0dB，上推 +6dB，下推静音 */
+.sj2 .gain-line{position:absolute;left:0;right:0;height:14px;margin-top:-7px;cursor:ns-resize;z-index:6;touch-action:none}
+.sj2 .gain-line i{position:absolute;left:4px;right:4px;top:50%;height:1px;background:#fff;box-shadow:0 0 4px #000c;pointer-events:none}
+.sj2 .gain-line:before{content:"";position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#fff;box-shadow:0 0 4px #000b;pointer-events:none}
+.sj2 .gain-line span{position:absolute;right:5px;top:-3px;font-size:8px;line-height:1;color:#fff;background:#000000b3;border:1px solid #ffffff38;border-radius:3px;padding:1px 3px;pointer-events:none}

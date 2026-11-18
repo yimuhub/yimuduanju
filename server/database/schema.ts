@@ -865,6 +865,8 @@ export const timelineClips = pgTable("timeline_clips", {
   sourceUrl: text("source_url"),
   inPoint: numeric("in_point").notNull().default('0'),
   outPoint: numeric("out_point").notNull().default('0'),
+  /** 源媒体完整时长，右边缘裁剪上限；不随 in/out 变化 */
+  sourceDuration: numeric("source_duration"),
   timelineStart: numeric("timeline_start").notNull().default('0'),
   // 同类型轨道内的分层（音频 0=对白/1=配乐/2=音效），不同 lane 可重叠
   lane: integer("lane").notNull().default(0),

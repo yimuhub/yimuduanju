@@ -98,6 +98,7 @@ export const ShenJianInspector = () => {
   const span = clipSpan(clip);
   const end = clip.timelineStart + span;
   const volume = Math.round((clip.volume ?? 1) * 100);
+  const volumeDb = (clip.volume ?? 1) <= 0 ? '-∞' : `${(20 * Math.log10(Math.min(2, clip.volume ?? 1))).toFixed(1)}`;
   const style: TimelineTextStyle = clip.textStyle ?? {};
   const transition = clip.transition?.type ?? 'none';
   const disabled = clip.enabled === false;
@@ -170,11 +171,11 @@ export const ShenJianInspector = () => {
               />
             </label>
             <label className="sj-range">
-              <span>音量 <b>{volume}%</b></span>
+              <span>音量 <b>{volume}% · {volumeDb} dB</b></span>
               <input
                 type="range"
                 min="0"
-                max="100"
+                max="200"
                 value={volume}
                 onChange={(e) => edl.setClipVolume(clip.id, Number(e.target.value) / 100)}
               />

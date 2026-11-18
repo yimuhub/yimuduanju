@@ -1823,6 +1823,8 @@ export interface TimelineClip {
   inPoint: number;
   /** 素材出点（源媒体内结束秒） */
   outPoint: number;
+  /** 源媒体完整时长；右边缘最多只能拖到这里，裁剪后仍保留 */
+  sourceDuration?: number;
   /** 时间线上的起始秒 */
   timelineStart: number;
   /**
