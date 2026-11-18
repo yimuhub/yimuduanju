@@ -231,7 +231,7 @@ export const StudioFloatingChat = () => {
 
   return (
     <>
-    <div className="pro-chat-float" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
+    <div className={`pro-chat-float${open ? ' is-open' : ''}`} style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
       {open ? (
         <div className="pro-chat-win" onPointerDown={(e) => e.stopPropagation()}>
           <div className="pro-chat-win-head" onPointerDown={onGripDown}>

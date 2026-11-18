@@ -599,3 +599,63 @@
 .sj2 .drag-ghost span{font-size:9px;color:#dff8f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sj2 .drag-ghost.audio{border-color:#4a8cff;background:#16263bcc}
 .sj2 .drag-ghost.text{border-color:#c084fc;background:#2a1a3acc}
+
+/* ===== 悬浮提示 / 窄屏与矮屏适配（R-066） ===== */
+.sj2 .tooltip{max-width:min(260px,calc(100vw - 16px));word-break:break-word}
+.sj2 .canvas-empty{pointer-events:none;z-index:2;padding:0 16px;background:radial-gradient(circle at 50% 40%,#1b1e24cc,#08090ce6)}
+.sj2 .compact-only{display:none}
+.sj2 .compact-drawer-backdrop{position:fixed;inset:0;z-index:90;background:#000000a8;display:flex;align-items:stretch}
+.sj2 .compact-drawer{width:min(360px,92vw);height:100%;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line2);box-shadow:24px 0 60px #000a}
+.sj2 .compact-drawer-head{flex:0 0 42px;height:42px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);background:var(--panel2)}
+.sj2 .compact-drawer-head b{font-size:12px;font-weight:650;color:var(--fg)}
+.sj2 .compact-drawer-head .icon-btn{margin-left:auto}
+.sj2 .compact-drawer-body{flex:1;min-height:0;display:flex}
+.sj2 .compact-drawer-body > *{flex:1;min-width:0;height:100%}
+.sj2 .compact-drawer-body .shot-pool2{width:100%;min-width:0;border-left:0}
+.sj2 .topbar{min-width:0}
+.sj2 .proj{flex:1 1 auto}
+.sj2 .top-right{flex:0 0 auto}
+.sj2{--tl-h:clamp(220px,48vh,430px)}
+.sj2 .app{grid-template-columns:minmax(0,1fr);grid-template-rows:52px minmax(0,1fr) var(--tl-h);height:100vh;width:100%;overflow:hidden}
+.sj2 .timeline{height:auto}
+.sj2 .tl-tools{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.sj2 .tl-tools::-webkit-scrollbar{display:none}
+.sj2 .tl-caption,.sj2 .tl-newhint{display:none}
+.sj2 .pro-chat-float{bottom:calc(var(--tl-h) + 24px);right:16px}
+.sj2 .pro-chat-float.is-open{bottom:76px}
+
+@media (max-width:1180px){
+  .sj2 .workspace{grid-template-columns:minmax(0,1fr)}
+  .sj2 .workspace > .library,.sj2 .workspace > .inspector{display:none}
+  .sj2 .top-center{display:none}
+  .sj2 .top-right .chip:not(.compact-only) span{display:none}
+  .sj2 .desktop-only{display:none}
+  .sj2 .compact-only{display:flex}
+  .sj2 .proj-title{max-width:140px}
+  .sj2 .canvas .quality-badge{display:none!important}
+}
+@media (max-width:680px){
+  .sj2 .topbar{gap:6px;padding:0 8px}
+  .sj2 .brand{padding-right:8px}
+  .sj2 .brand-name{display:none}
+  .sj2 .proj-badge,.sj2 .save-dot{display:none}
+  .sj2 .proj-title{max-width:88px;font-size:12px}
+  .sj2 .top-right{gap:4px}
+  .sj2 .top-right .chip{padding:0 7px}
+  .sj2 .top-right .chip span{display:none}
+  .sj2 .transport .right{display:none}
+  .sj2 .tc{min-width:96px;font-size:11px}
+}
+@media (max-height:620px){
+  .sj2{--tl-h:clamp(160px,42vh,260px)}
+}
+@media (max-height:520px){
+  .sj2{--tl-h:clamp(128px,42vh,180px)}
+  .sj2 .app{grid-template-rows:44px minmax(0,1fr) var(--tl-h)}
+  .sj2 .stage-bar{display:none}
+  .sj2 .transport{height:40px;padding:0 10px}
+  .sj2 .transport .mid{gap:2px}
+  .sj2 .transport .icon-btn{width:28px;height:28px;min-width:28px;min-height:28px;flex-basis:28px}
+  .sj2 .transport .play-btn{width:32px!important;height:32px!important;min-width:32px!important;min-height:32px!important;flex-basis:32px!important}
+  .sj2 .canvas-wrap{padding:4px 10px}
+}

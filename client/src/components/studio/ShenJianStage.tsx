@@ -340,12 +340,7 @@ export const ShenJianStage = ({
                   style={{ filter, transform: `scale(${transform.scale}) translate(${transform.x * 100}%, ${transform.y * 100}%) rotate(${transform.rotate}deg)` }}
                 />
               )
-            ) : (
-              <div className="canvas-empty">
-                <span>当前播放头没有可预览画面</span>
-                <small>从左侧素材库拖入时间线，或选择已有镜头</small>
-              </div>
-            )}
+            ) : null}
             {renderSubs ? (
               activeSubs.map((c) => (
                 <div
@@ -376,6 +371,12 @@ export const ShenJianStage = ({
             {previewQuality === 'fast' ? <div className="quality-badge">流畅预览 · 代理 540p</div> : null}
           </div>
         </div>
+        {!url || videoBroken ? (
+          <div className="canvas-empty">
+            <span>当前播放头没有可预览画面</span>
+            <small>从左侧素材库拖入时间线，或选择已有镜头</small>
+          </div>
+        ) : null}
       </div>
 
       <div className="transport">

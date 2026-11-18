@@ -4,17 +4,20 @@
  *   52px 顶栏 / 286px 左素材库（48 rail + 238 面板）/ 中舞台 / 318px 检查器 / 380px 多轨时间线
  * 所有面板都接真实项目数据与 EDL，不是静态演示。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Download,
+  FolderOpen,
   Image as ImageIcon,
   Keyboard,
   LayoutGrid,
   Magnet,
   Redo2,
+  SlidersHorizontal,
   Undo2,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
@@ -65,13 +68,23 @@ export const ShenJianWorkbench = () => {
   const [exportLaneMode, setExportLaneMode] = useState<'sequence' | 'main' | 'overlay'>('overlay');
   const [exportAsset, setExportAsset] = useState<{ name: string; fileUrl?: string; durationSeconds?: number } | null>(null);
   const [rightTab, setRightTab] = useState<'inspector' | 'pool'>('inspector');
+  const [compactPanel, setCompactPanel] = useState<'library' | 'pool' | 'inspector' | null>(null);
   const [grade, setGradeState] = useState({ brightness: 100, contrast: 100, saturation: 100, filter: 'none' });
-  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [tip, setTip] = useState<{ text: string; rect: DOMRect } | null>(null);
+  const [tipPos, setTipPos] = useState<{ left: number; top: number; transform: string } | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
   const [inT, setInT] = useState(0);
   const [outT, setOutT] = useState(0);
   const [attrClip, setAttrClip] = useState<{ speed: number; volume: number; transition: typeof selected extends null ? never : NonNullable<typeof selected>['transition']; textStyle: NonNullable<typeof selected>['textStyle'] } | null>(null);
 
   const setGrade = (patch: Partial<typeof grade>) => setGradeState((prev) => ({ ...prev, ...patch }));
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 1180) setCompactPanel(null);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   useEffect(() => {
     const onGrade = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
@@ -315,10 +328,31 @@ export const ShenJianWorkbench = () => {
     if (!el) return;
     const text = el.getAttribute('data-tip') || '';
     if (!text) return;
-    const rect = el.getBoundingClientRect();
-    setTip({ text, x: rect.left + rect.width / 2, y: rect.top });
+    setTip({ text, rect: el.getBoundingClientRect() });
   };
-  const hideTip = () => setTip(null);
+  const hideTip = () => {
+    setTip(null);
+    setTipPos(null);
+  };
+
+  // 悬浮提示智能避让：上方放不下就翻到下方，左右超出视口就夹紧。
+  useLayoutEffect(() => {
+    if (!tip || !tipRef.current) return;
+    const box = tipRef.current.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    const gap = 8;
+    const center = tip.rect.left + tip.rect.width / 2;
+    const left = Math.min(vw - gap - box.width / 2, Math.max(gap + box.width / 2, center));
+    let top = tip.rect.top - gap;
+    let transform = 'translate(-50%,-100%)';
+    if (top - box.height < gap) {
+      top = tip.rect.bottom + gap;
+      transform = 'translate(-50%,0)';
+    }
+    if (top + box.height > vh - gap) top = Math.max(gap, vh - gap - box.height);
+    setTipPos({ left, top, transform });
+  }, [tip]);
 
   return (
     <div className="sj2" onMouseOver={showTip} onMouseLeave={hideTip}>
@@ -350,11 +384,14 @@ export const ShenJianWorkbench = () => {
             </button>
           </div>
           <div className="top-right">
-            <button type="button" className="chip" data-tip="镜头池：点镜头自动起播，可删除镜头" onClick={() => setRightTab((v) => (v === 'pool' ? 'inspector' : 'pool'))}><LayoutGrid />镜头池</button>
-            <button type="button" className="chip" data-tip="查看全部剪映快捷键" onClick={() => setShortcutsOpen(true)}><Keyboard />快捷键</button>
-            <button type="button" className="chip" data-tip="封面编辑：模板、标题、字号、颜色" onClick={() => setCoverOpen(true)}><ImageIcon />封面</button>
-            <button type="button" className="chip primary" data-tip="导出成片 (Ctrl+E)" onClick={goExport}><Download />导出</button>
-            <button type="button" className="chip" data-tip="返回项目工作台" onClick={goProject}><ArrowLeft />返回</button>
+            <button type="button" className="chip compact-only" data-tip="打开素材库" onClick={() => setCompactPanel('library')}><FolderOpen /><span>素材</span></button>
+            <button type="button" className="chip compact-only" data-tip="打开镜头池" onClick={() => setCompactPanel('pool')}><LayoutGrid /><span>镜头</span></button>
+            <button type="button" className="chip compact-only" data-tip="打开属性检查器" onClick={() => setCompactPanel('inspector')}><SlidersHorizontal /><span>属性</span></button>
+            <button type="button" className="chip desktop-only" data-tip="镜头池：点镜头自动起播，可删除镜头" onClick={() => setRightTab((v) => (v === 'pool' ? 'inspector' : 'pool'))}><LayoutGrid /><span>镜头池</span></button>
+            <button type="button" className="chip" data-tip="查看全部剪映快捷键" onClick={() => setShortcutsOpen(true)}><Keyboard /><span>快捷键</span></button>
+            <button type="button" className="chip" data-tip="封面编辑：模板、标题、字号、颜色" onClick={() => setCoverOpen(true)}><ImageIcon /><span>封面</span></button>
+            <button type="button" className="chip primary" data-tip="导出成片 (Ctrl+E)" onClick={goExport}><Download /><span>导出</span></button>
+            <button type="button" className="chip" data-tip="返回项目工作台" onClick={goProject}><ArrowLeft /><span>返回</span></button>
           </div>
         </header>
 
@@ -367,8 +404,37 @@ export const ShenJianWorkbench = () => {
         <ShenJianTimeline snapOn={snapOn} setSnapOn={setSnapOn} />
       </div>
 
+      {compactPanel ? (
+        <div className="compact-drawer-backdrop" onClick={() => setCompactPanel(null)}>
+          <aside className="compact-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="compact-drawer-head">
+              <b>{compactPanel === 'library' ? '素材库' : compactPanel === 'pool' ? '镜头池' : '属性检查器'}</b>
+              <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setCompactPanel(null)}><X /></button>
+            </div>
+            <div className="compact-drawer-body">
+              {compactPanel === 'library'
+                ? <ShenJianLibrary onImport={() => setImportOpen(true)} />
+                : compactPanel === 'pool'
+                  ? <ShenJianShotPool onBack={() => setCompactPanel('inspector')} />
+                  : <ShenJianInspector grade={grade} setGrade={setGrade} />}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {tip ? (
-        <div className="tooltip" style={{ display: 'block', left: tip.x, top: tip.y, transform: 'translate(-50%,-100%)' }}>
+        <div
+          ref={tipRef}
+          className="tooltip"
+          style={{
+            display: 'block',
+            left: tipPos?.left ?? tip.rect.left,
+            top: tipPos?.top ?? tip.rect.top,
+            transform: tipPos?.transform ?? 'translate(-50%,-100%)',
+            visibility: tipPos ? 'visible' : 'hidden',
+            zIndex: 1000,
+          }}
+        >
           {tip.text}
         </div>
       ) : null}
