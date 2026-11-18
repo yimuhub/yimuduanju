@@ -519,3 +519,15 @@
 .sj2 .gain-line i{position:absolute;left:4px;right:4px;top:50%;height:1px;background:#fff;box-shadow:0 0 4px #000c;pointer-events:none}
 .sj2 .gain-line:before{content:"";position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#fff;box-shadow:0 0 4px #000b;pointer-events:none}
 .sj2 .gain-line span{position:absolute;right:5px;top:-3px;font-size:8px;line-height:1;color:#fff;background:#000000b3;border:1px solid #ffffff38;border-radius:3px;padding:1px 3px;pointer-events:none}
+/* 剪映式音量线反馈：拖动时数值放大浮出；提升偏青、压低偏琥珀 */
+.sj2 .gain-line.dragging{z-index:9}
+.sj2 .gain-line.dragging i{box-shadow:0 0 8px rgba(255,255,255,.85);height:2px}
+.sj2 .gain-line.dragging span{font-size:12px;font-weight:700;padding:3px 8px;top:-8px;background:rgba(0,0,0,.88);border-color:rgba(255,255,255,.55)}
+.sj2 .gain-line.boost span{color:#8ce0ff;border-color:rgba(140,224,255,.4)}
+.sj2 .gain-line.cut span{color:#ffc46b;border-color:rgba(255,196,107,.4)}
+/* 画面运镜关键帧：白色菱形，按关键帧真实时间摆放，可点选/左右拖 */
+.sj2 .clip2 .kfd{position:absolute;top:5px;width:8px;height:8px;background:#fff;border:1px solid rgba(0,0,0,.65);transform:rotate(45deg);cursor:ew-resize;z-index:6;box-shadow:0 0 3px rgba(0,0,0,.5)}
+.sj2 .clip2 .kfd:hover{background:#37d6c2;box-shadow:0 0 6px rgba(55,214,194,.8)}
+.sj2 .kf-toggle{margin-left:6px;padding:0 6px;line-height:16px;color:#9aa3af}
+.sj2 .kf-toggle.on{color:#37d6c2;border-color:#37d6c2}
+.sj2 .kf-toggle:hover{color:#fff}

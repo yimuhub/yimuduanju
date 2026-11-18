@@ -152,6 +152,7 @@ const AudioClipWave = ({
         inPoint={clip.inPoint}
         outPoint={clip.outPoint}
         pxPerSec={pxPerSec}
+        gain={clip.volume ?? 1}
       />
     </div>
   );
@@ -165,16 +166,16 @@ const AudioClipWave = ({
 const GainLine = ({
   clip,
   onChange,
-  showLabel = true,
 }: {
   clip: TimelineClip;
   onChange: (v: number) => void;
-  showLabel?: boolean;
 }) => {
   const [vol, setVol] = useState(() => Math.max(0, Math.min(2, clip.volume ?? 1)));
+  const [dragging, setDragging] = useState(false);
   useEffect(() => setVol(Math.max(0, Math.min(2, clip.volume ?? 1))), [clip.id, clip.volume]);
-  const db = vol <= 0 ? '-∞' : `${vol > 1 ? '+' : ''}${(20 * Math.log10(vol)).toFixed(1)}`;
+  const db = vol <= 0.001 ? '-∞' : `${vol > 1 ? '+' : ''}${(20 * Math.log10(vol)).toFixed(1)}`;
   const top = 10 + (1 - Math.min(2, vol) / 2) * 80;
+  const tone = vol > 1.001 ? ' boost' : vol < 0.999 ? ' cut' : '';
   const apply = (clientY: number, rect: DOMRect) => {
     const p = Math.max(0.1, Math.min(0.9, (clientY - rect.top) / Math.max(1, rect.height)));
     const next = Math.max(0, Math.min(2, 2 * (1 - (p - 0.1) / 0.8)));
@@ -183,16 +184,18 @@ const GainLine = ({
   };
   return (
     <div
-      className="gain-line"
+      className={`gain-line${tone}${dragging ? ' dragging' : ''}`}
       style={{ top: `${top}%` }}
       title={`音量 ${db} dB（向上增大，向下减小）`}
       onPointerDown={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        setDragging(true);
         const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
         apply(e.clientY, rect);
         const move = (ev: PointerEvent) => apply(ev.clientY, rect);
         const up = () => {
+          setDragging(false);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           window.removeEventListener('pointercancel', up);
@@ -203,8 +206,66 @@ const GainLine = ({
       }}
     >
       <i />
-      {showLabel ? <span>{db} dB</span> : null}
+      <span>{db} dB</span>
     </div>
+  );
+};
+
+/**
+ * 画面运镜关键帧：按关键帧真实时间铺白色菱形（剪映样式）。
+ * 点击跳到该关键帧；按住左右拖可直接改关键帧时间，落库走 setClipKeyframes。
+ */
+const ClipKeyframes = ({
+  clip,
+  span,
+  pxPerSec,
+  onSeek,
+  onChange,
+}: {
+  clip: TimelineClip;
+  span: number;
+  pxPerSec: number;
+  onSeek: (t: number) => void;
+  onChange: (frames: NonNullable<TimelineClip['keyframes']>) => void;
+}) => {
+  const frames = clip.keyframes ?? [];
+  if (!frames.length) return null;
+  return (
+    <>
+      {frames.map((f, i) => (
+        <b
+          key={`${f.time}-${i}`}
+          className="kfd"
+          style={{ left: Math.max(3, Math.min(span * pxPerSec - 9, f.time * pxPerSec - 3.5)) }}
+          title={`关键帧 ${f.time.toFixed(2)}s · 缩放 ${Math.round((f.scale ?? 1) * 100)}%（左右拖动改时间）`}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSeek(clip.timelineStart + f.time);
+            const startX = e.clientX;
+            const orig = f.time;
+            let moved = false;
+            const move = (ev: PointerEvent) => {
+              const dt = (ev.clientX - startX) / Math.max(1, pxPerSec);
+              if (Math.abs(ev.clientX - startX) > 2) moved = true;
+              const next = Math.max(0, Math.min(span, orig + dt));
+              const list = [...frames];
+              list[i] = { ...list[i], time: Math.round(next * 1000) / 1000 };
+              onChange(list);
+            };
+            const up = () => {
+              void moved;
+              window.removeEventListener('pointermove', move);
+              window.removeEventListener('pointerup', up);
+              window.removeEventListener('pointercancel', up);
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+          }}
+        />
+      ))}
+    </>
   );
 };
 
@@ -233,6 +294,7 @@ const EmbeddedAudio = ({
         inPoint={clip.inPoint}
         outPoint={clip.outPoint}
         pxPerSec={pxPerSec}
+        gain={clip.volume ?? 1}
       />
     </div>
   );
@@ -791,17 +853,23 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         {clip.track === 'audio' ? (
                           <AudioClipWave projectId={projectId} clip={clip} span={span} pxPerSec={zoom} />
                         ) : null}
-                        {clip.track === 'audio' ? (
+                        {clip.track === 'audio' || hasEmbeddedAudio ? (
                           <GainLine clip={clip} onChange={(v) => edl.setClipVolume(clip.id, v)} />
-                        ) : hasEmbeddedAudio ? (
-                          <GainLine clip={clip} onChange={(v) => edl.setClipVolume(clip.id, v)} showLabel={false} />
                         ) : null}
                         {clip.track === 'subtitle' ? <div className="t"><b>T1 字幕</b>{clip.text || '字幕'}</div> : null}
                         <span className="shade" />
                         <span className="cname">{clipLabel(clip)}</span>
                         <span className="tagline">{clip.track === 'audio' ? '音频' : clip.track === 'subtitle' ? '文本' : `V${(clip.lane ?? 0) + 1}`}</span>
                         {clip.transition && clip.transition.type !== 'none' ? <span className="xf">{clip.transition.type === 'crossfade' ? '叠' : '淡'}</span> : null}
-                        {clip.keyframes?.length ? <i className="kf" style={{ left: 8 }} /> : null}
+                        {clip.track === 'video' && clip.keyframes?.length ? (
+                          <ClipKeyframes
+                            clip={clip}
+                            span={span}
+                            pxPerSec={zoom}
+                            onSeek={setCurT}
+                            onChange={(frames) => edl.setClipKeyframes(clip.id, frames)}
+                          />
+                        ) : null}
                         <span
                           className="trim l"
                           onPointerDown={(e) => {

@@ -223,12 +223,15 @@ export const Waveform = ({
   inPoint,
   outPoint,
   pxPerSec,
+  gain = 1,
 }: {
   wave: TimelineWaveform | null;
   span: number;
   inPoint: number;
   outPoint: number;
   pxPerSec: number;
+  /** 片段当前音量：波形高度随音量缩放，颜色随增益变亮/变暗（剪映行为） */
+  gain?: number;
 }): ReactNode => {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
@@ -246,16 +249,27 @@ export const Waveform = ({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, cssH);
-    const color = getComputedStyle(canvas).color || '#2f9bff';
-    ctx.fillStyle = color;
+    // 颜色随增益变化：0dB 基准蓝，提升偏亮青，压低偏暗蓝
+    const g = Math.max(0, Math.min(2, gain));
+    const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+    let r = 47; let gg = 155; let b = 255;
+    if (g > 1) {
+      const t = Math.min(1, g - 1);
+      r = mix(47, 140, t); gg = mix(155, 224, t); b = 255;
+    } else if (g < 1) {
+      const t = Math.min(1, 1 - g);
+      r = mix(47, 18, t); gg = mix(155, 74, t); b = mix(255, 138, t);
+    }
+    ctx.fillStyle = `rgb(${r},${gg},${b})`;
     const mid = cssH / 2;
     const barW = width / peaks.length;
+    const ampScale = Math.min(1.35, Math.max(0.08, g));
     for (let i = 0; i < peaks.length; i += 1) {
       const amp = Math.max(0.06, Math.min(1, peaks[i]));
-      const barH = Math.max(1, amp * (mid - 1));
+      const barH = Math.max(0.8, Math.min(mid - 1, amp * ampScale * (mid - 1)));
       ctx.fillRect(i * barW, mid - barH, Math.max(1, barW - 0.35), barH * 2);
     }
-  }, [wave, span, inPoint, outPoint, pxPerSec]);
+  }, [wave, span, inPoint, outPoint, pxPerSec, gain]);
   if (!wave || wave.peaks.length === 0) return null;
   return (
     <canvas

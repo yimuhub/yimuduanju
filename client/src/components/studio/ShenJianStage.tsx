@@ -118,16 +118,17 @@ export const ShenJianStage = ({
       if (Number.isFinite(sourceTime) && Math.abs(v.currentTime - sourceTime) > 0.28) {
         try { v.currentTime = sourceTime; } catch { /* 元数据未就绪 */ }
       }
-      v.volume = previewVolume;
+      // 画面原声音量跟随片段 volume（白线/滑块调节实时作用于预览；>1 增益受跨域限制，导出端完整生效）
+      v.volume = Math.min(1, Math.max(0, active?.volume ?? 1)) * previewVolume;
       // 有独立音频轨在出声时，画面本体静音，避免同一条对白重复播放
-      v.muted = previewMuted || activeVideoMuted || activeAudio.length > 0;
+      v.muted = previewMuted || activeVideoMuted || activeAudio.length > 0 || (active?.volume ?? 1) <= 0.001;
       if (playing) void v.play().catch(() => undefined);
       else v.pause();
     };
     if (v.readyState >= 1) sync();
     else v.addEventListener('loadedmetadata', sync, { once: true });
     return () => v.removeEventListener('loadedmetadata', sync);
-  }, [sourceTime, playing, previewVolume, previewMuted, isStill, active?.id, activeAudio.length, activeVideoMuted]);
+  }, [sourceTime, playing, previewVolume, previewMuted, isStill, active?.id, active?.volume, activeAudio.length, activeVideoMuted]);
 
   // 音频轨真实播放：时间线每帧对齐 sourceTime，音量/速度/音高实时生效
   useEffect(() => {

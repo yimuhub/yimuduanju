@@ -87,6 +87,24 @@ export const ShenJianInspector = ({
     edl.setClipKeyframes(clip.id, frames);
   };
 
+  /** 剪映菱形按钮：播放头处有关键帧则删除，没有则按当前变换添加 */
+  const toggleKeyframe = () => {
+    if (!clip) return;
+    const time = Math.max(0, curT - clip.timelineStart);
+    const frames = [...(clip.keyframes ?? [])];
+    const idx = frames.findIndex((f) => Math.abs(f.time - time) < 1 / Math.max(1, edl.fps));
+    if (idx >= 0) {
+      frames.splice(idx, 1);
+      edl.setClipKeyframes(clip.id, frames);
+      toast.info(`已删除 ${time.toFixed(2)}s 处的关键帧`);
+    } else {
+      const current = sampleVideoTransform(frames, time);
+      frames.push({ time, ...current });
+      edl.setClipKeyframes(clip.id, frames);
+      toast.success(`已在 ${time.toFixed(2)}s 添加关键帧（时间线上显示白色菱形）`);
+    }
+  };
+
   const setMotion = (
     from: Partial<{ scale: number; x: number; y: number; rotate: number }>,
     to: Partial<{ scale: number; x: number; y: number; rotate: number }>,
@@ -179,7 +197,14 @@ export const ShenJianInspector = ({
 
                 {clip.track !== 'audio' && clip.track !== 'subtitle' ? (
                   <section className="section">
-                    <h4>变换<span className="val">关键帧 {clip.keyframes?.length ?? 0}</span></h4>
+                    <h4>变换<span className="val">关键帧 {clip.keyframes?.length ?? 0}
+                    <button
+                      type="button"
+                      className={`mini-btn kf-toggle${(clip.keyframes ?? []).some((f) => Math.abs(f.time - Math.max(0, curT - clip.timelineStart)) < 1 / Math.max(1, edl.fps)) ? ' on' : ''}`}
+                      title="在播放头添加/删除画面关键帧（菱形）"
+                      onClick={toggleKeyframe}
+                    >◆</button>
+                  </span></h4>
                     <Slider label="缩放" value={Math.round(transform.scale * 100)} min={50} max={300} suffix="%" onChange={(v) => writeTransform({ scale: v / 100 })} />
                     <Slider label="X 位置" value={Math.round(transform.x * 100)} min={-100} max={100} suffix="%" onChange={(v) => writeTransform({ x: v / 100 })} />
                     <Slider label="Y 位置" value={Math.round(transform.y * 100)} min={-100} max={100} suffix="%" onChange={(v) => writeTransform({ y: v / 100 })} />

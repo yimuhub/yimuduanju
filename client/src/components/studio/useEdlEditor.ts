@@ -95,6 +95,11 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   // 绑定组与字幕样式必须一起落库，否则一保存就「解绑」、样式回默认
   bindGroup: c.bindGroup ?? null,
   textStyle: c.textStyle ?? null,
+  // 运镜关键帧/倒放/复合/转写同样必须随保存落库，漏传会被服务端清空
+  keyframes: c.keyframes ?? null,
+  reverse: c.reverse ?? null,
+  compound: c.compound ?? null,
+  transcript: c.transcript ?? null,
   locked: c.locked,
   enabled: c.enabled !== false,
   sortOrder: c.sortOrder,
