@@ -44,6 +44,8 @@ type DragState = {
   span: number;
   pointerX?: number;
   pointerY?: number;
+  /** 拖到空白区松手时，新轨道插到同类轨道的顶部还是底部 */
+  insertAt?: 'top' | 'bottom';
   /** 右边缘最多能拉到的时长（源媒体完整时长 - 入点）/ 速度 */
   maxSpan?: number;
 };
@@ -346,10 +348,15 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
           .map((c) => c.lane ?? 0),
       ),
     ).sort((a, b) => a - b);
-    const subLanesSorted = Array.from(new Set(clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0))).sort((a, b) => b - a);
+    // 同类型轨道内用 meta.order 控制上下位置；未设置时：字幕/画面按 lane 从高到低，音频按 lane 从低到高。
+    const orderOf = (track: TimelineTrackKind, lane: number) => {
+      const meta = (edl.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
+      return meta?.order ?? (track === 'audio' ? lane : -lane);
+    };
+    const subLanesSorted = Array.from(new Set(clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0)))
+      .sort((a, b) => orderOf('subtitle', a) - orderOf('subtitle', b));
     if (subLanesSorted.length > 0) videoSet.add(0);
-    const overlayVideoLanes = Array.from(videoSet).filter((lane) => lane > 0).sort((a, b) => b - a);
-    const hasMainVideo = videoSet.has(0);
+    const videoLanes = Array.from(videoSet).sort((a, b) => orderOf('video', a) - orderOf('video', b));
     const metaOf = (track: TimelineTrackKind, lane: number) =>
       (edl.tracks ?? []).find((t) => t.track === track && (t.lane ?? 0) === lane);
     // 画面片段的稳定业务标识 → 画面轨。音画分离后 A 轨要贴在原画面轨旁边，
@@ -419,8 +426,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         locked: meta?.locked === true,
       });
     }
-    for (const lane of overlayVideoLanes) pushVideo(lane);
-    if (hasMainVideo) pushVideo(0);
+    for (const lane of videoLanes) pushVideo(lane);
     // 没有画面来源的音频（配乐/音效/独立导入）仍按底部音频区排列。
     for (const a of audioRows) if (a.pairedVideoLane == null) pushAudio(a);
     // 轨道编号与顺序绑定：上下滑动、增删轨道后仍跟随
@@ -444,10 +450,11 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   }, [rows, rowH, laneH]);
   const rowIndexAt = useCallback((y: number) => {
     if (!rows.length) return -1;
-    const local = Math.max(0, y);
+    // 负值＝指针在第一条轨道上方：这是“往上拖新建一行”的空白区，不能吸到第一行。
+    if (y < 0) return -1;
     let hit = rows.length - 1;
     for (let i = 0; i < rows.length; i += 1) {
-      if (local < (rowTops[i] ?? 0) + (rowH[rows[i].key] ?? laneH)) { hit = i; break; }
+      if (y < (rowTops[i] ?? 0) + (rowH[rows[i].key] ?? laneH)) { hit = i; break; }
     }
     return hit;
   }, [rows, rowTops, rowH, laneH]);
@@ -503,6 +510,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       // 垂直跨轨：以鼠标落在左侧轨道头的同一行判定，实时给出目标轨道
       let targetRowKey = drag.targetRowKey;
       let lane = drag.lane;
+      let insertAt: 'top' | 'bottom' | undefined = drag.insertAt;
       const wrap = lanesRef.current;
       let pointerY: number | undefined;
       if (wrap) {
@@ -523,12 +531,26 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
           targetRowKey = row.key;
           lane = row.lane;
         } else if (!row || row.track !== drag.track) {
-          // 空白区或别的类型轨道：自动落到该类轨道的下一条新轨
+          // 空白区或别的类型轨道：在同类轨道区按指针方向插入新轨（往上拖就插到顶部）
           targetRowKey = undefined;
           lane = maxLaneOf(drag.track) + 1;
         }
+        if (!targetRowKey) {
+          const same = rows.filter((r) => r.track === drag.track);
+          if (same.length) {
+            const first = rows.indexOf(same[0]);
+            const last = rows.indexOf(same[same.length - 1]);
+            const topEdge = rowTops[first] ?? 0;
+            const bottomEdge = (rowTops[last] ?? 0) + (rowH[rows[last].key] ?? laneH);
+            insertAt = y < topEdge + (rowH[same[0].key] ?? laneH) / 2 ? 'top'
+              : y > bottomEdge - (rowH[same[same.length - 1].key] ?? laneH) / 2 ? 'bottom'
+              : y < (topEdge + bottomEdge) / 2 ? 'top' : 'bottom';
+          } else {
+            insertAt = 'top';
+          }
+        }
       }
-      setDrag({ ...drag, dx: snapped - drag.origStart, span: drag.origSpan, lane, targetRowKey, created: !targetRowKey, pointerX: e.clientX, pointerY });
+      setDrag({ ...drag, dx: snapped - drag.origStart, span: drag.origSpan, lane, targetRowKey, created: !targetRowKey, pointerX: e.clientX, pointerY, insertAt });
     } else if (drag.kind === 'trim-l') {
       const d = Math.max(-drag.origSpan + 0.15, Math.min(drag.origSpan - 0.15, dx));
       setDrag({ ...drag, dx: d, span: drag.origSpan - d, origStart: drag.origStart + d });
@@ -547,9 +569,22 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       const sameLane = drag.lane === (sourceClip?.lane ?? 0);
       edl.moveClipToLane(drag.id, Math.max(0, drag.origStart + drag.dx), drag.lane, !sameLane);
       if (!sameLane) {
+        // 新轨落在同类轨道区的顶部还是底部：写 meta.order，rows 会按它重排。
+        const sameRows = rows.filter((r) => r.track === drag.track);
+        const orderOfRow = (r: Row) => {
+          const meta = (edl.tracks ?? []).find((t) => t.track === r.track && (t.lane ?? 0) === r.lane);
+          return meta?.order ?? (r.track === 'audio' ? r.lane : -r.lane);
+        };
+        const orders = sameRows.map(orderOfRow);
+        const order = orders.length
+          ? drag.insertAt === 'top' ? Math.min(...orders) - 1 : Math.max(...orders) + 1
+          : 0;
+        edl.updateTrack(drag.track, drag.lane, { order });
         const prefix = drag.track === 'audio' ? 'A' : drag.track === 'subtitle' ? 'T' : 'V';
         const exists = clips.some((c) => c.track === drag.track && (c.lane ?? 0) === drag.lane && c.id !== drag.id);
-        toast.success(exists ? `已放入 ${prefix}${drag.lane + 1}` : `已新建 ${prefix}${drag.lane + 1} 并放入`);
+        toast.success(exists
+          ? `已放入 ${prefix}${drag.lane + 1}`
+          : `已新建 ${prefix}${drag.lane + 1}${drag.insertAt === 'top' ? '（顶部）' : ''} 并放入`);
       }
     } else if (drag.kind === 'trim-l' && Math.abs(drag.dx) > 0.01) {
       edl.trimClip(drag.id, 'left', drag.dx);
@@ -559,7 +594,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     setDrag(null);
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', finishDrag);
-  }, [drag, edl, clips]);
+  }, [drag, edl, clips, rows]);
 
   useEffect(() => {
     if (!drag) return;
