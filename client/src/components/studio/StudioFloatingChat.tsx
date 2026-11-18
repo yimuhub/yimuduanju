@@ -50,7 +50,8 @@ const clampPos = (p: Pos, open: boolean): Pos => {
   const baseLeft = w - 24 - width;
   const baseTop = h - 76 - height;
   const minX = 8 - baseLeft;
-  const minY = 8 - baseTop;
+  // 打开时顶部至少留 56px，避开 52px 顶栏；否则拖到上边缘时标题栏会被顶栏遮住。
+  const minY = (open ? 56 : 8) - baseTop;
   const maxX = 16; // (w-8-width) - baseLeft
   const maxY = 68; // (h-8-height) - baseTop
   return {
