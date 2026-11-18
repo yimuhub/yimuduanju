@@ -35,6 +35,7 @@ import { StudioCoverDialog } from './StudioCoverDialog';
 import { StudioFloatingChat } from './StudioFloatingChat';
 import { JIANYING_SHORTCUT_GROUPS } from '@client/src/lib/jianying-shortcuts';
 import { clipSpan } from './model';
+import { useShenJianLayout } from './useShenJianLayout';
 
 type Ratio = '9:16' | '16:9' | '1:1';
 
@@ -55,6 +56,7 @@ export const ShenJianWorkbench = () => {
   } = useStudio();
   const edl = useEdl();
   const navigate = useNavigate();
+  const pane = useShenJianLayout();
 
   const [ratio, setRatio] = useState<Ratio>('9:16');
   const [snapOn, setSnapOn] = useState(true);
@@ -355,7 +357,7 @@ export const ShenJianWorkbench = () => {
   }, [tip]);
 
   return (
-    <div className="sj2" onMouseOver={showTip} onMouseLeave={hideTip}>
+    <div className={`sj2${pane.dragging ? ' dragging' : ''}`} style={pane.rootStyle} onMouseOver={showTip} onMouseLeave={hideTip}>
       <div className="app">
         <header className="topbar">
           <div className="brand" onClick={goProject} style={{ cursor: 'pointer' }} title="返回项目工作台">
@@ -399,9 +401,42 @@ export const ShenJianWorkbench = () => {
           <ShenJianLibrary onImport={() => setImportOpen(true)} />
           <ShenJianStage ratio={ratio} safe={safe} onToggleSafe={() => setSafe((v) => !v)} grade={grade} />
           {rightTab === 'pool' ? <ShenJianShotPool onBack={() => setRightTab('inspector')} /> : <ShenJianInspector grade={grade} setGrade={setGrade} />}
+          <div
+            className="pane-resizer left"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整素材库宽度"
+            tabIndex={0}
+            data-tip="拖动调整素材库宽度，双击恢复默认"
+            onPointerDown={(e) => pane.startResize('left', e)}
+            onDoubleClick={() => pane.reset('left')}
+            onKeyDown={pane.onResizerKey('left')}
+          />
+          <div
+            className="pane-resizer right"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整检查器宽度"
+            tabIndex={0}
+            data-tip="拖动调整检查器宽度，双击恢复默认"
+            onPointerDown={(e) => pane.startResize('right', e)}
+            onDoubleClick={() => pane.reset('right')}
+            onKeyDown={pane.onResizerKey('right')}
+          />
         </main>
 
         <ShenJianTimeline snapOn={snapOn} setSnapOn={setSnapOn} />
+        <div
+          className="pane-resizer bottom"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="调整时间线高度"
+          tabIndex={0}
+          data-tip="拖动调整时间线高度，双击恢复默认"
+          onPointerDown={(e) => pane.startResize('bottom', e)}
+          onDoubleClick={() => pane.reset('bottom')}
+          onKeyDown={pane.onResizerKey('bottom')}
+        />
       </div>
 
       {compactPanel ? (

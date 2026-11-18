@@ -659,3 +659,26 @@
   .sj2 .transport .play-btn{width:32px!important;height:32px!important;min-width:32px!important;min-height:32px!important;flex-basis:32px!important}
   .sj2 .canvas-wrap{padding:4px 10px}
 }
+
+/* ===== 可拖拽分区：左素材库 / 右检查器 / 底部时间线（R-067） ===== */
+.sj2 .app{position:relative}
+.sj2 .workspace{position:relative;grid-template-columns:var(--lib-w,286px) minmax(0,1fr) var(--ins-w,318px)}
+.sj2 .pane-resizer{position:absolute;z-index:36;touch-action:none;outline:none}
+.sj2 .pane-resizer.left{left:calc(var(--lib-w,286px) - 4px);top:0;bottom:0;width:8px;cursor:col-resize}
+.sj2 .pane-resizer.right{right:calc(var(--ins-w,318px) - 4px);top:0;bottom:0;width:8px;cursor:col-resize}
+.sj2 .pane-resizer.bottom{left:0;right:0;bottom:calc(var(--tl-h,430px) - 4px);height:8px;cursor:row-resize}
+.sj2 .pane-resizer::before{content:"";position:absolute;background:#ffffff12;transition:background .15s,box-shadow .15s}
+.sj2 .pane-resizer.left::before,.sj2 .pane-resizer.right::before{width:1px;top:0;bottom:0;left:3px}
+.sj2 .pane-resizer.bottom::before{height:1px;left:0;right:0;top:3px}
+.sj2 .pane-resizer::after{content:"";position:absolute;background:#37d6c255;border-radius:3px;transition:background .15s,height .15s,width .15s}
+.sj2 .pane-resizer.left::after,.sj2 .pane-resizer.right::after{width:3px;height:24px;left:2.5px;top:50%;transform:translateY(-50%)}
+.sj2 .pane-resizer.bottom::after{width:24px;height:3px;top:2.5px;left:50%;transform:translateX(-50%)}
+.sj2 .pane-resizer:hover::before,.sj2 .pane-resizer:focus-visible::before,.sj2 .pane-resizer.dragging::before{background:#37d6c2cc;box-shadow:0 0 8px #37d6c288}
+.sj2 .pane-resizer:hover::after,.sj2 .pane-resizer:focus-visible::after,.sj2 .pane-resizer.dragging::after{background:#37d6c2}
+.sj2 .pane-resizer.left:hover::after,.sj2 .pane-resizer.left:focus-visible::after,.sj2 .pane-resizer.left.dragging::after,.sj2 .pane-resizer.right:hover::after,.sj2 .pane-resizer.right:focus-visible::after,.sj2 .pane-resizer.right.dragging::after{height:36px}
+.sj2 .pane-resizer.bottom:hover::after,.sj2 .pane-resizer.bottom:focus-visible::after,.sj2 .pane-resizer.bottom.dragging::after{width:36px}
+.sj2.dragging,.sj2.dragging *{user-select:none!important}
+@media (max-width:1180px){
+  .sj2 .workspace{grid-template-columns:minmax(0,1fr)}
+  .sj2 .pane-resizer.left,.sj2 .pane-resizer.right{display:none}
+}
