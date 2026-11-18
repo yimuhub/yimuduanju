@@ -466,6 +466,50 @@
 
 
 /* 未分离的原声：画面片段在轨道拉高后，底部直接显示同源波形；分离后此条消失 */
-.sj2 .clip2 .embed-wave{position:absolute;left:0;right:0;bottom:0;height:34%;z-index:2;color:#69e0bd;background:linear-gradient(180deg,#08110f00,#08110fd9 38%);border-top:1px solid #69e0bd33;pointer-events:none}
+.sj2 .clip2 .embed-wave{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:2;color:#69e0bd;background:linear-gradient(180deg,#08110f00,#08110fd9 38%);border-top:1px solid #69e0bd33;pointer-events:none}
 .sj2 .clip2 .embed-wave b{position:absolute;left:5px;top:1px;z-index:3;font-size:8px;font-weight:500;color:#a9f0dc;text-shadow:0 1px 2px #000}
 .sj2 .clip2 .embed-wave svg{position:absolute;inset:0;width:100%;height:100%;opacity:.85}
+
+
+/* ===== 剪映式时间线视觉：深灰底、青色画面、蓝色原声波形、白色播放头 ===== */
+.sj2 .app{grid-template-rows:52px minmax(0,1fr) 430px}
+.sj2 .timeline{background:#191919;border-top:1px solid #2d2d2d}
+.sj2 .tl-tools{height:40px;background:#1d1d1d;border-bottom-color:#2c2c2c}
+.sj2 .tl-tool{color:#b3b3b3}
+.sj2 .tl-tool:hover{background:#2b2b2b;color:#fff}
+.sj2 .tl-tool.on{background:#24302f;color:#42d8ca;box-shadow:0 0 0 1px #315b57 inset}
+.sj2 .tl-caption{color:#8b8b8b}
+.sj2 .tl-body{grid-template-columns:156px minmax(0,1fr)}
+.sj2 .track-heads{background:#1b1b1b;border-right-color:#2e2e2e}
+.sj2 .head-ruler{background:#1b1b1b;border-bottom-color:#303030;color:#8b8b8b}
+.sj2 .track-head{background:#1d1d1d;border-bottom-color:#2c2c2c}
+.sj2 .track-head .tname{color:#d0d0d0}
+.sj2 .track-head .tlabel{color:#8a8a8a}
+.sj2 .track-head .locks button{color:#777}
+.sj2 .track-head .locks button:hover{background:#2a2a2a;color:#fff}
+.sj2 .lanes-wrap{background:#191919}
+.sj2 .ruler{height:26px;background:#1b1b1b;border-bottom-color:#303030}
+.sj2 .ruler .tick{border-left-color:#3a3a3a;color:#9a9a9a}
+.sj2 .ruler .tick.minor{border-left-color:#2a2a2a}
+.sj2 .lane{background-color:#1c1c1c;border-bottom-color:#282828;background-image:repeating-linear-gradient(90deg,#ffffff00 0,#ffffff00 calc(var(--tl-scale) - 1px),#ffffff0a calc(var(--tl-scale) - 1px),#ffffff0a var(--tl-scale))}
+.sj2 .lane:nth-child(odd){background-color:#1c1c1c}
+.sj2 .lane.audio{border-bottom-color:#254252}
+.sj2 .baseline{color:#6d6d6d}
+.sj2 .baseline span{background:#1c1c1c;border-color:#333}
+.sj2 .clip2{background:#223237;border-color:#33505a;box-shadow:0 1px 4px #0008}
+.sj2 .clip2.selected{border-color:#35d6c8;box-shadow:0 0 0 1px #35d6c8,0 0 16px #35d6c833}
+.sj2 .clip2.audio{background:#12364b;border-color:#2e6d8e}
+.sj2 .clip2 .wave{color:#4aa8ff}
+.sj2 .clip2 .embed-wave{color:#4aa8ff;border-top-color:#4aa8ff38;background:linear-gradient(180deg,#0a182200,#0a1822e6 38%)}
+.sj2 .clip2 .embed-wave b{color:#9ad8ff}
+.sj2 .clip2 .tagline{background:#000000a0;color:#dceff4}
+.sj2 .clip2 .shade{background:linear-gradient(180deg,#00000000 38%,#00000080)}
+.sj2 .clip2 .cname{bottom:2px;color:#eafaff}
+.sj2 .clip2 .tl-film{opacity:.95}
+.sj2 .playhead{background:#f5f5f5;box-shadow:0 0 3px #000b}
+.sj2 .playhead:before{width:11px;height:9px;left:-5px;top:0;background:#f5f5f5;clip-path:polygon(0 0,100% 0,50% 100%)}
+.sj2 .tl-foot{background:#1b1b1b;border-top-color:#2d2d2d;color:#8a8a8a}
+
+/* 剪映式片段标注：名称左上、类型右下角小字 */
+.sj2 .clip2:not(.text) .cname{top:3px;bottom:auto;right:auto;max-width:calc(100% - 34px);font-size:9px;line-height:1.2}
+.sj2 .clip2:not(.text) .tagline{left:auto;right:4px;top:3px;font-size:8px;background:#00000066}

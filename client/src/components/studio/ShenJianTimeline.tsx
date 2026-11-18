@@ -190,8 +190,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   const { data, projectId, curT, setCurT, setPreviewMode } = useStudio();
   const edl = useEdl();
 
-  const [zoom, setZoom] = useState(38);
-  const [laneH, setLaneH] = useState(44);
+  const [zoom, setZoom] = useState(44);
+  const [laneH, setLaneH] = useState(64);
   const [tool, setTool] = useState<'select' | 'razor'>('select');
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -210,7 +210,23 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     // 轨道行只由「实际有素材的 lane」决定；某类素材一个都没有时，该类轨道完全不出现。
     // 唯一例外：已有字幕但还没有主画面轨时，补一条空 V1 落点，保证字幕永远压在一个画面轨之上。
     const videoSet = new Set(clips.filter((c) => c.track === 'video').map((c) => c.lane ?? 0));
-    const audioLanes = Array.from(new Set(clips.filter((c) => c.track === 'audio').map((c) => c.lane ?? 0))).sort((a, b) => a - b);
+    // auto: 开头的音频是「内嵌原声」，不单独占行；只有被音画分离/独立导入的音频才出 A 轨。
+    const audioLanes = Array.from(
+      new Set(
+        clips
+          .filter((c) => c.track === 'audio')
+          .filter((c) => {
+            const lane = c.lane ?? 0;
+            return clips.some(
+              (x) =>
+                x.track === 'audio' &&
+                (x.lane ?? 0) === lane &&
+                !x.bindGroup?.startsWith('auto:'),
+            );
+          })
+          .map((c) => c.lane ?? 0),
+      ),
+    ).sort((a, b) => a - b);
     const subLanesSorted = Array.from(new Set(clips.filter((c) => c.track === 'subtitle').map((c) => c.lane ?? 0))).sort((a, b) => b - a);
     if (subLanesSorted.length > 0) videoSet.add(0);
     const overlayVideoLanes = Array.from(videoSet).filter((lane) => lane > 0).sort((a, b) => b - a);
@@ -227,8 +243,9 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     const pairLaneOf = (audioLane: number): number | undefined => {
       const a = clips.find((c) => c.track === 'audio' && (c.lane ?? 0) === audioLane);
       if (!a) return undefined;
-      if (a.bindGroup?.startsWith('av:')) {
-        const v = videoByKey.get(a.bindGroup.slice(3));
+      if (a.bindGroup?.startsWith('av:') || a.bindGroup?.startsWith('auto:')) {
+        const key = a.bindGroup.slice(a.bindGroup.startsWith('av:') ? 3 : 5);
+        const v = videoByKey.get(key);
         if (v) return v.lane ?? 0;
       }
       const v = clips.find((c) => c.track === 'video' && sameOrigin(a, c, edl.fps));
@@ -467,6 +484,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   const rowClips = (row: Row) =>
     clips
       .filter((c) => c.track === row.track && (c.lane ?? 0) === row.lane)
+      // auto: 内嵌原声不落 A 行；同 lane 被分开后自动让位，避免和独立音频重叠。
+      .filter((c) => !(row.track === 'audio' && c.bindGroup?.startsWith('auto:')))
       .sort((a, b) => a.timelineStart - b.timelineStart);
 
   const displayLeft = (c: TimelineClip) => (drag?.id === c.id && drag.kind !== 'trim-r' ? (drag.origStart) : c.timelineStart);
@@ -626,7 +645,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                 at,
                 lane,
               );
-              toast.success(hasAudio ? `${where} · 已带原声（拉高轨道可看波形，音画分离后紧贴画面）` : where);
+              toast.success(hasAudio ? `${where} · 原声已内嵌（波形在画面下半部，音画分离后并排 A 轨）` : where);
             });
           }}
         >
@@ -675,7 +694,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                     const shot = clip.sourceShotId ? data.shots.find((s) => s.id === clip.sourceShotId) : null;
                     // 已分离的画面不再显示内置原声，避免同一条声音上下重复
                     const audioDetached = clip.track === 'video' && clips.some(
-                      (a) => a.track === 'audio' && (
+                      (a) => a.track === 'audio' && !a.bindGroup?.startsWith('auto:') && (
                         (clip.clientKey && a.bindGroup === `av:${clip.clientKey}`) ||
                         sameOrigin(a, clip, edl.fps)
                       ),

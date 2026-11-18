@@ -920,7 +920,32 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      const next = [...before, clip];
+      let next: TimelineClip[] = [...before, clip];
+      // 源视频自带音轨：建一条「内嵌原声」音频片段。它参与导出，但默认不单独占一行，
+      // 波形直接画在画面片段下半部；点音画分离后才升为并排 A 轨。
+      if (asset.hasAudio === true) {
+        const audioIdentity = newClipIdentity('local-audio');
+        const audioClip: TimelineClip = {
+          ...audioIdentity,
+          projectId: projectId ?? '',
+          track: 'audio',
+          sourceShotId: asset.shotId ?? null,
+          sourceUrl: asset.url,
+          inPoint: 0,
+          outPoint: duration,
+          timelineStart: startAt,
+          lane,
+          speed: 1,
+          volume: 1,
+          text: `♪ 原声 · ${asset.name}`.slice(0, 120),
+          bindGroup: `auto:${clip.id}`,
+          locked: false,
+          sortOrder: before.length + 1,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        next = [...next, audioClip];
+      }
       commit(next, '拖入画面', before);
       return clip.id;
     },
@@ -941,8 +966,24 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       if (!docRef.current) return null;
       const src = before.find((c) => c.id === id);
       if (!src || src.track !== 'video' || !src.sourceUrl) return null;
-      const already = before.some((c) => c.track === 'audio' && sameOrigin(c, src, fpsRef.current));
-      if (already) return null;
+      const sameAudio = before.find((c) => c.track === 'audio' && sameOrigin(c, src, fpsRef.current));
+      if (sameAudio) {
+        // 内嵌原声升为独立并排 A 轨；已经分离过的保持原状。
+        if (!sameAudio.bindGroup?.startsWith('auto:')) return null;
+        const preferredLane = src.lane ?? 0;
+        const next = before.map((c) =>
+          c.id === sameAudio.id
+            ? {
+                ...c,
+                lane: preferredLane,
+                bindGroup: `av:${src.clientKey ?? src.id}`,
+                updatedAt: new Date().toISOString(),
+              }
+            : c,
+        );
+        commit(next, '音画分离', before);
+        return sameAudio.id;
+      }
       const occupied = before
         .filter((c) => c.track === 'audio')
         .map((c) => ({ lane: c.lane ?? 0, start: c.timelineStart, end: c.timelineStart + clipSpan(c) }));
@@ -987,9 +1028,16 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       if (!src || src.track !== 'video') return 0;
       const victims = before.filter((c) => c.track === 'audio' && sameOrigin(c, src, fpsRef.current));
       if (victims.length === 0) return 0;
-      const gone = new Set(victims.map((v) => v.id));
+      // 合并只把音频收回画面轨内显示，不删除音频：导出仍需要它来出声，
+      // 以后再次「音画分离」还能原地升回并排 A 轨。
+      const ids = new Set(victims.map((v) => v.id));
+      const group = `auto:${src.clientKey ?? src.id}`;
       commit(
-        before.filter((c) => !gone.has(c.id)),
+        before.map((c) =>
+          ids.has(c.id)
+            ? { ...c, bindGroup: group, updatedAt: new Date().toISOString() }
+            : c,
+        ),
         '音画合并',
         before,
       );
