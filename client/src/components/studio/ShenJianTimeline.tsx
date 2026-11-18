@@ -220,6 +220,7 @@ const ClipKeyframes = ({
   clip,
   span,
   pxPerSec,
+  rowHeight,
   onSeek,
   onChange,
 }: {
@@ -227,6 +228,7 @@ const ClipKeyframes = ({
   clip: TimelineClip;
   span: number;
   pxPerSec: number;
+  rowHeight: number;
   onSeek: (t: number) => void;
   onChange: (frames: NonNullable<TimelineClip['keyframes']>) => void;
 }) => {
@@ -276,6 +278,8 @@ const ClipKeyframes = ({
             className="kf-frame"
             style={{
               left: f.time * pxPerSec,
+              // 关键帧随轨道行高放大，但不超过片段宽度可容纳的尺寸。
+              height: Math.min(rowHeight - 22, Math.max(34, (span * pxPerSec) * (thumb.tileHeight / thumb.tileWidth))),
               aspectRatio: `${thumb.tileWidth} / ${thumb.tileHeight}`,
               backgroundImage: `url("${thumb.spriteUrl}")`,
               backgroundSize: `${thumb.columns * 100}% ${thumb.rows * 100}%`,
@@ -330,6 +334,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
   const [zoom, setZoom] = useState(44);
   const [laneH, setLaneH] = useState(64);
+  /** 每条轨道单独的显示高度；未设置的轨道跟随全局行高，关键帧轨道默认展开。 */
+  const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
   const [tool, setTool] = useState<'select' | 'razor'>('select');
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -447,10 +453,47 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
     return out;
   }, [clips, edl.tracks, edl.fps]);
 
+  // 关键帧轨道默认展开到能看清帧图的高度（原型 V2 为 200px、关键帧 150px）；
+  // 其他轨道跟随全局行高。用户按轨道头 −/＋ 后，单独值覆盖默认值。
+  const keyframeLanes = useMemo(
+    () => new Set(clips.filter((c) => c.track === 'video' && (c.keyframes?.length ?? 0) > 0).map((c) => c.lane ?? 0)),
+    [clips],
+  );
+  const rowH = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const r of rows) {
+      const base = r.track === 'video' && keyframeLanes.has(r.lane) ? Math.max(laneH, 168) : laneH;
+      map[r.key] = rowHeights[r.key] ?? base;
+    }
+    return map;
+  }, [rows, rowHeights, laneH, keyframeLanes]);
+  const rowTops = useMemo(() => {
+    let top = 0;
+    return rows.map((r) => {
+      const at = top;
+      top += rowH[r.key] ?? laneH;
+      return at;
+    });
+  }, [rows, rowH, laneH]);
+  const rowIndexAt = useCallback((y: number) => {
+    if (!rows.length) return -1;
+    const local = Math.max(0, y);
+    let hit = rows.length - 1;
+    for (let i = 0; i < rows.length; i += 1) {
+      if (local < (rowTops[i] ?? 0) + (rowH[rows[i].key] ?? laneH)) { hit = i; break; }
+    }
+    return hit;
+  }, [rows, rowTops, rowH, laneH]);
+  const nudgeRowHeight = (row: Row, delta: number) => {
+    const current = rowH[row.key] ?? laneH;
+    const next = Math.max(44, Math.min(260, current + delta));
+    setRowHeights((h) => ({ ...h, [row.key]: next }));
+  };
+
   // 只有「不挂在画面旁」的底部音频才需要基线；分离原声已经并排，不压基线。
   const unpairedAudioRows = rows.filter((r) => r.track === 'audio' && r.pairedVideoLane == null).length;
   const aboveRows = rows.length - unpairedAudioRows;
-  const baselineTop = 24 + aboveRows * laneH;
+  const baselineTop = 24 + rows.slice(0, Math.max(0, aboveRows)).reduce((sum, r) => sum + (rowH[r.key] ?? laneH), 0);
   const width = Math.max(900, total * zoom + 260);
   const step = zoom >= 60 ? 1 : zoom >= 30 ? 5 : zoom >= 16 ? 10 : 20;
   const ticks = useMemo(() => Array.from({ length: Math.ceil((total + step) / step) + 1 }, (_, i) => i * step), [total, step]);
@@ -497,7 +540,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       if (wrap) {
         const rect = wrap.getBoundingClientRect();
         const y = e.clientY - rect.top + wrap.scrollTop - 24;
-        const idx = Math.floor(y / laneH);
+        const idx = rowIndexAt(y);
         const row = rows[idx];
         if (row && row.track === drag.track && !row.locked) {
           targetRowKey = row.key;
@@ -518,7 +561,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       const d = Math.max(0.15 - drag.origSpan, Math.min(maxSpan - drag.origSpan, dx));
       setDrag({ ...drag, dx: d, span: Math.min(maxSpan, drag.origSpan + d) });
     }
-  }, [drag, lanesRef, laneH, maxLaneOf, rows, snapStart, zoom]);
+  }, [drag, lanesRef, laneH, maxLaneOf, rowIndexAt, rows, snapStart, zoom]);
 
   const finishDrag = useCallback(() => {
     if (!drag) return;
@@ -684,7 +727,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
               </div>
             ) : null}
             {rows.map((row) => (
-              <div className={`track-head${drag?.targetRowKey === row.key ? ' droptarget' : ''}`} key={row.key} style={{ height: laneH }}>
+              <div className={`track-head${drag?.targetRowKey === row.key ? ' droptarget' : ''}`} key={row.key} style={{ height: rowH[row.key] ?? laneH }}>
                 <span className="tname">{row.label}</span>
                 <span className="tlabel"><em>轨道 {row.no}</em><b>{row.name}</b></span>
                 <span className="locks">
@@ -715,6 +758,14 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                     onClick={() => edl.updateTrack(row.track, row.lane, { locked: !row.locked })}
                   >
                     <Lock />
+                  </button>
+                </span>
+                <span className="hctl" title={`轨道高度 ${Math.round(rowH[row.key] ?? laneH)}px`}>
+                  <button type="button" title="降低该轨道高度" onClick={(e) => { e.stopPropagation(); nudgeRowHeight(row, -24); }}>
+                    <Minus />
+                  </button>
+                  <button type="button" title="增高该轨道高度（关键帧图同步放大）" onClick={(e) => { e.stopPropagation(); nudgeRowHeight(row, 24); }}>
+                    <Plus />
                   </button>
                 </span>
               </div>
@@ -749,7 +800,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const rect = e.currentTarget.getBoundingClientRect();
             const at = Math.max(0, (e.clientX - rect.left + e.currentTarget.scrollLeft) / zoom);
             const y = e.clientY - rect.top + e.currentTarget.scrollTop - 24;
-            const idx = Math.max(0, Math.min(rows.length - 1, Math.floor(y / laneH)));
+            const idx = Math.max(0, rowIndexAt(y));
             const row = rows[idx];
             const want = trackOfDrag(payload);
             const sameType = row?.track === want;
@@ -765,7 +816,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
             const rect = e.currentTarget.getBoundingClientRect();
             const at = Math.max(0, (e.clientX - rect.left + e.currentTarget.scrollLeft) / zoom);
             const y = e.clientY - rect.top + e.currentTarget.scrollTop - 24;
-            const idx = Math.max(0, Math.min(rows.length - 1, Math.floor(y / laneH)));
+            const idx = Math.max(0, rowIndexAt(y));
             const row = rows[idx];
             const want = trackOfDrag(payload);
             const sameType = row?.track === want;
@@ -819,7 +870,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                 <div
                   key={row.key}
                   className={`lane ${row.track}${drag?.targetRowKey === row.key ? ' droptarget' : ''}`}
-                  style={{ height: laneH }}
+                  style={{ height: rowH[row.key] ?? laneH }}
                   onDoubleClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     const at = (e.clientX - rect.left + (lanesRef.current?.scrollLeft ?? 0)) / zoom;
@@ -839,12 +890,13 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         sameOrigin(a, clip, edl.fps)
                       ),
                     );
-                    const hasEmbeddedAudio = clip.track === 'video' && laneH >= 58 && !audioDetached;
+                    const rowHeightNow = rowH[row.key] ?? laneH;
+                    const hasEmbeddedAudio = clip.track === 'video' && rowHeightNow >= 58 && !audioDetached;
                     return (
                       <div
                         key={clip.id}
                         className={`clip2 ${clipColor(clip)}${isSelected ? ' selected' : ''}`}
-                        style={{ left: left * zoom, width: w, height: laneH - 10 }}
+                        style={{ left: left * zoom, width: w, height: rowHeightNow - 10 }}
                         title={`${clipLabel(clip)} · ${clip.timelineStart.toFixed(2)}s → ${(clip.timelineStart + clipSpan(clip)).toFixed(2)}s`}
                         onPointerDown={(e) => {
                           e.stopPropagation();
@@ -871,7 +923,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                           fallbackUrl={shot?.frameUrl}
                           span={span}
                           pxPerSec={zoom}
-                          rowHeight={laneH - 10}
+                          rowHeight={rowHeightNow - 10}
                           embeddedAudio={hasEmbeddedAudio}
                         />
                         {clip.track === 'audio' ? (
@@ -891,6 +943,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                             clip={clip}
                             span={span}
                             pxPerSec={zoom}
+                            rowHeight={rowHeightNow}
                             onSeek={setCurT}
                             onChange={(frames) => edl.setClipKeyframes(clip.id, frames)}
                           />
@@ -936,7 +989,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         <span>{fmtSec(curT)} / {fmtSec(total)} · {rows.length} 轨 · {clips.length} 片段</span>
         <span>·</span><span>缩放 <b>{zoom}</b> px/s</span>
         <span>·</span><span>行高</span>
-        <input className="tl-zoom" type="range" min="30" max="96" value={laneH} onChange={(e) => setLaneH(Number(e.target.value))} />
+        <input className="tl-zoom" type="range" min="30" max="96" value={laneH} onChange={(e) => { setLaneH(Number(e.target.value)); setRowHeights({}); }} />
         <div className="right"><span>Ctrl+滚轮缩放</span><span>·</span><span>拖动片段可跨轨叠加</span></div>
       </div>
 

@@ -479,7 +479,7 @@
 .sj2 .tl-tool:hover{background:#2b2b2b;color:#fff}
 .sj2 .tl-tool.on{background:#24302f;color:#42d8ca;box-shadow:0 0 0 1px #315b57 inset}
 .sj2 .tl-caption{color:#8b8b8b}
-.sj2 .tl-body{grid-template-columns:156px minmax(0,1fr)}
+.sj2 .tl-body{grid-template-columns:196px minmax(0,1fr)}
 .sj2 .track-heads{background:#1b1b1b;border-right-color:#2e2e2e}
 .sj2 .head-ruler{background:#1b1b1b;border-bottom-color:#303030;color:#8b8b8b}
 .sj2 .track-head{background:#1d1d1d;border-bottom-color:#2c2c2c}
@@ -580,3 +580,12 @@
 .sj2 .sj-dur-foot button{height:32px;padding:0 16px;border:1px solid #333b47;border-radius:6px;background:#1a2028;color:#c7d0da;font-size:12px;cursor:pointer}
 .sj2 .sj-dur-foot button.primary{border-color:#2ecfbe;background:#1b6f68;color:#fff}
 .sj2 .sj-dur-foot button.primary:hover{background:#23847c}
+
+/* ===== 每条轨道独立行高：剪映式 −/＋ 控制，关键帧图随行高放大 ===== */
+.sj2 .track-head{grid-template-columns:30px minmax(0,1fr) auto 16px}
+.sj2 .track-head .hctl{display:flex;flex-direction:column;gap:1px;justify-content:center;align-items:center;margin-left:-1px}
+.sj2 .track-head .hctl button{width:16px;height:15px;display:grid;place-items:center;border:1px solid #2a3039;border-radius:3px;background:#15181e;color:#8d96a3;padding:0;cursor:pointer}
+.sj2 .track-head .hctl button:hover{color:#fff;background:#252b34;border-color:#3e4653}
+.sj2 .track-head .hctl button svg{width:10px;height:10px}
+.sj2 .track-head .hctl button:active{background:#1c3a37;border-color:#37d6c2;color:#8effee}
+.sj2 .clip2 .kf-frame{max-width:calc(100% - 4px);min-height:34px}
