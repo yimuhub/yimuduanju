@@ -4,7 +4,7 @@
  * 轨道显隐/锁定、缩放与行高全部走 useEdlEditor 的已有方法。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Eye, EyeOff, Lock, Magnet, MapPin, Minus, Plus, Redo2, Trash2, Undo2, Volume2, VolumeX } from 'lucide-react';
+import { AlignJustify, ClipboardPaste, Copy, Eye, EyeOff, Layers, Lock, Magnet, MapPin, Minus, Plus, PlusCircle, Redo2, RotateCcw, Trash2, Type, Undo2, Volume2, VolumeX } from 'lucide-react';
 import { IconRazor, IconRippleDelete, IconSelect, IconSplit, IconTrimLeft, IconTrimRight } from './ShenJianIcons';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
@@ -301,6 +301,7 @@ const EmbeddedAudio = ({
 };
 
 export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSnapOn: (v: boolean) => void }) => {
+  const [addOpen, setAddOpen] = useState(false);
   const { data, projectId, curT, setCurT, setPreviewMode } = useStudio();
   const edl = useEdl();
 
@@ -670,6 +671,64 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         <button type="button" className="tl-tool" data-tip="重做 (Ctrl+Shift+Z)" onClick={() => edl.redo()}><Redo2 /></button>
         <button type="button" className={`tl-tool${snapOn ? ' on' : ''}`} data-tip="吸附开关 (N)" onClick={() => setSnapOn(!snapOn)}><Magnet /></button>
         <button type="button" className="tl-tool" data-tip="添加标记 (M)" onClick={() => edl.addMarker(curT)}><MapPin /></button>
+        <div className="sep" />
+        <button
+          type="button"
+          className="tl-tool"
+          data-tip="复制选中片段 (⌘C)"
+          disabled={!selected}
+          onClick={() => { if (selected) { edl.copySelection([selected.id]); toast.success('已复制'); } }}
+        >
+          <Copy />
+        </button>
+        <button
+          type="button"
+          className="tl-tool"
+          data-tip="粘贴到播放头 (⌘V)"
+          onClick={() => {
+            const created = edl.pasteAt(curT);
+            if (created.length) toast.success(`已粘贴 ${created.length} 个片段`);
+            else toast.info('剪贴板是空的，先复制一个片段');
+          }}
+        >
+          <ClipboardPaste />
+        </button>
+        <div className="tl-add">
+          <button type="button" className="tl-tool" data-tip="添加字幕 / 新增轨道" onClick={() => setAddOpen((v) => !v)}>
+            <PlusCircle />
+          </button>
+          {addOpen ? (
+            <div className="tl-add-menu" onPointerDown={(e) => e.stopPropagation()}>
+              <button type="button" onClick={() => { edl.addSubtitle(curT); setAddOpen(false); }}>
+                <Type size={12} /> 加字幕（播放头）
+              </button>
+              <div className="msep" />
+              <button type="button" onClick={() => { edl.addSubtitle(curT, Math.max(0, ...rows.filter((r) => r.track === 'subtitle').map((r) => r.lane)) + 1); setAddOpen(false); }}>
+                <Layers size={12} /> 新增字幕轨
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="tl-tool"
+          data-tip="画面轨首尾相接（排齐）"
+          onClick={() => { edl.packVideo(); toast.success('画面轨已排齐'); }}
+        >
+          <AlignJustify />
+        </button>
+        <button
+          type="button"
+          className="tl-tool"
+          data-tip="回到起点"
+          onClick={() => {
+            setCurT(0);
+            if (lanesRef.current) lanesRef.current.scrollLeft = 0;
+            setScrollLeft(0);
+          }}
+        >
+          <RotateCcw />
+        </button>
         <div className="tl-caption">A 选择 · B 剃刀 · E 分割 · Q 删前 · W 删后 · ⇧⌘S 音画分离</div>
         <div className="grow">
           <span className="tl-newhint">拖到空白自动建轨</span>

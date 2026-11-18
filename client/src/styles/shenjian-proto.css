@@ -159,6 +159,13 @@
 .sj2 .tl-tool .dotmark{position:absolute;right:3px;bottom:3px;width:4px;height:4px;border-radius:50%;background:var(--warn);display:none}
 .sj2 .tl-tool.on .dotmark{display:block}
 .sj2 .tl-caption{font-size:10px;color:#767d88;margin-left:4px}
+/* 旧版时间线同款：添加菜单下拉 */
+.sj2 .tl-add{position:relative;display:flex}
+.sj2 .tl-add-menu{position:absolute;top:30px;left:0;z-index:40;min-width:148px;background:#1c1f26;border:1px solid #2e323b;border-radius:8px;padding:4px;box-shadow:0 8px 24px #000a;display:flex;flex-direction:column}
+.sj2 .tl-add-menu button{display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:5px;font-size:11px;color:#c4cad4;text-align:left}
+.sj2 .tl-add-menu button:hover{background:#262a33;color:#fff}
+.sj2 .tl-add-menu .msep{height:1px;background:#2b2e36;margin:3px 4px}
+.sj2 .tl-tool:disabled{opacity:.35;cursor:default}
 .sj2 .tl-body{flex:1;display:grid;grid-template-columns:160px minmax(0,1fr);min-height:0;position:relative}
 .sj2 .track-heads{overflow:hidden;background:#131418;border-right:1px solid #292c33;position:relative;z-index:5}
 .sj2 .heads-inner{will-change:transform}
