@@ -404,8 +404,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       // 音画分离后的原声紧贴这条画面轨，不再沉到所有轨道最底部。
       for (const a of audioRows) if (a.pairedVideoLane === lane) pushAudio(a);
     };
-    // 上方：叠加画面 V2/V3… → 字幕 T1/T2… → 主画面 V1；分离原声跟随各自画面轨。
-    for (const lane of overlayVideoLanes) pushVideo(lane);
+    // 固定图层顺序：字幕层最上 → 视频层中间 → 音频层最下。
     for (const lane of subLanesSorted) {
       const meta = metaOf('subtitle', lane);
       out.push({
@@ -420,6 +419,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
         locked: meta?.locked === true,
       });
     }
+    for (const lane of overlayVideoLanes) pushVideo(lane);
     if (hasMainVideo) pushVideo(0);
     // 没有画面来源的音频（配乐/音效/独立导入）仍按底部音频区排列。
     for (const a of audioRows) if (a.pairedVideoLane == null) pushAudio(a);
@@ -910,7 +910,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
               ))}
             </div>
             <div className="baseline" style={{ top: baselineTop }}>
-              <span>时间轴基线 · 画面/字幕向上 · 音频向下</span>
+              <span>时间轴基线 · 字幕最上 · 画面居中 · 音频最下</span>
             </div>
             <div className="lanes">
               {rows.length === 0 ? (
