@@ -42,6 +42,8 @@ type DragState = {
   track: TimelineTrackKind;
   dx: number;
   span: number;
+  pointerX?: number;
+  pointerY?: number;
   /** 右边缘最多能拉到的时长（源媒体完整时长 - 入点）/ 速度 */
   maxSpan?: number;
 };
@@ -502,9 +504,19 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       let targetRowKey = drag.targetRowKey;
       let lane = drag.lane;
       const wrap = lanesRef.current;
+      let pointerY: number | undefined;
       if (wrap) {
         const rect = wrap.getBoundingClientRect();
+        // 靠近边缘自动滚动：指针停住也能持续把后面的轨道/时间带进来
+        const edge = 56;
+        let scrolled = false;
+        if (e.clientX > rect.right - edge) { wrap.scrollLeft += 18; scrolled = true; }
+        else if (e.clientX < rect.left + edge) { wrap.scrollLeft -= 18; scrolled = true; }
+        if (e.clientY > rect.bottom - 40) { wrap.scrollTop += 14; scrolled = true; }
+        else if (e.clientY < rect.top + 40) { wrap.scrollTop -= 14; scrolled = true; }
+        if (scrolled) { setScrollLeft(wrap.scrollLeft); setScrollTop(wrap.scrollTop); }
         const y = e.clientY - rect.top + wrap.scrollTop - 24;
+        pointerY = y;
         const idx = rowIndexAt(y);
         const row = rows[idx];
         if (row && row.track === drag.track && !row.locked) {
@@ -516,7 +528,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
           lane = maxLaneOf(drag.track) + 1;
         }
       }
-      setDrag({ ...drag, dx: snapped - drag.origStart, span: drag.origSpan, lane, targetRowKey, created: !targetRowKey });
+      setDrag({ ...drag, dx: snapped - drag.origStart, span: drag.origSpan, lane, targetRowKey, created: !targetRowKey, pointerX: e.clientX, pointerY });
     } else if (drag.kind === 'trim-l') {
       const d = Math.max(-drag.origSpan + 0.15, Math.min(drag.origSpan - 0.15, dx));
       setDrag({ ...drag, dx: d, span: drag.origSpan - d, origStart: drag.origStart + d });
@@ -631,12 +643,16 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
   const rowClips = (row: Row) =>
     clips
-      .filter((c) => c.track === row.track && (c.lane ?? 0) === row.lane)
+      .filter((c) => {
+        // 拖动中的素材实时跟随指针所在的轨道；其余素材按原轨道归属。
+        if (drag?.kind === 'move' && drag.id === c.id) return drag.targetRowKey === row.key;
+        return c.track === row.track && (c.lane ?? 0) === row.lane;
+      })
       // auto: 内嵌原声不落 A 行；同 lane 被分开后自动让位，避免和独立音频重叠。
       .filter((c) => !(row.track === 'audio' && c.bindGroup?.startsWith('auto:')))
       .sort((a, b) => a.timelineStart - b.timelineStart);
 
-  const displayLeft = (c: TimelineClip) => (drag?.id === c.id && drag.kind !== 'trim-r' ? (drag.origStart) : c.timelineStart);
+  const displayLeft = (c: TimelineClip) => (drag?.id === c.id && drag.kind !== 'trim-r' ? (drag.kind === 'move' ? drag.origStart + drag.dx : drag.origStart) : c.timelineStart);
   const displaySpan = (c: TimelineClip) => (drag?.id === c.id ? drag.span : clipSpan(c));
 
   return (
@@ -870,6 +886,19 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                 {((drag?.lane ?? dragOver?.lane ?? 0) + 1)}
               </div>
             ) : null}
+            {drag?.kind === 'move' && !drag.targetRowKey ? (
+              <div
+                className={`drag-ghost ${clipColor(clips.find((c) => c.id === drag.id) ?? ({} as TimelineClip))}`}
+                style={{
+                  left: Math.max(0, (drag.origStart + drag.dx) * zoom),
+                  top: 24 + Math.max(0, (drag.pointerY ?? 0)) - Math.max(18, (laneH - 10) / 2),
+                  width: Math.max(10, drag.origSpan * zoom),
+                  height: Math.max(28, laneH - 10),
+                }}
+              >
+                <span>{clipLabel(clips.find((c) => c.id === drag.id) ?? ({} as TimelineClip))}</span>
+              </div>
+            ) : null}
             <div
               className="ruler"
               onClick={(e) => seekFromEvent(e, e.currentTarget.parentElement?.parentElement as HTMLElement)}
@@ -918,7 +947,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                     return (
                       <div
                         key={clip.id}
-                        className={`clip2 ${clipColor(clip)}${isSelected ? ' selected' : ''}`}
+                        className={`clip2 ${clipColor(clip)}${isSelected ? ' selected' : ''}${drag?.id === clip.id && drag.kind === 'move' ? ' dragging' : ''}`}
                         style={{ left: left * zoom, width: w, height: rowHeightNow - 10 }}
                         title={`${clipLabel(clip)} · ${clip.timelineStart.toFixed(2)}s → ${(clip.timelineStart + clipSpan(clip)).toFixed(2)}s`}
                         onPointerDown={(e) => {
@@ -927,7 +956,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                           setPreviewMode('timeline');
                           if (row.locked || clip.locked) return;
                           const start = clip.timelineStart;
-                          setDrag({ id: clip.id, kind: 'move', startX: e.clientX, startY: e.clientY, origStart: start, origSpan: span, lane: clip.lane ?? 0, targetRowKey: row.key, track: clip.track, dx: 0, span });
+                          setDrag({ id: clip.id, kind: 'move', startX: e.clientX, startY: e.clientY, origStart: start, origSpan: span, lane: clip.lane ?? 0, targetRowKey: row.key, track: clip.track, dx: 0, span, pointerX: e.clientX });
                         }}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
