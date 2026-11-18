@@ -542,3 +542,9 @@
 .sj2 .kf-badge{position:absolute;left:4px;bottom:3px;font-size:9px;font-weight:600;color:#fff;background:#000000b3;padding:1px 4px;border-radius:3px}
 .sj2 .kf-meta{display:flex;align-items:center;gap:6px;padding:3px 6px;font-size:9px;color:#9aa3af}
 .sj2 .kf-meta i{margin-left:auto;font-style:normal;color:#ff8b8b;cursor:pointer;font-size:11px}
+/* 时间线上的画面关键帧：直接贴该帧画面 + 红色定位针（看得清内容） */
+.sj2 .clip2 .kf-frame{position:absolute;top:10px;height:calc(100% - 14px);transform:translateX(-50%);border:2px solid #ff4d4f;border-radius:2px;background-repeat:no-repeat;z-index:5;box-shadow:0 0 6px #000c;cursor:ew-resize;overflow:visible}
+.sj2 .clip2 .kf-frame:hover{border-color:#ffd166;box-shadow:0 0 8px #ff4d4f99}
+.sj2 .clip2 .kf-pin{position:absolute;left:50%;top:-10px;width:1px;height:10px;background:#ff4d4f;pointer-events:none}
+.sj2 .clip2 .kf-pin:after{content:"";position:absolute;left:-2px;top:-3px;width:5px;height:5px;border-radius:50%;background:#ff4d4f;box-shadow:0 0 4px #ff4d4f}
+.sj2 .clip2 .kf-time{position:absolute;left:1px;bottom:1px;font-size:8px;line-height:1;padding:1px 3px;border-radius:2px;background:#b3261eb3;color:#fff;pointer-events:none}

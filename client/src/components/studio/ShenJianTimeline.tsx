@@ -216,12 +216,14 @@ const GainLine = ({
  * 点击跳到该关键帧；按住左右拖可直接改关键帧时间，落库走 setClipKeyframes。
  */
 const ClipKeyframes = ({
+  projectId,
   clip,
   span,
   pxPerSec,
   onSeek,
   onChange,
 }: {
+  projectId: string;
   clip: TimelineClip;
   span: number;
   pxPerSec: number;
@@ -229,42 +231,64 @@ const ClipKeyframes = ({
   onChange: (frames: NonNullable<TimelineClip['keyframes']>) => void;
 }) => {
   const frames = clip.keyframes ?? [];
+  const thumb = useThumbnails(projectId, clip.sourceUrl);
   if (!frames.length) return null;
+  const bind = (i: number, f: NonNullable<TimelineClip['keyframes']>[number]) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onSeek(clip.timelineStart + f.time);
+      const startX = e.clientX;
+      const orig = f.time;
+      const move = (ev: PointerEvent) => {
+        const dt = (ev.clientX - startX) / Math.max(1, pxPerSec);
+        const next = Math.max(0, Math.min(span, orig + dt));
+        const list = [...frames];
+        list[i] = { ...list[i], time: Math.round(next * 1000) / 1000 };
+        onChange(list);
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    },
+  });
   return (
     <>
-      {frames.map((f, i) => (
-        <b
-          key={`${f.time}-${i}`}
-          className="kfd"
-          style={{ left: Math.max(3, Math.min(span * pxPerSec - 9, f.time * pxPerSec - 3.5)) }}
-          title={`关键帧 ${f.time.toFixed(2)}s · 缩放 ${Math.round((f.scale ?? 1) * 100)}%（左右拖动改时间）`}
-          onPointerDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onSeek(clip.timelineStart + f.time);
-            const startX = e.clientX;
-            const orig = f.time;
-            let moved = false;
-            const move = (ev: PointerEvent) => {
-              const dt = (ev.clientX - startX) / Math.max(1, pxPerSec);
-              if (Math.abs(ev.clientX - startX) > 2) moved = true;
-              const next = Math.max(0, Math.min(span, orig + dt));
-              const list = [...frames];
-              list[i] = { ...list[i], time: Math.round(next * 1000) / 1000 };
-              onChange(list);
-            };
-            const up = () => {
-              void moved;
-              window.removeEventListener('pointermove', move);
-              window.removeEventListener('pointerup', up);
-              window.removeEventListener('pointercancel', up);
-            };
-            window.addEventListener('pointermove', move);
-            window.addEventListener('pointerup', up);
-            window.addEventListener('pointercancel', up);
-          }}
-        />
-      ))}
+      {frames.map((f, i) => {
+        const src = clip.reverse
+          ? Math.max(clip.inPoint, clip.outPoint - f.time * (clip.speed ?? 1))
+          : clip.inPoint + f.time * (clip.speed ?? 1);
+        const tile = thumb && thumb.tileWidth > 0 && thumb.tileHeight > 0;
+        if (!tile) {
+          return <b key={`${f.time}-${i}`} className="kfd" style={{ left: Math.max(3, Math.min(span * pxPerSec - 9, f.time * pxPerSec - 3.5)) }} title={`关键帧 ${f.time.toFixed(2)}s`} {...bind(i, f)} />;
+        }
+        const idx = Math.max(0, Math.min(thumb.count - 1, Math.floor(src / thumb.interval)));
+        const col = idx % thumb.columns;
+        const row = Math.floor(idx / thumb.columns);
+        return (
+          <div
+            key={`${f.time}-${i}`}
+            className="kf-frame"
+            style={{
+              left: f.time * pxPerSec,
+              aspectRatio: `${thumb.tileWidth} / ${thumb.tileHeight}`,
+              backgroundImage: `url("${thumb.spriteUrl}")`,
+              backgroundSize: `${thumb.columns * 100}% ${thumb.rows * 100}%`,
+              backgroundPosition: `${(col / Math.max(1, thumb.columns - 1)) * 100}% ${(row / Math.max(1, thumb.rows - 1)) * 100}%`,
+            }}
+            title={`画面关键帧 ${f.time.toFixed(2)}s · 缩放 ${Math.round((f.scale ?? 1) * 100)}%（点击定位，左右拖改时间）`}
+            {...bind(i, f)}
+          >
+            <i className="kf-pin" />
+            <b className="kf-time">{f.time.toFixed(1)}s</b>
+          </div>
+        );
+      })}
     </>
   );
 };
@@ -863,6 +887,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
                         {clip.transition && clip.transition.type !== 'none' ? <span className="xf">{clip.transition.type === 'crossfade' ? '叠' : '淡'}</span> : null}
                         {clip.track === 'video' && clip.keyframes?.length ? (
                           <ClipKeyframes
+                            projectId={projectId}
                             clip={clip}
                             span={span}
                             pxPerSec={zoom}

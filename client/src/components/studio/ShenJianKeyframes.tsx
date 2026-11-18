@@ -54,19 +54,27 @@ export const ShenJianKeyframes = ({
     toast.success(`已从当前画面抽取关键帧：${localT.toFixed(2)}s`);
   };
 
-  const cell = (f: TimelineVideoKeyframe) => {
-    if (!thumb || thumb.tileWidth <= 0) return null;
+  /**
+   * 单个关键帧的帧图：用 sprite 百分比定位，元素比例严格等于单格比例，
+   * 这样竖屏素材不会被裁成一条，也不会串到相邻帧（上一版看不清的根因）。
+   */
+  const cell = (f: TimelineVideoKeyframe): { bg: CSSProperties; w: number; h: number } | null => {
+    if (!thumb || thumb.tileWidth <= 0 || thumb.tileHeight <= 0) return null;
     const t = frameOf(clip, f);
     const idx = Math.max(0, Math.min(thumb.count - 1, Math.floor(t / thumb.interval)));
     const col = idx % thumb.columns;
     const row = Math.floor(idx / thumb.columns);
+    const w = 66;
+    const h = Math.round(w * (thumb.tileHeight / thumb.tileWidth));
     return {
-      backgroundImage: `url("${thumb.spriteUrl}")`,
-      backgroundSize: `${thumb.columns * thumb.tileWidth}px ${thumb.rows * thumb.tileHeight}px`,
-      backgroundPosition: `-${col * thumb.tileWidth}px -${row * thumb.tileHeight}px`,
-      width: thumb.tileWidth,
-      height: thumb.tileHeight,
-    } as CSSProperties;
+      w,
+      h,
+      bg: {
+        backgroundImage: `url("${thumb.spriteUrl}")`,
+        backgroundSize: `${thumb.columns * 100}% ${thumb.rows * 100}%`,
+        backgroundPosition: `${(col / Math.max(1, thumb.columns - 1)) * 100}% ${(row / Math.max(1, thumb.rows - 1)) * 100}%`,
+      },
+    };
   };
 
   return (
@@ -90,7 +98,7 @@ export const ShenJianKeyframes = ({
       ) : (
         <div className="kf-strip">
           {frames.map((f) => {
-            const style = cell(f);
+            const shot = cell(f);
             const tr = sampleVideoTransform([f], 0);
             const on = Math.abs(f.time - localT) < 0.5 / Math.max(1, edl.fps) + 0.05;
             return (
@@ -100,8 +108,11 @@ export const ShenJianKeyframes = ({
                 title={`${f.time.toFixed(2)}s · 缩放 ${Math.round((tr.scale ?? 1) * 100)}% · X ${Math.round((f.x ?? 0) * 100)}% · Y ${Math.round((f.y ?? 0) * 100)}%`}
                 onClick={() => onSeek(clip.timelineStart + f.time)}
               >
-                <div className="kf-shot" style={style ?? undefined}>
-                  {!style ? <span className="kf-shot-fallback">无帧</span> : null}
+                <div
+                  className="kf-shot"
+                  style={shot ? { ...shot.bg, width: shot.w, height: shot.h } : { width: 66, height: 88 }}
+                >
+                  {!shot ? <span className="kf-shot-fallback">无帧</span> : null}
                   <b className="kf-badge">{f.time.toFixed(2)}s</b>
                 </div>
                 <div className="kf-meta">
