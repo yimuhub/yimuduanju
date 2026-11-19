@@ -1,5 +1,6 @@
 import type { PipelineReadiness } from './pipeline-readiness';
 import type { TimelineVideoKeyframe } from './timeline-keyframes';
+import type { TimelineClipVisual } from './timeline-visual';
 
 export type ProjectStatus =
   | 'draft'
@@ -1851,6 +1852,8 @@ export interface TimelineClip {
   keyframes?: TimelineVideoKeyframe[] | null;
   /** 倒放：视频画面与独立音频轨都反向播放 */
   reverse?: boolean | null;
+  /** 视觉增强：抠像 / 蒙版 / 美容 / 手动跟踪 / AI 风格；预览与导出共用 */
+  visual?: TimelineClipVisual | null;
   /** 真复合片段：children 非空时本片段是嵌套序列，预览/导出按子片段展开 */
   compound?: { children: TimelineCompoundChild[] } | null;
   /**

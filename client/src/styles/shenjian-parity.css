@@ -718,3 +718,48 @@
 .ptl-menu-portal button svg { width: 15px; height: 15px; color: #8d8d98; }
 .ptl-menu-portal button:hover svg { color: #2ee6cf; }
 .ptl-menu-portal button em { color: #6f6f79; font-size: 8.5px; font-style: normal; }
+.sj2.parity .ptl-zoom .ptl-fit { width: auto; padding: 0 7px; font-size: 9px; color: #b9b9c2; background: #24242a; }
+.ptl-menu-portal {
+  position: fixed; z-index: 99999; width: 216px; padding: 6px;
+  background: #1b1b20; border: 1px solid #34343d; border-radius: 9px;
+  box-shadow: 0 18px 48px #000c, inset 0 1px 0 #ffffff08;
+}
+.ptl-menu-title { padding: 3px 8px 6px; color: #74747e; font-size: 9px; letter-spacing: .4px; }
+.ptl-menu-portal button {
+  width: 100%; height: 30px; display: grid; grid-template-columns: 18px 1fr auto;
+  align-items: center; gap: 7px; padding: 0 8px; border-radius: 5px;
+  color: #d5d5dc; font-size: 10.5px; text-align: left;
+}
+.ptl-menu-portal button:hover { background: #292930; color: #fff; }
+.ptl-menu-portal button svg { width: 15px; height: 15px; color: #8d8d98; }
+.ptl-menu-portal button:hover svg { color: #2ee6cf; }
+.ptl-menu-portal button em { color: #6f6f79; font-size: 8.5px; font-style: normal; }
+
+/* 画面增强：媒体效果层与实时抠像画布 */
+.sj2.parity .media-effect { position: absolute; inset: 0; overflow: hidden; }
+.sj2.parity .media-effect .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.sj2.parity .media-effect .chroma-canvas { background: transparent; }
+
+/* 检查器：已接入的抠像 / 蒙版 / 美容 / 跟踪 / AI */
+.parity-visual-panel { display: flex; flex-direction: column; gap: 10px; }
+.parity-visual-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.parity-visual-head h4 { margin: 0 0 4px; }
+.parity-enable {
+  height: 26px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 6px; color: #a8a8b2; background: #232329; border: 1px solid #34343d; font-size: 10px; white-space: nowrap;
+}
+.parity-enable.on { color: #2ee6cf; border-color: #2ee6cf66; background: #12302d; }
+.parity-visual-color { display: flex; align-items: center; gap: 8px; color: #9b9ba5; font-size: 10px; }
+.parity-visual-color input[type=color] { width: 34px; height: 24px; padding: 0; border: 1px solid #3a3a43; border-radius: 4px; background: #202027; }
+.parity-swatches { display: flex; gap: 5px; }
+.parity-swatches button { width: 20px; height: 20px; border-radius: 50%; border: 1px solid #ffffff22; }
+.parity-swatches button.on { box-shadow: 0 0 0 2px #2ee6cf; }
+.parity-shape-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.parity-shape-row button { height: 26px; border-radius: 5px; background: #232329; color: #b8b8c2; font-size: 10px; border: 1px solid #34343d; }
+.parity-shape-row button.on { color: #2ee6cf; border-color: #2ee6cf66; background: #12302d; }
+.parity-ai-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.parity-ai-grid button { min-height: 50px; padding: 7px; display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 2px 5px; text-align: left; border-radius: 6px; background: #222228; border: 1px solid #33333c; color: #c7c7d0; }
+.parity-ai-grid button span { font-size: 10.5px; }
+.parity-ai-grid button small { grid-column: 2; color: #777782; font-size: 8.5px; }
+.parity-ai-grid button.on { border-color: #2ee6cf66; background: #12302d; color: #eafffb; }
+.parity-visual-foot { margin-top: auto; padding-top: 10px; }

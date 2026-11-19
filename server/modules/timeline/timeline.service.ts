@@ -30,6 +30,7 @@ import { projectExportFileName } from '@shared/file-name';
 import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
 import { scanTimelineIssues } from '@shared/timeline-issues';
 import { buildZoompanExpressions, normalizeVideoKeyframes } from '@shared/timeline-keyframes';
+import { mergeTrackingKeyframes } from '@shared/timeline-visual';
 import { expandCompounds } from '@shared/timeline-compound';
 import type {
   Asset,
@@ -80,6 +81,8 @@ function diffChangedClientKeys(prev: SaveTimelineClipDto[], next: SaveTimelineCl
       c.transition?.type ?? '',
       c.transition?.duration ?? 0,
       JSON.stringify(c.textStyle ?? null),
+      JSON.stringify(c.visual ?? null),
+      JSON.stringify(c.keyframes ?? null),
     ].join('|');
   };
   const prevMap = new Map(prev.map((c) => [c.clientKey ?? '', norm(c)]));
@@ -332,6 +335,7 @@ export class TimelineService {
       transition: (row.transition as TimelineClip['transition']) ?? null,
       text: row.text,
       keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
+      visual: (row.visual as TimelineClip['visual']) ?? null,
       reverse: Boolean(row.reverse),
       compound: (row.compound as TimelineClip['compound']) ?? null,
       transcript: (row.transcript as TimelineClip['transcript']) ?? null,
@@ -432,6 +436,7 @@ export class TimelineService {
           transition: c.transition ?? null,
           text: c.text ?? null,
           keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
+          visual: c.visual ?? null,
           reverse: Boolean(c.reverse),
           compound: c.compound?.children?.length ? c.compound : null,
           transcript: c.transcript ?? null,
@@ -1094,6 +1099,46 @@ export class TimelineService {
       else if (g.filter === 'sharp') out.push('unsharp=5:5:1.0:5:5:0.0');
       return out;
     };
+    /** 片段视觉增强：透明度 / 抠像 / 蒙版 / 美容 / AI 风格；与预览同一份 visual 数据 */
+    const visualFilters = (c: TimelineClip): string[] => {
+      const v = c.visual;
+      if (!v) return [];
+      const out: string[] = [];
+      const opacity = Math.max(0, Math.min(1, v.opacity ?? 1));
+      if (opacity < 0.999) out.push('format=rgba', `colorchannelmixer=aa=${opacity.toFixed(3)}`);
+      if (v.keying?.enabled) {
+        const color = (v.keying.color || '#00ff00').replace('#', '0x');
+        out.push(`chromakey=${color}:${Math.max(0.01, v.keying.similarity).toFixed(3)}:${Math.max(0, v.keying.smoothness).toFixed(3)}`, `despill=type=green:mix=${Math.max(0, Math.min(1, v.keying.spill)).toFixed(3)}`);
+      }
+      if (v.beauty?.enabled) {
+        const smooth = Math.max(0, Math.min(100, v.beauty.smooth)) / 100;
+        const whiten = Math.max(0, Math.min(100, v.beauty.whiten)) / 100;
+        const rosy = Math.max(0, Math.min(100, v.beauty.rosy)) / 100;
+        if (smooth > 0.01) out.push(`gblur=sigma=${(smooth * 2.2).toFixed(2)}`);
+        out.push(`eq=brightness=${(whiten * 0.12).toFixed(3)}:saturation=${(1 + rosy * 0.18).toFixed(3)}`);
+      }
+      const ai = v.ai;
+      if (ai && ai.preset !== 'none') {
+        const s = Math.max(0.1, Math.min(1, (ai.strength ?? 55) / 100));
+        if (ai.preset === 'anime') out.push(`eq=saturation=${(1 + 0.7 * s).toFixed(3)}:contrast=${(1 + 0.25 * s).toFixed(3)}`, `unsharp=5:5:${(0.8 * s).toFixed(2)}:5:5:0`);
+        else if (ai.preset === 'sketch') out.push(`format=gray,eq=contrast=${(1 + 0.8 * s).toFixed(3)}`, `unsharp=5:5:${(1.2 * s).toFixed(2)}:5:5:0`);
+        else if (ai.preset === 'oil') out.push(`gblur=sigma=${(0.8 * s).toFixed(2)}`, `eq=saturation=${(1 + 0.45 * s).toFixed(3)}:contrast=${(1 + 0.35 * s).toFixed(3)}`);
+        else if (ai.preset === 'neon') out.push(`eq=saturation=${(1 + 1.2 * s).toFixed(3)}`, `hue=h=${(-18 * s).toFixed(1)}`);
+        else if (ai.preset === 'mono') out.push(`format=gray,eq=contrast=${(1 + 0.3 * s).toFixed(3)}`);
+        else if (ai.preset === 'retro') out.push(`colorbalance=rs=${(0.18 * s).toFixed(2)}:gs=${(0.06 * s).toFixed(2)}:bs=${(-0.12 * s).toFixed(2)}`, `eq=saturation=${(1 - 0.25 * s).toFixed(3)}:contrast=${(1 - 0.1 * s).toFixed(3)}`);
+        else if (ai.preset === 'clean') out.push(`eq=brightness=${(0.08 * s).toFixed(3)}:contrast=${(1 + 0.2 * s).toFixed(3)}`, `unsharp=5:5:${(1.4 * s).toFixed(2)}:5:5:0`);
+      }
+      const mask = v.mask;
+      if (mask?.enabled && mask.shape === 'rect') {
+        const w = Math.max(0.05, Math.min(1, mask.w));
+        const h = Math.max(0.05, Math.min(1, mask.h));
+        const x = Math.max(0, Math.min(1 - w, mask.x - w / 2));
+        const y = Math.max(0, Math.min(1 - h, mask.y - h / 2));
+        out.push(`crop=iw*${w.toFixed(3)}:ih*${h.toFixed(3)}:iw*${x.toFixed(3)}:ih*${y.toFixed(3)}`);
+      }
+      if (out.some((f) => f.startsWith('format='))) out.push('format=yuv420p');
+      return out;
+    };
     // 画面不该被「静音」整轨摘掉：muted 只作用于声音；画面只受 enabled / exportEnabled 控制。
     // 否则点了视频轨静音，导出会连画面一起消失，这是明确的语义错误。
     const allVideo = doc.clips
@@ -1198,10 +1243,11 @@ export class TimelineService {
             : [];
         const seg = join(work, `v_seg_${String(i).padStart(3, '0')}.mp4`);
         cleanup.push(seg);
-        const kf = buildZoompanExpressions(clip.keyframes, fps, visibleSpan);
+        const kf = buildZoompanExpressions(mergeTrackingKeyframes(clip.keyframes, clip.visual?.tracking), fps, visibleSpan);
         const vf = [
           ...(clip.reverse ? ['reverse'] : []),
           ...gradeFilters(clip),
+          ...visualFilters(clip),
           `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
           `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`,
           'setsar=1',

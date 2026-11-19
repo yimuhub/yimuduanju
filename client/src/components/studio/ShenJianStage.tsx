@@ -9,6 +9,7 @@ import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clipSpan } from './model';
 import { sampleVideoTransform } from '@shared/timeline-keyframes';
+import { aiFilter, beautyStyle, maskStyle, sampleTracking } from '@shared/timeline-visual';
 import type { TimelineClip, TimelineTextStyle } from '@shared/api.interface';
 
 type Ratio = '9:16' | '16:9' | '1:1' | '4:3';
@@ -48,6 +49,7 @@ export const ShenJianStage = ({
   } = useStudio();
   const edl = useEdl();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const chromaRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
   // >0dB（volume>1）需要 WebAudio GainNode；普通音量直接走元素 volume，避免破坏跨域媒体。
@@ -116,6 +118,17 @@ export const ShenJianStage = ({
   const isStill = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#]|$)/i.test(url);
   const transform = sampleVideoTransform(active?.keyframes, active ? curT - active.timelineStart : 0);
   const local = active ? Math.max(0, curT - active.timelineStart) : 0;
+  const visual = active?.visual ?? null;
+  const tracking = sampleTracking(visual?.tracking, local);
+  const beauty = beautyStyle(visual?.beauty);
+  const composited = {
+    ...transform,
+    x: transform.x + tracking.x,
+    y: transform.y + tracking.y,
+    scale: transform.scale * tracking.scale,
+  };
+  const mediaMask = maskStyle(visual?.mask);
+  const keying = visual?.keying?.enabled ? visual.keying : null;
   const sourceTime = active ? (active.reverse ? Math.max(active.inPoint, active.outPoint - local * active.speed) : active.inPoint + local * active.speed) : 0;
 
   useEffect(() => setVideoBroken(false), [url]);
@@ -209,9 +222,57 @@ export const ShenJianStage = ({
     effectiveGrade.brightness !== 100 ? `brightness(${effectiveGrade.brightness}%)` : '',
     effectiveGrade.contrast !== 100 ? `contrast(${effectiveGrade.contrast}%)` : '',
     effectiveGrade.saturation !== 100 ? `saturate(${effectiveGrade.saturation}%)` : '',
+    aiFilter(visual?.ai),
+    beauty.filter,
   ]
     .filter(Boolean)
     .join(' ');
+
+  // 实时色度键：按像素距离删背景；导出用 ffmpeg chromakey，参数同源。
+  useEffect(() => {
+    const v = videoRef.current;
+    const c = chromaRef.current;
+    if (!v || !c || !keying) return;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    const hex = keying.color.replace('#', '');
+    const kr = parseInt(hex.slice(0, 2), 16);
+    const kg = parseInt(hex.slice(2, 4), 16);
+    const kb = parseInt(hex.slice(4, 6), 16);
+    const threshold = Math.max(10, keying.similarity * 441);
+    const soft = Math.max(1, keying.smoothness * 180 + 1);
+    let raf = 0;
+    let last = 0;
+    const draw = (now: number) => {
+      raf = requestAnimationFrame(draw);
+      if (now - last < 33) return;
+      last = now;
+      if (!v.videoWidth || v.paused || v.seeking) return;
+      const scale = Math.min(1, 720 / v.videoWidth);
+      const w = Math.max(1, Math.round(v.videoWidth * scale));
+      const h = Math.max(1, Math.round(v.videoHeight * scale));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      ctx.drawImage(v, 0, 0, w, h);
+      const frame = ctx.getImageData(0, 0, w, h);
+      const d = frame.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const dr = d[i] - kr;
+        const dg = d[i + 1] - kg;
+        const db = d[i + 2] - kb;
+        const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+        if (dist < threshold) d[i + 3] = 0;
+        else if (dist < threshold + soft) d[i + 3] = Math.round(((dist - threshold) / soft) * 255);
+        else if (keying.spill > 0) {
+          const spill = keying.spill * 0.6;
+          const rb = (d[i] + d[i + 2]) / 2;
+          if (d[i + 1] > rb) d[i + 1] = Math.round(d[i + 1] * (1 - spill) + rb * spill);
+        }
+      }
+      ctx.putImageData(frame, 0, 0);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [keying, active?.id]);
 
   const hexRgba = (hex: string | undefined, alpha: number) => {
     const h = (hex || '#000000').replace('#', '');
@@ -326,20 +387,25 @@ export const ShenJianStage = ({
             aria-label="预览画面，点击播放或暂停"
           >
             {url && !videoBroken ? (
-              isStill ? (
-                <img className="bg" src={url} alt="" style={{ filter, transform: `scale(${transform.scale}) translate(${transform.x * 100}%, ${transform.y * 100}%) rotate(${transform.rotate}deg)` }} />
-              ) : (
-                <video
-                  key={active?.id || url}
-                  ref={videoRef}
-                  className="bg"
-                  src={url}
-                  playsInline
-                  muted={previewMuted || activeVideoMuted || activeAudio.length > 0}
-                  onError={() => setVideoBroken(true)}
-                  style={{ filter, transform: `scale(${transform.scale}) translate(${transform.x * 100}%, ${transform.y * 100}%) rotate(${transform.rotate}deg)` }}
-                />
-              )
+              <div className="media-effect" style={{ ...mediaMask, opacity: visual?.opacity ?? 1 }}>
+                {isStill ? (
+                  <img className="bg" src={url} alt="" style={{ filter, transform: `scale(${composited.scale}) translate(${composited.x * 100}%, ${composited.y * 100}%) rotate(${composited.rotate}deg) scaleX(${beauty.scaleX})` }} />
+                ) : (
+                  <>
+                    <video
+                      key={active?.id || url}
+                      ref={videoRef}
+                      className="bg"
+                      src={url}
+                      playsInline
+                      muted={previewMuted || activeVideoMuted || activeAudio.length > 0}
+                      onError={() => setVideoBroken(true)}
+                      style={{ filter, opacity: keying ? 0 : 1, transform: `scale(${composited.scale}) translate(${composited.x * 100}%, ${composited.y * 100}%) rotate(${composited.rotate}deg) scaleX(${beauty.scaleX})` }}
+                    />
+                    {keying ? <canvas ref={chromaRef} className="bg chroma-canvas" style={{ filter, transform: `scale(${composited.scale}) translate(${composited.x * 100}%, ${composited.y * 100}%) rotate(${composited.rotate}deg) scaleX(${beauty.scaleX})` }} /> : null}
+                  </>
+                )}
+              </div>
             ) : null}
             {renderSubs ? (
               activeSubs.map((c) => (

@@ -1,15 +1,17 @@
 /**
  * 同构版右侧检查器。
  * 7 个主页签 + 画面下 4 个子页签；音频 / 变速是真实可写面板，
- * 画面 / 动画 / 调整复用经典检查器；跟踪、AI 效果与画面子页签明确标为待接入。
+ * 画面 / 动画 / 调整复用经典检查器；抠像 / 蒙版 / 美容 / 跟踪 / AI 效果全部接真实参数，写 EDL、进预览与导出。
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
   AudioLines,
-  ChevronRight,
-  CircleDashed,
+  Crosshair,
+  Eye,
+  EyeOff,
   Gauge,
   Image as ImageIcon,
+  Palette,
   RotateCcw,
   ScanEye,
   SlidersHorizontal,
@@ -17,6 +19,15 @@ import {
   Wand2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  AI_PRESETS,
+  DEFAULT_AI,
+  DEFAULT_BEAUTY,
+  DEFAULT_KEYING,
+  DEFAULT_MASK,
+  DEFAULT_TRACKING,
+  type TimelineClipVisual,
+} from '@shared/timeline-visual';
 import { ShenJianInspector } from './ShenJianInspectorV2';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
@@ -43,36 +54,13 @@ const SUB_TABS: Array<[SubTab, string]> = [
   ['beauty', '美容美体'],
 ];
 
-const SUB_COPY: Record<Exclude<SubTab, 'basic'>, { title: string; body: string; fallback: string }> = {
-  keying: {
-    title: '抠像尚未接入同构版',
-    body: '当前没有色度键 / 智能抠像面板。经典版也没有独立抠像入口，画面处理仍通过画中画、透明度与调色完成。',
-    fallback: '可先用「画面 · 基础」里的位置、缩放、混合模式做替代。',
-  },
-  mask: {
-    title: '蒙版尚未接入同构版',
-    body: '当前没有线性 / 圆形 / 羽化蒙版面板。时间线片段与 EDL 数据结构已保留，后续可直接加蒙版字段而不改轨道。',
-    fallback: '可先用「画面 · 基础」里的圆角、缩放与位置做近似。',
-  },
-  beauty: {
-    title: '美容美体尚未接入同构版',
-    body: '当前没有磨皮、瘦脸、美体参数。现有能力集中在画面变换、调色、字幕与关键帧。',
-    fallback: '可先用「调整」页的亮度 / 对比度 / 饱和度做基础校正。',
-  },
-};
-
-const PENDING: Partial<Record<MainTab, { title: string; body: string; fallback: string }>> = {
-  tracking: {
-    title: '目标跟踪尚未接入同构版',
-    body: '当前只有手动关键帧运镜（画面 / 动画），没有对人物、物体或点的自动跟踪。',
-    fallback: '可先在「动画」页给片段加关键帧，做推近、拉远、左右移。',
-  },
-  ai: {
-    title: 'AI 效果库尚未接入同构版',
-    body: '当前没有一键 AI 特效、风格迁移、智能改色面板；AI 能力仍通过对话提案与确认门完成，不直接改时间线。',
-    fallback: '可回到对话面板描述想要的风格，由 Agent 出提案后确认。',
-  },
-};
+const METRIC = {
+  keying: { label: '色度键', note: '按颜色删除背景；适合绿幕/蓝幕' },
+  mask: { label: '蒙版', note: '矩形/椭圆/线性遮罩，支持羽化与反转' },
+  beauty: { label: '美颜', note: '磨皮、美白、红润与横向收紧' },
+  tracking: { label: '点跟踪', note: '在播放头记录目标点，预览与导出按路径运动' },
+  ai: { label: 'AI 风格', note: '本地滤镜链，不调用外部模型' },
+} as const;
 
 const clipName = (clip: { text?: string | null; sourceUrl?: string | null; track?: string; id: string }) => {
   if (clip.text) return clip.text;
@@ -105,6 +93,41 @@ const ParSlider = ({
   </div>
 );
 
+const VisualPanel = ({
+  title,
+  note,
+  enabled,
+  onToggle,
+  onReset,
+  children,
+}: {
+  title: string;
+  note: string;
+  enabled: boolean;
+  onToggle: (on: boolean) => void;
+  onReset: () => void;
+  children: React.ReactNode;
+}) => (
+  <div className="parity-panel parity-visual-panel">
+    <section className="parity-group">
+      <div className="parity-visual-head">
+        <div>
+          <h4>{title}</h4>
+          <div className="parity-hint">{note}</div>
+        </div>
+        <button type="button" className={`parity-enable${enabled ? ' on' : ''}`} onClick={() => onToggle(!enabled)}>
+          {enabled ? <Eye size={13} /> : <EyeOff size={13} />}
+          {enabled ? '已启用' : '启用'}
+        </button>
+      </div>
+    </section>
+    {children}
+    <div className="parity-inline parity-visual-foot">
+      <button type="button" className="parity-mini" onClick={onReset}>恢复默认</button>
+    </div>
+  </div>
+);
+
 export const ShenJianInspectorParity = ({
   grade,
   setGrade,
@@ -112,7 +135,7 @@ export const ShenJianInspectorParity = ({
   grade: Grade;
   setGrade: (patch: Partial<Grade>) => void;
 }) => {
-  const { data } = useStudio();
+  const { data, curT } = useStudio();
   const edl = useEdl();
   const [tab, setTab] = useState<MainTab>('frame');
   const [sub, setSub] = useState<SubTab>('basic');
@@ -137,13 +160,21 @@ export const ShenJianInspectorParity = ({
     return () => window.removeEventListener('yimu:shenjian-inspector-main', onMain);
   }, []);
 
-  const showClassic = tab === 'frame' || tab === 'anim' || tab === 'adjust';
-  const subPending = tab === 'frame' && sub !== 'basic' ? SUB_COPY[sub] : null;
-  const mainPending = PENDING[tab] ?? null;
+  const showClassic = (tab === 'frame' && sub === 'basic') || tab === 'anim' || tab === 'adjust';
   const volume = Math.round((selected?.volume ?? 1) * 100);
   const pitch = Math.round((selected?.pitch ?? 1) * 100) / 100;
   const speed = selected?.speed ?? 1;
   const span = selected ? clipSpan(selected) : 0;
+  const visual: TimelineClipVisual = selected?.visual ?? {};
+  const patchVisual = (patch: Partial<TimelineClipVisual>) => {
+    if (!selected) return;
+    edl.setClipVisual(selected.id, { ...visual, ...patch });
+  };
+  const resetVisual = (key: keyof TimelineClipVisual) => {
+    if (!selected) return;
+    edl.setClipVisual(selected.id, { ...visual, [key]: null });
+  };
+  const localT = selected ? Math.max(0, curT - selected.timelineStart) : 0;
 
   const resetAll = () => {
     setGrade({ brightness: 100, contrast: 100, saturation: 100, filter: 'none' });
@@ -190,31 +221,11 @@ export const ShenJianInspectorParity = ({
       </div>
 
       <div className="parity-insp-body">
-        {subPending ? (
-          <div className="parity-pending">
-            <div className="parity-pending-icon"><CircleDashed /></div>
-            <b>{subPending.title}</b>
-            <p>{subPending.body}</p>
-            <div className="parity-pending-tip">{subPending.fallback}</div>
-            <button type="button" className="mini-btn" onClick={() => setSub('basic')}>
-              回到画面 · 基础 <ChevronRight size={11} />
-            </button>
-          </div>
-        ) : mainPending ? (
-          <div className="parity-pending">
-            <div className="parity-pending-icon"><Sparkles /></div>
-            <b>{mainPending.title}</b>
-            <p>{mainPending.body}</p>
-            <div className="parity-pending-tip">{mainPending.fallback}</div>
-            <button type="button" className="mini-btn" onClick={() => setTab(tab === 'tracking' ? 'anim' : 'frame')}>
-              去{tab === 'tracking' ? '动画' : '画面'}页继续 <ChevronRight size={11} />
-            </button>
-          </div>
-        ) : !selected ? (
+        {!selected ? (
           <div className="parity-insp-empty">
             <div className="parity-empty-ico"><ScanEye /></div>
             <b>还没有选中片段</b>
-            <p>在底部时间线点一下任意片段，这里会显示它的时间、变换、音量、变速与字幕。</p>
+            <p>在底部时间线点一下任意片段，这里会显示它的时间、变换、音量、变速与画面增强。</p>
             <div className="parity-empty-keys">
               <span>E 分割</span><span>Q 删前</span><span>W 删后</span><span>空格播放</span>
             </div>
@@ -257,16 +268,12 @@ export const ShenJianInspectorParity = ({
               <ParSlider label="速度" value={speed} min={0.25} max={4} step={0.05} suffix="×" onChange={(v) => edl.setClipSpeed(selected.id, v)} />
               <div className="parity-speed-presets">
                 {[0.5, 1, 1.5, 2, 3].map((v) => (
-                  <button key={v} type="button" className={Math.abs(speed - v) < 0.001 ? 'on' : ''} onClick={() => edl.setClipSpeed(selected.id, v)}>
-                    {v}×
-                  </button>
+                  <button key={v} type="button" className={Math.abs(speed - v) < 0.001 ? 'on' : ''} onClick={() => edl.setClipSpeed(selected.id, v)}>{v}×</button>
                 ))}
               </div>
               <div className="parity-inline">
                 <button type="button" className="parity-mini" onClick={() => edl.setClipSpeed(selected.id, 1)}>恢复 1×</button>
-                <button type="button" className={`parity-mini${selected.reverse ? ' on' : ''}`} onClick={() => edl.toggleClipReverse(selected.id)}>
-                  {selected.reverse ? '取消倒放' : '倒放'}
-                </button>
+                <button type="button" className={`parity-mini${selected.reverse ? ' on' : ''}`} onClick={() => edl.toggleClipReverse(selected.id)}>{selected.reverse ? '取消倒放' : '倒放'}</button>
               </div>
             </section>
             <section className="parity-group">
@@ -278,13 +285,111 @@ export const ShenJianInspectorParity = ({
           </div>
         ) : showClassic ? (
           <ShenJianInspector grade={grade} setGrade={setGrade} />
+        ) : tab === 'frame' && sub === 'keying' ? (
+          <VisualPanel
+            title="抠像"
+            note="按颜色删除背景，预览用实时像素键，导出用 ffmpeg chromakey。"
+            enabled={Boolean(visual.keying?.enabled)}
+            onToggle={(on) => patchVisual({ keying: { ...DEFAULT_KEYING, ...(visual.keying ?? {}), enabled: on } })}
+            onReset={() => resetVisual('keying')}
+          >
+            <div className="parity-visual-color">
+              <span>键控颜色</span>
+              <input type="color" value={visual.keying?.color ?? DEFAULT_KEYING.color} onChange={(e) => patchVisual({ keying: { ...DEFAULT_KEYING, ...(visual.keying ?? {}), color: e.target.value } })} />
+              <div className="parity-swatches">
+                {['#00ff00', '#0000ff', '#ffffff'].map((c) => (
+                  <button key={c} type="button" style={{ background: c }} className={(visual.keying?.color ?? '') === c ? 'on' : ''} onClick={() => patchVisual({ keying: { ...DEFAULT_KEYING, ...(visual.keying ?? {}), color: c } })} title={c} />
+                ))}
+              </div>
+            </div>
+            <ParSlider label="相似度" value={Math.round((visual.keying?.similarity ?? DEFAULT_KEYING.similarity) * 100)} min={1} max={100} suffix="%" onChange={(v) => patchVisual({ keying: { ...DEFAULT_KEYING, ...(visual.keying ?? {}), similarity: v / 100 } })} />
+            <ParSlider label="边缘平滑" value={Math.round((visual.keying?.smoothness ?? DEFAULT_KEYING.smoothness) * 100)} min={0} max={100} suffix="%" onChange={(v) => patchVisual({ keying: { ...DEFAULT_KEYING, ...(visual.keying ?? {}), smoothness: v / 100 } })} />
+            <ParSlider label="去绿边" value={Math.round((visual.keying?.spill ?? DEFAULT_KEYING.spill) * 100)} min={0} max={100} suffix="%" onChange={(v) => patchVisual({ keying: { ...DEFAULT_KEYING, ...(visual.keying ?? {}), spill: v / 100 } })} />
+          </VisualPanel>
+        ) : tab === 'frame' && sub === 'mask' ? (
+          <VisualPanel
+            title="蒙版"
+            note="矩形 / 椭圆 / 线性三种遮罩，支持羽化与反转；预览与导出共用同一组参数。"
+            enabled={Boolean(visual.mask?.enabled)}
+            onToggle={(on) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), enabled: on } })}
+            onReset={() => resetVisual('mask')}
+          >
+            <div className="parity-shape-row">
+              {(['rect', 'circle', 'linear'] as const).map((shape) => (
+                <button key={shape} type="button" className={(visual.mask?.shape ?? DEFAULT_MASK.shape) === shape ? 'on' : ''} onClick={() => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), shape } })}>
+                  {shape === 'rect' ? '矩形' : shape === 'circle' ? '椭圆' : '线性'}
+                </button>
+              ))}
+            </div>
+            <ParSlider label="中心 X" value={Math.round((visual.mask?.x ?? DEFAULT_MASK.x) * 100)} min={0} max={100} suffix="%" onChange={(v) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), x: v / 100 } })} />
+            <ParSlider label="中心 Y" value={Math.round((visual.mask?.y ?? DEFAULT_MASK.y) * 100)} min={0} max={100} suffix="%" onChange={(v) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), y: v / 100 } })} />
+            <ParSlider label="宽度" value={Math.round((visual.mask?.w ?? DEFAULT_MASK.w) * 100)} min={5} max={100} suffix="%" onChange={(v) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), w: v / 100 } })} />
+            <ParSlider label="高度" value={Math.round((visual.mask?.h ?? DEFAULT_MASK.h) * 100)} min={5} max={100} suffix="%" onChange={(v) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), h: v / 100 } })} />
+            <ParSlider label="旋转" value={Math.round(visual.mask?.rotation ?? DEFAULT_MASK.rotation)} min={-180} max={180} suffix="°" onChange={(v) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), rotation: v } })} />
+            <ParSlider label="羽化" value={Math.round((visual.mask?.feather ?? DEFAULT_MASK.feather) * 100)} min={0} max={90} suffix="%" onChange={(v) => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), feather: v / 100 } })} />
+            <button type="button" className={`parity-mini${visual.mask?.invert ? ' on' : ''}`} onClick={() => patchVisual({ mask: { ...DEFAULT_MASK, ...(visual.mask ?? {}), invert: !visual.mask?.invert } })}>{visual.mask?.invert ? '取消反转' : '反转蒙版'}</button>
+          </VisualPanel>
+        ) : tab === 'frame' && sub === 'beauty' ? (
+          <VisualPanel
+            title="美容美体"
+            note="磨皮 / 美白 / 红润写进预览与导出；瘦脸、美体用横向收紧近似，不做人脸关键点识别。"
+            enabled={Boolean(visual.beauty?.enabled)}
+            onToggle={(on) => patchVisual({ beauty: { ...DEFAULT_BEAUTY, ...(visual.beauty ?? {}), enabled: on } })}
+            onReset={() => resetVisual('beauty')}
+          >
+            {([
+              ['smooth', '磨皮'],
+              ['whiten', '美白'],
+              ['rosy', '红润'],
+              ['faceSlim', '瘦脸'],
+              ['bodySlim', '美体'],
+            ] as const).map(([key, label]) => (
+              <ParSlider key={key} label={label} value={visual.beauty?.[key] ?? DEFAULT_BEAUTY[key]} min={0} max={100} suffix="%" onChange={(v) => patchVisual({ beauty: { ...DEFAULT_BEAUTY, ...(visual.beauty ?? {}), [key]: v } })} />
+            ))}
+          </VisualPanel>
+        ) : tab === 'tracking' ? (
+          <VisualPanel
+            title="目标跟踪"
+            note={`手动点跟踪：在播放头记录目标偏移，路径自动插值。当前 ${visual.tracking?.points?.length ?? 0} 个跟踪点。`}
+            enabled={Boolean(visual.tracking?.enabled)}
+            onToggle={(on) => patchVisual({ tracking: { ...DEFAULT_TRACKING, ...(visual.tracking ?? {}), enabled: on } })}
+            onReset={() => resetVisual('tracking')}
+          >
+            <ParSlider label="跟踪 X" value={Math.round((visual.tracking?.x ?? 0) * 100)} min={-100} max={100} suffix="%" onChange={(v) => patchVisual({ tracking: { ...DEFAULT_TRACKING, ...(visual.tracking ?? {}), x: v / 100 } })} />
+            <ParSlider label="跟踪 Y" value={Math.round((visual.tracking?.y ?? 0) * 100)} min={-100} max={100} suffix="%" onChange={(v) => patchVisual({ tracking: { ...DEFAULT_TRACKING, ...(visual.tracking ?? {}), y: v / 100 } })} />
+            <ParSlider label="跟踪缩放" value={Math.round((visual.tracking?.scale ?? 1) * 100)} min={80} max={200} suffix="%" onChange={(v) => patchVisual({ tracking: { ...DEFAULT_TRACKING, ...(visual.tracking ?? {}), scale: v / 100 } })} />
+            <div className="parity-inline">
+              <button type="button" className="parity-mini" onClick={() => patchVisual({ tracking: { ...DEFAULT_TRACKING, ...(visual.tracking ?? {}), enabled: true, points: [...(visual.tracking?.points ?? []), { time: Number(localT.toFixed(2)), x: visual.tracking?.x ?? 0, y: visual.tracking?.y ?? 0, scale: visual.tracking?.scale ?? 1 }] } })}><Crosshair size={12} /> 在 {localT.toFixed(2)}s 打点</button>
+              <button type="button" className="parity-mini" onClick={() => patchVisual({ tracking: { ...DEFAULT_TRACKING, ...(visual.tracking ?? {}), points: [] } })}>清空路径</button>
+            </div>
+            <div className="parity-hint">自动识别人脸/物体的跟踪模型尚未接入；这里接入的是逐点手动跟踪，数据可落库、可预览、可导出。</div>
+          </VisualPanel>
+        ) : tab === 'ai' ? (
+          <VisualPanel
+            title="AI 效果"
+            note="本地风格滤镜链，不调用外部模型；强度可调，预览与导出共用。"
+            enabled={Boolean(visual.ai && visual.ai.preset !== 'none')}
+            onToggle={(on) => patchVisual({ ai: on ? { ...DEFAULT_AI, ...(visual.ai ?? {}), preset: visual.ai?.preset && visual.ai.preset !== 'none' ? visual.ai.preset : 'anime' } : { ...DEFAULT_AI, ...(visual.ai ?? {}), preset: 'none' } })}
+            onReset={() => resetVisual('ai')}
+          >
+            <div className="parity-ai-grid">
+              {AI_PRESETS.map((p) => (
+                <button key={p.id} type="button" className={(visual.ai?.preset ?? 'none') === p.id ? 'on' : ''} onClick={() => patchVisual({ ai: { preset: p.id, strength: visual.ai?.strength ?? DEFAULT_AI.strength } })}>
+                  <Palette size={14} />
+                  <span>{p.label}</span>
+                  <small>{p.note}</small>
+                </button>
+              ))}
+            </div>
+            <ParSlider label="强度" value={visual.ai?.strength ?? DEFAULT_AI.strength} min={10} max={100} suffix="%" onChange={(v) => patchVisual({ ai: { preset: visual.ai?.preset ?? 'anime', strength: v } })} />
+          </VisualPanel>
         ) : null}
       </div>
 
       <div className="parity-insp-foot">
         <span>同构版</span>
         <span className="grow" />
-        <span>{showClassic ? '复用真实 EDL 控件' : tab === 'audio' || tab === 'speed' ? '真实可写参数' : '占位页 · 不写入数据'}</span>
+        <span>{showClassic ? '复用真实 EDL 控件' : '真实可写参数 · 写入 EDL'}</span>
       </div>
     </aside>
   );

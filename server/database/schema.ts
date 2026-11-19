@@ -884,6 +884,7 @@ export const timelineClips = pgTable("timeline_clips", {
    * time 为片段内秒数；预览与导出共用。
    */
   keyframes: jsonb("keyframes"),
+  visual: jsonb("visual"),
   reverse: boolean("reverse").default(false),
   compound: jsonb("compound"),
   /**

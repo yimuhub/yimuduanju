@@ -19,6 +19,7 @@ import {
 } from 'class-validator';
 import type { TimelineTextStyle, TimelineTrackKind } from '@shared/api.interface';
 import type { TimelineVideoKeyframe } from '@shared/timeline-keyframes';
+import type { TimelineClipVisual } from '@shared/timeline-visual';
 
 /** 片段转场（与下一片段之间）；Phase 4 导出暂按硬切渲染，EDL 先存决策 */
 export class ClipTransitionDto {
@@ -119,6 +120,11 @@ export class SaveTimelineClipDto {
   @IsArray()
   @ArrayMaxSize(120)
   keyframes?: TimelineVideoKeyframe[] | null;
+
+  /** 视觉增强：抠像/蒙版/美容/跟踪/AI 风格 */
+  @IsOptional()
+  @IsObject()
+  visual?: TimelineClipVisual | null;
   reverse?: boolean | null;
   compound?: { children: import('@shared/api.interface').TimelineCompoundChild[] } | null;
 

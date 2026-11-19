@@ -97,6 +97,7 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   textStyle: c.textStyle ?? null,
   // 运镜关键帧/倒放/复合/转写同样必须随保存落库，漏传会被服务端清空
   keyframes: c.keyframes ?? null,
+  visual: c.visual ?? null,
   reverse: c.reverse ?? null,
   compound: c.compound ?? null,
   transcript: c.transcript ?? null,
@@ -217,6 +218,8 @@ export interface EdlEditor {
   setClipText: (id: string, text: string) => void;
   /** 运镜关键帧：整组替换（内部已排序去重） */
   setClipKeyframes: (id: string, keyframes: TimelineClip['keyframes']) => void;
+  /** 写入视觉增强：抠像/蒙版/美容/跟踪/AI 风格 */
+  setClipVisual: (id: string, visual: TimelineClip['visual']) => void;
 
   /** 新建同类型轨道（返回新 lane，失败返回 null） */
   addTrack: (track: TimelineTrackMeta['track']) => number | null;
@@ -1399,6 +1402,20 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  const setClipVisual = useCallback(
+    (id: string, visual: TimelineClip['visual']) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      commit(
+        before.map((c) => (c.id === id ? { ...c, visual: visual ? { ...(c.visual ?? {}), ...visual } : null } : c)),
+        '调整视觉增强',
+        before,
+      );
+    },
+    [commit],
+  );
+
   const setClipText = useCallback(
     (id: string, text: string) => {
       const before = clipsRef.current;
@@ -1676,6 +1693,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     updateTextStyle,
     setClipText,
     setClipKeyframes,
+    setClipVisual,
     addTrack,
     removeTrack,
     updateTrack,
