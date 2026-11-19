@@ -1,18 +1,21 @@
 /**
- * 一幕·神剪 — 同构版 / Parity 工作台
- * 与经典版并存：72px 模块栏 + 300px 素材面板 / 舞台 / 430px 检查器 / 360px 双行工具栏时间线。
- * 共用同一份工程、EDL 与接口，只替换布局、检查器和时间线外壳。
+ * 一幕·神剪 — 同构版（Parity）
+ * 与经典版并存：72px 模块栏 + 300px 素材面板 / 中间舞台 / 430px 检查器 / 360px 双行工具栏时间线。
+ * 工程、EDL、导出、快捷键完全复用；没有接入的能力在检查器与时间线里明确标“待接入”。
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
+  Clapperboard,
   Download,
+  Eye,
   FolderOpen,
   Image as ImageIcon,
   Keyboard,
   LayoutGrid,
   Magnet,
+  Maximize2,
   Redo2,
   SlidersHorizontal,
   Undo2,
@@ -24,7 +27,7 @@ import { useEdl } from './EdlContext';
 import { exportTimeline } from '@client/src/api/timeline';
 import { downloadDeliverable } from '@client/src/api/export';
 import { projectExportFileName } from '@shared/file-name';
-import { ShenJianLibrary } from './ShenJianLibrary';
+import { ParityLibrary } from './ParityLibrary';
 import { ShenJianStage } from './ShenJianStage';
 import { ShenJianInspectorParity } from './ShenJianInspectorParity';
 import { ShenJianShotPool } from './ShenJianShotPool';
@@ -37,7 +40,7 @@ import { clipSpan } from './model';
 import { useParityLayout } from './useParityLayout';
 import { ShenJianVariantSwitch } from './ShenJianVariantSwitch';
 
-type Ratio = '9:16' | '16:9' | '1:1';
+type Ratio = '9:16' | '16:9' | '1:1' | '4:3';
 
 export const ShenJianWorkbenchParity = () => {
   const {
@@ -59,12 +62,17 @@ export const ShenJianWorkbenchParity = () => {
   const pane = useParityLayout();
 
   const [ratio, setRatio] = useState<Ratio>('9:16');
+  useEffect(() => {
+    const a = data.project?.aspectRatio;
+    if (a === '16:9' || a === '1:1' || a === '4:3') setRatio(a);
+  }, [data.project?.aspectRatio]);
   const [snapOn, setSnapOn] = useState(true);
   const [safe, setSafe] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [parityOpen, setParityOpen] = useState(false);
+  const [annotate, setAnnotate] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportBurnSubs, setExportBurnSubs] = useState(true);
@@ -119,7 +127,7 @@ export const ShenJianWorkbenchParity = () => {
     setStageView('chat');
     // 项目根默认是对话主界面，旧底部时间线收起，避免一返回就看到老剪辑界面
     setTlCollapsed(true);
-    if (projectId) navigate(`/project/${projectId}`);
+    navigate('/');
   };
   const goExport = () => {
     if (!projectId) return;
@@ -328,9 +336,13 @@ export const ShenJianWorkbenchParity = () => {
 
   const showTip = (e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('[data-tip]') as HTMLElement | null;
-    if (!el) return;
+    if (!el || !el.getAttribute('data-tip')) {
+      // 指针移到普通区域时立即收起，避免提示跟着上一次按钮留在屏幕上。
+      setTip(null);
+      setTipPos(null);
+      return;
+    }
     const text = el.getAttribute('data-tip') || '';
-    if (!text) return;
     setTip({ text, rect: el.getBoundingClientRect() });
   };
   const hideTip = () => {
@@ -360,50 +372,65 @@ export const ShenJianWorkbenchParity = () => {
   return (
     <div className={`sj2 parity${pane.dragging ? ' dragging' : ''}`} style={pane.rootStyle} onMouseOver={showTip} onMouseLeave={hideTip}>
       <div className="app">
-        <header className="topbar">
-          <div className="brand" onClick={goProject} style={{ cursor: 'pointer' }} title="返回项目工作台">
-            <div className="brand-mark">神</div>
-            <div className="brand-name">一幕 · <em>神剪</em></div>
-            <span className="parity-badge">同构版</span>
-          </div>
-          <div className="proj">
-            <span className="proj-title">{data.project?.title || '未命名项目'}</span>
-            <span className="proj-badge">{ratio} · {total.toFixed(1)}s</span>
-            <span className={`save-dot${edl.dirty ? ' dirty' : ''}`} title={edl.dirty ? '改动待保存' : '已自动保存'} />
-          </div>
-          <div className="top-center">
-            <button type="button" className="icon-btn" data-tip="撤销 (Ctrl+Z)" disabled={!edl.canUndo} onClick={() => edl.undo()}><Undo2 /></button>
-            <button type="button" className="icon-btn" data-tip="重做 (Ctrl+Shift+Z)" disabled={!edl.canRedo} onClick={() => edl.redo()}><Redo2 /></button>
-            <div className="seg">
-              {(['9:16', '16:9', '1:1'] as Ratio[]).map((r) => (
-                <button key={r} type="button" className={ratio === r ? 'on' : ''} onClick={() => setRatio(r)}>{r}</button>
-              ))}
+        <header className="topbar parity-topbar">
+          <div className="parity-brand" onClick={goProject} title="返回项目工作台">
+            <div className="parity-mark"><Clapperboard /></div>
+            <div className="parity-brand-text">
+              <b>一幕 · 神剪</b>
+              <span>PARITY</span>
             </div>
-            <div className="seg">
-              <button type="button" className={previewQuality === 'fast' ? 'on' : ''} data-tip="流畅预览：540p 代理，剪辑不卡" onClick={() => setPreviewQuality('fast')}>流畅</button>
-              <button type="button" className={previewQuality === 'original' ? 'on' : ''} data-tip="原画预览：加载原始分辨率" onClick={() => setPreviewQuality('original')}>原画</button>
+          </div>
+          <div className="parity-project">
+            <div className="parity-project-name">{data.project?.title || '未命名项目'}</div>
+            <div className="parity-save-line">
+              <i className={edl.dirty ? 'dirty' : ''} />
+              <span>{edl.dirty ? '保存中…' : '自动保存 · 本地'}</span>
+              <em>{ratio} · {total.toFixed(1)}s</em>
             </div>
-            <button type="button" className="chip" data-tip="拖动时吸附到其他片段边缘与播放头" onClick={() => setSnapOn(!snapOn)}>
+          </div>
+          <div className="parity-top-center">
+            <button type="button" className="parity-icon" data-tip="撤销 (Ctrl+Z)" disabled={!edl.canUndo} onClick={() => edl.undo()}><Undo2 /></button>
+            <button type="button" className="parity-icon" data-tip="重做 (Ctrl+Shift+Z)" disabled={!edl.canRedo} onClick={() => edl.redo()}><Redo2 /></button>
+            <span className="parity-sep" />
+            <div className="parity-meta-chip">{ratio} · {ratio === '9:16' ? '1080×1920' : ratio === '16:9' ? '1920×1080' : ratio === '1:1' ? '1080×1080' : '1440×1080'} · 24fps</div>
+            <button type="button" className="parity-quality" data-tip="流畅预览：540p 代理，剪辑不卡" onClick={() => setPreviewQuality(previewQuality === 'fast' ? 'original' : 'fast')}>
+              {previewQuality === 'fast' ? '流畅预览 · 540P' : '原画预览'}
+            </button>
+            <button type="button" className={`parity-snap${snapOn ? ' on' : ''}`} data-tip="拖动时吸附到其他片段边缘与播放头" onClick={() => setSnapOn(!snapOn)}>
               <Magnet /><span>{snapOn ? '吸附开' : '吸附关'}</span>
             </button>
           </div>
-          <div className="top-right">
+          <div className="parity-top-right">
             <ShenJianVariantSwitch />
-            <button type="button" className="chip" data-tip="查看同构版已落地 / 待接入清单" onClick={() => setParityOpen(true)}><LayoutGrid /><span>对照</span></button>
-            <button type="button" className="chip compact-only" data-tip="打开素材库" onClick={() => setCompactPanel('library')}><FolderOpen /><span>素材</span></button>
-            <button type="button" className="chip compact-only" data-tip="打开镜头池" onClick={() => setCompactPanel('pool')}><LayoutGrid /><span>镜头</span></button>
-            <button type="button" className="chip compact-only" data-tip="打开属性检查器" onClick={() => setCompactPanel('inspector')}><SlidersHorizontal /><span>属性</span></button>
-            <button type="button" className="chip desktop-only" data-tip="镜头池：点镜头自动起播，可删除镜头" onClick={() => setRightTab((v) => (v === 'pool' ? 'inspector' : 'pool'))}><LayoutGrid /><span>镜头池</span></button>
-            <button type="button" className="chip" data-tip="查看全部剪映快捷键" onClick={() => setShortcutsOpen(true)}><Keyboard /><span>快捷键</span></button>
-            <button type="button" className="chip" data-tip="封面编辑：模板、标题、字号、颜色" onClick={() => setCoverOpen(true)}><ImageIcon /><span>封面</span></button>
-            <button type="button" className="chip primary" data-tip="导出成片 (Ctrl+E)" onClick={goExport}><Download /><span>导出</span></button>
-            <button type="button" className="chip" data-tip="返回项目工作台" onClick={goProject}><ArrowLeft /><span>返回</span></button>
+            <button type="button" className="parity-ghost desktop-only" data-tip="镜头池：点镜头自动起播，可删除镜头" onClick={() => setRightTab((v) => (v === 'pool' ? 'inspector' : 'pool'))}><LayoutGrid /><span>镜头池</span></button>
+            <button type="button" className="parity-ghost" data-tip="显示 72 / 300 / 430 / 360 四区尺寸" onClick={() => setAnnotate((v) => !v)}><LayoutGrid /><span>布局对照</span></button>
+            <button type="button" className="parity-ghost" data-tip="查看同构版已落地 / 待接入清单" onClick={() => setParityOpen(true)}><Clapperboard /><span>差异清单</span></button>
+            <button type="button" className="parity-ghost" data-tip="查看全部剪映快捷键" onClick={() => setShortcutsOpen(true)}><Keyboard /><span>快捷键</span></button>
+            <button type="button" className="parity-ghost desktop-only" data-tip="封面编辑：模板、标题、字号、颜色" onClick={() => setCoverOpen(true)}><ImageIcon /><span>封面</span></button>
+            <button type="button" className="parity-export" data-tip="导出成片 (Ctrl+E)" onClick={goExport}><Download /><span>导出</span></button>
+            <button type="button" className="parity-ghost parity-back" data-tip="返回项目工作台" onClick={goProject}><ArrowLeft /></button>
+            <div className="parity-avatar" title="当前账号">张</div>
+            <button type="button" className="parity-icon compact-only" data-tip="打开素材库" onClick={() => setCompactPanel('library')}><FolderOpen /></button>
+            <button type="button" className="parity-icon compact-only" data-tip="打开镜头池" onClick={() => setCompactPanel('pool')}><LayoutGrid /></button>
+            <button type="button" className="parity-icon compact-only" data-tip="打开属性检查器" onClick={() => setCompactPanel('inspector')}><SlidersHorizontal /></button>
           </div>
         </header>
 
         <main className="workspace">
-          <ShenJianLibrary onImport={() => setImportOpen(true)} />
-          <ShenJianStage ratio={ratio} safe={safe} onToggleSafe={() => setSafe((v) => !v)} grade={grade} />
+          <ParityLibrary onImport={() => setImportOpen(true)} />
+          <div className="parity-stage-shell">
+            <div className="parity-stage-head">
+              <div className="parity-stage-title"><b>播放器</b><span>·</span><span>时间线 01</span><i>{ratio} 预览</i></div>
+              <div className="parity-stage-actions">
+                <button type="button" className={safe ? 'on' : ''} data-tip="安全框：检查字幕与主体是否出画" onClick={() => setSafe((v) => !v)}><Eye /></button>
+                <button type="button" data-tip="全屏预览" onClick={() => {
+                  if (document.fullscreenElement) void document.exitFullscreen();
+                  else void document.documentElement.requestFullscreen?.();
+                }}><Maximize2 /></button>
+              </div>
+            </div>
+            <ShenJianStage ratio={ratio} safe={safe} onToggleSafe={() => setSafe((v) => !v)} grade={grade} />
+          </div>
           {rightTab === 'pool' ? <ShenJianShotPool onBack={() => setRightTab('inspector')} /> : <ShenJianInspectorParity grade={grade} setGrade={setGrade} />}
           <div
             className="pane-resizer left"
@@ -452,7 +479,7 @@ export const ShenJianWorkbenchParity = () => {
             </div>
             <div className="compact-drawer-body">
               {compactPanel === 'library'
-                ? <ShenJianLibrary onImport={() => setImportOpen(true)} />
+                ? <ParityLibrary onImport={() => setImportOpen(true)} />
                 : compactPanel === 'pool'
                   ? <ShenJianShotPool onBack={() => setCompactPanel('inspector')} />
                   : <ShenJianInspectorParity grade={grade} setGrade={setGrade} />}
@@ -615,6 +642,20 @@ export const ShenJianWorkbenchParity = () => {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {annotate ? (
+        <div className="parity-annot-layer" aria-hidden>
+          <div className="parity-annot-frame frame-library" />
+          <div className="parity-annot-frame frame-stage" />
+          <div className="parity-annot-frame frame-inspector" />
+          <div className="parity-annot-frame frame-timeline" />
+          <span className="parity-annot-label ann-rail">① 模块栏 72px</span>
+          <span className="parity-annot-label ann-lib">② 素材面板 300px</span>
+          <span className="parity-annot-label ann-stage">③ 播放器 1fr</span>
+          <span className="parity-annot-label ann-ins">④ 检查器 430px</span>
+          <span className="parity-annot-label ann-tl">⑤ 全宽时间线 · 360px</span>
         </div>
       ) : null}
 

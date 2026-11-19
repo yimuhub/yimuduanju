@@ -257,3 +257,430 @@
 @media (max-height: 520px) {
   .sj2.parity .app { grid-template-rows: 44px minmax(0, 1fr) clamp(150px, 42vh, 220px); }
 }
+
+/* ============================================================
+   同构版专属外观：与经典版拉开结构差异
+   深灰底 + 青色强调，素材面板 / 播放器 / 检查器 / 时间线四区各自成块
+   ============================================================ */
+.sj2.parity {
+  --p-bg: #0a0a0c;
+  --p-panel: #111114;
+  --p-panel2: #17171b;
+  --p-line: #27272e;
+  --p-line2: #34343d;
+  --p-text: #e9e9ec;
+  --p-muted: #8b8b94;
+  --p-cyan: #2ee6cf;
+  --p-warm: #f0c674;
+  --lib-main-w: calc(var(--lib-w, 372px) - 72px);
+}
+
+/* ---- 顶栏：品牌 / 项目 / 状态 / 操作 ---- */
+.sj2.parity .app { grid-template-rows: 54px minmax(0, 1fr) var(--tl-h, 360px); }
+.sj2.parity .parity-topbar {
+  display: grid;
+  grid-template-columns: 205px minmax(150px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  height: 54px;
+  padding: 0 14px 0 10px;
+  background: #0c0c0f;
+  border-bottom: 1px solid #202027;
+}
+.sj2.parity .parity-brand { display: flex; align-items: center; gap: 9px; min-width: 0; cursor: pointer; }
+.sj2.parity .parity-mark {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center;
+  background: linear-gradient(145deg, #2ee6cf, #148d97 60%, #0e5f67);
+  color: #041514;
+  box-shadow: 0 0 0 1px #7ffff066 inset, 0 8px 18px #00000055;
+  flex: none;
+}
+.sj2.parity .parity-mark svg { width: 17px; height: 17px; }
+.sj2.parity .parity-brand-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.sj2.parity .parity-brand-text b { font-size: 13px; font-weight: 700; letter-spacing: .2px; color: #f2f4f7; white-space: nowrap; }
+.sj2.parity .parity-brand-text span { font-size: 8px; letter-spacing: 1.2px; color: #65d8cd; }
+.sj2.parity .parity-project { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-left: 12px; border-left: 1px solid #26262d; }
+.sj2.parity .parity-project-name { font-size: 13px; font-weight: 650; color: #f0f1f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sj2.parity .parity-save-line { display: flex; align-items: center; gap: 6px; color: #76767f; font-size: 9.5px; }
+.sj2.parity .parity-save-line i { width: 6px; height: 6px; border-radius: 50%; background: #36d7c4; box-shadow: 0 0 7px #36d7c4; flex: none; }
+.sj2.parity .parity-save-line i.dirty { background: #f0c674; box-shadow: 0 0 7px #f0c674; }
+.sj2.parity .parity-save-line em { font-style: normal; color: #5d5d66; white-space: nowrap; }
+.sj2.parity .parity-top-center { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.sj2.parity .parity-icon {
+  width: 30px; height: 30px; border-radius: 6px;
+  display: grid; place-items: center; color: #a8a8b1; border: 1px solid transparent; background: transparent;
+}
+.sj2.parity .parity-icon:hover { background: #1f1f25; color: #fff; }
+.sj2.parity .parity-icon:disabled { opacity: .28; cursor: default; }
+.sj2.parity .parity-icon svg { width: 15px; height: 15px; }
+.sj2.parity .parity-sep { width: 1px; height: 22px; background: #2a2a32; margin: 0 4px; flex: none; }
+.sj2.parity .parity-meta-chip {
+  height: 26px; padding: 0 9px; display: flex; align-items: center;
+  border: 1px solid #2b2b33; border-radius: 4px; background: #131316;
+  color: #9b9ba4; font-size: 9.5px; white-space: nowrap;
+}
+.sj2.parity .parity-quality {
+  height: 26px; padding: 0 9px; border-radius: 4px;
+  border: 1px solid #2b5c58; background: #12322f; color: #8ff4e8; font-size: 9.5px; white-space: nowrap;
+}
+.sj2.parity .parity-quality:hover { background: #174039; }
+.sj2.parity .parity-snap {
+  height: 26px; padding: 0 8px; display: flex; align-items: center; gap: 4px;
+  border-radius: 4px; border: 1px solid #2b2b33; background: #131316; color: #8f8f99; font-size: 9.5px; white-space: nowrap;
+}
+.sj2.parity .parity-snap.on { color: #8ff4e8; border-color: #2b5c58; background: #122624; }
+.sj2.parity .parity-snap svg { width: 13px; height: 13px; }
+.sj2.parity .parity-top-right { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.sj2.parity .parity-ghost {
+  height: 30px; padding: 0 8px; display: flex; align-items: center; gap: 5px;
+  border-radius: 5px; color: #96969f; font-size: 10px; white-space: nowrap; background: transparent;
+}
+.sj2.parity .parity-ghost:hover { background: #1e1e25; color: #e8e8ec; }
+.sj2.parity .parity-ghost svg { width: 14px; height: 14px; }
+.sj2.parity .parity-ghost.on { color: #8ff4e8; background: #14302c; }
+.sj2.parity .parity-back { width: 30px; padding: 0; justify-content: center; }
+.sj2.parity .parity-export {
+  height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 5px;
+  border-radius: 5px; background: linear-gradient(180deg, #40e6d0, #1fbfae);
+  color: #041715; font-size: 11px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 6px 16px #0b5b5433;
+}
+.sj2.parity .parity-export:hover { filter: brightness(1.06); }
+.sj2.parity .parity-export svg { width: 14px; height: 14px; }
+.sj2.parity .parity-avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; flex: none;
+  background: linear-gradient(145deg, #4a4a55, #232329);
+  border: 1px solid #45454f; color: #d8d8de; font-size: 10px; font-weight: 600;
+}
+
+/* ---- 素材面板：标题 / 分类 / 搜索 / 双列卡片 ---- */
+.sj2.parity .parity-library { grid-template-columns: 72px minmax(0, 1fr); background: #111114; border-right: 1px solid #222228; }
+.sj2.parity .parity-rail { padding: 5px 5px; gap: 1px; background: #0b0b0e; border-right: 1px solid #202026; }
+.sj2.parity .parity-rail .rail-btn {
+  width: 60px; height: 55px; border-radius: 6px; gap: 4px;
+  color: #8b8b95; font-size: 9.5px; letter-spacing: .2px;
+}
+.sj2.parity .parity-rail .rail-btn:hover { background: #1a1a20; color: #e4e4e9; }
+.sj2.parity .parity-rail .rail-btn.on {
+  background: linear-gradient(180deg, #2ee6cf22, #2ee6cf0a);
+  color: #8ff4e8;
+  box-shadow: inset 2px 0 0 #2ee6cf, 0 0 16px #2ee6cf0d;
+}
+.sj2.parity .parity-rail .rail-btn svg { width: 18px; height: 18px; }
+.sj2.parity .parity-lib-main { background: #111114; }
+.sj2.parity .parity-lib-head {
+  height: 56px; padding: 8px 12px 4px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+}
+.sj2.parity .parity-lib-title { font-size: 15px; font-weight: 700; color: #f1f2f5; line-height: 1.15; }
+.sj2.parity .parity-lib-sub { margin-top: 3px; font-size: 9.5px; color: #73737d; }
+.sj2.parity .parity-lib-actions { display: flex; align-items: center; gap: 4px; }
+.sj2.parity .parity-import {
+  height: 28px; padding: 0 9px; display: flex; align-items: center; gap: 4px;
+  border-radius: 5px; background: #23232a; border: 1px solid #35353e; color: #d9d9df; font-size: 10.5px;
+}
+.sj2.parity .parity-import:hover { border-color: #2ee6cf77; color: #9ff7ec; }
+.sj2.parity .parity-import svg { width: 13px; height: 13px; }
+.sj2.parity .parity-icon-btn { width: 28px; height: 28px; border-radius: 5px; display: grid; place-items: center; color: #8d8d96; }
+.sj2.parity .parity-icon-btn:hover { background: #1f1f25; color: #fff; }
+.sj2.parity .parity-icon-btn svg { width: 14px; height: 14px; }
+.sj2.parity .parity-kind-tabs { display: flex; gap: 2px; padding: 0 10px 6px; overflow: auto; scrollbar-width: none; }
+.sj2.parity .parity-kind-tabs button {
+  height: 24px; padding: 0 9px; border-radius: 4px; color: #85858f; font-size: 10px; white-space: nowrap;
+}
+.sj2.parity .parity-kind-tabs button:hover { color: #d9d9df; background: #1c1c22; }
+.sj2.parity .parity-kind-tabs button.on { color: #fff; background: #2a2a32; font-weight: 600; }
+.sj2.parity .parity-search {
+  height: 30px; margin: 0 10px 7px; padding: 0 8px;
+  display: flex; align-items: center; gap: 6px;
+  border-radius: 5px; border: 1px solid #2a2a31; background: #17171b;
+}
+.sj2.parity .parity-search svg { width: 13px; height: 13px; color: #6f6f79; flex: none; }
+.sj2.parity .parity-search input { flex: 1; min-width: 0; height: 100%; background: transparent; border: 0; outline: 0; color: #dcdce1; font-size: 10.5px; }
+.sj2.parity .parity-search input::placeholder { color: #61616b; }
+.sj2.parity .parity-search button { font-size: 9px; color: #6f6f79; }
+.sj2.parity .parity-scope { display: flex; align-items: center; gap: 3px; padding: 0 10px 6px; }
+.sj2.parity .parity-scope button {
+  height: 22px; padding: 0 8px; border-radius: 3px; color: #777781; font-size: 9.5px;
+}
+.sj2.parity .parity-scope button.on { color: #8ff4e8; background: #14302c; }
+.sj2.parity .parity-scope span { margin-left: auto; color: #5d5d67; font-size: 9px; }
+.sj2.parity .parity-lib-scroll { flex: 1; min-height: 0; overflow: auto; padding: 2px 10px 10px; }
+.sj2.parity .parity-media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.sj2.parity .parity-media-card {
+  position: relative; min-width: 0; cursor: grab;
+  border-radius: 5px; border: 1px solid #2b2b32; background: #17171b;
+  overflow: hidden; transition: border-color .12s, transform .12s, box-shadow .12s;
+}
+.sj2.parity .parity-media-card:hover { border-color: #474752; transform: translateY(-1px); box-shadow: 0 6px 14px #00000044; }
+.sj2.parity .parity-media-card.selected { border-color: #2ee6cf; box-shadow: 0 0 0 1px #2ee6cf, 0 0 16px #2ee6cf22; }
+.sj2.parity .parity-media-thumb { position: relative; aspect-ratio: 16 / 10; background: #0b0b0e; overflow: hidden; }
+.sj2.parity .parity-media-thumb video,
+.sj2.parity .parity-media-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .92; }
+.sj2.parity .parity-media-card:hover .parity-media-thumb video,
+.sj2.parity .parity-media-card:hover .parity-media-thumb img { opacity: 1; }
+.sj2.parity .parity-audio-thumb { height: 100%; display: grid; place-items: center; color: #73d8ff; background: radial-gradient(circle at 50% 45%, #16394b, #0d1118 70%); }
+.sj2.parity .parity-audio-thumb svg { width: 22px; height: 22px; }
+.sj2.parity .parity-type {
+  position: absolute; left: 4px; top: 4px; padding: 1px 4px; border-radius: 3px;
+  background: #000000b8; color: #c9f8f1; font-size: 8px;
+}
+.sj2.parity .parity-dur { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 3px; background: #000000c4; color: #e5e5ea; font-size: 8px; }
+.sj2.parity .parity-play { position: absolute; inset: 0; display: grid; place-items: center; color: #ffffffcc; font-size: 15px; text-shadow: 0 1px 6px #000; pointer-events: none; opacity: 0; transition: opacity .12s; }
+.sj2.parity .parity-media-card:hover .parity-play { opacity: 1; }
+.sj2.parity .parity-media-name { padding: 5px 6px 6px; font-size: 9.5px; color: #c6c6cd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sj2.parity .parity-del {
+  position: absolute; right: 3px; top: 3px; width: 19px; height: 19px; border-radius: 3px;
+  display: grid; place-items: center; background: #000000a6; color: #b7b7bf; opacity: 0; transition: opacity .12s;
+}
+.sj2.parity .parity-media-card:hover .parity-del { opacity: 1; }
+.sj2.parity .parity-del:hover { color: #ff8a8a; }
+.sj2.parity .parity-del svg { width: 11px; height: 11px; }
+.sj2.parity .parity-lib-empty { padding: 34px 15px; text-align: center; color: #7f7f89; }
+.sj2.parity .parity-empty-ico { width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 9px; border: 1px solid #303038; background: #17171b; display: grid; place-items: center; color: #2ee6cf; }
+.sj2.parity .parity-empty-ico svg { width: 17px; height: 17px; }
+.sj2.parity .parity-lib-empty b { display: block; color: #dedee3; font-size: 11.5px; }
+.sj2.parity .parity-lib-empty p { margin: 7px 0 12px; font-size: 10px; line-height: 1.7; }
+.sj2.parity .parity-lib-empty button { height: 27px; padding: 0 10px; border-radius: 4px; background: #1d3a36; border: 1px solid #2e6a62; color: #9ff7ec; font-size: 10px; display: inline-flex; align-items: center; gap: 4px; }
+.sj2.parity .parity-lib-foot {
+  flex: none; height: 27px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between;
+  border-top: 1px solid #232329; color: #65656f; font-size: 9px;
+}
+.sj2.parity .parity-lib-selection {
+  flex: none; min-height: 38px; padding: 6px 10px; display: flex; align-items: center; gap: 6px;
+  border-top: 1px solid #232329; background: #151519; color: #b5b5bd; font-size: 9.5px;
+}
+.sj2.parity .parity-lib-selection b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #e3e3e8; font-weight: 500; }
+.sj2.parity .parity-lib-selection span { color: #70707a; }
+.sj2.parity .parity-lib-selection button { height: 23px; padding: 0 7px; border-radius: 4px; border: 1px solid #34343d; background: #1d1d23; color: #bdbdc5; font-size: 9px; }
+.sj2.parity .parity-lib-selection button:hover { border-color: #2ee6cf77; color: #9ff7ec; }
+.sj2.parity .parity-selection-dot { width: 5px; height: 5px; border-radius: 50%; background: #2ee6cf; flex: none; }
+.sj2.parity .parity-preset-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 12px; }
+
+/* ---- 播放器：标题 / 画布 / 走带 ---- */
+.sj2.parity .parity-stage-shell { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #08080a; }
+.sj2.parity .parity-stage-shell > .stage { flex: 1; min-height: 0; border: 0; background: transparent; }
+.sj2.parity .parity-stage-head {
+  flex: none; height: 34px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid #1c1c22; background: #0d0d10;
+}
+.sj2.parity .parity-stage-title { display: flex; align-items: center; gap: 6px; color: #72727c; font-size: 9.5px; }
+.sj2.parity .parity-stage-title b { color: #d8d8df; font-size: 10.5px; font-weight: 600; }
+.sj2.parity .parity-stage-title i { font-style: normal; margin-left: 3px; padding: 1px 6px; border-radius: 3px; border: 1px solid #2b2b33; color: #8d8d97; }
+.sj2.parity .parity-stage-actions { display: flex; gap: 2px; }
+.sj2.parity .parity-stage-actions button {
+  width: 26px; height: 26px; border-radius: 4px; display: grid; place-items: center; color: #8c8c96;
+}
+.sj2.parity .parity-stage-actions button:hover { background: #1d1d23; color: #fff; }
+.sj2.parity .parity-stage-actions button.on { color: #8ff4e8; background: #14302c; }
+.sj2.parity .parity-stage-actions svg { width: 13px; height: 13px; }
+.sj2.parity .parity-stage-shell .stage-body { background: radial-gradient(circle at 50% 45%, #141419, #08080a 72%); }
+.sj2.parity .parity-stage-shell .stage-bar { display: none; }
+.sj2.parity .parity-stage-shell .transport {
+  height: 48px; background: #0c0c0f; border-top: 1px solid #202027; padding: 0 14px; gap: 8px;
+}
+.sj2.parity .parity-stage-shell .transport .timecode { font-size: 11px; letter-spacing: .2px; color: #d7d7de; }
+.sj2.parity .parity-stage-shell .transport .timecode .total { color: #6c6c76; }
+.sj2.parity .parity-stage-shell .transport .mid { gap: 3px; }
+.sj2.parity .parity-stage-shell .transport .play-btn {
+  width: 34px !important; height: 34px !important; min-width: 34px !important; min-height: 34px !important; flex-basis: 34px !important;
+  background: radial-gradient(circle at 35% 28%, #ffffff, #dfe4ea 55%, #b9c1cb) !important;
+  color: #0d1116 !important;
+  border: 1px solid #ffffff4d !important;
+  box-shadow: 0 0 0 4px #e9ebef12, 0 5px 14px #0009;
+}
+.sj2.parity .parity-stage-shell .transport .play-btn:hover { background: radial-gradient(circle at 35% 28%, #ffffff, #f2f5f7 55%, #cdd3da) !important; }
+.sj2.parity .parity-stage-shell .transport .icon-btn { width: 28px; height: 28px; min-width: 28px; min-height: 28px; flex-basis: 28px; border-radius: 7px; background: #15151a; }
+.sj2.parity .parity-stage-shell .canvas-wrap { padding: 22px 24px 14px; }
+.sj2.parity .parity-stage-shell .canvas-frame { box-shadow: 0 0 0 1px #2a2a32, 0 22px 60px #00000088; }
+
+/* ---- 检查器：页签 / 选中头 / 分组 / 音频变速 ---- */
+.sj2.parity .parity-inspector { background: #111114; border-left: 1px solid #222228; }
+.sj2.parity .parity-insp-tabs {
+  height: 44px; display: flex; align-items: stretch; gap: 0; padding: 0 4px;
+  border-bottom: 1px solid #24242b; background: #0f0f12;
+}
+.sj2.parity .parity-insp-tabs button {
+  flex: 1; min-width: 0; height: 44px; padding: 0 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  color: #85858f; font-size: 9px; border-bottom: 2px solid transparent; background: transparent;
+}
+.sj2.parity .parity-insp-tabs button svg { width: 13px; height: 13px; }
+.sj2.parity .parity-insp-tabs button:hover { color: #dedee3; background: #18181d; }
+.sj2.parity .parity-insp-tabs button.on { color: #fff; border-bottom-color: #2ee6cf; background: linear-gradient(180deg, #2ee6cf0a, transparent); }
+.sj2.parity .parity-insp-subtabs { height: 32px; background: #141418; border-bottom: 1px solid #232329; padding: 0 10px; gap: 2px; }
+.sj2.parity .parity-insp-subtabs button { height: 24px; padding: 0 9px; border-radius: 3px; font-size: 9.5px; color: #8d8d97; }
+.sj2.parity .parity-insp-subtabs button.on { background: #2a2a32; color: #fff; }
+.sj2.parity .parity-ins-head {
+  flex: none; height: 34px; padding: 0 10px; display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid #232329; background: #121216;
+}
+.sj2.parity .parity-selected-tag { flex: 1; min-width: 0; font-size: 9px; color: #74747e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sj2.parity .parity-selected-tag b { color: #d5d5dc; font-weight: 500; }
+.sj2.parity .parity-reset { width: 24px; height: 24px; border-radius: 4px; display: grid; place-items: center; color: #85858f; }
+.sj2.parity .parity-reset:hover { background: #1f1f25; color: #fff; }
+.sj2.parity .parity-reset svg { width: 12px; height: 12px; }
+.sj2.parity .parity-insp-body { flex: 1; min-height: 0; overflow: auto; background: #111114; }
+.sj2.parity .parity-insp-body > .inspector { height: auto; min-height: 100%; border: 0; background: transparent; }
+.sj2.parity .parity-inspector .inspector .insp-scroll { padding: 8px 10px 32px; }
+.sj2.parity .parity-inspector .inspector .section {
+  margin: 0 0 7px; padding: 9px 10px 10px; border: 1px solid #24242b; border-radius: 5px; background: #151519;
+}
+.sj2.parity .parity-inspector .inspector .section h4 {
+  margin: 0 0 8px; padding: 0 0 6px; border-bottom: 1px solid #222228;
+  font-size: 9.5px; font-weight: 600; letter-spacing: .4px; color: #9a9aa4; text-transform: none;
+}
+.sj2.parity .parity-inspector .inspector .section h4 .val { color: #2ee6cf; font-size: 9px; font-weight: 500; }
+.sj2.parity .parity-inspector .inspector .row label { color: #8d8d97; font-size: 9.5px; }
+.sj2.parity .parity-inspector .inspector input[type="range"] { accent-color: #2ee6cf; }
+.sj2.parity .parity-inspector .inspector input[type="number"],
+.sj2.parity .parity-inspector .inspector select,
+.sj2.parity .parity-inspector .inspector textarea { background: #0f0f12; border-color: #30303a; color: #dedee3; }
+.sj2.parity .parity-inspector .inspector .mini-btn { background: #1d1d23; border-color: #32323c; color: #bdbdc6; }
+.sj2.parity .parity-inspector .inspector .mini-btn:hover { border-color: #2ee6cf66; color: #9ff7ec; }
+.sj2.parity .parity-inspector .inspector .insp-empty { padding: 22px 18px; color: #85858f; }
+.sj2.parity .parity-inspector .inspector .sel-head { margin: 0; padding: 8px 10px; border: 1px solid #24242b; border-radius: 5px; background: #151519; }
+.sj2.parity .parity-panel { padding: 8px 10px 28px; }
+.sj2.parity .parity-group { margin: 0 0 8px; padding: 10px 11px 11px; border: 1px solid #24242b; border-radius: 5px; background: #151519; }
+.sj2.parity .parity-group h4 { margin: 0 0 9px; padding: 0 0 6px; border-bottom: 1px solid #222228; color: #9a9aa4; font-size: 9.5px; font-weight: 600; letter-spacing: .4px; }
+.sj2.parity .parity-group-val { float: right; color: #2ee6cf; font-weight: 500; }
+.sj2.parity .parity-field { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.sj2.parity .parity-field label { width: 44px; flex: none; color: #8d8d97; font-size: 9.5px; }
+.sj2.parity .parity-field input[type="range"] { flex: 1; min-width: 0; accent-color: #2ee6cf; }
+.sj2.parity .parity-field-val { width: 42px; flex: none; text-align: right; color: #b9b9c2; font-size: 9px; font-variant-numeric: tabular-nums; }
+.sj2.parity .parity-inline { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.sj2.parity .parity-mini {
+  height: 24px; padding: 0 8px; border-radius: 4px;
+  border: 1px solid #33333d; background: #1c1c22; color: #b6b6bf; font-size: 9.5px;
+}
+.sj2.parity .parity-mini:hover { border-color: #2ee6cf77; color: #9ff7ec; }
+.sj2.parity .parity-mini.on { border-color: #2ee6cf; background: #163a36; color: #9ff7ec; }
+.sj2.parity .parity-speed-presets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 7px; }
+.sj2.parity .parity-speed-presets button { height: 26px; border-radius: 4px; border: 1px solid #33333d; background: #1b1b21; color: #aaaab4; font-size: 9.5px; }
+.sj2.parity .parity-speed-presets button.on { border-color: #2ee6cf; background: #163a36; color: #9ff7ec; }
+.sj2.parity .parity-kv { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed #24242b; color: #85858f; font-size: 9.5px; }
+.sj2.parity .parity-kv b { color: #cfcfd6; font-weight: 500; font-variant-numeric: tabular-nums; }
+.sj2.parity .parity-hint { margin-top: 8px; color: #65656f; font-size: 9px; line-height: 1.65; }
+.sj2.parity .parity-insp-empty { padding: 30px 20px; text-align: center; color: #7f7f89; }
+.sj2.parity .parity-insp-empty b { display: block; color: #dedee3; font-size: 11.5px; margin-bottom: 7px; }
+.sj2.parity .parity-insp-empty p { margin: 0; font-size: 10px; line-height: 1.7; }
+.sj2.parity .parity-empty-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 12px; }
+.sj2.parity .parity-empty-keys span { padding: 2px 6px; border: 1px solid #2d2d35; border-radius: 3px; background: #17171b; color: #74747e; font-size: 8.5px; }
+.sj2.parity .parity-insp-foot { height: 27px; background: #0f0f12; border-top: 1px solid #24242b; color: #60606a; }
+
+/* ---- 时间线：双行工具栏 / 轨道头 / 片段 ---- */
+.sj2.parity .parity-timeline { background: #101012; border-top: 1px solid #222228; }
+.sj2.parity .parity-tl-toolbar {
+  height: 38px; padding: 0 8px; gap: 3px; background: #151517; border-bottom: 1px solid #26262c;
+}
+.sj2.parity .ptl-btn { height: 28px; padding: 0 7px; border-radius: 4px; color: #a8a8b1; font-size: 10px; }
+.sj2.parity .ptl-btn:hover { background: #24242a; color: #fff; }
+.sj2.parity .ptl-btn.active { background: #1d3b37; color: #8ff4e8; box-shadow: inset 0 0 0 1px #2ee6cf44; }
+.sj2.parity .ptl-btn.pending { color: #8b8b95; }
+.sj2.parity .ptl-btn.pending:hover { color: #f0c674; }
+.sj2.parity .ptl-sep { background: #303038; height: 18px; margin: 0 3px; }
+.sj2.parity .ptl-note { color: #5f5f69; font-size: 9px; }
+.sj2.parity .parity-timeline > .timeline { background: #191919; }
+.sj2.parity .parity-timeline .tl-tools { height: 40px; background: #1b1b1f; border-bottom-color: #292930; }
+.sj2.parity .parity-timeline .tl-tools .tl-caption,
+.sj2.parity .parity-timeline .tl-tools .tl-newhint { display: none; }
+.sj2.parity .parity-timeline .tl-tool { color: #a6a6af; }
+.sj2.parity .parity-timeline .tl-tool:hover { background: #26262d; color: #fff; }
+.sj2.parity .parity-timeline .tl-tool.on { background: #1d3b37; color: #2ee6cf; }
+.sj2.parity .parity-timeline .tl-body { grid-template-columns: 200px minmax(0, 1fr); }
+.sj2.parity .parity-timeline .track-heads { background: #16161a; border-right: 1px solid #2a2a31; }
+.sj2.parity .parity-timeline .head-ruler { height: 26px; background: #18181c; border-bottom: 1px solid #2a2a31; padding: 0 10px; color: #7d7d87; }
+.sj2.parity .parity-timeline .track-head {
+  display: grid; grid-template-columns: 27px minmax(0, 1fr) auto; grid-template-rows: 1fr; align-items: center;
+  gap: 7px; padding: 0 8px; background: #17171b; border-bottom: 1px solid #242429;
+}
+.sj2.parity .parity-timeline .track-head .tname {
+  width: 27px; height: 27px; border-radius: 4px; display: grid; place-items: center;
+  background: #24242b; color: #7fe9da; font-size: 9.5px; font-weight: 700;
+}
+.sj2.parity .parity-timeline .track-head .tlabel { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }
+.sj2.parity .parity-timeline .track-head .tlabel b { font-size: 9.5px; color: #d9d9df; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sj2.parity .parity-timeline .track-head .tlabel em { font-style: normal; font-size: 8.5px; color: #81818b; white-space: nowrap; }
+.sj2.parity .parity-timeline .track-head .locks { display: flex; gap: 0; }
+.sj2.parity .parity-timeline .track-head .locks button { width: 18px; height: 18px; color: #74747e; border-radius: 2px; }
+.sj2.parity .parity-timeline .track-head .locks button:hover { background: #28282f; color: #fff; }
+.sj2.parity .parity-timeline .track-head .locks button.on { color: #f0c674; }
+.sj2.parity .parity-timeline .track-head .hctl { display: none; }
+.sj2.parity .parity-timeline .ruler { height: 26px; background: #18181c; border-bottom: 1px solid #2a2a31; }
+.sj2.parity .parity-timeline .ruler .tick { border-left-color: #3a3a42; color: #8f8f99; font-size: 9px; }
+.sj2.parity .parity-timeline .lane { background-color: #1b1b1f; border-bottom-color: #27272d; }
+.sj2.parity .parity-timeline .lane:nth-child(odd) { background-color: #1a1a1e; }
+.sj2.parity .parity-timeline .baseline span { background: #1b1b1f; border: 1px solid #2a2a31; color: #6c6c76; }
+.sj2.parity .parity-timeline .clip2 { border-radius: 3px; }
+.sj2.parity .parity-timeline .clip2.selected { border-color: #2ee6cf; box-shadow: 0 0 0 1px #2ee6cf, 0 0 18px #2ee6cf22; }
+.sj2.parity .parity-timeline .clip2 .tagline { background: #000000a0; color: #cfeee9; }
+.sj2.parity .parity-timeline .clip2 .cname { bottom: 3px; font-size: 8.5px; }
+.sj2.parity .parity-timeline .playhead { background: #f5f5f7; }
+.sj2.parity .parity-timeline .tl-foot { background: #18181c; border-top-color: #2a2a31; color: #80808a; }
+
+/* ---- 布局对照标注 ---- */
+.sj2.parity .parity-annot-layer { position: absolute; inset: 54px 0 var(--tl-h, 360px) 0; pointer-events: none; z-index: 70; }
+.sj2.parity .parity-annot-frame { position: absolute; border: 1px dashed #2ee6cfaa; border-radius: 4px; background: #2ee6cf08; box-shadow: 0 0 18px #2ee6cf11; }
+.sj2.parity .frame-library { left: 0; top: 0; bottom: 0; width: calc(72px + var(--lib-main-w, 300px)); }
+.sj2.parity .frame-stage { left: calc(72px + var(--lib-main-w, 300px)); right: var(--ins-w, 430px); top: 0; bottom: 0; }
+.sj2.parity .frame-inspector { right: 0; top: 0; bottom: 0; width: var(--ins-w, 430px); }
+.sj2.parity .frame-timeline { left: 0; right: 0; bottom: calc(-1 * var(--tl-h, 360px)); height: var(--tl-h, 360px); }
+.sj2.parity .parity-annot-label {
+  position: absolute; z-index: 71; padding: 2px 6px; border-radius: 3px;
+  background: #08110fe6; border: 1px solid #2ee6cf88; color: #9ff7ec; font-size: 9px; white-space: nowrap;
+}
+.sj2.parity .ann-rail { left: 6px; top: 6px; }
+.sj2.parity .ann-lib { left: 6px; top: 28px; }
+.sj2.parity .ann-stage { left: 50%; top: 6px; transform: translateX(-50%); }
+.sj2.parity .ann-ins { right: 8px; top: auto; bottom: 34px; }
+.sj2.parity .ann-tl { left: 50%; bottom: -24px; transform: translateX(-50%); }
+
+/* ---- 响应式：同构版顶栏/四区 ---- */
+@media (max-width: 1380px) {
+  .sj2.parity .parity-topbar { grid-template-columns: 184px minmax(120px, 1fr) auto auto; gap: 8px; }
+  .sj2.parity .parity-ghost span { display: none; }
+  .sj2.parity .parity-meta-chip { display: none; }
+  .sj2.parity .parity-avatar { display: none; }
+}
+@media (max-width: 1180px) {
+  .sj2.parity .parity-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .sj2.parity .parity-top-center { display: none; }
+  .sj2.parity .parity-project { padding-left: 8px; }
+  .sj2.parity .parity-brand-text span { display: none; }
+  .sj2.parity .parity-top-right .parity-ghost { display: none; }
+  .sj2.parity .parity-top-right .compact-only { display: grid; }
+}
+@media (max-width: 680px) {
+  .sj2.parity .parity-brand-text b { font-size: 11px; }
+  .sj2.parity .parity-project-name { font-size: 11px; }
+  .sj2.parity .parity-export span { display: none; }
+}
+
+.sj2.parity .parity-top-right .compact-only { display: none; }
+.sj2.parity .ptl-ai {
+  margin-left: 3px; padding: 0 3px; border-radius: 2px;
+  background: #2ee6cf1f; color: #7ff1e3; font-size: 7.5px; letter-spacing: .2px;
+}
+.sj2.parity .ptl-zoom { display: flex; align-items: center; gap: 6px; margin: 0 8px; color: #7d7d87; font-size: 9px; }
+.sj2.parity .ptl-zoom span { white-space: nowrap; }
+.sj2.parity .ptl-zoom input { width: 72px; accent-color: #2ee6cf; }
+.sj2.parity .ptl-zoom em { font-style: normal; color: #62626c; font-size: 8.5px; }
+.sj2.parity .parity-stage-shell .transport .timecode { flex: none; white-space: nowrap; font-size: 10.5px; }
+@media (max-width: 1280px) {
+  .sj2.parity .parity-stage-shell .transport .timecode em,
+  .sj2.parity .parity-stage-shell .transport .timecode span:nth-of-type(2) { display: none; }
+}
+@media (max-width: 680px) {
+  .sj2.parity .parity-project { display: none; }
+  .sj2.parity .parity-stage-title { display: none; }
+  .sj2.parity .parity-tl-toolbar { overflow-x: auto; scrollbar-width: none; }
+  .sj2.parity .parity-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .sj2.parity .parity-stage-title span,
+  .sj2.parity .parity-stage-title i { display: none; }
+  .sj2.parity .ptl-zoom,
+  .sj2.parity .ptl-note { display: none; }
+  .sj2.parity .parity-stage-shell .transport .timecode { font-size: 9.5px; }
+  .sj2.parity .pro-chat-orb { display: none; }
+}

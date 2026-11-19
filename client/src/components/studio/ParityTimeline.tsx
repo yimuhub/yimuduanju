@@ -3,7 +3,7 @@
  * 第二行沿用 ShenJianTimeline 的真实工具条与轨道区。
  * 已有剪辑动作直接调用 EDL；未接入的能力只提示，不伪造结果。
  */
-import { Captions, Copy, Mic, MousePointer2, Redo2, Scissors, Trash2, Undo2, Wand2 } from 'lucide-react';
+import { Captions, Copy, Gauge, Mic, MousePointer2, Redo2, Scissors, Trash2, Undo2, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
@@ -37,7 +37,7 @@ export const ParityTimeline = ({
   return (
     <div className="parity-timeline">
       <div className="parity-tl-toolbar">
-        <button type="button" className="ptl-btn" title="选择工具 (A)" onClick={() => window.dispatchEvent(new CustomEvent('yimu:shenjian-tool', { detail: 'select' }))}>
+        <button type="button" className="ptl-btn active" title="选择工具 (A)" onClick={() => window.dispatchEvent(new CustomEvent('yimu:shenjian-tool', { detail: 'select' }))}>
           <MousePointer2 /><span>选择</span>
         </button>
         <button type="button" className="ptl-btn" title="分割 (E)" onClick={splitAtPlayhead}>
@@ -57,16 +57,32 @@ export const ParityTimeline = ({
           <Copy />
         </button>
         <span className="ptl-sep" />
+        <button type="button" className="ptl-btn" title="变速：打开检查器变速页" onClick={() => window.dispatchEvent(new CustomEvent('yimu:shenjian-inspector-main', { detail: 'speed' }))}>
+          <Gauge /><span>变速</span>
+        </button>
+        <span className="ptl-sep" />
         <button type="button" className="ptl-btn pending" title="录音能力待接入" onClick={() => toast.info('同构版占位：录音能力待接入，经典版也未提供')}>
           <Mic /><span>录音</span>
         </button>
         <button type="button" className="ptl-btn pending" title="自动字幕待接入" onClick={() => toast.info('同构版占位：自动字幕待接入；当前可手动加字幕轨')}>
-          <Captions /><span>自动字幕</span>
+          <Captions /><span>自动字幕</span><span className="ptl-ai">AI</span>
         </button>
         <button type="button" className="ptl-btn pending" title="智能包装待接入" onClick={() => toast.info('同构版占位：智能包装待接入；当前保留字幕、贴纸与模板能力')}>
           <Wand2 /><span>智能包装</span>
         </button>
         <span className="ptl-grow" />
+        <div className="ptl-zoom">
+          <span>缩放</span>
+          <input
+            type="range"
+            min="14"
+            max="120"
+            defaultValue="44"
+            aria-label="时间线缩放"
+            onChange={(e) => window.dispatchEvent(new CustomEvent('yimu:shenjian-zoom-set', { detail: Number(e.target.value) }))}
+          />
+          <em>px/s</em>
+        </div>
         <span className="ptl-note">同构版 · 第一行快捷条</span>
       </div>
       <ShenJianTimeline snapOn={snapOn} setSnapOn={setSnapOn} />

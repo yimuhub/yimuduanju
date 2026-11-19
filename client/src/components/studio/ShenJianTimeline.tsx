@@ -674,11 +674,17 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       if (d === 'fit') fit();
       else setZoom((z) => Math.max(14, Math.min(120, z + (d === 'out' ? -4 : 4))));
     };
+    const onZoomSet = (e: Event) => {
+      const v = Number((e as CustomEvent).detail);
+      if (Number.isFinite(v)) setZoom(Math.max(14, Math.min(120, v)));
+    };
     window.addEventListener('yimu:shenjian-tool', onTool);
     window.addEventListener('yimu:shenjian-zoom', onZoom);
+    window.addEventListener('yimu:shenjian-zoom-set', onZoomSet);
     return () => {
       window.removeEventListener('yimu:shenjian-tool', onTool);
       window.removeEventListener('yimu:shenjian-zoom', onZoom);
+      window.removeEventListener('yimu:shenjian-zoom-set', onZoomSet);
     };
   });
 

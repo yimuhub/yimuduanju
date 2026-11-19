@@ -11,7 +11,7 @@ import { clipSpan } from './model';
 import { sampleVideoTransform } from '@shared/timeline-keyframes';
 import type { TimelineClip, TimelineTextStyle } from '@shared/api.interface';
 
-type Ratio = '9:16' | '16:9' | '1:1';
+type Ratio = '9:16' | '16:9' | '1:1' | '4:3';
 
 // 预览字体映射，与检查器里的字体 id 一一对应
 const PREVIEW_FONTS: Record<string, string> = {
@@ -316,7 +316,7 @@ export const ShenJianStage = ({
       </div>
 
       <div className="canvas-wrap">
-        <div className={`canvas-frame${ratio === '16:9' ? ' wide' : ratio === '1:1' ? ' square' : ''}`}>
+        <div className={`canvas-frame${ratio === '16:9' ? ' wide' : ratio === '1:1' ? ' square' : ratio === '4:3' ? ' four-three' : ''}`}>
           <div
             ref={canvasRef}
             className={`canvas${previewQuality === 'fast' ? ' fast' : ''}${safe ? ' safe-on' : ''}`}
