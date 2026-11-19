@@ -114,6 +114,15 @@ export const ParityLibrary = ({ onImport }: { onImport: () => void }) => {
     return () => window.removeEventListener('yimu:assets-changed', onChange);
   }, [refresh]);
 
+  useEffect(() => {
+    const onModule = (e: Event) => {
+      const next = (e as CustomEvent).detail as RailTab;
+      if (RAIL.some((r) => r.key === next)) setRail(next);
+    };
+    window.addEventListener('yimu:shenjian-module', onModule);
+    return () => window.removeEventListener('yimu:shenjian-module', onModule);
+  }, []);
+
   const pool = scope === 'project' ? projectAssets : platformAssets;
   const visible = useMemo(() => {
     let rows = pool.filter((a) => a.status !== 'failed' && mediaUrl(a));

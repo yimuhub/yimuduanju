@@ -162,7 +162,7 @@ export interface EdlEditor {
   splitClip: (id: string, at: number) => string | null;
   splitAtPlayhead: (at: number, id?: string) => string | null;
   editSubtitle: (id: string, text: string) => void;
-  addSubtitle: (at: number, lane?: number, text?: string, style?: TimelineClip['textStyle']) => string | null;
+  addSubtitle: (at: number, lane?: number, text?: string, style?: TimelineClip['textStyle'], durationSec?: number) => string | null;
   addAudio: (
     asset: { name: string; url: string; durationSeconds?: number },
     at: number,
@@ -818,10 +818,10 @@ export function useEdlEditor(data: StudioData): EdlEditor {
   );
 
   const addSubtitle = useCallback(
-    (at: number, lane = 0, text = '新字幕', textStyle?: TimelineClip['textStyle']): string | null => {
+    (at: number, lane = 0, text = '新字幕', textStyle?: TimelineClip['textStyle'], durationSec = 3): string | null => {
       const before = clipsRef.current;
       if (!docRef.current) return null;
-      const duration = 3;
+      const duration = Math.max(0.2, durationSec);
       const startAt = quantizeToFrame(Math.max(0, at), fpsRef.current);
       let targetLane = lane;
       // 同一时刻已有字幕时不覆盖，自动向上找空 lane；字幕/贴纸可以同时叠多层

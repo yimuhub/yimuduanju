@@ -304,7 +304,7 @@ const EmbeddedAudio = ({
   );
 };
 
-export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSnapOn: (v: boolean) => void }) => {
+export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { snapOn: boolean; setSnapOn: (v: boolean) => void; hideToolbar?: boolean }) => {
   const [addOpen, setAddOpen] = useState(false);
   const { data, projectId, curT, setCurT, setPreviewMode } = useStudio();
   const edl = useEdl();
@@ -314,6 +314,12 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
   /** 每条轨道单独的显示高度；未设置的轨道跟随全局行高，关键帧轨道默认展开。 */
   const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
   const [tool, setTool] = useState<'select' | 'razor'>('select');
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('yimu:shenjian-tool-state', { detail: tool }));
+  }, [tool]);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('yimu:shenjian-zoom-state', { detail: zoom }));
+  }, [zoom]);
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -678,13 +684,21 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
       const v = Number((e as CustomEvent).detail);
       if (Number.isFinite(v)) setZoom(Math.max(14, Math.min(120, v)));
     };
+    const onHome = () => {
+      const wrap = lanesRef.current;
+      if (wrap) { wrap.scrollLeft = 0; wrap.scrollTop = 0; }
+      setScrollLeft(0);
+      setScrollTop(0);
+    };
     window.addEventListener('yimu:shenjian-tool', onTool);
     window.addEventListener('yimu:shenjian-zoom', onZoom);
     window.addEventListener('yimu:shenjian-zoom-set', onZoomSet);
+    window.addEventListener('yimu:shenjian-scroll-home', onHome);
     return () => {
       window.removeEventListener('yimu:shenjian-tool', onTool);
       window.removeEventListener('yimu:shenjian-zoom', onZoom);
       window.removeEventListener('yimu:shenjian-zoom-set', onZoomSet);
+      window.removeEventListener('yimu:shenjian-scroll-home', onHome);
     };
   });
 
@@ -704,6 +718,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
 
   return (
     <section className="tl2 timeline">
+      {!hideToolbar ? (
       <div className="tl-tools">
         <button type="button" className={`tl-tool${tool === 'select' ? ' on' : ''}`} data-tip="选择工具 (A)：点选/拖动片段" onClick={() => setTool('select')}>
           <IconSelect /><span className="dotmark" />
@@ -801,6 +816,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn }: { snapOn: boolean; setSn
           <button type="button" className="mini-btn" data-tip="适应窗口" onClick={fit}>适应</button>
         </div>
       </div>
+      ) : null}
 
       <div className="tl-body">
         <div className="track-heads">
