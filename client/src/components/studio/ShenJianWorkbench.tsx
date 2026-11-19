@@ -36,6 +36,7 @@ import { StudioFloatingChat } from './StudioFloatingChat';
 import { JIANYING_SHORTCUT_GROUPS } from '@client/src/lib/jianying-shortcuts';
 import { clipSpan } from './model';
 import { useShenJianLayout } from './useShenJianLayout';
+import { ShenJianVariantSwitch } from './ShenJianVariantSwitch';
 
 type Ratio = '9:16' | '16:9' | '1:1';
 
@@ -327,9 +328,13 @@ export const ShenJianWorkbench = () => {
 
   const showTip = (e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('[data-tip]') as HTMLElement | null;
-    if (!el) return;
+    if (!el || !el.getAttribute('data-tip')) {
+      // 指针移到普通区域时立即收起，避免提示跟着上一次按钮留在屏幕上。
+      setTip(null);
+      setTipPos(null);
+      return;
+    }
     const text = el.getAttribute('data-tip') || '';
-    if (!text) return;
     setTip({ text, rect: el.getBoundingClientRect() });
   };
   const hideTip = () => {
@@ -386,6 +391,7 @@ export const ShenJianWorkbench = () => {
             </button>
           </div>
           <div className="top-right">
+            <ShenJianVariantSwitch />
             <button type="button" className="chip compact-only" data-tip="打开素材库" onClick={() => setCompactPanel('library')}><FolderOpen /><span>素材</span></button>
             <button type="button" className="chip compact-only" data-tip="打开镜头池" onClick={() => setCompactPanel('pool')}><LayoutGrid /><span>镜头</span></button>
             <button type="button" className="chip compact-only" data-tip="打开属性检查器" onClick={() => setCompactPanel('inspector')}><SlidersHorizontal /><span>属性</span></button>

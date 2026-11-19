@@ -42,6 +42,8 @@ import { StudioTimeline } from './StudioTimeline';
 import { StudioStatusBar } from './StudioStatusBar';
 import { StudioProTopBar } from './StudioProTopBar';
 import { ShenJianWorkbench } from './ShenJianWorkbench';
+import { ShenJianWorkbenchParity } from './ShenJianWorkbenchParity';
+import { useShenJianVariant } from '@client/src/lib/shenjian-variant';
 import { NewWorkDialog, type NewWorkOpenOptions } from './NewWorkDialog';
 import { StudioFloatingChat } from './StudioFloatingChat';
 import ProjectStoryboardTab from '@client/src/pages/ProjectWorkspace/tabs/ProjectStoryboardTab';
@@ -228,6 +230,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       /* 忽略 */
     }
   }, []);
+  const variant = useShenJianVariant();
   const [proEdit, setProEditState] = useState(
     () => {
       try {
@@ -738,7 +741,7 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     return (
       <StudioContext.Provider value={ctxValue}>
         <EdlProvider data={data}>
-          <ShenJianWorkbench />
+          {variant === 'parity' ? <ShenJianWorkbenchParity /> : <ShenJianWorkbench />}
         </EdlProvider>
       </StudioContext.Provider>
     );

@@ -1,0 +1,259 @@
+/**
+ * 同构版（Parity）样式。
+ * 只在 .sj2.parity 下生效，经典版沿用 shenjian-proto.css，不被覆盖。
+ * 目标四区：72 模块栏 + 300 素材 / 舞台 1fr / 430 检查器 / 360 双行工具栏时间线。
+ */
+.sj2.parity {
+  --lib-w-default: 372px;
+  --ins-w-default: 430px;
+  --tl-h-default: 360px;
+}
+
+/* ===== 四区骨架 ===== */
+.sj2.parity .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 52px minmax(0, 1fr) var(--tl-h, 360px);
+}
+.sj2.parity .workspace {
+  grid-template-columns: var(--lib-w, 372px) minmax(0, 1fr) var(--ins-w, 430px);
+}
+.sj2.parity .library {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.sj2.parity .lib-rail {
+  padding: 6px 6px;
+  gap: 2px;
+}
+.sj2.parity .rail-btn {
+  width: 60px;
+  height: 58px;
+  gap: 5px;
+  font-size: 10.5px;
+  letter-spacing: .2px;
+}
+.sj2.parity .rail-btn svg { width: 19px; height: 19px; }
+.sj2.parity .rail-btn.on {
+  background: linear-gradient(180deg, #2ee6cf18, #2ee6cf08);
+  color: #2ee6cf;
+  box-shadow: inset 2px 0 0 #2ee6cf;
+}
+.sj2.parity .lib-head { height: 46px; padding: 10px 12px 6px; }
+.sj2.parity .lib-title { font-size: 14px; }
+.sj2.parity .lib-subtabs { height: 34px; padding: 0 10px 8px; gap: 2px; }
+.sj2.parity .lib-subtabs button { font-size: 11px; padding: 3px 9px; border-radius: 4px; }
+.sj2.parity .lib-subtabs button.on { background: transparent; color: #fff; font-weight: 600; box-shadow: inset 0 -2px 0 #2ee6cf; }
+.sj2.parity .lib-scroll { padding: 4px 10px 12px; }
+.sj2.parity .media-card { aspect-ratio: 16 / 10; }
+.sj2.parity .lib-foot { height: 28px; }
+
+/* ===== 顶栏 ===== */
+.sj2.parity .parity-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 7px;
+  padding: 0 6px;
+  border: 1px solid #2ee6cf55;
+  border-radius: 3px;
+  color: #8ff4e8;
+  background: #2ee6cf10;
+  font-size: 9px;
+  font-weight: 500;
+  vertical-align: 2px;
+  letter-spacing: .3px;
+}
+.sj2 .variant-switch {
+  height: 28px;
+  padding: 2px;
+  border-color: #33353c;
+  background: #0f1013;
+  flex: none;
+}
+.sj2 .variant-switch button {
+  min-width: 38px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  letter-spacing: .2px;
+}
+.sj2 .variant-switch button.on {
+  background: #2ee6cf18;
+  color: #8ff4e8;
+  box-shadow: inset 0 0 0 1px #2ee6cf33;
+}
+.sj2 .variant-switch.compact button { min-width: 30px; }
+
+/* 助手球默认停在舞台右下角，不压检查器 */
+.sj2.parity .pro-chat-float { right: calc(var(--ins-w, 430px) + 16px); bottom: calc(var(--tl-h, 360px) + 78px); }
+@media (max-width: 1180px) { .sj2.parity .pro-chat-float { right: 16px; } }
+
+/* ===== 检查器：7 + 4 页签 ===== */
+.sj2.parity .parity-inspector { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sj2.parity .parity-insp-tabs {
+  display: flex;
+  flex: none;
+  height: 38px;
+  align-items: center;
+  gap: 1px;
+  padding: 0 4px;
+  border-bottom: 1px solid #282a31;
+  background: #131418;
+}
+.sj2.parity .parity-insp-tabs button {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 3px;
+  border-radius: 4px;
+  color: #8a909b;
+  font-size: 10.5px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.sj2.parity .parity-insp-tabs button:hover { color: #e6e8ed; background: #ffffff08; }
+.sj2.parity .parity-insp-tabs button.on { color: #fff; border-bottom-color: #2ee6cf; font-weight: 600; }
+.sj2.parity .parity-insp-subtabs {
+  display: flex;
+  flex: none;
+  height: 34px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid #202329;
+  background: #17181c;
+}
+.sj2.parity .parity-insp-subtabs button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 4px;
+  color: #878d98;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.sj2.parity .parity-insp-subtabs button.on { background: #262a31; color: #fff; }
+.sj2.parity .parity-insp-subplaceholder { flex: none; height: 0; }
+.sj2.parity .parity-insp-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.sj2.parity .parity-insp-body > .inspector { flex: 1; min-width: 0; border-left: 0; background: transparent; }
+.sj2.parity .parity-inspector .inspector .insp-tabs { display: none; }
+.sj2.parity .parity-inspector .inspector .insp-scroll { padding: 12px 14px 40px; }
+.sj2.parity .parity-pending { padding: 28px 22px; color: #8f96a2; }
+.sj2.parity .parity-pending-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #33363e;
+  border-radius: 8px;
+  color: #2ee6cf;
+  background: #2ee6cf0d;
+  margin-bottom: 12px;
+}
+.sj2.parity .parity-pending b { display: block; color: #e7e9ee; font-size: 13px; margin-bottom: 7px; }
+.sj2.parity .parity-pending p { margin: 0; font-size: 11px; line-height: 1.9; color: #9aa1ac; }
+.sj2.parity .parity-pending-tip {
+  margin: 12px 0;
+  padding: 9px 10px;
+  border: 1px solid #2c3038;
+  border-radius: 5px;
+  background: #181a1f;
+  color: #7f8792;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.sj2.parity .parity-pending .mini-btn { display: inline-flex; align-items: center; gap: 3px; }
+.sj2.parity .parity-insp-foot {
+  flex: none;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-top: 1px solid #24272e;
+  color: #626975;
+  font-size: 9.5px;
+}
+.sj2.parity .parity-insp-foot .grow { flex: 1; }
+
+/* ===== 时间线：第一行快捷条 + 第二行真实工具条 ===== */
+.sj2.parity .parity-timeline {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: var(--tl-h, 360px);
+  border-top: 1px solid #2a2c33;
+  background: #191919;
+  position: relative;
+  z-index: 20;
+}
+.sj2.parity .parity-tl-toolbar {
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  background: #1d1d1d;
+  border-bottom: 1px solid #2c2c2c;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sj2.parity .parity-tl-toolbar::-webkit-scrollbar { display: none; }
+.sj2.parity .ptl-btn {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: 4px;
+  color: #b3b3b3;
+  font-size: 10.5px;
+  white-space: nowrap;
+  flex: none;
+}
+.sj2.parity .ptl-btn:hover { background: #2b2b2b; color: #fff; }
+.sj2.parity .ptl-btn.pending { color: #949494; }
+.sj2.parity .ptl-btn.pending:hover { color: #f0c674; }
+.sj2.parity .ptl-btn:disabled { opacity: .35; cursor: default; }
+.sj2.parity .ptl-btn svg { width: 15px; height: 15px; }
+.sj2.parity .ptl-sep { width: 1px; height: 18px; background: #333; margin: 0 4px; flex: none; }
+.sj2.parity .ptl-grow { flex: 1; min-width: 10px; }
+.sj2.parity .ptl-note { color: #6c6c72; font-size: 9.5px; white-space: nowrap; }
+.sj2.parity .parity-timeline > .timeline {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  border-top: 0;
+}
+.sj2.parity .tl-body { grid-template-columns: 172px minmax(0, 1fr); }
+.sj2.parity .tl-tools { height: 38px; }
+
+/* ===== 对照弹窗 ===== */
+.sj2.parity .parity-modal { width: min(780px, 94vw); }
+.sj2.parity .parity-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.sj2.parity .parity-compare-col { border: 1px solid #2b2e36; border-radius: 7px; padding: 14px 16px; background: #17191e; }
+.sj2.parity .parity-compare-col.done { border-color: #2ee6cf33; }
+.sj2.parity .parity-compare-col.pending { border-color: #f3b45a33; }
+.sj2.parity .parity-compare-col b { display: block; font-size: 12px; margin-bottom: 8px; color: #e9ebef; }
+.sj2.parity .parity-compare-col.done b { color: #8ff4e8; }
+.sj2.parity .parity-compare-col.pending b { color: #f3c27a; }
+.sj2.parity .parity-compare-col ul { margin: 0; padding-left: 16px; color: #a4abb6; font-size: 11px; line-height: 1.9; }
+.sj2.parity .parity-compare-note { margin-top: 10px; padding-top: 9px; border-top: 1px solid #2a2d34; color: #7f8792; font-size: 10px; line-height: 1.7; }
+
+/* ===== 窄屏：与经典版一致的抽屉策略，同构版保留开关 ===== */
+@media (max-width: 1180px) {
+  .sj2.parity .workspace { grid-template-columns: minmax(0, 1fr); }
+  .sj2.parity .workspace > .library,
+  .sj2.parity .workspace > .inspector { display: none; }
+  .sj2.parity .top-center { display: none; }
+  .sj2.parity .parity-badge { display: none; }
+ }
+@media (max-width: 680px) {
+  .sj2.parity .ptl-note { display: none; }
+  .sj2.parity .parity-insp-tabs button { font-size: 9.5px; }
+  .sj2.parity .parity-compare { grid-template-columns: 1fr; }
+}
+@media (max-height: 620px) {
+  .sj2.parity .app { grid-template-rows: 48px minmax(0, 1fr) clamp(180px, 40vh, 360px); }
+}
+@media (max-height: 520px) {
+  .sj2.parity .app { grid-template-rows: 44px minmax(0, 1fr) clamp(150px, 42vh, 220px); }
+}
