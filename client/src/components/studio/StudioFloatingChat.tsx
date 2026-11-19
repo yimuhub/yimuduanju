@@ -12,7 +12,7 @@
  * 系统级置顶小窗（可拖到屏幕任意位置），点它回到主窗口继续对话；
  * Safari/Firefox 无此 API，退化为页内拖拽小球。全平台透明置顶宠物仍需 Tauri 壳。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Grip, MonitorUp, Send, X } from 'lucide-react';
 import { IconShenJianAssistant } from './ShenJianIcons';
 import { toast } from 'sonner';
@@ -36,30 +36,6 @@ interface Pos {
 const ORB_SIZE = 46;
 const WIN_W = 380;
 
-/**
- * 小球/浮窗都挂在右下角（right:24 / bottom:76）再用 translate 位移。
- * 这里把「视觉上必须完整留在视口内」换算成 translate 的合法区间：
- * 关闭时只保证 46px 小球可见，打开时保证 380×560 的浮窗可见。
- */
-const clampPos = (p: Pos, open: boolean): Pos => {
-  if (typeof window === 'undefined') return p;
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const width = open ? Math.min(WIN_W, w - 16) : ORB_SIZE;
-  const height = open ? Math.min(620, h - 110) : ORB_SIZE;
-  const baseLeft = w - 24 - width;
-  const baseTop = h - 76 - height;
-  const minX = 8 - baseLeft;
-  // 打开时顶部至少留 56px，避开 52px 顶栏；否则拖到上边缘时标题栏会被顶栏遮住。
-  const minY = (open ? 56 : 8) - baseTop;
-  const maxX = 16; // (w-8-width) - baseLeft
-  const maxY = 68; // (h-8-height) - baseTop
-  return {
-    x: Math.min(Math.max(maxX, minX), Math.max(minX, Math.min(maxX, p.x))),
-    y: Math.min(Math.max(maxY, minY), Math.max(minY, Math.min(maxY, p.y))),
-  };
-};
-
 const readPos = (): Pos => {
   try {
     const raw = localStorage.getItem(POS_KEY);
@@ -77,6 +53,9 @@ export const StudioFloatingChat = () => {
   const { chatMsgs, chatBusy, sendChat, stopChat, data } = useStudio();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<Pos>(readPos);
+  const floatRef = useRef<HTMLDivElement | null>(null);
+  const posRef = useRef<Pos>(pos);
+  useEffect(() => { posRef.current = pos; }, [pos]);
   const [autonomy, setAutonomy] = useState<AgentAutonomy>(readAgentAutonomy);
   const [draft, setDraft] = useState('');
   const [durOpen, setDurOpen] = useState(false);
@@ -105,6 +84,35 @@ export const StudioFloatingChat = () => {
     }
   }, [pos]);
 
+  /**
+ * 全屏拖拽：用当前 DOM 的真实布局位置和尺寸算边界，而不是假定 right:24/bottom:76。
+ * 同构版把小球默认放在检查器左侧，旧公式只允许 16×68px 的位移，所以看起来“只能小范围动”。
+ */
+  const clampToViewport = useCallback((candidate: Pos, current: Pos = posRef.current): Pos => {
+    const el = floatRef.current;
+    if (!el || typeof window === 'undefined') return candidate;
+    const margin = 8;
+    const rect = el.getBoundingClientRect();
+    const width = rect.width || (open ? Math.min(WIN_W, window.innerWidth - 16) : ORB_SIZE);
+    const height = rect.height || ORB_SIZE;
+    // rect 已包含 translate；减掉当前位移得到 right/bottom 定位下的真实基准点。
+    const baseLeft = rect.left - current.x;
+    const baseTop = rect.top - current.y;
+    const minX = margin - baseLeft;
+    const maxX = window.innerWidth - margin - width - baseLeft;
+    const minY = margin - baseTop;
+    const maxY = window.innerHeight - margin - height - baseTop;
+    return {
+      x: Math.min(Math.max(minX, candidate.x), Math.max(minX, maxX)),
+      y: Math.min(Math.max(minY, candidate.y), Math.max(minY, maxY)),
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    // 展开/收起会改变宽高，渲染后按新尺寸夹一次，避免展开后跑出视口。
+    setPos((p) => clampToViewport(p, p));
+  }, [open, clampToViewport]);
+
   const onGripDown = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
@@ -119,7 +127,7 @@ export const StudioFloatingChat = () => {
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
         if (!d.moved) return;
         suppressClickRef.current = true;
-        setPos(clampPos({ x: d.ox + dx, y: d.oy + dy }, open));
+        setPos(clampToViewport({ x: d.ox + dx, y: d.oy + dy }, posRef.current));
       };
       const up = () => {
         window.removeEventListener('pointermove', move);
@@ -137,14 +145,13 @@ export const StudioFloatingChat = () => {
   /** 打开/收起时把浮窗也夹回屏幕内，避免从边角展开后跑出可视区 */
   const setChatOpen = useCallback((next: boolean) => {
     setOpen(next);
-    setPos((p) => clampPos(p, next));
   }, []);
 
   useEffect(() => {
-    const onResize = () => setPos((p) => clampPos(p, open));
+    const onResize = () => setPos((p) => clampToViewport(p, p));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [open]);
+  }, [clampToViewport]);
 
   /**
    * 把 logo 投成系统级置顶小窗：Document PiP 窗口本身可被用户拖到屏幕任意位置，
@@ -231,7 +238,7 @@ export const StudioFloatingChat = () => {
 
   return (
     <>
-    <div className={`pro-chat-float${open ? ' is-open' : ''}`} style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
+    <div ref={floatRef} className={`pro-chat-float${open ? ' is-open' : ''}`} style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
       {open ? (
         <div className="pro-chat-win" onPointerDown={(e) => e.stopPropagation()}>
           <div className="pro-chat-win-head" onPointerDown={onGripDown}>
