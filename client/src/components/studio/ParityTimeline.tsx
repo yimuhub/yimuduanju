@@ -410,6 +410,7 @@ export const ParityTimeline = ({
             onChange={(e) => setZoomAbs(Number(e.target.value))}
           />
           <button type="button" title="放大 (+)" onClick={() => zoomStep('in')}><Plus /></button>
+          <span className="ptl-zoom-val" title={`${zoom} px/s`}>{Math.round((zoom / 44) * 100)}%</span>
           <button type="button" className="ptl-fit" onClick={fit}>适应</button>
         </div>
       </div>

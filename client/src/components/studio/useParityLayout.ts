@@ -42,13 +42,27 @@ const readViewport = () => ({
 });
 
 function normalize(raw: ParityLayout, viewport: { width: number; height: number }): ParityLayout {
-  const maxLib = Math.max(MIN_LIBRARY, viewport.width - raw.inspectorWidth - MIN_STAGE);
-  const maxIns = Math.max(MIN_INSPECTOR, viewport.width - raw.libraryWidth - MIN_STAGE);
-  const maxTl = Math.max(MIN_TIMELINE, viewport.height - 150);
+  // 先保住中间预览，再压缩两侧：两侧最小宽度之和挤到预览时，
+  // 先收检查器、再收素材库，而不是让舞台被挤成 0 宽。
+  const sideBudget = Math.max(MIN_LIBRARY + MIN_INSPECTOR, viewport.width - MIN_STAGE);
+  let libraryWidth = clamp(raw.libraryWidth, MIN_LIBRARY, Math.max(MIN_LIBRARY, viewport.width - MIN_STAGE - MIN_INSPECTOR));
+  let inspectorWidth = clamp(raw.inspectorWidth, MIN_INSPECTOR, Math.max(MIN_INSPECTOR, viewport.width - MIN_STAGE - MIN_LIBRARY));
+  let overflow = libraryWidth + inspectorWidth - sideBudget;
+  if (overflow > 0) {
+    const insCut = Math.min(overflow, Math.max(0, inspectorWidth - MIN_INSPECTOR));
+    inspectorWidth -= insCut;
+    overflow -= insCut;
+  }
+  if (overflow > 0) {
+    libraryWidth = Math.max(MIN_LIBRARY, libraryWidth - overflow);
+  }
+  // 矮窗口给预览让路：时间线最低可降到 112px，避免播放器被压成 0 高。
+  const minTl = viewport.height < 560 ? 112 : MIN_TIMELINE;
+  const maxTl = Math.max(minTl, viewport.height - (viewport.height < 560 ? 200 : 180));
   return {
-    libraryWidth: clamp(raw.libraryWidth, MIN_LIBRARY, maxLib),
-    inspectorWidth: clamp(raw.inspectorWidth, MIN_INSPECTOR, maxIns),
-    timelineHeight: clamp(raw.timelineHeight, MIN_TIMELINE, maxTl),
+    libraryWidth,
+    inspectorWidth,
+    timelineHeight: clamp(raw.timelineHeight, minTl, maxTl),
   };
 }
 

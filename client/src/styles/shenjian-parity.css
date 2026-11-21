@@ -763,3 +763,36 @@
 .parity-ai-grid button small { grid-column: 2; color: #777782; font-size: 8.5px; }
 .parity-ai-grid button.on { border-color: #2ee6cf66; background: #12302d; color: #eafffb; }
 .parity-visual-foot { margin-top: auto; padding-top: 10px; }
+
+/* ===== OpenMotion 对齐（2026-11-21）：预览优先、独立全屏、指针锚点缩放 ===== */
+@media (max-width: 1180px) {
+  .sj2.parity .parity-top-right .compact-only { display: grid; }
+  .sj2.parity .parity-tl-toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .sj2.parity .parity-tl-toolbar::-webkit-scrollbar { display: none; }
+}
+.sj2.parity .parity-stage-shell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #050506;
+}
+.sj2.parity .parity-stage-shell:fullscreen .parity-stage-head {
+  height: 46px;
+  flex: 0 0 46px;
+  background: #0b0b0e;
+}
+.sj2.parity .parity-stage-shell:fullscreen .canvas-wrap {
+  padding: 18px;
+  height: calc(100vh - 46px);
+}
+.sj2.parity .ptl-zoom-val { min-width: 34px; text-align: right; color: #9fa0aa; font-size: 9px; font-variant-numeric: tabular-nums; }
+.sj2.parity .canvas-wrap { container-type: size; }
+.sj2.parity .canvas-frame { height: min(100cqh, calc(100cqw * 16 / 9)); width: auto; }
+.sj2.parity .canvas-frame.wide { width: min(100cqw, calc(100cqh * 16 / 9)); height: auto; }
+.sj2.parity .canvas-frame.square { width: min(100cqw, 100cqh); height: auto; }
+.sj2.parity .canvas-frame.four-three { width: min(100cqw, calc(100cqh * 4 / 3)); height: auto; }
+@media (max-height: 560px) {
+  .sj2.parity .parity-stage-head { display: none; }
+  .sj2.parity .parity-stage-shell .transport { height: 38px; }
+  .sj2.parity .parity-stage-shell .canvas-wrap { padding: 6px; }
+  .sj2.parity .parity-tl-toolbar { overflow-x: auto; }
+}

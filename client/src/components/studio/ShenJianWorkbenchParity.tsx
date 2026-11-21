@@ -61,6 +61,7 @@ export const ShenJianWorkbenchParity = () => {
   const edl = useEdl();
   const navigate = useNavigate();
   const pane = useParityLayout();
+  const stageShellRef = useRef<HTMLDivElement | null>(null);
 
   const [ratio, setRatio] = useState<Ratio>('9:16');
   useEffect(() => {
@@ -174,6 +175,13 @@ export const ShenJianWorkbenchParity = () => {
   /** 与剪映一致的常用快捷键；输入框内全部让路 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (exportOpen) { if (!exportBusy) setExportOpen(false); return; }
+        if (shortcutsOpen) { setShortcutsOpen(false); return; }
+        if (parityOpen) { setParityOpen(false); return; }
+        if (coverOpen) { setCoverOpen(false); return; }
+        if (importOpen) { setImportOpen(false); return; }
+      }
       const el = e.target as HTMLElement | null;
       if (el && (el.closest('input, textarea, select, [contenteditable="true"]') || el.isContentEditable)) return;
       const mod = e.metaKey || e.ctrlKey;
@@ -204,7 +212,7 @@ export const ShenJianWorkbenchParity = () => {
       if (mod && key === 'g') { e.preventDefault(); edl.bindSelection(); toast.success('已组合'); return; }
       if (mod && key === 'i') { e.preventDefault(); setImportOpen(true); return; }
       if (mod && key === 'n') { e.preventDefault(); navigate('/create'); return; }
-      if (mod && key === 'f') { e.preventDefault(); if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen?.(); return; }
+      if (mod && key === 'f') { e.preventDefault(); if (document.fullscreenElement) void document.exitFullscreen(); else void stageShellRef.current?.requestFullscreen?.(); return; }
       if (mod && key === 'k') {
         e.preventDefault();
         if (selected) {
@@ -235,6 +243,14 @@ export const ShenJianWorkbenchParity = () => {
       if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); edl.undo(); return; }
       if ((mod && key === 'z' && e.shiftKey) || (mod && key === 'y')) { e.preventDefault(); edl.redo(); return; }
       if (mod && key === 'c') { e.preventDefault(); edl.copySelection(edl.selectedIds); return; }
+      if (mod && key === 'd') {
+        e.preventDefault();
+        if (!edl.selectedIds.length) { toast.info('先选中一个片段'); return; }
+        edl.copySelection(edl.selectedIds);
+        const created = edl.pasteAt(curT);
+        toast.success(`已复制 ${created.length || edl.selectedIds.length} 个片段到播放头`);
+        return;
+      }
       if (mod && key === 'x') { e.preventDefault(); edl.cutSelection(edl.selectedIds); return; }
       if (mod && key === 'v') { e.preventDefault(); edl.pasteAt(curT); return; }
       if (mod && key === 'a') { e.preventDefault(); edl.setSelection((data.timeline?.clips ?? []).map((c) => c.id)); return; }
@@ -264,6 +280,12 @@ export const ShenJianWorkbenchParity = () => {
       if (key === 'delete' || key === 'backspace') {
         e.preventDefault();
         if (edl.selectedIds.length) edl.rippleDelete(edl.selectedIds);
+        return;
+      }
+      if ((key === 'arrowleft' || key === 'arrowright') && e.shiftKey) {
+        e.preventDefault();
+        const step = 10 / edl.fps;
+        setCurT(Math.max(0, Math.min(total, curT + (key === 'arrowright' ? step : -step))));
         return;
       }
       if (key === 'arrowleft') { e.preventDefault(); setCurT(Math.max(0, curT - 1 / edl.fps)); return; }
@@ -333,7 +355,7 @@ export const ShenJianWorkbenchParity = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [curT, data.timeline?.clips, edl, inT, outT, playing, selected, setCurT, setPlayDir, setPlaying, snapOn, total]);
+  }, [curT, data.timeline?.clips, edl, inT, outT, playing, selected, setCurT, setPlayDir, setPlaying, snapOn, total, exportOpen, exportBusy, shortcutsOpen, parityOpen, coverOpen, importOpen]);
 
   const showTip = (e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('[data-tip]') as HTMLElement | null;
@@ -420,14 +442,14 @@ export const ShenJianWorkbenchParity = () => {
 
         <main className="workspace">
           <ParityLibrary onImport={() => setImportOpen(true)} />
-          <div className="parity-stage-shell">
+          <div className="parity-stage-shell" ref={stageShellRef}>
             <div className="parity-stage-head">
               <div className="parity-stage-title"><b>播放器</b><span>·</span><span>时间线 01</span><i>{ratio} 预览</i></div>
               <div className="parity-stage-actions">
                 <button type="button" className={safe ? 'on' : ''} data-tip="安全框：检查字幕与主体是否出画" onClick={() => setSafe((v) => !v)}><Eye /></button>
-                <button type="button" data-tip="全屏预览" onClick={() => {
+                <button type="button" data-tip="全屏预览 (F)" onClick={() => {
                   if (document.fullscreenElement) void document.exitFullscreen();
-                  else void document.documentElement.requestFullscreen?.();
+                  else void stageShellRef.current?.requestFullscreen?.();
                 }}><Maximize2 /></button>
               </div>
             </div>

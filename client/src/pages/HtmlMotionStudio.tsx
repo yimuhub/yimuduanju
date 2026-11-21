@@ -18,6 +18,7 @@ import {
   updateMotionProject,
   type MotionRenderJob,
 } from '../api/motion';
+import { useMotionLayout } from '../components/motion/useMotionLayout';
 import '../styles/html-motion.css';
 
 const TEMPLATES: Array<{ name: string; html: string }> = [
@@ -75,6 +76,7 @@ function fmt(t: number): string {
 export default function HtmlMotionStudio() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
+  const layout = useMotionLayout();
   const [projects, setProjects] = useState<MotionProject[]>([]);
   const [project, setProject] = useState<MotionProject | null>(null);
   const [activeId, setActiveId] = useState('');
@@ -82,7 +84,7 @@ export default function HtmlMotionStudio() {
   const [playing, setPlaying] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [codeOpen, setCodeOpen] = useState(true);
+  const [codeOpen, setCodeOpen] = useState(() => (typeof window === 'undefined' ? true : window.innerWidth > 1024));
   const [previewHtml, setPreviewHtml] = useState('');
   const [job, setJob] = useState<MotionRenderJob | null>(null);
   const [renderOpen, setRenderOpen] = useState(false);
@@ -90,6 +92,22 @@ export default function HtmlMotionStudio() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const playRef = useRef({ localTime, activeId, project, playing });
   const dragIndex = useRef<number | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const stageWrapRef = useRef<HTMLDivElement | null>(null);
+  const [tlViewW, setTlViewW] = useState(760);
+  const [stageBox, setStageBox] = useState({ w: 520, h: 620 });
+  const [pps, setPps] = useState(80);
+  const [snapOn, setSnapOn] = useState(true);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sceneId: string } | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const fitProjectRef = useRef('');
+  const zoomTouchedRef = useRef(false);
+  const scrubRef = useRef(false);
+  const clipDragRef = useRef<{ from: number; x0: number; moved: boolean } | null>(null);
+  const trimRef = useRef<{ id: string; x0: number; dur: number; orig: MotionDocument; moved: boolean } | null>(null);
+  const copiedSceneRef = useRef<MotionScene | null>(null);
   const pastRef = useRef<MotionDocument[]>([]);
   const futureRef = useRef<MotionDocument[]>([]);
   const [undoCount, setUndoCount] = useState(0);
@@ -103,6 +121,8 @@ export default function HtmlMotionStudio() {
     return doc.scenes.slice(0, doc.scenes.indexOf(activeScene)).reduce((a, s) => a + s.duration, 0);
   }, [doc, activeScene]);
   const globalTime = offset + localTime;
+  const fitPps = Math.max(12, (tlViewW - 24) / Math.max(0.2, total));
+  const zoomPct = Math.round((pps / fitPps) * 100);
 
   const load = useCallback(async (pid: string) => {
     const p = await getMotionProject(pid);
@@ -131,6 +151,67 @@ export default function HtmlMotionStudio() {
     })();
     return () => { alive = false; };
   }, [id, load]);
+
+  // 拖任意面板 / 改窗口大小，预览都按真实剩余空间重新适配
+  useEffect(() => {
+    const stage = stageWrapRef.current;
+    const scroll = scrollRef.current;
+    const stageObs = stage ? new ResizeObserver(([entry]) => {
+      setStageBox({ w: entry.contentRect.width, h: entry.contentRect.height });
+    }) : null;
+    const scrollObs = scroll ? new ResizeObserver(([entry]) => setTlViewW(entry.contentRect.width)) : null;
+    if (stage && stageObs) stageObs.observe(stage);
+    if (scroll && scrollObs) scrollObs.observe(scroll);
+    return () => { stageObs?.disconnect(); scrollObs?.disconnect(); };
+  }, [project?.id]);
+
+  // 原生 non-passive wheel：⌘/Ctrl+滚轮以指针为锚缩放，Shift/Alt+滚轮横移。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        const anchor = (e.clientX - rect.left + el.scrollLeft) / pps;
+        const next = Math.max(12, Math.min(400, pps * (e.deltaY < 0 ? 1.16 : 0.86)));
+        zoomTouchedRef.current = true;
+        setPps(next);
+        requestAnimationFrame(() => { el.scrollLeft = Math.max(0, anchor * next - (e.clientX - rect.left)); });
+        return;
+      }
+      if (e.shiftKey || e.altKey) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [pps]);
+
+  useEffect(() => {
+    if (!project || tlViewW <= 0) return;
+    if (fitProjectRef.current !== project.id) {
+      fitProjectRef.current = project.id;
+      zoomTouchedRef.current = false;
+      setPps(Math.max(12, Math.min(400, fitPps)));
+    } else if (!zoomTouchedRef.current) {
+      setPps(Math.max(12, Math.min(400, fitPps)));
+    }
+  }, [project?.id, tlViewW, fitPps]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [ctxMenu]);
+
+  useEffect(() => {
+    const onFs = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
 
   useEffect(() => {
     if (project) playRef.current = { localTime, activeId, project, playing };
@@ -184,12 +265,15 @@ export default function HtmlMotionStudio() {
     return () => cancelAnimationFrame(raf);
   }, [playing]);
 
-  const remember = () => {
-    if (!project) return;
-    pastRef.current = [...pastRef.current.slice(-49), JSON.parse(JSON.stringify(project.document))];
+  const pushHistoryDoc = (snapshot: MotionDocument) => {
+    pastRef.current = [...pastRef.current.slice(-49), JSON.parse(JSON.stringify(snapshot))];
     futureRef.current = [];
     setUndoCount(pastRef.current.length);
     setRedoCount(0);
+  };
+
+  const remember = () => {
+    if (project) pushHistoryDoc(project.document);
   };
 
   const commitDoc = (next: MotionDocument) => {
@@ -223,15 +307,35 @@ export default function HtmlMotionStudio() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      if (typing) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo(); else undo();
         return;
       }
-      if (e.code === 'Space' && !typing) {
+      if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateScene(activeScene); return; }
+      if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copiedSceneRef.current = activeScene; return; }
+      if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteScene(); return; }
+      if (e.code === 'Space') { e.preventDefault(); setPlaying((v) => !v); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
-        setPlaying((v) => !v);
+        const frames = e.shiftKey ? 10 : 1;
+        const delta = (e.key === 'ArrowLeft' ? -frames : frames) / doc.fps;
+        stepTime(delta);
+        return;
       }
+      if (e.key === 'Home') { e.preventDefault(); seekGlobal(0); return; }
+      if (e.key === 'End') { e.preventDefault(); seekGlobal(total); return; }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && e.shiftKey === false) {
+        e.preventDefault();
+        removeScene(activeScene.id);
+        return;
+      }
+      if ((e.key === 's' || e.key === 'S') && !mod) { e.preventDefault(); splitAtPlayhead(); return; }
+      if ((e.key === 'n' || e.key === 'N') && !mod) { e.preventDefault(); setSnapOn((v) => !v); return; }
+      if ((e.key === 'f' || e.key === 'F') && !mod) { e.preventDefault(); toggleFullscreen(); return; }
+      if (e.key === 'Escape') setCtxMenu(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -336,6 +440,144 @@ export default function HtmlMotionStudio() {
     }
   };
 
+  const stepTime = (delta: number) => {
+    if (!doc) return;
+    const idx = doc.scenes.findIndex((s) => s.id === activeId);
+    let next = localTime + delta;
+    if (next < 0) {
+      const prev = doc.scenes[idx - 1];
+      if (prev) { setActiveId(prev.id); setLocalTime(prev.duration); }
+      else setLocalTime(0);
+      return;
+    }
+    if (next > doc.scenes[idx]?.duration) {
+      const nextScene = doc.scenes[idx + 1];
+      if (nextScene) { setActiveId(nextScene.id); setLocalTime(0); }
+      else setLocalTime(doc.scenes[idx]?.duration ?? 0);
+      return;
+    }
+    setLocalTime(next);
+  };
+
+  const splitAtPlayhead = () => {
+    if (!doc || !activeScene) return;
+    const at = Math.max(0.2, Math.min(activeScene.duration - 0.2, localTime));
+    if (activeScene.duration < 0.5) return;
+    const first: MotionScene = { ...activeScene, duration: at, name: `${activeScene.name} A` };
+    const second: MotionScene = { ...activeScene, id: `scene-${Date.now()}`, duration: activeScene.duration - at, name: `${activeScene.name} B` };
+    const idx = doc.scenes.findIndex((s) => s.id === activeScene.id);
+    const scenes = [...doc.scenes];
+    scenes.splice(idx, 1, first, second);
+    patchDoc({ scenes });
+    setActiveId(second.id);
+    setLocalTime(0);
+  };
+
+  const pasteScene = () => {
+    if (!doc || !activeScene || !copiedSceneRef.current) return;
+    duplicateScene(copiedSceneRef.current);
+  };
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void stageWrapRef.current?.requestFullscreen?.();
+  };
+
+  const seekFromX = (clientX: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    seekGlobal(Math.max(0, Math.min(total, (clientX - rect.left) / pps)));
+  };
+
+  const beginScrub = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('.hm-clip,.hm-codeclip,.hm-playhead')) return;
+    scrubRef.current = true;
+    seekFromX(e.clientX);
+    const onMove = (ev: PointerEvent) => { if (scrubRef.current) seekFromX(ev.clientX); };
+    const onUp = () => {
+      scrubRef.current = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  };
+
+  const sceneIndexAtX = (clientX: number): number | null => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect || !doc) return null;
+    const at = (clientX - rect.left) / pps;
+    let acc = 0;
+    for (let i = 0; i < doc.scenes.length; i += 1) {
+      if (at < acc + doc.scenes[i].duration / 2) return i;
+      acc += doc.scenes[i].duration;
+    }
+    return doc.scenes.length - 1;
+  };
+
+  const beginClipDrag = (e: React.PointerEvent, index: number) => {
+    if ((e.target as HTMLElement).closest('.hm-trim-handle')) return;
+    e.stopPropagation();
+    const scene = doc?.scenes[index];
+    if (!scene) return;
+    setActiveId(scene.id);
+    setCtxMenu(null);
+    seekFromX(e.clientX);
+    clipDragRef.current = { from: index, x0: e.clientX, moved: false };
+    const onMove = (ev: PointerEvent) => {
+      const drag = clipDragRef.current;
+      if (!drag) return;
+      if (Math.abs(ev.clientX - drag.x0) > 3) drag.moved = true;
+      const to = sceneIndexAtX(ev.clientX);
+      if (to != null) setDropIndex(to);
+    };
+    const onUp = (ev: PointerEvent) => {
+      const drag = clipDragRef.current;
+      const to = sceneIndexAtX(ev.clientX);
+      clipDragRef.current = null;
+      setDropIndex(null);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (drag?.moved && to != null) moveScene(drag.from, to);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  };
+
+  const beginTrim = (e: React.PointerEvent, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!doc) return;
+    const scene = doc.scenes[index];
+    const orig = JSON.parse(JSON.stringify(doc)) as MotionDocument;
+    trimRef.current = { id: scene.id, x0: e.clientX, dur: scene.duration, orig, moved: false };
+    setActiveId(scene.id);
+    setCtxMenu(null);
+    const onMove = (ev: PointerEvent) => {
+      const trim = trimRef.current;
+      if (!trim) return;
+      const raw = trim.dur + (ev.clientX - trim.x0) / pps;
+      let next = Math.max(0.2, Math.min(30, raw));
+      if (snapOn) {
+        next = Math.round(next * 20) / 20;
+        if (Math.abs(next - localTime) < 8 / pps && localTime > 0.2) next = localTime;
+      }
+      if (Math.abs(next - trim.dur) > 0.001) trim.moved = true;
+      setProject((p) => p ? { ...p, document: { ...p.document, scenes: p.document.scenes.map((s) => s.id === trim.id ? { ...s, duration: next } : s) } } : p);
+      setDirty(true);
+    };
+    const onUp = () => {
+      const trim = trimRef.current;
+      trimRef.current = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (trim?.moved) pushHistoryDoc(trim.orig);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  };
+
+
   const render = async () => {
     if (!project) return;
     if (dirty) await save();
@@ -371,12 +613,18 @@ export default function HtmlMotionStudio() {
   }
 
   const sceneIndex = doc.scenes.indexOf(activeScene);
-  const scale = Math.min(1, 610 / doc.height, 680 / doc.width);
+  const scale = Math.max(0.05, Math.min(1, (stageBox.w - 24) / doc.width, (stageBox.h - 46) / doc.height));
   const frameW = Math.round(doc.width * scale);
   const frameH = Math.round(doc.height * scale);
+  const tickSteps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120];
+  const tickStep = tickSteps.find((step) => step * pps >= 64) ?? 120;
+  const tickCount = Math.floor(total / tickStep + 0.5) + 1;
+  const ticks = Array.from({ length: tickCount }, (_, i) => i * tickStep).filter((t) => t <= total + 0.001);
+  const canvasW = Math.max(tlViewW - 2, total * pps);
+  const dropLeft = dropIndex == null ? 0 : doc.scenes.slice(0, dropIndex).reduce((a, s) => a + s.duration, 0) * pps;
 
   return (
-    <div className="hm-shell">
+    <div className={`hm-shell${layout.dragging ? ' is-resizing' : ''}`} style={layout.rootStyle}>
       <header className="hm-header">
         <div className="hm-brand">
           <Link to="/" className="hm-back">←</Link>
@@ -477,6 +725,18 @@ export default function HtmlMotionStudio() {
           </div>
         </aside>
 
+        <div
+          className="hm-vres left"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整场景栏宽度"
+          tabIndex={0}
+          title="拖动调整场景栏宽度，双击恢复默认"
+          onPointerDown={(e) => layout.startResize('left', e)}
+          onDoubleClick={() => layout.reset('left')}
+          onKeyDown={layout.onResizerKey('left')}
+        />
+
         <section className="hm-center">
           <div className="hm-center-bar">
             <div className="hm-center-left">
@@ -499,7 +759,7 @@ export default function HtmlMotionStudio() {
           </div>
 
           <div className={`hm-work ${codeOpen ? 'with-code' : ''}`}>
-            <div className="hm-stage-wrap">
+            <div className="hm-stage-wrap" ref={stageWrapRef}>
               <div className="hm-stage" style={{ width: frameW, height: frameH }}>
                 <iframe
                   ref={iframeRef}
@@ -513,12 +773,25 @@ export default function HtmlMotionStudio() {
                 <span>{doc.width} × {doc.height}</span>
                 <span>{doc.fps} fps</span>
                 <span>{activeScene.duration.toFixed(2)}s</span>
+                <button onClick={toggleFullscreen} title="全屏预览 (F)">{fullscreen ? '退出全屏' : '全屏'}</button>
                 <span className="hm-live"><i /> LIVE PREVIEW</span>
               </div>
             </div>
 
             {codeOpen && (
-              <div className="hm-code">
+              <>
+                <div
+                  className="hm-vres code"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整代码栏宽度"
+                  tabIndex={0}
+                  title="拖动调整代码栏宽度，双击恢复默认"
+                  onPointerDown={(e) => layout.startResize('code', e)}
+                  onDoubleClick={() => layout.reset('code')}
+                  onKeyDown={layout.onResizerKey('code')}
+                />
+                <div className="hm-code">
                 <div className="hm-code-head">
                   <span><i /> scene-{String(sceneIndex + 1).padStart(2, '0')}.html</span>
                   <span className="hm-muted">可写 CSS 动画 / WAAPI / __hfSeek(t)</span>
@@ -531,11 +804,23 @@ export default function HtmlMotionStudio() {
                 <div className="hm-code-foot">
                   <span>保存后逐帧 seek 截图 · {Math.round(activeScene.duration * doc.fps)} 帧</span>
                 </div>
-              </div>
+                </div>
+              </>
             )}
           </div>
         </section>
 
+        <div
+          className="hm-vres right"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整检查器宽度"
+          tabIndex={0}
+          title="拖动调整检查器宽度，双击恢复默认"
+          onPointerDown={(e) => layout.startResize('right', e)}
+          onDoubleClick={() => layout.reset('right')}
+          onKeyDown={layout.onResizerKey('right')}
+        />
         <aside className="hm-right">
           <div className="hm-panel-head"><span>检查器</span></div>
           <div className="hm-inspector">
@@ -584,49 +869,149 @@ export default function HtmlMotionStudio() {
       </main>
 
       <footer className="hm-timeline">
+        <div
+          className="hm-hres top"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="调整时间线高度"
+          tabIndex={0}
+          title="拖动调整时间线高度，双击恢复默认"
+          onPointerDown={(e) => layout.startResize('timeline', e)}
+          onDoubleClick={() => layout.reset('timeline')}
+          onKeyDown={layout.onResizerKey('timeline')}
+        />
+
         <div className="hm-tl-head">
-          <div className="hm-tl-title">时间线 <span>· 拖动场景卡片可排序</span></div>
-          <div className="hm-tl-zoom">{fmt(globalTime)}</div>
-        </div>
-        <div className="hm-tl-ruler">
-          {Array.from({ length: 11 }).map((_, i) => (
-            <span key={i} style={{ left: `${i * 10}%` }}>{fmt((total * i) / 10)}</span>
-          ))}
-        </div>
-        <div className="hm-tl-tracks">
-          <div className="hm-track-label">场景</div>
-          <div className="hm-track hm-track-scenes">
-            {doc.scenes.map((s, i) => (
-              <div
-                key={s.id}
-                className={`hm-clip ${s.id === activeId ? 'is-active' : ''}`}
-                style={{ width: `${(s.duration / total) * 100}%` }}
-                onClick={() => seekGlobal(doc.scenes.slice(0, i).reduce((a, x) => a + x.duration, 0) + 0.01)}
-              >
-                <span>{String(i + 1).padStart(2, '0')}</span>
-                <b>{s.name}</b>
-                <small>{s.duration.toFixed(1)}s</small>
-              </div>
-            ))}
+          <div className="hm-tl-title">
+            时间线
+            <span>拖动片段排序 · 拖右边缘改时长 · ⌘滚轮缩放</span>
+          </div>
+          <div className="hm-tl-tools">
+            <button className="hm-tool" title="在播放头分割场景 (S)" onClick={splitAtPlayhead}>✂ 分割</button>
+            <button className="hm-tool" title="复制当前场景 (⌘D)" onClick={() => duplicateScene(activeScene)}>⧉ 复制</button>
+            <button className="hm-tool" title="删除当前场景 (Delete)" onClick={() => removeScene(activeScene.id)}>⌫ 删除</button>
+            <span className="hm-tool-sep" />
+            <button className={`hm-tool${snapOn ? ' is-on' : ''}`} title="吸附开关 (N)" onClick={() => setSnapOn((v) => !v)}>
+              吸附 {snapOn ? '开' : '关'}
+            </button>
+            <button className="hm-tool" title="时间线适配 (Shift+Z)" onClick={() => { zoomTouchedRef.current = false; setPps(Math.max(12, Math.min(400, fitPps))); }}>
+              适配
+            </button>
+          </div>
+          <div className="hm-tl-zoom">
+            <span className="hm-time">{fmt(globalTime)}</span>
+            <span className="hm-zoom-label">{zoomPct}%</span>
+            <button className="hm-zoom-btn" title="缩小时间线" onClick={() => { zoomTouchedRef.current = true; setPps((v) => Math.max(12, v * 0.85)); }}>−</button>
+            <input
+              className="hm-zoom-range"
+              type="range"
+              min={12}
+              max={400}
+              step={1}
+              value={Math.min(400, pps)}
+              aria-label="时间线缩放"
+              onChange={(e) => { zoomTouchedRef.current = true; setPps(Number(e.target.value)); }}
+            />
+            <button className="hm-zoom-btn" title="放大时间线" onClick={() => { zoomTouchedRef.current = true; setPps((v) => Math.min(400, v * 1.18)); }}>+</button>
           </div>
         </div>
-        <div className="hm-tl-tracks">
-          <div className="hm-track-label">代码层</div>
-          <div className="hm-track hm-track-code">
-            {doc.scenes.map((s) => (
-              <div key={s.id} className="hm-codeclip" style={{ width: `${(s.duration / total) * 100}%` }}>
-                &lt;html&gt; · {Math.round(s.duration * doc.fps)}f
+
+        <div className="hm-tl-body">
+          <div className="hm-tl-labels">
+            <div className="hm-ruler-spacer" />
+            <div className="hm-track-label">场景</div>
+            <div className="hm-track-label">代码层</div>
+          </div>
+          <div className="hm-tl-scroll" ref={scrollRef} >
+            <div className="hm-tl-canvas" ref={canvasRef} style={{ width: canvasW }} onPointerDown={beginScrub}>
+              <div className="hm-tl-ruler">
+                {ticks.map((t, i) => (
+                  <div key={i} className={`hm-tick${i % 2 === 0 ? ' major' : ''}`} style={{ left: t * pps }}>
+                    <span>{fmt(t)}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+
+              <div className="hm-track hm-track-scenes">
+                {doc.scenes.map((s, i) => {
+                  const before = doc.scenes.slice(0, i).reduce((a, x) => a + x.duration, 0);
+                  return (
+                    <div
+                      key={s.id}
+                      className={`hm-clip${s.id === activeId ? ' is-active' : ''}${clipDragRef.current?.from === i ? ' is-dragging' : ''}`}
+                      style={{ left: before * pps, width: Math.max(24, s.duration * pps) }}
+                      onPointerDown={(e) => beginClipDrag(e, i)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setActiveId(s.id);
+                        setCtxMenu({ x: e.clientX, y: e.clientY, sceneId: s.id });
+                      }}
+                    >
+                      <span>{String(i + 1).padStart(2, '0')}</span>
+                      <b>{s.name}</b>
+                      <small>{s.duration.toFixed(2)}s</small>
+                      <i
+                        className="hm-trim-handle"
+                        title="拖动调整场景时长"
+                        onPointerDown={(e) => beginTrim(e, i)}
+                      />
+                    </div>
+                  );
+                })}
+                {dropIndex != null && <div className="hm-drop-line" style={{ left: dropLeft }} />}
+              </div>
+
+              <div className="hm-track hm-track-code">
+                {doc.scenes.map((s, i) => {
+                  const before = doc.scenes.slice(0, i).reduce((a, x) => a + x.duration, 0);
+                  return (
+                    <div
+                      key={s.id}
+                      className="hm-codeclip"
+                      style={{ left: before * pps, width: Math.max(24, s.duration * pps) }}
+                      onClick={() => seekGlobal(before + 0.01)}
+                    >
+                      &lt;html&gt; · {Math.round(s.duration * doc.fps)}f
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hm-playhead" style={{ left: globalTime * pps }} />
+            </div>
           </div>
         </div>
-        <div className="hm-playhead" style={{ left: `calc(88px + (100% - 88px) * ${total ? globalTime / total : 0})` }} />
+
         <div className="hm-timeline-foot">
-          <span>Drag to reorder</span>
+          <span>拖动排序</span>
           <span>·</span>
-          <span>Click to seek</span>
+          <span>点击定位</span>
+          <span>·</span>
+          <span>← → 逐帧，Shift 十帧</span>
           <span className="hm-tl-total">{doc.scenes.length} scenes · {Math.round(total * doc.fps)} frames</span>
         </div>
+
+        {ctxMenu && (
+          <div
+            className="hm-ctx"
+            style={{ left: Math.min(ctxMenu.x, window.innerWidth - 190), top: Math.min(ctxMenu.y, window.innerHeight - 190) }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const scene = doc.scenes.find((x) => x.id === ctxMenu.sceneId);
+              if (!scene) return null;
+              return (
+                <>
+                  <button onClick={() => { duplicateScene(scene); setCtxMenu(null); }}>复制场景</button>
+                  <button onClick={() => { setActiveId(scene.id); splitAtPlayhead(); setCtxMenu(null); }}>在播放头分割</button>
+                  <button onClick={() => { removeScene(scene.id); setCtxMenu(null); }} className="danger">删除场景</button>
+                </>
+              );
+            })()}
+          </div>
+        )}
       </footer>
 
       {renderOpen && (

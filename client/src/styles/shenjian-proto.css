@@ -683,3 +683,11 @@
   .sj2 .workspace{grid-template-columns:minmax(0,1fr)}
   .sj2 .pane-resizer.left,.sj2 .pane-resizer.right{display:none}
 }
+
+/* ===== OpenMotion 对齐：轨道头列宽拖拽 ===== */
+.sj2 .tl-body { position: relative; }
+.sj2 .tl-head-resizer {
+  position: absolute; top: 0; bottom: 0; width: 8px; z-index: 12;
+  cursor: col-resize; transform: translateX(-4px);
+}
+.sj2 .tl-head-resizer:hover, .sj2 .tl-head-resizer:active { background: #2ee6cf55; }

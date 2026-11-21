@@ -322,6 +322,59 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { s
   }, [zoom]);
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
+
+  const [headW, setHeadW] = useState(() => {
+    const raw = Number(localStorage.getItem('yimu:shenjian:track-head-w'));
+    return Number.isFinite(raw) && raw >= 140 && raw <= 360 ? raw : 196;
+  });
+  useEffect(() => {
+    try { localStorage.setItem('yimu:shenjian:track-head-w', String(headW)); } catch { /* 会话内保留 */ }
+  }, [headW]);
+  const beginHeadResize = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = headW;
+    const body = document.body;
+    const prevCursor = body.style.cursor;
+    body.style.cursor = 'col-resize';
+    const onMove = (ev: PointerEvent) => setHeadW(Math.max(140, Math.min(360, startW + ev.clientX - startX)));
+    const finish = () => {
+      body.style.cursor = prevCursor;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finish);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', finish, { once: true });
+  };
+
+  // React 的 wheel 监听默认 passive，preventDefault 会失效并报警；
+  // 这里挂原生 non-passive 监听，保证 ⌘/Ctrl+滚轮缩放与 Alt+滚轮横移真正生效。
+  useEffect(() => {
+    const wrap = lanesRef.current;
+    if (!wrap) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        const anchorX = e.clientX - rect.left;
+        const timeAtPointer = (anchorX + wrap.scrollLeft) / zoom;
+        const next = Math.max(14, Math.min(120, zoom + (e.deltaY < 0 ? 4 : -4)));
+        setZoom(next);
+        requestAnimationFrame(() => {
+          wrap.scrollLeft = Math.max(0, timeAtPointer * next - anchorX);
+          setScrollLeft(wrap.scrollLeft);
+        });
+      } else if (e.altKey) {
+        e.preventDefault();
+        wrap.scrollLeft += e.deltaY;
+        setScrollLeft(wrap.scrollLeft);
+      }
+    };
+    wrap.addEventListener('wheel', onWheel, { passive: false });
+    return () => wrap.removeEventListener('wheel', onWheel);
+  }, [zoom]);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [ctx, setCtx] = useState<CtxState>(null);
   const [dragOver, setDragOver] = useState<{ track: TimelineTrackKind; lane: number; at: number; created: boolean } | null>(null);
@@ -641,6 +694,40 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { s
     setCurT(Math.max(0, Math.min(total, x / zoom)));
   };
 
+  // 播放头拖动：标尺与播放头共用同一套坐标，横向自动滚动跟手。
+  const beginScrub = (e: React.PointerEvent, source: 'ruler' | 'lanes') => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const ruler = e.currentTarget as HTMLElement;
+    const wrap = lanesRef.current;
+    const update = (clientX: number) => {
+      if (source === 'ruler') {
+        const rect = ruler.getBoundingClientRect();
+        setCurT(Math.max(0, Math.min(total, (clientX - rect.left) / zoom)));
+        return;
+      }
+      if (!wrap) return;
+      const rect = wrap.getBoundingClientRect();
+      const edge = 28;
+      if (clientX > rect.right - edge) wrap.scrollLeft += 18;
+      else if (clientX < rect.left + edge) wrap.scrollLeft -= 18;
+      const x = clientX - rect.left + wrap.scrollLeft;
+      setScrollLeft(wrap.scrollLeft);
+      setCurT(Math.max(0, Math.min(total, x / zoom)));
+    };
+    update(e.clientX);
+    const onMove = (ev: PointerEvent) => update(ev.clientX);
+    const finish = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', finish, { once: true });
+    window.addEventListener('pointercancel', finish, { once: true });
+  };
+
   const selected = clips.find((c) => edl.selectedIds.includes(c.id)) ?? null;
 
   const splitAtPlayhead = () => {
@@ -818,7 +905,8 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { s
       </div>
       ) : null}
 
-      <div className="tl-body">
+      <div className="tl-body" style={{ gridTemplateColumns: `${headW}px minmax(0, 1fr)` }}>
+        <div className="tl-head-resizer" title="拖动调整轨道头列宽，双击复位" onPointerDown={beginHeadResize} onDoubleClick={() => setHeadW(196)} />
         <div className="track-heads">
           <div className="head-ruler"><span>轨道</span><span>{rows.length || 1} 轨</span></div>
           <div className="heads-inner" style={{ transform: `translateY(-${scrollTop}px)` }}>
@@ -881,16 +969,6 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { s
           onScroll={(e) => {
             setScrollTop(e.currentTarget.scrollTop);
             setScrollLeft(e.currentTarget.scrollLeft);
-          }}
-          onWheel={(e) => {
-            if (e.ctrlKey || e.metaKey) {
-              e.preventDefault();
-              setZoom((z) => Math.max(14, Math.min(120, z + (e.deltaY < 0 ? 4 : -4))));
-            } else if (e.altKey) {
-              e.preventDefault();
-              e.currentTarget.scrollLeft += e.deltaY;
-              setScrollLeft(e.currentTarget.scrollLeft);
-            }
           }}
           onClick={(e) => {
             if (!(e.target as HTMLElement).closest('.clip')) seekFromEvent(e, e.currentTarget);
@@ -964,6 +1042,7 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { s
             ) : null}
             <div
               className="ruler"
+              onPointerDown={(e) => beginScrub(e, 'ruler')}
               onClick={(e) => seekFromEvent(e, e.currentTarget.parentElement?.parentElement as HTMLElement)}
             >
               {ticks.map((t) => (
@@ -1096,7 +1175,12 @@ export const ShenJianTimeline = ({ snapOn, setSnapOn, hideToolbar = false }: { s
                 </div>
               ))}
             </div>
-            <div className="playhead" style={{ left: curT * zoom }} />
+            <div
+              className="playhead"
+              style={{ left: curT * zoom }}
+              title="拖动播放头"
+              onPointerDown={(e) => beginScrub(e, 'lanes')}
+            />
             {edl.markers.map((m) => (
               <span key={m} className="marker" style={{ left: m * zoom }} title={`标记 ${fmtSec(m)}`} />
             ))}
