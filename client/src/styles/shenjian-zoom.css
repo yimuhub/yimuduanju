@@ -1,0 +1,38 @@
+/* ============================================================
+   一幕·神剪 · 预览缩放/平移配套样式（对齐 OpenMotion NLEPreview / PreviewZoomOverlay）
+   画幅本体 .canvas-frame 的 transform 由 JS 直写（stageZoom 状态机），本文件只承载：
+   视口裁剪、控制条缩放菜单、右下 HUD、minimap 导航器四块皮肤。
+   Fit（默认）状态下 HUD 透明、minimap/快捷适应按钮不渲染，画面与改动前完全一致。
+   ============================================================ */
+
+/* 缩放/平移后画幅会溢出画布区，视口裁掉溢出部分；Fit 时不产生任何视觉差异 */
+.sj2 .canvas-wrap{overflow:hidden}
+
+/* —— 控制条：缩放档位菜单 + 快捷适应（挂在 stage-bar 右侧，不随画布缩放） —— */
+.sj2 .stage-zoom-controls{display:flex;align-items:center;gap:2px}
+.sj2 .stage-zoom-fit{width:auto;min-width:0;padding:0 8px;font-size:11px;font-weight:650;color:#ffb9b4}
+.sj2 .stage-zoom-fit:hover{color:#fff;background:#332021}
+.sj2 .stage-zoom-menu-anchor{position:relative}
+.sj2 .stage-zoom-trigger{height:28px;padding:0 7px;border-radius:6px;display:flex;align-items:center;gap:3px;font-size:11px;color:#aeb4bf;border:1px solid transparent;font-variant-numeric:tabular-nums}
+.sj2 .stage-zoom-trigger:hover,.sj2 .stage-zoom-trigger.open{background:#22252b;color:#fff}
+.sj2 .stage-zoom-pop{position:absolute;top:calc(100% + 6px);right:0;z-index:60;min-width:98px;padding:4px;border-radius:9px;background:#14161a;border:1px solid #262a31;box-shadow:0 14px 34px #000000a6}
+.sj2 .stage-zoom-item{width:100%;display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;font-size:11px;color:#aeb4bf;text-align:left}
+.sj2 .stage-zoom-item:hover{background:#22252b;color:#fff}
+.sj2 .stage-zoom-item.checked{color:var(--brand-hi)}
+.sj2 .stage-zoom-radio{width:7px;height:7px;border-radius:50%;box-shadow:inset 0 0 0 1px #4a505a;flex:0 0 auto}
+.sj2 .stage-zoom-item.checked .stage-zoom-radio{background:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
+.sj2 .stage-zoom-sep{height:1px;margin:4px 6px;background:#262a31}
+
+/* —— 右下 HUD：缩放百分比（Fit 时显示「适应」），1.2s 无操作淡出；
+      纯展示层 pointer-events 关闭，不挡字幕拖拽/中键平移 —— */
+.sj2 .stage-zoom-hud{position:absolute;right:12px;bottom:140px;z-index:40;pointer-events:none;padding:3px 10px;border-radius:999px;background:#000000a6;border:1px solid #ffffff26;color:#fff;font-size:11px;font-variant-numeric:tabular-nums}
+
+/* —— minimap 导航器：整幅画幅等比缩略（最长边 112px）+ 可拖拽视区矩形（品牌红） —— */
+.sj2 .stage-minimap{position:absolute;right:12px;bottom:12px;z-index:40}
+.sj2 .stage-minimap.collapsed{cursor:pointer}
+.sj2 .stage-minimap-collapsed{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;background:#15181eb3;border:1px solid #242932;color:#aeb6c2;backdrop-filter:blur(4px)}
+.sj2 .stage-minimap.collapsed:hover .stage-minimap-collapsed{background:#20252d;border-color:#3a414d;color:#f4f6f8}
+.sj2 .stage-minimap-frame{position:relative;overflow:hidden;border-radius:5px;background:#101216;border:1px solid #ffffff2e;box-shadow:0 10px 26px #0000008c;cursor:pointer}
+.sj2 .stage-minimap:active .stage-minimap-frame{cursor:grabbing}
+.sj2 .stage-minimap-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;opacity:.85}
+.sj2 .stage-minimap-region{position:absolute;border:1px solid var(--brand);background:var(--brand-soft);border-radius:1px;pointer-events:none;box-shadow:0 0 0 1px #00000055}

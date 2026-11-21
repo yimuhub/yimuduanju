@@ -988,3 +988,79 @@
 .parity-dock-wrap.is-right-collapsed .dv-groupview:has(.is-inspector) .dv-content-container {
   display: none;
 }
+
+/* ============================ 音频效果链（FX rack） ============================ */
+/* 信号路径条：In → 节点 chips → Out；chip 点击展开参数，旁通降透明 */
+.sj2.parity .fx-section .fx-path { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin: 2px 0 8px; }
+.sj2.parity .fx-path-port {
+  flex: none; padding: 1px 5px; border: 1px solid #2a2a32; border-radius: 3px;
+  background: #101014; color: #7b7b86; font-size: 9px; font-family: monospace;
+  letter-spacing: .5px; text-transform: uppercase;
+}
+.sj2.parity .fx-chip {
+  flex: none; padding: 2px 7px; border: 1px solid #33333d; border-radius: 3px;
+  background: #1b1b21; color: #c4c4cd; font-size: 10px; cursor: pointer; position: relative;
+}
+.sj2.parity .fx-chip:hover { border-color: #ff403a99; color: #eee; }
+.sj2.parity .fx-chip.open { border-color: #ff403a; background: #163a36; color: #9ff7ec; }
+.sj2.parity .fx-chip.off { opacity: .45; text-decoration: line-through; }
+.sj2.parity .fx-chip:not(:last-of-type)::after {
+  content: '→'; position: absolute; right: -7px; top: 50%; transform: translateY(-50%);
+  color: #4a4a55; font-size: 9px; pointer-events: none;
+}
+.sj2.parity .fx-section .fx-empty { margin: 2px 0 8px; color: #65656f; font-size: 10px; line-height: 1.6; }
+
+/* 节点行：序号 + 名称 + 开关/上移/下移/删除；bypass 整行降透明 */
+.sj2.parity .fx-node { border: 1px solid #24242b; border-left: 2px solid #ff403a; border-radius: 4px; background: #17171b; margin-bottom: 5px; }
+.sj2.parity .fx-node.bypassed { opacity: .5; border-left-color: #3a3a44; }
+.sj2.parity .fx-node-head { display: flex; align-items: center; gap: 3px; padding: 4px 6px; }
+.sj2.parity .fx-node-index { flex: none; color: #5f5f6a; font-size: 9px; font-family: monospace; font-variant-numeric: tabular-nums; }
+.sj2.parity .fx-node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: none; border: 0; color: #c9c9d2; font-size: 11px; cursor: pointer; padding: 0; }
+.sj2.parity .fx-node-name:hover { color: #fff; }
+.sj2.parity .fx-node-bypass {
+  flex: none; padding: 1px 6px; border: 1px solid #33333d; border-radius: 3px; background: transparent;
+  color: #8d8d97; font-size: 9px; cursor: pointer;
+}
+.sj2.parity .fx-node-bypass[aria-pressed="false"] { border-color: #ff403a88; color: #9ff7ec; }
+.sj2.parity .fx-node-act {
+  flex: none; width: 18px; height: 18px; line-height: 1; border: 0; border-radius: 3px; background: transparent;
+  color: #7b7b86; font-size: 11px; cursor: pointer;
+}
+.sj2.parity .fx-node-act:hover:not(:disabled) { color: #eee; background: #22222a; }
+.sj2.parity .fx-node-act:disabled { opacity: .25; cursor: default; }
+.sj2.parity .fx-node-del:hover { color: #ff6b66; }
+.sj2.parity .fx-node-body { padding: 0 6px 6px; border-top: 1px dashed #24242b; }
+
+/* FX 参数自动化开关（OpenMotion AutomationToggle 语义）：A=未自动化，包络折线=已自动化 */
+.sj2.parity .fx-auto-toggle {
+  flex: none; width: 16px; height: 16px; border: 1px solid #34343e; border-radius: 3px; background: transparent;
+  color: #7b7b86; font-size: 9px; font-family: monospace; cursor: pointer; display: grid; place-items: center; padding: 0;
+}
+.sj2.parity .fx-auto-toggle:hover { color: #eee; border-color: #ff403a66; }
+.sj2.parity .fx-auto-toggle.on { color: #ff6b66; border-color: #ff403a; background: #3a211f; }
+.sj2.parity .fx-auto-toggle svg { width: 11px; height: 11px; }
+/* 自动化中的参数行：标签亮品牌红提示「值由时间线包络驱动」，滑杆禁用半透明 */
+.sj2.parity .parity-field label.on { color: #ff8066; }
+.sj2.parity .parity-field input[type="range"]:disabled { opacity: .45; cursor: default; }
+
+/* 添加菜单：按组（音色/滤波/动态/时间 + 一键决策）列出 */
+.sj2.parity .fx-add-menu { margin-top: 6px; padding: 7px; border: 1px solid #2a2a32; border-radius: 5px; background: #121216; }
+.sj2.parity .fx-add-group { margin-bottom: 6px; }
+.sj2.parity .fx-add-group:last-child { margin-bottom: 0; }
+.sj2.parity .fx-add-group-label { display: block; margin-bottom: 3px; color: #6d6d78; font-size: 9px; letter-spacing: .5px; }
+.sj2.parity .fx-add-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.sj2.parity .fx-add-item {
+  padding: 2px 8px; border: 1px solid #2e2e38; border-radius: 3px; background: #1b1b21;
+  color: #c4c4cd; font-size: 10px; cursor: pointer;
+}
+.sj2.parity .fx-add-item:hover { border-color: #ff403a99; color: #9ff7ec; }
+.sj2.parity .fx-foot { display: flex; gap: 4px; margin-top: 7px; }
+
+/* LUT（.cube）：「调整」页签 = 经典检查器（调色）+ LUT 区块纵向排成一列，整列滚动 */
+.sj2.parity .parity-insp-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: auto; background: #111114; }
+.sj2.parity .parity-insp-col > .inspector { flex: none; min-height: 0; border: 0; background: transparent; }
+.sj2.parity .parity-insp-col > .inspector .insp-scroll { overflow: visible; }
+.sj2.parity .parity-insp-col > .parity-group { flex: none; margin: 0 10px 8px; }
+.sj2.parity .parity-insp-col .parity-lut-row { display: flex; align-items: center; gap: 4px; margin-top: 7px; }
+.sj2.parity .parity-insp-col .parity-lut-row select { flex: 1; min-width: 0; }
+.sj2.parity .parity-insp-col .parity-lut-foot { flex: none; height: 28px; }

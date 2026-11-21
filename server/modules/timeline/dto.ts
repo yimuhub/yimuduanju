@@ -20,6 +20,8 @@ import {
 import type { TimelineTextStyle, TimelineTrackKind } from '@shared/api.interface';
 import type { TimelineVideoKeyframe } from '@shared/timeline-keyframes';
 import type { TimelineClipVisual } from '@shared/timeline-visual';
+import type { TimelineVolumePoint } from '@shared/timeline-audio-expr';
+import { AUDIO_FX_NODE_TYPES, AUDIO_FX_MAX_NODES, type AudioFxNodeType } from '@shared/timeline-audio-fx';
 
 /** 片段转场（与下一片段之间）；Phase 4 导出暂按硬切渲染，EDL 先存决策 */
 export class ClipTransitionDto {
@@ -31,6 +33,69 @@ export class ClipTransitionDto {
   @Min(0)
   @Max(5)
   duration!: number;
+}
+
+/** 音量包络断点：t 片段内相对秒，v 音量倍率 0–2 */
+export class VolumeAutomationPointDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  t!: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(2)
+  v!: number;
+}
+
+/** 音量包络（G12）：断点折线，客户端已按 fps 帧量化，服务端只校验形状 */
+export class VolumeAutomationDto {
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => VolumeAutomationPointDto)
+  points!: TimelineVolumePoint[];
+}
+
+/**
+ * 音频效果节点（FX rack）：params 是扁平数值表，键随 type 白名单。
+ * 数值范围不在这里逐个装饰器校验——normalizeAudioFxNodes 落库前统一夹紧
+ * （与 keyframes 同策略：夹紧而非整单报错）。
+ */
+export class AudioFxNodeDto {
+  @IsString()
+  @MaxLength(64)
+  id!: string;
+
+  @IsIn(AUDIO_FX_NODE_TYPES)
+  type!: AudioFxNodeType;
+
+  /** true = 跳过该节点（预览不建、导出不加滤镜） */
+  @IsOptional()
+  @IsBoolean()
+  bypass?: boolean;
+
+  @IsObject()
+  params!: Record<string, number>;
+
+  /**
+   * FX 参数自动化（对齐 OpenMotion automation lane）：key = 参数名（白名单），
+   * 值 = 断点 { t, v } 升序表。与 params 同策略：形状在这里只验 IsObject，
+   * 白名单/夹紧/帧量化由 normalizeAudioFxNodes 落库前统一做。
+   */
+  @IsOptional()
+  @IsObject()
+  automation?: Record<string, import('@shared/timeline-audio-fx').AudioFxAutomationPoint[]>;
+}
+
+/** 音频效果链：节点按信号路径排序（In → 节点 → Out） */
+export class AudioFxDto {
+  @IsArray()
+  @ArrayMaxSize(AUDIO_FX_MAX_NODES)
+  @ValidateNested({ each: true })
+  @Type(() => AudioFxNodeDto)
+  nodes!: import('@shared/timeline-audio-fx').TimelineClipAudioFxNode[];
 }
 
 /** SaveTimelineRequest.clips 元素（缺省 id 视为新建） */
@@ -48,6 +113,11 @@ export class SaveTimelineClipDto {
   @IsIn(['video', 'audio', 'subtitle', 'overlay'])
   track!: TimelineTrackKind;
 
+  @IsOptional()
+  @IsUUID('all')
+  sourceAssetId?: string | null;
+
+  /** 旧字段兼容：迁移期允许客户端继续传，服务端不再落库 */
   @IsOptional()
   @IsUUID('all')
   sourceShotId?: string | null;
@@ -97,6 +167,37 @@ export class SaveTimelineClipDto {
   @Min(0)
   @Max(2)
   volume?: number;
+
+  /** 音量包络（G12/G15）：存在时优先于 volume 常数；非法点由服务端归一化 */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VolumeAutomationDto)
+  volumeAutomation?: VolumeAutomationDto | null;
+
+  /** 片段淡入（G11，秒，≥0）：音频幅度斜坡 + 画面透明度；超长由服务端夹紧到片段时长 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  fadeIn?: number | null;
+
+  /** 片段淡出（G11，秒，≥0）；超长由服务端夹紧到片段时长 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  fadeOut?: number | null;
+
+  /** 人声避让标记（G15）：导出混音以人声为 sidechain 自动压低该片段 */
+  @IsOptional()
+  @IsBoolean()
+  duckUnderVoice?: boolean;
+
+  /** 音频效果链（FX rack）：预览 WebAudio / 导出 ffmpeg 滤镜共用；非法节点由服务端归一化剔除 */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AudioFxDto)
+  audioFx?: AudioFxDto | null;
 
   /** 音高倍率 0.5–2（1=原音）；只用于音频/视频原声 */
   @IsOptional()
@@ -294,6 +395,30 @@ export class ExportTimelineDto {
   @Min(0)
   @Max(86400)
   endSec?: number;
+
+  /** 导出容器格式（G20）：缺省 mp4 = 旧行为 */
+  @IsOptional()
+  @IsIn(['mp4', 'webm', 'gif'])
+  format?: 'mp4' | 'webm' | 'gif';
+
+  /** 质量档（G20）：crf 映射（mp4 32/23/18）；不传 = 旧行为 crf 20 */
+  @IsOptional()
+  @IsIn(['draft', 'standard', 'high'])
+  quality?: 'draft' | 'standard' | 'high';
+
+  /** GIF 循环次数（G20）：0 = 无限循环，缺省 0；仅 format=gif 生效 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(65535)
+  loopCount?: number;
+}
+
+/** POST /timeline/analyze-beats：单素材节拍分析（G14） */
+export class AnalyzeBeatsDto {
+  @IsUUID('all')
+  assetId!: string;
 }
 
 /** POST /timeline/agent-ops：对话驱动的剪辑动作（结构由 shared/timeline-ops 校验） */
@@ -335,4 +460,11 @@ export class TranscribeClipDto {
   @IsString()
   @MaxLength(20)
   language?: string | null;
+}
+
+/** 版本固定（C4）：body { pinned }；缺省 true（点星标即固定） */
+export class RevisionPinDto {
+  @IsOptional()
+  @IsBoolean()
+  pinned?: boolean;
 }

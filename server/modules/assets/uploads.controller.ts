@@ -19,7 +19,7 @@ import { eq } from 'drizzle-orm';
 import { createWriteStream } from 'fs';
 // 修复：unlink 原本在两个分支里各写一次 `await import('fs/promises')` 动态导入，
 // 而顶部已静态导入了 mkdir。统一为静态导入，去掉重复的运行时解析。
-import { mkdir, stat, unlink, writeFile } from 'fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { createHash, randomUUID } from 'crypto';
 // 修复：`resolve` 从未被使用，noUnusedLocals 下会直接编译失败；
 // 同时把重复的第二条 '@nestjs/common' import 合并进上面那条。
@@ -76,6 +76,14 @@ const ALLOWED: Record<string, string> = {
   'audio/x-m4a': 'm4a',
   'audio/mp4': 'm4a',
 };
+/**
+ * LUT（.cube）导入：纯文本查找表，浏览器给不出可靠 MIME，按 X-Filename 扩展名放行，
+ * 内容再单独校验（必须带 LUT_3D_SIZE 头）。文件很小，单请求上传即可覆盖；
+ * 超过 25MB 的「LUT」一定是脏数据，分片通道不放行（initChunks 仍按 ALLOWED 白名单）。
+ */
+const LUT_FILENAME_RE = /\.cube$/i;
+/** 真正的 .cube 文本必带 LUT_3D_SIZE 声明；用它防止任意文件改名混进 LUT 资产 */
+const LUT_HEADER_RE = /LUT_3D_SIZE/;
 
 // 修复（分层）：删除原本的 `export { uploadDir } from './upload-dir';`。
 // 这个再导出写在 Controller 里，逼着 main.ts 与 model-gateway.service.ts
@@ -108,6 +116,7 @@ export class UploadsController {
     },
   ): Promise<{ uploadId: string; chunkSize: number }> {
     const mime = (body.mimeType ?? '').split(';')[0].trim().toLowerCase();
+    // 注：.cube LUT 只走单请求通道（见 ALLOWED 上方注释），分片通道不放行
     const ext = ALLOWED[mime];
     if (!ext) {
       throw new BadRequestException(
@@ -277,10 +286,12 @@ export class UploadsController {
     @Query('durationSeconds') durationRaw?: string,
   ): Promise<{ asset: Asset; fileUrl: string }> {
     const mime = (contentType ?? '').split(';')[0].trim().toLowerCase();
-    const ext = ALLOWED[mime];
+    // .cube LUT 按文件名扩展名放行（浏览器不给可靠 MIME），其余类型仍走白名单
+    const isLutUpload = !ALLOWED[mime] && LUT_FILENAME_RE.test((rawName ?? '').trim());
+    const ext = ALLOWED[mime] ?? (isLutUpload ? 'cube' : undefined);
     if (!ext) {
       throw new BadRequestException(
-        `不支持的 Content-Type，仅允许 ${Object.keys(ALLOWED).join('、')}`,
+        `不支持的 Content-Type，仅允许 ${Object.keys(ALLOWED).join('、')} 或 .cube LUT 文件`,
       );
     }
     // 修复（无 Content-Length 预检）：旧实现要等客户端把 25MB 全部灌满才拒绝。
@@ -385,6 +396,14 @@ export class UploadsController {
       await unlink(absPath).catch(() => {});
       throw new BadRequestException('空文件，上传被拒绝');
     }
+    if (ext === 'cube') {
+      // 内容校验：读头部 4KB 检查 LUT_3D_SIZE 头，防止任意文件改名混进 LUT 资产
+      const head = await readFile(absPath, 'utf8').then((t) => t.slice(0, 4096)).catch(() => '');
+      if (!LUT_HEADER_RE.test(head)) {
+        await unlink(absPath).catch(() => {});
+        throw new BadRequestException('文件内容不是有效的 .cube LUT（缺少 LUT_3D_SIZE 头）');
+      }
+    }
 
     const displayName = (rawName ?? '')
       .split(/[/\\]/)
@@ -396,10 +415,11 @@ export class UploadsController {
     const durationSeconds = durationRaw ? Number(durationRaw) : NaN;
     const asset = await this.assetsService.create({
       projectId,
-      assetType: isVideo ? 'video' : isAudio ? 'audio' : 'image',
+      // .cube 登记为独立 lut 类型：Inspector 下拉按它过滤，素材库也不会误当视频/图片
+      assetType: ext === 'cube' ? 'lut' : isVideo ? 'video' : isAudio ? 'audio' : 'image',
       name: displayName || `白模-${createHash('md5').update(fileName).digest('hex').slice(0, 8)}.${ext}`,
       fileUrl: `/uploads/${projectId}/${fileName}`,
-      mimeType: mime,
+      mimeType: ext === 'cube' ? 'text/plain' : mime,
       fileSize: size,
       durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0
         ? durationSeconds

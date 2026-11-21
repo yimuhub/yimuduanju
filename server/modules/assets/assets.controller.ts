@@ -13,31 +13,23 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { readFile } from 'fs/promises';
-import { relative, resolve, isAbsolute, sep } from 'path';
 import type {
   Asset,
   AssetListResponse,
+  AssetMetadata,
 } from '@shared/api.interface';
 import { AssetsService } from './assets.service';
-import { uploadDir } from './upload-dir';
+import { resolveUnderUploads } from './upload-dir';
 import { AssetListQueryDto, CreateAssetDto, UpdateAssetDto } from './dto';
 import { isSafeExternalUrl } from '../../common/url-guard';
 
-/**
- * /uploads/ 相对地址或服务端绝对路径 → 上传目录内绝对路径，并做包含性校验。
- * 用 path.relative 判定而不是 startsWith 前缀（后者放行 data/uploads-backup 等兄弟目录）。
- */
-function resolveUnderUploads(fileUrlOrPath: string): string {
-  const input = fileUrlOrPath.replace(/^\/uploads\//, '');
-  const base = resolve(uploadDir());
-  // fileUrl 通常是 /uploads/ 相对地址，服务端归档则会写绝对 filePath；
-  // 两种形式都允许，但最终路径必须仍在上传目录内。
-  const abs = isAbsolute(input) ? resolve(input) : resolve(base, input);
-  const rel = relative(base, abs);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+/** 包含性校验失败（路径逃出上传目录）时保持原有的 400 语义 */
+function toUploadPathOrThrow(fileUrlOrPath: string): string {
+  try {
+    return resolveUnderUploads(fileUrlOrPath);
+  } catch {
     throw new BadRequestException('非法路径');
   }
-  return abs;
 }
 
 @Controller('api/assets')
@@ -71,10 +63,6 @@ export class AssetsController {
     return this.assetsService.listShotHistory(shotId, { assetType });
   }
 
-  /**
-   * 媒体取流：本地直接读盘返回；远程 CDN 由后端重试拉取并落盘缓存。
-   * 前端资产库统一用 /api/assets/:id/content 做 img/video src。
-   */
   @Get(':id/content')
   async content(
     @Param('id', ParseUUIDPipe) id: string,
@@ -92,7 +80,7 @@ export class AssetsController {
     res.setHeader('Cache-Control', 'private, max-age=3600');
 
     if (url.startsWith('/uploads/')) {
-      const abs = resolveUnderUploads(url);
+      const abs = toUploadPathOrThrow(url);
       try {
         const buf = await readFile(abs);
         res.setHeader('Content-Length', String(buf.length));
@@ -105,7 +93,7 @@ export class AssetsController {
     if (asset.filePath) {
       try {
         // filePath 也可由资产 DTO 写入，绝不能直接信任并读取任意服务器路径。
-        const buf = await readFile(resolveUnderUploads(asset.filePath));
+        const buf = await readFile(toUploadPathOrThrow(asset.filePath));
         res.setHeader('Content-Length', String(buf.length));
         res.end(buf);
         return;
@@ -134,6 +122,17 @@ export class AssetsController {
       throw new BadRequestException('assetId 与 assetType 为必填项');
     }
     return this.assetsService.revertShotAsset(shotId, body.assetId, body.assetType);
+  }
+
+  /**
+   * G16 素材媒体元数据（ffprobe 探测，进程内缓存避免重复 probe）。
+   * 错误素材 / 非媒体文件不抛错：返回 200 + 全 null 字段（前端兜底友好，
+   * 拿不到元数据照样渲染卡片）；素材本身不存在仍走 404。
+   * 注意路由顺序：必须在 `@Get(':id')` 之前声明，否则两段路径会被单段 `:id` 规则吞掉。
+   */
+  @Get(':id/metadata')
+  async metadata(@Param('id', ParseUUIDPipe) id: string): Promise<AssetMetadata> {
+    return this.assetsService.getMetadata(id);
   }
 
   @Get(':id')

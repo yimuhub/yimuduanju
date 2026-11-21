@@ -3,6 +3,7 @@ import type {
   Asset,
   AssetListParams,
   AssetListResponse,
+  AssetMetadata,
 } from '@shared/api.interface';
 
 export const listAssets = (params: AssetListParams = {}) =>
@@ -44,6 +45,10 @@ export const mediaUrl = (asset: Pick<Asset, 'id' | 'fileUrl'>): string | undefin
 
 export const getAsset = (id: string) =>
   axiosForBackend.get<Asset>(`/api/assets/${id}`).then((res) => res.data);
+
+/** G16 素材媒体元数据（ffprobe 探测）：探测失败返回 200 + 全 null 字段 */
+export const getAssetMetadata = (id: string) =>
+  axiosForBackend.get<AssetMetadata>(`/api/assets/${id}/metadata`).then((res) => res.data);
 
 export const createAsset = (data: Partial<Asset>) =>
   axiosForBackend.post<Asset>('/api/assets', data).then((res) => res.data);

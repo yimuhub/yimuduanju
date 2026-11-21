@@ -10,6 +10,8 @@ import { useEdl } from './EdlContext';
 import { clipSpan, toTimecode } from './model';
 import type { TimelineClip } from '@shared/api.interface';
 import { sampleVideoTransform } from '@shared/timeline-keyframes';
+import { cinematicCropPreset, normalizeCrop, type TimelineVisualCrop } from '@shared/timeline-visual';
+import { useAutoRecord } from '@client/src/lib/keyframe-autorecord';
 
 type Grade = { brightness: number; contrast: number; saturation: number; filter: string };
 
@@ -29,10 +31,13 @@ const TEXT_FONTS = [
 const TEXT_TEMPLATES: Array<{ name: string; patch: Record<string, unknown> }> = [
   { name: '经典白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0.04, bgColor: '', bold: true } },
   { name: '综艺黄', patch: { color: '#FFE45C', strokeColor: '#000000', strokeWidth: 0.05, bgColor: '', bold: true } },
-  { name: '电影字幕', patch: { color: '#F4F1EA', strokeColor: '#000000', strokeWidth: 0.03, bgColor: '', bold: false } },
+  { name: '电影字幕', patch: { color: '#F4F1EA', strokeColor: '#000000', strokeWidth: 0.03, bgColor: '#000000', bgOpacity: 0.55, bold: true } },
   { name: '黑底白字', patch: { color: '#FFFFFF', strokeColor: '#000000', strokeWidth: 0, bgColor: '#000000', bgOpacity: 0.55, bold: true } },
   { name: '极简小字', patch: { color: '#DDE3EA', strokeColor: '#000000', strokeWidth: 0.02, bgColor: '', bold: false, fontSize: 4.2 } },
 ];
+
+/** 裁剪四边的中文标签（画面→基础 裁剪区块） */
+const CROP_EDGE_LABEL: Record<keyof TimelineVisualCrop, string> = { top: '上', bottom: '下', left: '左', right: '右' };
 
 export const ShenJianInspector = ({
   grade,
@@ -43,6 +48,8 @@ export const ShenJianInspector = ({
 }) => {
   const { data, curT, setCurT } = useStudio();
   const edl = useEdl();
+  // 自动打点（G13）：开启时改运镜参数在播放头自动落关键帧（localStorage 持久，与工具条同源）
+  const [autoRecord, setAutoRecord] = useAutoRecord();
   const [tab, setTab] = useState<'basic' | 'color' | 'anim'>('basic');
   useEffect(() => {
     const h = (e: Event) => {
@@ -51,6 +58,17 @@ export const ShenJianInspector = ({
     };
     window.addEventListener('yimu:shenjian-inspector-tab', h);
     return () => window.removeEventListener('yimu:shenjian-inspector-tab', h);
+  }, []);
+  // 时间线右键「裁剪」等入口：切到基础页并滚动到裁剪区块（延迟一拍等渲染完成）
+  useEffect(() => {
+    const onCrop = () => {
+      setTab('basic');
+      window.setTimeout(() => {
+        document.querySelector('.inspector [data-insp-crop]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 60);
+    };
+    window.addEventListener('yimu:shenjian-inspector-crop', onCrop);
+    return () => window.removeEventListener('yimu:shenjian-inspector-crop', onCrop);
   }, []);
 
   const clip = useMemo(() => {
@@ -79,12 +97,26 @@ export const ShenJianInspector = ({
     if (!clip) return;
     const time = Math.max(0, curT - clip.timelineStart);
     const frames = [...(clip.keyframes ?? [])];
-    const current = sampleVideoTransform(frames, time);
-    const next = { time, ...current, ...patch };
-    const idx = frames.findIndex((f) => Math.abs(f.time - time) < 1 / Math.max(1, edl.fps));
-    if (idx >= 0) frames[idx] = { ...frames[idx], ...next };
-    else frames.push(next);
-    edl.setClipKeyframes(clip.id, frames);
+    // 手动打点入口（菱形按钮 / ⌘K 传空 patch）：始终在播放头落点，不受开关影响
+    const manual = Object.keys(patch).length === 0;
+    if (autoRecord || manual) {
+      const current = sampleVideoTransform(frames, time);
+      const next = { time, ...current, ...patch };
+      const idx = frames.findIndex((f) => Math.abs(f.time - time) < 1 / Math.max(1, edl.fps));
+      if (idx >= 0) frames[idx] = { ...frames[idx], ...next };
+      else frames.push(next);
+      edl.setClipKeyframes(clip.id, frames);
+      return;
+    }
+    // 自动打点关闭（G13）：改的是整条动画的数值——所有关键帧统一更新，不再偷落新点
+    if (!frames.length) {
+      toast.info('自动打点已关闭且该片段没有关键帧：打开「自动打点」或在播放头按 ⌘K 打点');
+      return;
+    }
+    edl.setClipKeyframes(
+      clip.id,
+      frames.map((f) => ({ ...f, ...patch })),
+    );
   };
 
   /** 剪映菱形按钮：播放头处有关键帧则删除，没有则按当前变换添加 */
@@ -119,6 +151,20 @@ export const ShenJianInspector = ({
   const setStart = (v: number) => {
     if (!clip) return;
     edl.moveClip(clip.id, Math.max(0, v));
+  };
+
+  /** 源画面裁剪（C1）：归一化后写 visual.crop，全零自动清空为 null（= 不裁，旧行为） */
+  const visualCrop = clip?.visual?.crop ?? null;
+  const patchCrop = (patch: Partial<TimelineVisualCrop>) => {
+    if (!clip) return;
+    const next = normalizeCrop({
+      left: visualCrop?.left ?? 0,
+      right: visualCrop?.right ?? 0,
+      top: visualCrop?.top ?? 0,
+      bottom: visualCrop?.bottom ?? 0,
+      ...patch,
+    });
+    edl.setClipVisual(clip.id, { crop: next });
   };
 
   const setEnd = (v: number) => {
@@ -207,6 +253,51 @@ export const ShenJianInspector = ({
                       <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 1.08, x: 0, y: 0 })}>填充画面</button>
                       <button type="button" className="mini-btn" onClick={() => writeTransform({ scale: 0.86, x: 0, y: 0 })}>原始尺寸</button>
                       <button type="button" className="mini-btn" onClick={() => edl.setClipKeyframes(clip.id, [])}>重置运镜</button>
+                    </div>
+                  </section>
+                ) : null}
+
+                {clip.track !== 'audio' && clip.track !== 'subtitle' ? (
+                  <section className="section" data-insp-crop>
+                    <h4>裁剪<span className="val">{visualCrop ? '已裁切' : '未裁剪'}</span></h4>
+                    <div className="grid2">
+                      {(['top', 'bottom', 'left', 'right'] as const).map((edge) => (
+                        <div className="row" style={{ margin: 0 }} key={edge}>
+                          <label style={{ width: 32 }}>{CROP_EDGE_LABEL[edge]}</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={45}
+                            step={1}
+                            value={Math.round((visualCrop?.[edge] ?? 0) * 100)}
+                            onChange={(e) => patchCrop({ [edge]: (Number(e.target.value) || 0) / 100 })}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid2" style={{ marginTop: 6 }}>
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        title="按项目画幅裁掉上下，得到 2.35:1 电影感构图"
+                        onClick={() => {
+                          const preset = cinematicCropPreset(data.timeline?.width ?? 1080, data.timeline?.height ?? 1920);
+                          if (!preset) {
+                            toast.info('当前画幅已经比 2.35:1 更宽，无需裁切');
+                            return;
+                          }
+                          patchCrop(preset);
+                          toast.success('已按画幅裁出 2.35:1 电影感（居中，只裁上下）');
+                        }}
+                      >
+                        2.35:1 电影感
+                      </button>
+                      <button type="button" className="mini-btn" disabled={!visualCrop} onClick={() => edl.setClipVisual(clip.id, { crop: null })}>
+                        重置裁剪
+                      </button>
+                    </div>
+                    <div className="mini-note" style={{ marginTop: 4 }}>
+                      裁掉源画面四周再铺满画幅（每边最多 45%，上下/左右合计不超过 90%）；蒙版与字幕作用在裁切后的画面上，预览与导出共用同一份参数。
                     </div>
                   </section>
                 ) : null}
@@ -475,6 +566,22 @@ export const ShenJianInspector = ({
                     <button type="button" className="mini-btn" onClick={() => setMotion({ x: 0 }, { x: 0.06 })}>右移</button>
                     <button type="button" className="mini-btn" onClick={() => setMotion({ rotate: -2 }, { rotate: 2 })}>微旋</button>
                     <button type="button" className="mini-btn" onClick={() => setMotion({ y: 0.04, scale: 1.06 }, { y: -0.02, scale: 1.14 })}>呼吸</button>
+                  </div>
+                </section>
+                <section className="section">
+                  <h4>自动打点<span className="val">{autoRecord ? '开' : '关'}</span></h4>
+                  <button
+                    type="button"
+                    className={`mini-btn${autoRecord ? ' on' : ''}`}
+                    onClick={() => {
+                      setAutoRecord(!autoRecord);
+                      toast.success(autoRecord ? '自动打点已关闭：改运镜参数将整体调整动画' : '自动打点已开启：改运镜参数会在播放头自动落关键帧');
+                    }}
+                  >
+                    {autoRecord ? '关闭自动打点' : '开启自动打点'}
+                  </button>
+                  <div className="mini-note" style={{ marginTop: 6 }}>
+                    开启时拖动缩放 / 位移 / 旋转会在播放头自动落关键帧（覆盖同帧已有）；关闭后改的是整条动画的数值。菱形按钮与 ⌘K 手动打点不受影响。
                   </div>
                 </section>
                 <section className="section">

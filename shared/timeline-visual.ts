@@ -80,6 +80,22 @@ export interface TimelineVisualAi {
   strength: number;
 }
 
+/**
+ * 源画面裁切（crop）：四边各裁掉的比例。
+ * 与蒙版不同——蒙版是形状遮罩，crop 是把源画面本身切掉一部分再铺满项目画幅；
+ * 导出滤镜链里 crop 插在最前（源空间），抠像/蒙版作用在裁切后的画面上。
+ */
+export interface TimelineVisualCrop {
+  /** 左边裁掉比例 0–0.45 */
+  left: number;
+  /** 右边裁掉比例 0–0.45 */
+  right: number;
+  /** 上边裁掉比例 0–0.45 */
+  top: number;
+  /** 下边裁掉比例 0–0.45 */
+  bottom: number;
+}
+
 export interface TimelineClipVisual {
   /** 0–1 */
   opacity?: number;
@@ -88,6 +104,34 @@ export interface TimelineClipVisual {
   beauty?: TimelineVisualBeauty | null;
   tracking?: TimelineVisualTracking | null;
   ai?: TimelineVisualAi | null;
+  /** .cube 3D 查找表（LUT）：预览 WebGL 查表、导出 ffmpeg lut3d，共用同一份数据 */
+  lut?: TimelineVisualLut | null;
+  /** 源画面裁切（C1）：null / 全零 = 不裁 */
+  crop?: TimelineVisualCrop | null;
+}
+
+export interface TimelineVisualLut {
+  /** .cube 资产地址（/uploads 本地路径或资产代理 URL） */
+  url: string;
+  /** 原始文件名（Inspector 展示用） */
+  name?: string;
+  /** 0–1 与原色混合的比例，默认 1（= 完全套用） */
+  strength: number;
+}
+
+/**
+ * clip.visual.lut 归一化：url 必须是非空字符串，strength 夹紧 0–1（缺省 1）。
+ * url 非法的整体视为未设置（返回 null，等同没有 LUT），预览与导出按旧逻辑走。
+ */
+export function normalizeVisualLut(lut: TimelineVisualLut | null | undefined): TimelineVisualLut | null {
+  const url = typeof lut?.url === 'string' ? lut.url.trim() : '';
+  if (!url) return null;
+  const raw = Number(lut?.strength);
+  return {
+    url,
+    name: typeof lut?.name === 'string' ? lut.name.trim().slice(0, 120) || undefined : undefined,
+    strength: Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 1,
+  };
 }
 
 export const DEFAULT_KEYING: TimelineVisualKeying = {
@@ -141,6 +185,80 @@ export const AI_PRESETS: Array<{ id: TimelineAiPreset; label: string; note: stri
 ];
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/* ----------------------------- 裁切（C1） ----------------------------- */
+
+/** 单边裁切上限：最多切掉 45% */
+export const CROP_EDGE_MAX = 0.45;
+/** 两边合计上限（须 <0.9，至少留 10% 画面） */
+export const CROP_SUM_MAX = 0.89;
+
+/**
+ * 归一化裁切：非法输入按 0 处理，单边夹到 0–0.45；
+ * 两边合计超过上限时按比例回缩（保持居中意图）；全零返回 null（= 不裁）。
+ */
+export function normalizeCrop(crop: TimelineVisualCrop | null | undefined): TimelineVisualCrop | null {
+  if (!crop) return null;
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  let left = clamp(num(crop.left), 0, CROP_EDGE_MAX);
+  let right = clamp(num(crop.right), 0, CROP_EDGE_MAX);
+  let top = clamp(num(crop.top), 0, CROP_EDGE_MAX);
+  let bottom = clamp(num(crop.bottom), 0, CROP_EDGE_MAX);
+  const capSum = (a: number, b: number): [number, number] => {
+    const sum = a + b;
+    if (sum <= CROP_SUM_MAX) return [a, b];
+    const f = CROP_SUM_MAX / sum;
+    return [round3(a * f), round3(b * f)];
+  };
+  [left, right] = capSum(left, right);
+  [top, bottom] = capSum(top, bottom);
+  if (left + right + top + bottom <= 0) return null;
+  return { left: round3(left), right: round3(right), top: round3(top), bottom: round3(bottom) };
+}
+
+/**
+ * 预览裁切 transform：追加到媒体 transform 末尾（= 源空间最先裁切，与导出滤镜
+ * 链 crop 在最前同序），运镜/美容/旋转作用在裁切后的画面上。
+ * 映射：裁切区域 [l,1-r]×[t,1-b] 放大平移后铺满整个画幅（object-fit 行为不变）。
+ * 无裁切返回空串，调用方原样保留既有 transform。
+ */
+export function cropTransform(crop: TimelineVisualCrop | null | undefined): string {
+  const c = normalizeCrop(crop);
+  if (!c) return '';
+  const sx = 1 / (1 - c.left - c.right);
+  const sy = 1 / (1 - c.top - c.bottom);
+  // 平移把裁切区中心对到画幅中心（平移发生在 scale 之内，量与缩放无关）
+  const tx = ((c.right - c.left) / 2) * 100;
+  const ty = ((c.bottom - c.top) / 2) * 100;
+  return `scale(${sx.toFixed(4)}, ${sy.toFixed(4)}) translate(${tx.toFixed(3)}%, ${ty.toFixed(3)}%)`;
+}
+
+/**
+ * 导出裁切滤镜（ffmpeg crop，源空间）：`crop=iw*(1-l-r):ih*(1-t-b):iw*l:ih*t`。
+ * 放在视频滤镜链最前面（crop 最前 = 源空间），后续 chromakey / 蒙版 / scale-pad
+ * 都作用在裁切后的画面上，与预览层序一致。无裁切返回空串（调用方不追加）。
+ */
+export function buildCropFilterArgs(crop: TimelineVisualCrop | null | undefined): string {
+  const c = normalizeCrop(crop);
+  if (!c) return '';
+  const w = 1 - c.left - c.right;
+  const h = 1 - c.top - c.bottom;
+  return `crop=iw*${w.toFixed(3)}:ih*${h.toFixed(3)}:iw*${c.left.toFixed(3)}:ih*${c.top.toFixed(3)}`;
+}
+
+/**
+ * 「居中 2.35:1 电影感」预设：按项目画幅算上下各裁多少（左右不动）。
+ * 假设素材与项目画幅同比例（生成的镜头视频即如此）；素材异形时结果以预览为准微调。
+ * 画幅本身比 2.35:1 更宽（不需要裁）时返回 null。
+ */
+export function cinematicCropPreset(width: number, height: number): TimelineVisualCrop | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  const cut = (1 - width / 2.35 / height) / 2;
+  if (cut <= 0) return null;
+  return normalizeCrop({ left: 0, right: 0, top: cut, bottom: cut });
+}
 
 /** 手动跟踪点插值；无点返回 0 偏移 */
 export function sampleTracking(

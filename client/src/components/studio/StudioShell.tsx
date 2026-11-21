@@ -52,6 +52,11 @@ import { useStreamingChat } from './chat/useStreamingChat';
 import type { PendingAttachment } from './chat/ChatComposer';
 import { useStudioData, type StudioData } from './useStudioData';
 import { clipSpan, shotIndexAt } from './model';
+import { quantizeToFrame } from '@client/src/lib/timeline-frame';
+
+/** JKL 走带速度档位（OpenMotion SHUTTLE_SPEEDS 对齐）：j/l 反复按在档位内循环加速 */
+export const SHUTTLE_SPEEDS = [1, 2, 4] as const;
+export type PlaySpeed = (typeof SHUTTLE_SPEEDS)[number];
 import {
   DOCK_SEG,
   DOCK_SEG_OF,
@@ -115,6 +120,17 @@ export interface StudioContextValue {
   /** 走带方向：1 正放 / -1 倒放（J 键驱动，靠主时钟反向推进） */
   playDir: 1 | -1;
   setPlayDir: (v: 1 | -1) => void;
+  /** JKL 走带速度（G7）：1/2/4；正放用 playbackRate 加速，倒放按帧步进 seek */
+  playSpeed: PlaySpeed;
+  setPlaySpeed: (v: PlaySpeed) => void;
+  /** 工作区循环（G8）：开启后播放到区域末端（无区域=内容末端）自动回到起点续播 */
+  loopEnabled: boolean;
+  setLoopEnabled: (v: boolean) => void;
+  /** 工作区 In/Out（I/O 键设点，帧量化；null = 未设） */
+  workIn: number | null;
+  workOut: number | null;
+  setWorkIn: (t: number | null) => void;
+  setWorkOut: (t: number | null) => void;
   /** 中央预览的来源：timeline=只渲染时间轴；shot=镜头池点选后的单镜预览 */
   previewMode: 'timeline' | 'shot';
   setPreviewMode: (m: 'timeline' | 'shot') => void;
@@ -339,9 +355,13 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
   const [dockW, setDockW] = useState<number | null>(null);
   const [stageView, setStageViewState] = useState<StageView>('chat');
   const [sel, setSelRaw] = useState(0);
-  const [curT, setCurT] = useState(0);
+  const [curT, setCurTState] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [playDir, setPlayDir] = useState<1 | -1>(1);
+  const [playSpeed, setPlaySpeed] = useState<PlaySpeed>(1);
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [workIn, setWorkIn] = useState<number | null>(null);
+  const [workOut, setWorkOut] = useState<number | null>(null);
   const [canvasApi, setCanvasApi] = useState<StudioContextValue['canvasApi']>(null);
   const {
     msgs: chatMsgs,
@@ -566,42 +586,105 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
     return () => window.removeEventListener('keydown', onKey);
   }, [canvasApi, stepShot, setStageView, stageView, toggleTlCollapsed]);
 
-  // 播放：requestAnimationFrame 驱动，40fps 提交播放头（兼顾平滑与渲染成本）。
-  // 旧实现 100ms 轮询会让画面最多落后播放头 0.3s，精剪时对不准口型。
+  // 外部 seek（拖播放头 / 键盘跳转）经 setCurT 转成交接请求，走带 tick 消费后对齐
+  // 内部时间——避免「curT 与内部时间差异」这种猜测式判断把循环折返误判成 seek
+  const seekReqRef = useRef<number | null>(null);
+  const setCurT = useCallback((next: number) => {
+    seekReqRef.current = next;
+    setCurTState(next);
+  }, []);
+
+  /* ------------------------- 走带引擎（G7/G8） -------------------------
+   * 播放循环放在状态的所有者（本 Shell）：rAF 累计真实时间，按整帧推进
+   * curT（帧量化红线），既驱动播放头也让媒体元素同步。正放靠元素原生
+   * play（playbackRate 加速），倒放由 ShenJianStage 逐帧 seek。
+   * 循环判定（G8）：有有效 In/Out 区域时在区域内折返，否则循环整段内容
+   * （单镜预览在镜头范围内折返）；关循环时到达末端即暂停。
+   */
+  const fps = data.timeline?.fps ?? 24;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const dirRef = useRef(playDir);
+  dirRef.current = playDir;
+  const speedRef = useRef(playSpeed);
+  speedRef.current = playSpeed;
+  const loopRef = useRef(loopEnabled);
+  loopRef.current = loopEnabled;
+  const workInRef = useRef(workIn);
+  workInRef.current = workIn;
+  const workOutRef = useRef(workOut);
+  workOutRef.current = workOut;
+  const fpsRef = useRef(fps);
+  fpsRef.current = fps;
+  const curRef = useRef(curT);
+  curRef.current = curT;
+  const previewRef = useRef({ previewMode, sel, shots, timelineTotal });
+  previewRef.current = { previewMode, sel, shots, timelineTotal };
+
   useEffect(() => {
-    const shot = previewMode === 'shot' ? data.shots[sel] : undefined;
-    const total = shot ? shot.start + shot.dur : timelineTotal;
-    if (!playing || total <= 0) return undefined;
-    const stepSec = 1 / 40;
+    if (!playing) return;
+    seekReqRef.current = null; // 从当前播放头重新起步
+    let t = curT; // 走带内部时间
     let last = performance.now();
-    let acc = 0;
     let raf = 0;
     const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      const frame = 1 / Math.max(1, fpsRef.current);
+      // 后台页签限流回来不快进：单帧间隔最多补 0.25s
       const dt = Math.min(0.25, (now - last) / 1000);
       last = now;
-      acc += dt;
-      if (acc >= stepSec) {
-        const step = acc;
-        acc = 0;
-        setCurT((t) => {
-          const next = t + step * playDir;
-          if (playDir < 0 && next <= 0) {
-            window.setTimeout(() => setPlaying(false), 0);
-            return 0;
-          }
-          if (next >= total) {
-            window.setTimeout(() => setPlaying(false), 0);
-            // 单镜预览停在镜尾；时间轴播放保持原来的循环行为
-            return shot ? (playDir > 0 ? total : 0) : 0;
-          }
-          return next;
-        });
+      // 外部 seek 以外部为准（含播放中拖播放头 / 键盘跳转）
+      if (seekReqRef.current != null) {
+        t = seekReqRef.current;
+        seekReqRef.current = null;
       }
-      raf = requestAnimationFrame(tick);
+      // 单镜预览以镜头范围为界；时间轴播放以整段内容为界
+      const { previewMode: mode, sel: selIdx, shots: shotList, timelineTotal: totalSec } = previewRef.current;
+      const shot = mode === 'shot' ? shotList[selIdx] : undefined;
+      const shotEnd = shot ? shot.start + shot.dur : 0;
+      const contentEnd = shot ? Math.max(shotEnd, shot.start) : Math.max(0, totalSec);
+      const dir = dirRef.current;
+      t += dt * dir * (speedRef.current ?? 1);
+      // 循环边界（G8）：有效区域优先，其次单镜范围，否则整段内容
+      const inP = workInRef.current;
+      const outP = workOutRef.current;
+      const hasRegion = shot == null && inP != null && outP != null && outP - inP >= frame;
+      const loopStart = hasRegion ? inP : 0;
+      const loopEnd = hasRegion ? outP : contentEnd;
+      const looping = loopRef.current && loopEnd > loopStart;
+      if (dir === 1 && t >= loopEnd) {
+        if (looping) {
+          t = loopStart + (t - loopEnd);
+        } else {
+          setCurTState(quantizeToFrame(Math.min(loopEnd, Math.max(0, contentEnd)), fpsRef.current));
+          setPlaying(false); // 到达末端暂停，速度档位随之复位
+          cancelAnimationFrame(raf);
+          return;
+        }
+      } else if (dir === -1 && t <= loopStart) {
+        if (looping) {
+          t = loopEnd - (loopStart - t);
+        } else {
+          setCurTState(quantizeToFrame(Math.max(0, loopStart), fpsRef.current));
+          setPlaying(false);
+          cancelAnimationFrame(raf);
+          return;
+        }
+      }
+      t = Math.max(0, Math.min(Math.max(0, contentEnd), t));
+      // 帧量化推进：帧号没变就不触发 React 重渲染
+      const nextFrame = quantizeToFrame(t, fpsRef.current);
+      if (nextFrame !== quantizeToFrame(curRef.current, fpsRef.current)) setCurTState(nextFrame);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, playDir, timelineTotal, previewMode, sel, data.shots, setPlaying]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing]);
+
+  // K / 空格 / 到达末端停止后都回到 1×（OpenMotion pause() 复位 shuttle 档位同语义）
+  useEffect(() => {
+    if (!playing && playSpeed !== 1) setPlaySpeed(1);
+  }, [playing, playSpeed]);
 
   // 播放头移动 → 通过 EDL 视频片段反查镜头（片段被移动后仍能跟随）
   useEffect(() => {
@@ -664,6 +747,14 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setPlaying,
       playDir,
       setPlayDir,
+      playSpeed,
+      setPlaySpeed,
+      loopEnabled,
+      setLoopEnabled,
+      workIn,
+      workOut,
+      setWorkIn,
+      setWorkOut,
       previewMode,
       setPreviewMode,
       previewVolume,
@@ -701,7 +792,13 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       sel,
       setSel,
       curT,
+      setCurT,
       playing,
+      playDir,
+      playSpeed,
+      loopEnabled,
+      workIn,
+      workOut,
       previewMode,
       previewVolume,
       previewMuted,
@@ -719,6 +816,16 @@ export const StudioShell = ({ projectId: projectIdProp, children }: StudioShellP
       setDockTab,
       dockW,
       canvasApi,
+      setPlayDir,
+      setPlaySpeed,
+      setLoopEnabled,
+      setWorkIn,
+      setWorkOut,
+      setPreviewMode,
+      setPreviewVolume,
+      setPreviewMuted,
+      setOriginalAudio,
+      setPreviewQuality,
     ],
   );
 

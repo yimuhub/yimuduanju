@@ -765,6 +765,24 @@ export interface AssetListParams {
   pageSize?: number;
 }
 
+/**
+ * G16 素材媒体元数据（GET /api/assets/:id/metadata，ffprobe 探测）。
+ * 素材存在但探测失败 / 非媒体文件 → 200 + 全 null（前端兜底友好）；
+ * 素材本身不存在 → 404。
+ */
+export interface AssetMetadata {
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  /** 从 r_frame_rate 分数解析的帧率（如 30000/1001 → 29.97） */
+  fps: number | null;
+  bitRate: number | null;
+  pixFmt: string | null;
+  sizeBytes: number | null;
+}
+
 export interface AssetListResponse {
   items: Asset[];
   total: number;
@@ -1818,6 +1836,8 @@ export interface TimelineClip {
   track: TimelineTrackKind;
   /** 来源镜头 id（外部导入素材为空） */
   sourceShotId?: string | null;
+  /** 来源素材 id（时间线片段的唯一来源） */
+  sourceAssetId?: string | null;
   /** 媒体地址（视频/音频/图片） */
   sourceUrl?: string | null;
   /** 素材入点（源媒体内起始秒） */
@@ -1837,6 +1857,30 @@ export interface TimelineClip {
   speed: number;
   /** 音量 0–1（音频轨），默认 1 */
   volume: number;
+  /**
+   * 音量包络（G12）：片段内相对秒 → 0–2 音量倍率的断点折线。
+   * 存在时优先于 volume 直线（白色增益线隐藏），预览与导出共用同一份数据。
+   */
+  volumeAutomation?: import('./timeline-audio-expr').TimelineVolumeAutomation | null;
+  /**
+   * 片段淡入时长（G11，秒，≥0，≤片段时长）：音频做线性幅度斜坡，
+   * 画面轨同时驱动画面透明度。缺省/0 = 无淡入。
+   */
+  fadeIn?: number | null;
+  /** 片段淡出时长（G11，秒，≥0，≤片段时长）；缺省/0 = 无淡出 */
+  fadeOut?: number | null;
+  /**
+   * 人声避让标记（G15）：该片段的包络由「人声避让」一键生成，
+   * 导出混音以人声为 sidechain 自动压低该片段（sidechaincompress）。
+   */
+  duckUnderVoice?: boolean | null;
+  /**
+   * 音频效果链（静态 FX rack）：EQ/压缩/延迟/混响/滤波节点按信号路径排序。
+   * 预览用 WebAudio 建链（GainNode 之后），导出翻译成 ffmpeg 滤镜插在
+   * 音量包络之前；挂在画面片段上时作用于其内嵌原声
+   * （与 auto: 内嵌音频片段互相镜像，见 useEdlEditor.setClipAudioFx）。
+   */
+  audioFx?: import('./timeline-audio-fx').TimelineClipAudioFx | null;
   /** 音高倍率（音频轨），默认 1；1.12 = 升 2 个半音，0.89 = 降 2 个半音 */
   pitch?: number;
   /** 片段启用状态（剪映 V 键）：false = 不参与预览与导出，但仍保留在时间线上 */
@@ -1965,6 +2009,24 @@ export interface TimelineWaveform {
   points: number;
 }
 
+/** G14 音乐节拍检测请求（POST /api/projects/:projectId/timeline/analyze-beats） */
+export interface TimelineBeatAnalysisRequest {
+  /** 待分析素材 id（音频或带音轨的视频） */
+  assetId: string;
+}
+
+/** G14 音乐节拍检测结果：节拍点 + BPM，供时间线节拍吸附 */
+export interface TimelineBeatAnalysis {
+  /** 节拍时间点（秒，升序，保留 3 位小数） */
+  beats: number[];
+  /** 估计 BPM（60–180 倍频归一后）；0 = 未能估计 */
+  bpm: number;
+  /** 源音频时长（秒） */
+  durationSeconds: number;
+  /** 分析失败原因：降级响应（beats 为空）时给出，不抛 500 */
+  error?: string;
+}
+
 /** P4 按 EDL 导出 */
 export interface ExportTimelineRequest {
   width?: number;
@@ -1982,6 +2044,18 @@ export interface ExportTimelineRequest {
   startSec?: number;
   /** 选区导出终点（秒）；缺省时间线总时长。 */
   endSec?: number;
+  /**
+   * 导出容器格式（G20，OpenMotion 对齐）：mp4 / webm(VP9+opus) / gif(调色板两段式)。
+   * 缺省 mp4 = 旧行为。webm 需本机 ffmpeg 带 libvpx-vp9/libopus，缺失时报明确错误。
+   */
+  format?: 'mp4' | 'webm' | 'gif';
+  /**
+   * 质量档：draft / standard / high → 编码 crf 映射（mp4 32/23/18，webm 35/30/25）。
+   * 不传 = 旧行为（mp4 crf 20），与 standard 不等价。仅 mp4 / webm 生效。
+   */
+  quality?: 'draft' | 'standard' | 'high';
+  /** GIF 循环次数：0 = 无限循环（缺省）。仅 format=gif 生效。 */
+  loopCount?: number;
 }
 
 /**

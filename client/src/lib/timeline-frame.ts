@@ -72,6 +72,40 @@ export function parseTimecode(input: string, fps = DEFAULT_FPS): number | null {
   return null;
 }
 
+/* ======================= 时间 / 帧显示模式 ======================= */
+
+/**
+ * 走带与时间线的读数模式（OpenMotion timeDisplayMode 对齐）：
+ *   · time  = 00:MM:SS 时间码 / mm:ss.cs 标尺（默认）；
+ *   · frame = 帧号读数，标尺显示帧计数。
+ * 选择持久化到 localStorage，预览时间码、时间线状态栏、hover 与标尺共用。
+ */
+export type TimeDisplayMode = 'time' | 'frame';
+
+export const TIME_DISPLAY_MODE_KEY = 'yimu:om:time-display';
+/** 模式切换的跨组件广播事件（预览舞台与时间线互不依赖，靠它同步） */
+export const TIME_DISPLAY_EVENT = 'yimu:time-display';
+
+export const readTimeDisplayMode = (): TimeDisplayMode => {
+  try {
+    return localStorage.getItem(TIME_DISPLAY_MODE_KEY) === 'frame' ? 'frame' : 'time';
+  } catch {
+    return 'time';
+  }
+};
+
+export const writeTimeDisplayMode = (mode: TimeDisplayMode) => {
+  try {
+    localStorage.setItem(TIME_DISPLAY_MODE_KEY, mode);
+  } catch {
+    /* 隐私模式忽略 */
+  }
+};
+
+/** 秒 → 帧号（帧显示模式的读数；与 quantizeToFrame 同一取整规则） */
+export const frameNumberOf = (sec: number, fps: number) =>
+  Math.max(0, Math.round(sec * Math.max(1, fps)));
+
 /* ============================ 吸附 ============================ */
 
 export type SnapKind = 'zero' | 'playhead' | 'clip-start' | 'clip-end' | 'marker' | 'grid';

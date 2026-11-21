@@ -20,6 +20,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Info } from 'lucide-react';
 import { probeVideoHasAudio } from '@client/src/lib/media-audio';
 import MediaPreviewDialog, { type MediaKind } from '@client/src/components/MediaPreviewDialog';
 import { deleteAsset, listAssets, listByProject, mediaUrl } from '@client/src/api/assets';
@@ -28,6 +29,8 @@ import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clearTimelineDrag, startTimelineDrag } from '@client/src/lib/timeline-dnd';
 import { ShenJianPresets } from './ShenJianPresets';
+import { AssetDetailDialog } from './AssetDetailDialog';
+import { HoverPreviewVideo } from './HoverPreviewVideo';
 
 type RailTab = 'media' | 'audio' | 'text' | 'sticker' | 'effect' | 'transition' | 'caption' | 'filter' | 'adjust';
 type SubTab = 'all' | 'video' | 'image' | 'audio' | 'text';
@@ -85,6 +88,8 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
   const [platformTotal, setPlatformTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<{ asset: Asset; url: string; kind: MediaKind } | null>(null);
+  // G16 素材详情：ffprobe 元数据浮层（与同构版共用同一组件）
+  const [detail, setDetail] = useState<{ asset: Asset; kind: MediaKind } | null>(null);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
 
   const refresh = useMemo(
@@ -306,7 +311,7 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
                     {kind === 'audio' ? (
                       <span className="media-audio"><Music2 /></span>
                     ) : kind === 'video' && !gif ? (
-                      <video src={url} muted preload="metadata" onError={() => setBroken((p) => ({ ...p, [a.id]: true }))} />
+                      <HoverPreviewVideo src={url} onError={() => setBroken((p) => ({ ...p, [a.id]: true }))} />
                     ) : (
                       <img
                         src={url}
@@ -320,9 +325,19 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
                     <span className="name">{a.name || '未命名素材'}</span>
                   </button>
                   {brokenThis ? <span className="broken-tag">无法打开</span> : (
-                    <button type="button" className="card-del" title="从项目资产库删除" onClick={() => void remove(a)}>
-                      <Trash2 />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="card-info"
+                        title="素材详情：分辨率 / 编码 / 帧率等元数据"
+                        onClick={() => setDetail({ asset: a, kind })}
+                      >
+                        <Info />
+                      </button>
+                      <button type="button" className="card-del" title="从项目资产库删除" onClick={() => void remove(a)}>
+                        <Trash2 />
+                      </button>
+                    </>
                   )}
                 </div>
               );
@@ -347,6 +362,10 @@ export const ShenJianLibrary = ({ onImport }: { onImport: () => void }) => {
           title={preview.asset.name}
           onClose={() => setPreview(null)}
         />
+      ) : null}
+
+      {detail ? (
+        <AssetDetailDialog asset={detail.asset} kind={detail.kind} onClose={() => setDetail(null)} />
       ) : null}
     </aside>
   );

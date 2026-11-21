@@ -3,11 +3,15 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack
 import { assets, shots } from '@server/database/schema';
 import { eq, desc, and, count, ilike } from 'drizzle-orm';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { mkdir, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { uploadDir } from './upload-dir';
-import type { Asset, AssetListParams, AssetListResponse } from '@shared/api.interface';
+import { uploadDir, resolveUnderUploads } from './upload-dir';
+import { emptyAssetMetadata, normalizeAssetMetadata } from './asset-metadata';
+import { ExportService } from '../export/export.service';
+import { isSafeExternalUrlStatic } from '../../common/url-guard';
+import type { Asset, AssetListParams, AssetListResponse, AssetMetadata } from '@shared/api.interface';
 
 /**
  * W7 安全修复：fileUrl 由客户端经 create/update 提交，内容取流接口会按它读盘或远程拉取。
@@ -27,8 +31,15 @@ function assertSafeFileUrl(v: string): void {
 @Injectable()
 export class AssetsService {
   private readonly logger = new Logger(AssetsService.name);
+  /** ffprobe 探测缓存（G16）：TTL + 容量上限，Map 插入序 = 访问序（命中重插近似 LRU） */
+  private readonly metaCache = new Map<string, { value: AssetMetadata; expiresAt: number }>();
+  /** ffprobe 可执行文件缓存（与 ffmpeg 同目录推导，进程内只算一次） */
+  private ffprobeBin: string | null = null;
 
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly exportService: ExportService,
+  ) {}
 
   async list(params: AssetListParams): Promise<AssetListResponse> {
     // P1 修复：查询参数经 HTTP 传入时为 string，钳制为合法范围
@@ -185,67 +196,95 @@ export class AssetsService {
     return rows.map((r) => this.mapAsset(r));
   }
 
-  /**
-   * 镜头历史版本：按稳定 sourceId（shot:<shotId>:<type>）归组，返回该镜头所有产物版本，
-   * 按 version 倒序（最新在前），前端据此展示「历史版本 / 回退」。
-   */
-  async listShotHistory(
-    shotId: string,
-    opts?: { assetType?: string },
-  ): Promise<Asset[]> {
-    const rows = await this.db
-      .select()
-      .from(assets)
-      .where(and(eq(assets.sourceId, `shot:${shotId}:${opts?.assetType ?? 'video'}`)))
-      .orderBy(desc(assets.version));
-    return rows.map((r) => this.mapAsset(r));
+  // ==========================================================================
+  // G16 素材媒体元数据（ffprobe）
+  // 契约：素材不存在 → 404（沿用 get）；探测失败 / 非媒体文件 → 200 + 全 null。
+  // ==========================================================================
+
+  /** 缓存参数：10 分钟 TTL + 256 条容量（重复 probe 同一素材纯属浪费） */
+  private static readonly META_CACHE_TTL_MS = 10 * 60_000;
+  private static readonly META_CACHE_MAX = 256;
+
+  async getMetadata(id: string): Promise<AssetMetadata> {
+    const asset = await this.get(id);
+    const now = Date.now();
+    const hit = this.metaCache.get(id);
+    if (hit && hit.expiresAt > now) {
+      // 命中即续期并重插，热素材不会被容量淘汰挤走
+      this.metaCache.delete(id);
+      this.metaCache.set(id, hit);
+      return hit.value;
+    }
+    const meta = await this.probeAssetMetadata(asset);
+    this.metaCache.set(id, {
+      value: meta,
+      expiresAt: now + AssetsService.META_CACHE_TTL_MS,
+    });
+    if (this.metaCache.size > AssetsService.META_CACHE_MAX) {
+      const oldest = this.metaCache.keys().next().value;
+      if (oldest != null) this.metaCache.delete(oldest);
+    }
+    return meta;
   }
 
-  /**
-   * 回退镜头产物：把指定历史版本的 URL 写回 shots 的主产物字段。
-   * assetType 决定写 videoUrl 还是 startFrameUrl；回退不删资产、不改版本链，可再回退回来。
-   */
-  async revertShotAsset(
-    shotId: string,
-    assetId: string,
-    assetType: 'video' | 'image',
-  ): Promise<Asset> {
-    const assetRows = await this.db
-      .select()
-      .from(assets)
-      .where(eq(assets.id, assetId))
-      .limit(1);
-    if (assetRows.length === 0) throw new NotFoundException('历史版本不存在');
-    const asset = assetRows[0];
-    if (!asset.fileUrl) throw new BadRequestException('该历史版本无可回退的产物地址');
-    if (asset.assetType !== assetType) {
-      throw new BadRequestException('历史版本类型与回退目标不一致');
-    }
-    // 完整性校验：只能回退本镜头的产物，防止用任意资产覆盖镜头
-    if (asset.sourceId !== `shot:${shotId}:${assetType}`) {
-      throw new BadRequestException('该版本不属于指定镜头');
-    }
+  /** ffprobe 与 ffmpeg 同目录（复用 ExportService 的探测逻辑推导） */
+  private resolveFfprobeBin(): string {
+    if (this.ffprobeBin) return this.ffprobeBin;
+    this.ffprobeBin = this.exportService.resolveFfmpegBin().replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+    return this.ffprobeBin;
+  }
 
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    if (assetType === 'video') {
-      patch.videoUrl = asset.fileUrl;
-      // 回退成片即代表该镜有可用产物，顺带把失败/生成中状态收敛回 ready
-      patch.status = 'ready';
-    } else {
-      patch.startFrameUrl = asset.fileUrl;
+  /** 探测源：本地已归档 filePath → /uploads 路径 → SSRF 守卫后的公网 URL；都拿不到返回 null */
+  private resolveProbeSource(asset: Asset): string | null {
+    if (asset.filePath) {
+      try {
+        const abs = resolveUnderUploads(asset.filePath);
+        if (existsSync(abs)) return abs;
+      } catch {
+        /* fallthrough */
+      }
     }
+    if (asset.fileUrl?.startsWith('/uploads/')) {
+      try {
+        const abs = resolveUnderUploads(asset.fileUrl);
+        if (existsSync(abs)) return abs;
+      } catch {
+        /* fallthrough */
+      }
+    }
+    const url = asset.fileUrl;
+    // 远程探测直接把 URL 交给 ffprobe（支持 http/https），必须先过 SSRF 守卫
+    if (url && /^https?:\/\//i.test(url) && isSafeExternalUrlStatic(url)) return url;
+    return null;
+  }
 
-    const conditions = [eq(shots.id, shotId)];
-    if (asset.projectId) conditions.push(eq(shots.projectId, asset.projectId));
-    const updated = await this.db
-      .update(shots)
-      .set(patch)
-      .where(and(...conditions))
-      .returning({ id: shots.id });
-    if (updated.length === 0) throw new NotFoundException('镜头不存在或不属于该项目');
-
-    this.logger.log(`镜头 ${shotId} 回退到历史版本 ${assetId}（${assetType} v${asset.version ?? 1}）`);
-    return this.mapAsset(asset);
+  private async probeAssetMetadata(asset: Asset): Promise<AssetMetadata> {
+    const src = this.resolveProbeSource(asset);
+    if (!src) return emptyAssetMetadata();
+    return new Promise<AssetMetadata>((resolve) => {
+      try {
+        const child = spawn(
+          this.resolveFfprobeBin(),
+          ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', src],
+          { stdio: ['ignore', 'pipe', 'pipe'], timeout: 20_000 },
+        );
+        let out = '';
+        child.stdout?.on('data', (d: Buffer) => {
+          out += d.toString();
+        });
+        child.on('error', () => resolve(emptyAssetMetadata()));
+        child.on('close', () => {
+          try {
+            resolve(normalizeAssetMetadata(JSON.parse(out)));
+          } catch {
+            // 非媒体文件 / ffprobe 缺失：200 + 全 null（前端兜底友好）
+            resolve(emptyAssetMetadata());
+          }
+        });
+      } catch {
+        resolve(emptyAssetMetadata());
+      }
+    });
   }
 
   private mapAsset(row: typeof assets.$inferSelect): Asset {
@@ -367,5 +406,68 @@ export class AssetsService {
     } catch (e) {
       this.logger.warn(`资产落盘失败 ${asset.id}: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * 镜头历史版本：按稳定 sourceId（shot:<shotId>:<type>）归组，返回该镜头所有产物版本，
+   * 按 version 倒序（最新在前），前端据此展示「历史版本 / 回退」。
+   */
+  async listShotHistory(
+    shotId: string,
+    opts?: { assetType?: string },
+  ): Promise<Asset[]> {
+    const rows = await this.db
+      .select()
+      .from(assets)
+      .where(and(eq(assets.sourceId, `shot:${shotId}:${opts?.assetType ?? 'video'}`)))
+      .orderBy(desc(assets.version));
+    return rows.map((r) => this.mapAsset(r));
+  }
+
+  /**
+   * 回退镜头产物：把指定历史版本的 URL 写回 shots 的主产物字段。
+   * assetType 决定写 videoUrl 还是 startFrameUrl；回退不删资产、不改版本链，可再回退回来。
+   */
+  async revertShotAsset(
+    shotId: string,
+    assetId: string,
+    assetType: 'video' | 'image',
+  ): Promise<Asset> {
+    const assetRows = await this.db
+      .select()
+      .from(assets)
+      .where(eq(assets.id, assetId))
+      .limit(1);
+    if (assetRows.length === 0) throw new NotFoundException('历史版本不存在');
+    const asset = assetRows[0];
+    if (!asset.fileUrl) throw new BadRequestException('该历史版本无可回退的产物地址');
+    if (asset.assetType !== assetType) {
+      throw new BadRequestException('历史版本类型与回退目标不一致');
+    }
+    // 完整性校验：只能回退本镜头的产物，防止用任意资产覆盖镜头
+    if (asset.sourceId !== `shot:${shotId}:${assetType}`) {
+      throw new BadRequestException('该版本不属于指定镜头');
+    }
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (assetType === 'video') {
+      patch.videoUrl = asset.fileUrl;
+      // 回退成片即代表该镜有可用产物，顺带把失败/生成中状态收敛回 ready
+      patch.status = 'ready';
+    } else {
+      patch.startFrameUrl = asset.fileUrl;
+    }
+
+    const conditions = [eq(shots.id, shotId)];
+    if (asset.projectId) conditions.push(eq(shots.projectId, asset.projectId));
+    const updated = await this.db
+      .update(shots)
+      .set(patch)
+      .where(and(...conditions))
+      .returning({ id: shots.id });
+    if (updated.length === 0) throw new NotFoundException('镜头不存在或不属于该项目');
+
+    this.logger.log(`镜头 ${shotId} 回退到历史版本 ${assetId}（${assetType} v${asset.version ?? 1}）`);
+    return this.mapAsset(asset);
   }
 }

@@ -14,11 +14,19 @@ import {
 import type { Response } from 'express';
 import type { TimelineDocument } from '@shared/api.interface';
 import { TimelineMediaService } from './media-analysis.service';
+import { BeatAnalysisService } from './beat-analysis.service';
 import { PreviewProxyService } from './preview-proxy.service';
 import { AsrService } from './asr.service';
 import { JianyingDraftService } from './jianying-draft.service';
 import { TimelineService } from './timeline.service';
-import { AgentTimelineOpsDto, ExportTimelineDto, SaveTimelineDto, TranscribeClipDto } from './dto';
+import {
+  AgentTimelineOpsDto,
+  AnalyzeBeatsDto,
+  ExportTimelineDto,
+  RevisionPinDto,
+  SaveTimelineDto,
+  TranscribeClipDto,
+} from './dto';
 
 const numOrUndef = (raw?: string): number | undefined => {
   if (raw == null || raw.trim() === '') return undefined;
@@ -31,6 +39,7 @@ export class TimelineController {
   constructor(
     private readonly timelineService: TimelineService,
     private readonly mediaService: TimelineMediaService,
+    private readonly beatAnalysis: BeatAnalysisService,
     private readonly previewProxy: PreviewProxyService,
     private readonly asr: AsrService,
     private readonly jianyingDraft: JianyingDraftService,
@@ -172,6 +181,20 @@ export class TimelineController {
     return this.timelineService.restoreRevision(projectId, revision);
   }
 
+  /** 固定 / 取消固定修订（C4 版本历史 pin）：只改标记位，不改历史 */
+  @Put('revisions/:revision/pin')
+  async pinRevision(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('revision') revisionRaw: string,
+    @Body() body: RevisionPinDto,
+  ) {
+    const revision = Number(revisionRaw);
+    if (!Number.isInteger(revision) || revision <= 0) {
+      throw new BadRequestException('revision 必须是正整数');
+    }
+    return this.timelineService.setRevisionPinned(projectId, revision, body.pinned !== false);
+  }
+
   /** 视频片段帧缩略图 sprite（懒生成 + 磁盘缓存） */
   @Get('thumbnails')
   @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -209,5 +232,17 @@ export class TimelineController {
     @Body() body: ExportTimelineDto,
   ) {
     return this.timelineService.exportTimeline(projectId, body ?? {});
+  }
+
+  /**
+   * G14 音乐节拍分析：返回节拍点（秒，升序）与估计 BPM，供时间线节拍吸附。
+   * 分析失败降级为 200 + 空结果 + error 说明（不抛 500）；素材不存在抛 400。
+   */
+  @Post('analyze-beats')
+  async analyzeBeats(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() body: AnalyzeBeatsDto,
+  ) {
+    return this.beatAnalysis.analyze(projectId, body.assetId);
   }
 }

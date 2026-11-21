@@ -25,6 +25,9 @@ import type {
   TimelineTextStyle,
   TimelineTrackMeta,
 } from '@shared/api.interface';
+import type { TimelineVolumePoint } from '@shared/timeline-audio-expr';
+import type { TimelineClipAudioFxNode } from '@shared/timeline-audio-fx';
+import { normalizeAudioFxNodes } from '@shared/timeline-audio-fx';
 import { applyTimelineAgentOps, getTimeline, saveTimeline } from '@client/src/api/timeline';
 import type { StudioData } from './useStudioData';
 import {
@@ -38,11 +41,19 @@ import { clipSpan, sameOrigin } from './model';
 import {
   clamp,
   clampBoundMove,
+  floorToFrame,
   quantizeToFrame,
   ROW_HEIGHT_DEFAULT,
   round3,
 } from '@client/src/lib/timeline-frame';
 import { pickFreeLane } from '@client/src/lib/timeline-drop';
+import { buildDuckEnvelope, collectVoiceRegions, normalizeVolumePoints } from '@client/src/lib/timeline-audio';
+import {
+  resolveCloseAllShifts,
+  resolveCloseGapShifts,
+  resolveGapAt,
+  type GapClip,
+} from '@client/src/lib/timeline-gaps';
 import {
   HISTORY_LIMIT,
   loadHistory,
@@ -97,6 +108,14 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
   textStyle: c.textStyle ?? null,
   // 运镜关键帧/倒放/复合/转写同样必须随保存落库，漏传会被服务端清空
   keyframes: c.keyframes ?? null,
+  // 音量包络与人声避让标记同理：漏传会在整体替换保存时被服务端清空
+  volumeAutomation: c.volumeAutomation ?? null,
+  // 音频效果链（FX rack）同理：漏传会在整体替换保存时被服务端清空
+  audioFx: c.audioFx ?? null,
+  // 淡入淡出（G11）同样必须随保存落库，漏传会在整体替换保存时被服务端清空
+  fadeIn: c.fadeIn,
+  fadeOut: c.fadeOut,
+  duckUnderVoice: c.duckUnderVoice ?? null,
   visual: c.visual ?? null,
   reverse: c.reverse ?? null,
   compound: c.compound ?? null,
@@ -107,6 +126,30 @@ const toSaveClip = (c: TimelineClip): SaveTimelineRequest['clips'][number] => ({
 });
 
 const markerKey = (projectId: string) => `yimu.timeline.markers.${projectId}`;
+
+/**
+ * 音量包络的同步范围：画面片段 ↔ 它的 auto: 内嵌音频（与 setClipVolume 同规则）。
+ * bindGroup 里存的是片段 id/clientKey，落库重建 id 后两种都可能存在，两种都认。
+ */
+const volumeSyncIds = (clips: TimelineClip[], src: TimelineClip): Set<string> => {
+  const ids = new Set<string>([src.id]);
+  const ownerKeys = [src.id, src.clientKey].filter(Boolean) as string[];
+  if (src.track === 'video') {
+    for (const c of clips) {
+      if (c.track !== 'audio') continue;
+      if (ownerKeys.some((k) => c.bindGroup === `auto:${k}`)) ids.add(c.id);
+    }
+  } else if (src.track === 'audio') {
+    const m = /^auto:(.+)$/.exec(src.bindGroup ?? '');
+    if (m) {
+      for (const c of clips) {
+        if (c.track !== 'video') continue;
+        if (c.id === m[1] || c.clientKey === m[1]) ids.add(c.id);
+      }
+    }
+  }
+  return ids;
+};
 
 const readMarkers = (projectId: string | undefined): number[] => {
   if (!projectId) return [];
@@ -160,7 +203,32 @@ export interface EdlEditor {
    * 与 trimClip 的区别是「闭合空隙」，不是留下黑场。
    */
   rippleTrimAt: (id: string, edge: 'left' | 'right', atSec: number) => void;
+  /**
+   * 修剪到播放头（非波纹，OpenMotion TimelineTrimButtons 对齐）：
+   * 把片段左/右边缘直接修到播放头时刻，后续片段保持原位（留出的空隙不闭合）。
+   * 目标片段 = 显式 id > 播放头命中的选中片段 > 播放头命中的片段；
+   * 播放头必须在片段内部，结果时长不足一帧时拒绝。成功返回 true。
+   */
+  trimClipToPlayhead: (side: 'left' | 'right', at: number, id?: string) => boolean;
+  /**
+   * 闭合单条空隙（右键空白轨区）：把该行空隙之后的片段整体左移空隙宽度。
+   * 一次 commit 可撤销；失败返回原因，成功返回 null。
+   */
+  closeGap: (track: TimelineClip['track'], lane: number, atSec: number) => string | null;
+  /** 闭合该行全部空隙（保留首个片段起点，前导留黑不吞）。失败返回原因。 */
+  closeAllGaps: (track: TimelineClip['track'], lane: number) => string | null;
+  /**
+   * 冻结帧插入：在切点切开源片段并插入一张图片片段（默认 1s，可拖拽调整），
+   * 切点之后同轨片段整体后移。一次 commit，可整体撤销。
+   */
+  insertFreezeFrame: (
+    id: string,
+    at: number,
+    image: { name: string; url: string; durationSec?: number },
+  ) => boolean;
   splitClip: (id: string, at: number) => string | null;
+  /** 批量分割：同一时刻切开多个片段（缺省 = 全部可切片段），返回实际切开的数量 */
+  splitManyAt: (at: number, ids?: string[]) => number;
   splitAtPlayhead: (at: number, id?: string) => string | null;
   editSubtitle: (id: string, text: string) => void;
   addSubtitle: (at: number, lane?: number, text?: string, style?: TimelineClip['textStyle'], durationSec?: number) => string | null;
@@ -201,6 +269,28 @@ export interface EdlEditor {
   /** 解除真复合片段，按子片段还原 */
   ungroupCompound: (id: string) => string[];
   setClipVolume: (id: string, volume: number) => void;
+  /** 音量包络（G12）：整组替换（帧量化、升序去重）；少于 2 点视为清除 */
+  setClipVolumeAutomation: (id: string, points: TimelineVolumePoint[]) => void;
+  /**
+   * 淡入淡出（G11）：头/尾线性斜坡（秒，帧量化、≥0、各自 ≤ 片段时长且相加不超时长）。
+   * 画面片段与其 auto: 内嵌音频互相镜像（与音量包络同规则）；0 = 清除该侧淡变。
+   */
+  setClipFades: (id: string, fades: { fadeIn?: number; fadeOut?: number }) => void;
+  /** 清除音量包络：恢复 volume 直线（白色增益线重新出现） */
+  clearClipVolumeAutomation: (id: string) => void;
+  /**
+   * 人声避让（G15）：收集对白轨/人声语义片段的活跃区间，为目标音频片段
+   * 生成压低包络（0.25 / 淡入 0.15s / 淡出 0.3s，帧量化）并打 duckUnderVoice 标记。
+   * 一次提交可整体撤销；没有人声区间返回 false。
+   */
+  applyDuckUnderVoice: (id: string) => boolean;
+  /**
+   * 音频效果链（FX rack）：整组替换（服务端落库前再归一化夹紧）；null/空 = 清除。
+   * 画面片段 ↔ 它的 auto: 内嵌音频互相镜像——导出的 auto 音频 part 读的是
+   * auto: 音频片段，预览响的也是它，画面上挂的 FX 必须镜像过去才听得到/导得出
+   * （与音量包络同一规则）；独立音频片段各自独立。
+   */
+  setClipAudioFx: (id: string, nodes: TimelineClipAudioFxNode[] | null) => void;
   /** 音高倍率 0.5–2（1=原音）；预览/导出共用 */
   setClipPitch: (id: string, pitch: number) => void;
   setClipTransition: (id: string, transition: TimelineClip['transition']) => void;
@@ -649,6 +739,82 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  /**
+   * 修剪到播放头（非波纹）：边缘直接落到播放头所在帧，右侧片段一律不动，
+   * 留出的空隙交给「空隙闭合」或用户手动处理（OpenMotion TimelineTrimButtons 语义）。
+   * 左边缘与 trimClip 一样同步推进 inPoint（变速时按源时间补偿）。
+   */
+  const trimClipToPlayhead = useCallback(
+    (side: 'left' | 'right', at: number, id?: string): boolean => {
+      const before = clipsRef.current;
+      const fpsNow = fpsRef.current;
+      const cutAt = quantizeToFrame(Math.max(0, at), fpsNow);
+      // 播放头必须在片段内部（留出半帧容差，压在边缘上不裁）
+      const inside = (c: TimelineClip) =>
+        cutAt > c.timelineStart + 1 / fpsNow / 2 &&
+        cutAt < c.timelineStart + clipSpan(c) - 1 / fpsNow / 2;
+      let src: TimelineClip | undefined;
+      if (id) {
+        src = before.find((c) => c.id === id);
+        if (!src) return false;
+      } else {
+        const sel = before.find((c) => c.id === (selectedIds[selectedIds.length - 1] ?? ''));
+        src = (sel && inside(sel) ? sel : undefined)
+          ?? before
+            .filter(inside)
+            .sort((a, b) => (b.lane ?? 0) - (a.lane ?? 0) || a.timelineStart - b.timelineStart)[0];
+      }
+      if (!src || src.locked) {
+        if (id) toast.info(src?.locked ? '片段已锁定' : '播放头不在片段内，无法修剪');
+        else toast.info('先把播放头移到要修剪的片段内部');
+        return false;
+      }
+      if (!inside(src)) {
+        toast.info('播放头不在片段内，无法修剪到播放头');
+        return false;
+      }
+      const target = src;
+      const speed = target.speed > 0 ? target.speed : 1;
+      if (side === 'left') {
+        const removed = cutAt - target.timelineStart;
+        if (removed < 1 / fpsNow / 2) {
+          toast.info('播放头太靠近片段左边缘');
+          return false;
+        }
+        const newIn = round3(quantizeToFrame(target.inPoint + removed * speed, fpsNow));
+        if ((target.outPoint - newIn) / speed < MIN_SPAN) {
+          toast.info('修剪后时长不足一帧');
+          return false;
+        }
+        commit(
+          before.map((c) =>
+            c.id === target.id ? { ...c, inPoint: newIn, timelineStart: round3(cutAt) } : c,
+          ),
+          '修剪到播放头（左）',
+          before,
+        );
+      } else {
+        const removed = target.timelineStart + clipSpan(target) - cutAt;
+        if (removed < 1 / fpsNow / 2) {
+          toast.info('播放头太靠近片段右边缘');
+          return false;
+        }
+        const newOut = round3(quantizeToFrame(target.outPoint - removed * speed, fpsNow));
+        if ((newOut - target.inPoint) / speed < MIN_SPAN) {
+          toast.info('修剪后时长不足一帧');
+          return false;
+        }
+        commit(
+          before.map((c) => (c.id === target.id ? { ...c, outPoint: newOut } : c)),
+          '修剪到播放头（右）',
+          before,
+        );
+      }
+      return true;
+    },
+    [commit, selectedIds],
+  );
+
   /* ------------------------- 删除 / 分割 ------------------------- */
 
   const rippleTrimAt = useCallback(
@@ -744,12 +910,127 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
-  const splitClip = useCallback(
-    (id: string, at: number): string | null => {
+  /* ------------------------- 空隙闭合 ------------------------- */
+
+  /**
+   * 一条轨道行的片段集合。与时间线行渲染同一规则：
+   * 内嵌原声（bindGroup auto:）不占音频行，也不参与该行空隙计算——
+   * 它跟着自己的画面片段走，闭合音频行空隙时不能把它单独挪走。
+   */
+  const rowGapClips = useCallback(
+    (track: TimelineClip['track'], lane: number): GapClip[] =>
+      clipsRef.current
+        .filter(
+          (c) =>
+            c.track === track &&
+            (c.lane ?? 0) === lane &&
+            !(track === 'audio' && c.bindGroup?.startsWith('auto:')),
+        )
+        .map((c) => ({
+          id: c.id,
+          start: c.timelineStart,
+          duration: clipSpan(c),
+          locked: c.locked === true,
+        })),
+    [],
+  );
+
+  /** 空隙闭合的公共校验：行内是否有片段、轨道是否锁定。返回原因或 null */
+  const gapGuard = useCallback(
+    (track: TimelineClip['track'], lane: number, minClips: number): string | null => {
+      const rowClips = rowGapClips(track, lane);
+      if (rowClips.length < minClips) {
+        return rowClips.length === 0 ? '该轨道还没有片段' : '该轨道只有一个片段，没有可闭合的空隙';
+      }
+      const lockedTrack = (docRef.current?.tracks ?? []).some(
+        (t) => t.track === track && (t.lane ?? 0) === lane && t.locked === true,
+      );
+      if (lockedTrack) return '轨道已锁定，先解锁再闭合空隙';
+      return null;
+    },
+    [rowGapClips],
+  );
+
+  /** 把平移计划落成一次 commit（新起点统一落帧，浮点漂移不进 EDL） */
+  const applyGapShifts = useCallback(
+    (shifts: { id: string; newStart: number }[], label: string, before: TimelineClip[]) => {
+      const shiftMap = new Map(shifts.map((s) => [s.id, s.newStart]));
+      commit(
+        before.map((c) =>
+          shiftMap.has(c.id)
+            ? {
+                ...c,
+                timelineStart: round3(
+                  quantizeToFrame(shiftMap.get(c.id) as number, fpsRef.current),
+                ),
+              }
+            : c,
+        ),
+        label,
+        before,
+      );
+    },
+    [commit],
+  );
+
+  /**
+   * 闭合单条空隙（OpenMotion TrackGapContextMenu 对齐）：
+   * atSec 时刻该行空隙之后的片段整体左移空隙宽度，一次 commit 可撤销。
+   * 返回 null 表示成功，否则为给用户看的失败原因。
+   */
+  const closeGap = useCallback(
+    (track: TimelineClip['track'], lane: number, atSec: number): string | null => {
       const before = clipsRef.current;
-      const src = before.find((c) => c.id === id);
-      if (!src || src.locked) return null;
-      const fpsNow = fpsRef.current;
+      const guard = gapGuard(track, lane, 2);
+      if (guard) return guard;
+      const rowClips = rowGapClips(track, lane);
+      const gap = resolveGapAt(rowClips, quantizeToFrame(Math.max(0, atSec), fpsRef.current));
+      if (!gap) return '这里没有可闭合的空隙';
+      const byId = new Map(rowClips.map((c) => [c.id, c]));
+      if (gap.followingIds.some((cid) => byId.get(cid)?.locked)) {
+        return '该轨道上有锁定片段，无法闭合空隙';
+      }
+      const shifts = resolveCloseGapShifts(rowClips, gap);
+      if (shifts.length === 0) return '这里没有可闭合的空隙';
+      applyGapShifts(shifts, '闭合空隙', before);
+      return null;
+    },
+    [applyGapShifts, gapGuard, rowGapClips],
+  );
+
+  /**
+   * 闭合该行全部空隙：保留首个片段的起点（前导留黑不吞），其后片段
+   * 按原顺序首尾相接。画面轨从 0 排齐请用 packVideo。失败返回原因。
+   */
+  const closeAllGaps = useCallback(
+    (track: TimelineClip['track'], lane: number): string | null => {
+      const before = clipsRef.current;
+      const guard = gapGuard(track, lane, 2);
+      if (guard) return guard;
+      const rowClips = rowGapClips(track, lane);
+      const shifts = resolveCloseAllShifts(rowClips);
+      if (shifts.length === 0) return '该轨道没有可闭合的空隙';
+      const byId = new Map(rowClips.map((c) => [c.id, c]));
+      if (shifts.some((s) => byId.get(s.id)?.locked)) {
+        return '该轨道上有锁定片段，无法闭合空隙';
+      }
+      applyGapShifts(shifts, '闭合全部空隙', before);
+      return null;
+    },
+    [applyGapShifts, gapGuard, rowGapClips],
+  );
+
+  /**
+   * 在片段数组里把一条片段按帧切开：返回 [新数组, 右片段 id]。
+   * 纯数组变换，供 splitClip / splitManyAt 共用（批量切必须在同一份
+   * 数组上累积，否则每次 commit 之间 clipsRef 还是旧值，前一刀会被后一刀吃掉）。
+   */
+  const splitInArray = useCallback(
+    (all: TimelineClip[], id: string, at: number, fpsNow: number): [TimelineClip[], string] | null => {
+      const idx = all.findIndex((c) => c.id === id);
+      if (idx < 0) return null;
+      const src = all[idx];
+      if (src.locked) return null;
       const cutAt = quantizeToFrame(at, fpsNow);
       const span = clipSpan(src);
       const offset = cutAt - src.timelineStart;
@@ -759,11 +1040,7 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       const cut = round3(quantizeToFrame(src.inPoint + offset * speed, fpsNow));
       // 导入素材的元数据时长可能比真实流略长；在素材末端之后分割会生成
       // 一段没有画面的空片段，时间线显示 5s、导出却只有 4.48s。
-      if (cut >= sourceEnd - 1 / fpsNow) {
-        toast.info('分割点超出素材实际长度');
-        return null;
-      }
-      const idx = before.findIndex((c) => c.id === id);
+      if (cut >= sourceEnd - 1 / fpsNow) return null;
       const left: TimelineClip = { ...src, outPoint: cut };
       const right: TimelineClip = {
         ...src,
@@ -772,11 +1049,65 @@ export function useEdlEditor(data: StudioData): EdlEditor {
         timelineStart: round3(cutAt),
         sortOrder: src.sortOrder + 1,
       };
-      const next = [...before.slice(0, idx), left, right, ...before.slice(idx + 1)];
-      commit(next, '分割片段', before);
-      return right.id;
+      const next = [...all.slice(0, idx), left, right, ...all.slice(idx + 1)];
+      return [next, right.id];
     },
-    [commit],
+    [],
+  );
+
+  const splitClip = useCallback(
+    (id: string, at: number): string | null => {
+      const before = clipsRef.current;
+      const fpsNow = fpsRef.current;
+      const split = splitInArray(before, id, at, fpsNow);
+      if (!split) {
+        // 单切失败时把「为什么切不动」说清楚（批量切静默跳过，不打扰）
+        const src = before.find((c) => c.id === id);
+        const cutAt = quantizeToFrame(at, fpsNow);
+        if (src && !src.locked) {
+          const span = clipSpan(src);
+          const offset = cutAt - src.timelineStart;
+          const speed = src.speed > 0 ? src.speed : 1;
+          const sourceEnd = src.sourceDuration && src.sourceDuration > 0 ? src.sourceDuration : Number.POSITIVE_INFINITY;
+          const cut = round3(quantizeToFrame(src.inPoint + offset * speed, fpsNow));
+          if (offset > 1 / fpsNow && offset < span - 1 / fpsNow && cut >= sourceEnd - 1 / fpsNow) {
+            toast.info('分割点超出素材实际长度');
+          }
+        }
+        return null;
+      }
+      commit(split[0], '分割片段', before);
+      return split[1];
+    },
+    [commit, splitInArray],
+  );
+
+  /**
+   * 批量分割：一次 commit 在同一时刻切开多个片段（剃刀 Shift+点击 = 切所有轨、
+   * 批量分割键共用）。切不动的片段静默跳过。返回实际切开的数量。
+   */
+  const splitManyAt = useCallback(
+    (at: number, ids?: string[]): number => {
+      const before = clipsRef.current;
+      const fpsNow = fpsRef.current;
+      const idSet = ids ? new Set(ids) : null;
+      let working = before;
+      let n = 0;
+      for (const c of before) {
+        if (c.locked) continue;
+        if (idSet && !idSet.has(c.id)) continue;
+        const cutAt = quantizeToFrame(at, fpsNow);
+        if (cutAt <= c.timelineStart || cutAt >= c.timelineStart + clipSpan(c)) continue;
+        const split = splitInArray(working, c.id, at, fpsNow);
+        if (!split) continue;
+        working = split[0];
+        n += 1;
+      }
+      if (n === 0) return 0;
+      commit(working, n === 1 ? '分割片段' : `批量分割 ${n} 个片段`, before);
+      return n;
+    },
+    [commit, splitInArray],
   );
 
   const splitAtPlayhead = useCallback(
@@ -802,6 +1133,81 @@ export function useEdlEditor(data: StudioData): EdlEditor {
       return created;
     },
     [splitClip],
+  );
+
+  /**
+   * 冻结帧插入（OpenMotion Freeze frame 对齐，纯客户端实现）：
+   * 在切点切开源片段 → 插入一张图片片段（默认 1s，拖右边缘可拉长）→
+   * 切点之后同轨片段整体后移。抓帧与上传由组件层完成，这里只负责
+   * 一次 commit 落库（可整体撤销）。失败返回 false 并说明原因。
+   */
+  const insertFreezeFrame = useCallback(
+    (id: string, at: number, image: { name: string; url: string; durationSec?: number }): boolean => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!docRef.current || !src || src.locked || src.track !== 'video') return false;
+      const fpsNow = fpsRef.current;
+      const cutAt = quantizeToFrame(at, fpsNow);
+      const span = clipSpan(src);
+      const offset = cutAt - src.timelineStart;
+      if (offset <= 1 / fpsNow || offset >= span - 1 / fpsNow) {
+        toast.info('播放头太靠近片段边缘，无法插入冻结帧');
+        return false;
+      }
+      const speed = src.speed > 0 ? src.speed : 1;
+      const sourceEnd = src.sourceDuration && src.sourceDuration > 0 ? src.sourceDuration : Number.POSITIVE_INFINITY;
+      const cut = round3(quantizeToFrame(src.inPoint + offset * speed, fpsNow));
+      if (cut >= sourceEnd - 1 / fpsNow) {
+        toast.info('冻结点超出素材实际长度');
+        return false;
+      }
+      const duration = round3(Math.max(1 / fpsNow, image.durationSec ?? 1));
+      const srcEnd = src.timelineStart + span;
+      const idx = before.findIndex((c) => c.id === id);
+      const left: TimelineClip = { ...src, outPoint: cut };
+      const imageClip: TimelineClip = {
+        ...newClipIdentity('local-freeze'),
+        projectId: projectId ?? '',
+        track: 'video',
+        sourceShotId: null,
+        sourceUrl: image.url,
+        inPoint: 0,
+        outPoint: duration,
+        // 图片没有真实时长，这里只是右边缘可拉长的上限（素材池图片同规则）
+        sourceDuration: 10,
+        timelineStart: round3(cutAt),
+        lane: src.lane ?? 0,
+        speed: 1,
+        volume: 1,
+        transition: { type: 'none', duration: 0 },
+        text: image.name.slice(0, 120),
+        locked: false,
+        sortOrder: src.sortOrder + 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const right: TimelineClip = {
+        ...src,
+        ...newClipIdentity('local-split'),
+        inPoint: cut,
+        timelineStart: round3(cutAt + duration),
+        sortOrder: src.sortOrder + 2,
+      };
+      // 切点之后（不含被切的两半）的同轨片段整体后移一个冻结帧时长
+      const shifted = before.map((c) =>
+        c.id !== id &&
+        c.track === src.track &&
+        (c.lane ?? 0) === (src.lane ?? 0) &&
+        c.timelineStart >= srcEnd - 1e-6
+          ? { ...c, timelineStart: round3(Math.max(0, c.timelineStart + duration)) }
+          : c,
+      );
+      const next = [...shifted.slice(0, idx), left, imageClip, right, ...shifted.slice(idx + 1)];
+      commit(next, '插入冻结帧', before);
+      setSelection([imageClip.id]);
+      return true;
+    },
+    [commit, projectId, setSelection],
   );
 
   /* ------------------------- 字幕 / 音频 ------------------------- */
@@ -1286,6 +1692,152 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     [commit],
   );
 
+  /**
+   * 音量包络（G12）：包络编辑与 volume 直线共用「同一份声音只改一处」的规则——
+   * 画面片段与其 auto: 内嵌音频互相镜像（导出走 auto 音频、预览走画面静音），
+   * 所以在画面上画的包络必须同步写进 auto 音频，反之亦然。
+   * 点位帧量化 + 升序去重由 normalizeVolumePoints 收口；少于 2 点视为清除。
+   */
+  const setClipVolumeAutomation = useCallback(
+    (id: string, points: TimelineVolumePoint[]) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      const span = clipSpan(src);
+      const nextPoints = normalizeVolumePoints(points, span, fpsRef.current);
+      const nextAutomation = nextPoints.length >= 2 ? { points: nextPoints } : null;
+      const ids = volumeSyncIds(before, src);
+      const changed = before.some((c) => {
+        if (!ids.has(c.id)) return false;
+        const cur = c.volumeAutomation?.points ?? null;
+        const next = nextAutomation?.points ?? null;
+        return JSON.stringify(cur) !== JSON.stringify(next);
+      });
+      if (!changed) return;
+      commit(
+        before.map((c) => (ids.has(c.id) ? { ...c, volumeAutomation: nextAutomation } : c)),
+        nextAutomation ? '调整音量包络' : '清除音量包络',
+        before,
+      );
+    },
+    [commit],
+  );
+
+  const clearClipVolumeAutomation = useCallback(
+    (id: string) => {
+      setClipVolumeAutomation(id, []);
+    },
+    [setClipVolumeAutomation],
+  );
+
+  /**
+   * 淡入淡出（G11）：帧量化 + 夹紧（各自 0–片段时长，相加不超时长）。
+   * 未传入的一侧保持现值并优先让位；双侧同时超长时等比例收缩。
+   * 镜像范围与音量包络同规则（画面 ↔ auto: 内嵌音频共用同一份声音）；
+   * 拖拽把手 / 检查器输入 / 导出 afade·fade 滤镜读同一份数据。0 = 清除该侧淡变。
+   */
+  const setClipFades = useCallback(
+    (id: string, fades: { fadeIn?: number; fadeOut?: number }) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      const span = clipSpan(src);
+      if (!(span > 0)) return;
+      const fps = Math.max(1, fpsRef.current);
+      const inReq = Math.max(0, fades.fadeIn ?? (src.fadeIn ?? 0));
+      const outReq = Math.max(0, fades.fadeOut ?? (src.fadeOut ?? 0));
+      let fadeIn = quantizeToFrame(Math.min(inReq, span), fps);
+      let fadeOut = quantizeToFrame(Math.min(outReq, span), fps);
+      if (fadeIn + fadeOut > span) {
+        const over = fadeIn + fadeOut - span;
+        if (fades.fadeIn === undefined) {
+          fadeIn = Math.max(0, floorToFrame(fadeIn - over, fps));
+        } else if (fades.fadeOut === undefined) {
+          fadeOut = Math.max(0, floorToFrame(fadeOut - over, fps));
+        } else {
+          const k = span / (fadeIn + fadeOut);
+          fadeIn = floorToFrame(fadeIn * k, fps);
+          fadeOut = Math.max(0, quantizeToFrame(Math.min(fadeOut * k, span - fadeIn), fps));
+        }
+      }
+      const ids = volumeSyncIds(before, src);
+      const changed = before.some((c) => {
+        if (!ids.has(c.id)) return false;
+        return Math.abs(fadeIn - (c.fadeIn ?? 0)) >= 1 / (2 * fps) || Math.abs(fadeOut - (c.fadeOut ?? 0)) >= 1 / (2 * fps);
+      });
+      if (!changed) return;
+      commit(
+        before.map((c) =>
+          ids.has(c.id)
+            ? {
+                ...c,
+                fadeIn: fadeIn > 0 ? fadeIn : undefined,
+                fadeOut: fadeOut > 0 ? fadeOut : undefined,
+              }
+            : c,
+        ),
+        fadeIn > 0 || fadeOut > 0 ? '设置淡入淡出' : '清除淡入淡出',
+        before,
+      );
+    },
+    [commit],
+  );
+
+  const applyDuckUnderVoice = useCallback(
+    (id: string) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return false;
+      const regions = collectVoiceRegions(before, id);
+      const points = buildDuckEnvelope({
+        clipStart: src.timelineStart,
+        span: clipSpan(src),
+        voiceRegions: regions,
+        fps: fpsRef.current,
+      });
+      if (!points) return false;
+      commit(
+        before.map((c) =>
+          c.id === id
+            ? { ...c, volumeAutomation: { points }, duckUnderVoice: true }
+            : c,
+        ),
+        '人声避让',
+        before,
+      );
+      return true;
+    },
+    [commit],
+  );
+
+  /**
+   * 音频效果链（FX rack）：客户端先归一化一次（非法类型剔除、参数夹紧、上限截断），
+   * 服务端落库前还会防御一遍。镜像范围与音量包络同规则（画面 ↔ auto: 内嵌音频）：
+   * 导出的 auto 音频 part 读 auto: 片段，预览响的也是它，画面上挂的 FX 必须
+   * 同步过去才听得到、导得出。null/空数组 = 清除整条链。
+   */
+  const setClipAudioFx = useCallback(
+    (id: string, nodes: TimelineClipAudioFxNode[] | null) => {
+      const before = clipsRef.current;
+      const src = before.find((c) => c.id === id);
+      if (!src || src.locked) return;
+      const clean = normalizeAudioFxNodes(nodes);
+      const nextFx = clean ? { nodes: clean } : null;
+      const ids = volumeSyncIds(before, src);
+      const changed = before.some((c) => {
+        if (!ids.has(c.id)) return false;
+        return JSON.stringify(c.audioFx ?? null) !== JSON.stringify(nextFx);
+      });
+      if (!changed) return;
+      commit(
+        before.map((c) => (ids.has(c.id) ? { ...c, audioFx: nextFx } : c)),
+        nextFx ? '调整音频效果' : '清除音频效果',
+        before,
+      );
+    },
+    [commit],
+  );
+
   const setClipPitch = useCallback(
     (id: string, pitch: number) => {
       const before = clipsRef.current;
@@ -1669,8 +2221,13 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     removeClip,
     rippleDelete,
     rippleTrimAt,
+    trimClipToPlayhead,
+    closeGap,
+    closeAllGaps,
     splitClip,
+    splitManyAt,
     splitAtPlayhead,
+    insertFreezeFrame,
     editSubtitle,
     addSubtitle,
     addAudio,
@@ -1684,6 +2241,11 @@ export function useEdlEditor(data: StudioData): EdlEditor {
     createCompound,
     ungroupCompound,
     setClipVolume,
+    setClipVolumeAutomation,
+    clearClipVolumeAutomation,
+    setClipFades,
+    applyDuckUnderVoice,
+    setClipAudioFx,
     setClipPitch,
     setClipTransition,
     setClipLocked,

@@ -862,6 +862,8 @@ export const timelineClips = pgTable("timeline_clips", {
   clientKey: text("client_key"),
   track: varchar("track", { length: 20 }).notNull().default('video'),
   sourceShotId: uuid("source_shot_id"),
+  /** 来源素材 id（节拍检测/素材级吸附按素材 id 映射片段；0044） */
+  sourceAssetId: uuid("source_asset_id"),
   sourceUrl: text("source_url"),
   inPoint: numeric("in_point").notNull().default('0'),
   outPoint: numeric("out_point").notNull().default('0'),
@@ -872,6 +874,15 @@ export const timelineClips = pgTable("timeline_clips", {
   lane: integer("lane").notNull().default(0),
   speed: numeric("speed").notNull().default('1'),
   volume: numeric("volume").notNull().default('1'),
+  /** 音量包络（G12/G15）：{ points: [{ t, v }] }，片段内相对秒 + 0–2 倍率 */
+  volumeAutomation: jsonb("volume_automation"),
+  /** 片段淡入/淡出（G11，秒）：NULL/0 = 无淡变；音频幅度斜坡 + 画面透明度 */
+  fadeIn: numeric("fade_in"),
+  fadeOut: numeric("fade_out"),
+  /** 人声避让标记（G15，配乐片段）：导出混音以人声为 sidechain 压低该片段 */
+  duckUnderVoice: boolean("duck_under_voice").notNull().default(false),
+  /** 音频效果链（FX rack）：{ nodes: [{ id, type, bypass?, params }] }，预览/导出共用 */
+  audioFx: jsonb("audio_fx"),
   /** 音高倍率：1.12 = 升 2 个半音；导出用 asetrate + atempo 保持时长 */
   pitch: numeric("pitch").notNull().default('1'),
   /**
@@ -936,6 +947,8 @@ export const timelineRevisions = pgTable("timeline_revisions", {
   /** user / agent / restore */
   author: varchar("author", { length: 20 }).notNull().default('user'),
   summary: text("summary"),
+  /** 版本固定（C4，OpenMotion MotionHistoryPanel Pinned 对齐）：星标后可在历史里快速定位 */
+  pinned: boolean("pinned").notNull().default(false),
   /** 完整 EDL 快照：{ fps,width,height,tracks,clips } */
   snapshot: jsonb("snapshot").notNull(),
   /** 相对上一条修订改动过的片段 clientKey */

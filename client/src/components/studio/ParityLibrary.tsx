@@ -23,6 +23,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Info } from 'lucide-react';
 import { probeVideoHasAudio } from '@client/src/lib/media-audio';
 import MediaPreviewDialog, { type MediaKind } from '@client/src/components/MediaPreviewDialog';
 import { deleteAsset, listAssets, listByProject, mediaUrl } from '@client/src/api/assets';
@@ -31,6 +32,8 @@ import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clearTimelineDrag, startTimelineDrag } from '@client/src/lib/timeline-dnd';
 import { ShenJianPresets } from './ShenJianPresets';
+import { AssetDetailDialog } from './AssetDetailDialog';
+import { HoverPreviewVideo } from './HoverPreviewVideo';
 
 type RailTab = 'media' | 'audio' | 'text' | 'sticker' | 'effect' | 'transition' | 'caption' | 'filter' | 'adjust';
 type KindTab = 'all' | 'video' | 'image' | 'audio' | 'text';
@@ -85,6 +88,8 @@ export const ParityLibrary = ({ onImport }: { onImport: () => void }) => {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ asset: Asset; url: string; kind: MediaKind } | null>(null);
+  // G16 素材详情：ffprobe 元数据浮层
+  const [detail, setDetail] = useState<{ asset: Asset; kind: MediaKind } | null>(null);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
 
   const refresh = useMemo(
@@ -267,7 +272,7 @@ export const ParityLibrary = ({ onImport }: { onImport: () => void }) => {
                         {mediaKind === 'audio' ? (
                           <span className="parity-audio-thumb"><Music2 /></span>
                         ) : mediaKind === 'video' && !gif ? (
-                          <video src={url} muted preload="metadata" onError={() => setBroken((p) => ({ ...p, [a.id]: true }))} />
+                          <HoverPreviewVideo src={url} onError={() => setBroken((p) => ({ ...p, [a.id]: true }))} />
                         ) : (
                           <img src={url} alt={a.name} loading="lazy" onError={() => setBroken((p) => ({ ...p, [a.id]: true }))} />
                         )}
@@ -276,6 +281,16 @@ export const ParityLibrary = ({ onImport }: { onImport: () => void }) => {
                         {mediaKind === 'video' ? <span className="parity-play">▶</span> : null}
                       </div>
                       <div className="parity-media-name">{a.name || '未命名素材'}</div>
+                      {!isBroken ? (
+                        <button
+                          type="button"
+                          className="parity-info"
+                          title="素材详情：分辨率 / 编码 / 帧率等元数据"
+                          onClick={(e) => { e.stopPropagation(); setDetail({ asset: a, kind: mediaKind }); }}
+                        >
+                          <Info />
+                        </button>
+                      ) : null}
                       {isBroken ? <span className="parity-broken">无法打开</span> : (
                         <button
                           type="button"
@@ -327,6 +342,10 @@ export const ParityLibrary = ({ onImport }: { onImport: () => void }) => {
           title={preview.asset.name}
           onClose={() => setPreview(null)}
         />
+      ) : null}
+
+      {detail ? (
+        <AssetDetailDialog asset={detail.asset} kind={detail.kind} onClose={() => setDetail(null)} />
       ) : null}
     </aside>
   );

@@ -3,7 +3,7 @@
  * 7 个主页签 + 画面下 4 个子页签；音频 / 变速是真实可写面板，
  * 画面 / 动画 / 调整复用经典检查器；抠像 / 蒙版 / 美容 / 跟踪 / AI 效果全部接真实参数，写 EDL、进预览与导出。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioLines,
   Crosshair,
@@ -26,12 +26,19 @@ import {
   DEFAULT_KEYING,
   DEFAULT_MASK,
   DEFAULT_TRACKING,
+  normalizeVisualLut,
   type TimelineClipVisual,
 } from '@shared/timeline-visual';
+import type { Asset } from '@shared/api.interface';
+import { listProjectAssets, mediaUrl, uploadLocalFile } from '@client/src/api/assets';
 import { ShenJianInspector } from './ShenJianInspectorV2';
+import { ShenJianAudioFx } from './ShenJianAudioFx';
 import { useStudio } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { clipSpan } from './model';
+
+/** .cube LUT 文件识别：按扩展名（与上传端约定一致） */
+const LUT_FILE_RE = /\.cube$/i;
 
 type Grade = { brightness: number; contrast: number; saturation: number; filter: string };
 type MainTab = 'frame' | 'audio' | 'speed' | 'anim' | 'tracking' | 'adjust' | 'ai';
@@ -135,7 +142,7 @@ export const ShenJianInspectorParity = ({
   grade: Grade;
   setGrade: (patch: Partial<Grade>) => void;
 }) => {
-  const { data, curT } = useStudio();
+  const { data, curT, projectId } = useStudio();
   const edl = useEdl();
   const [tab, setTab] = useState<MainTab>('frame');
   const [sub, setSub] = useState<SubTab>('basic');
@@ -160,12 +167,26 @@ export const ShenJianInspectorParity = ({
     return () => window.removeEventListener('yimu:shenjian-inspector-main', onMain);
   }, []);
 
-  const showClassic = (tab === 'frame' && sub === 'basic') || tab === 'anim' || tab === 'adjust';
+  // 时间线右键「裁剪」：切到 画面→基础（经典控件渲染裁剪区块），渲染后再滚动定位
+  useEffect(() => {
+    const onCrop = () => {
+      setTab('frame');
+      setSub('basic');
+      window.setTimeout(() => {
+        document.querySelector('.inspector [data-insp-crop]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 80);
+    };
+    window.addEventListener('yimu:shenjian-inspector-crop', onCrop);
+    return () => window.removeEventListener('yimu:shenjian-inspector-crop', onCrop);
+  }, []);
+
+  const showClassic = (tab === 'frame' && sub === 'basic') || tab === 'anim';
   const volume = Math.round((selected?.volume ?? 1) * 100);
   const pitch = Math.round((selected?.pitch ?? 1) * 100) / 100;
   const speed = selected?.speed ?? 1;
   const span = selected ? clipSpan(selected) : 0;
   const visual: TimelineClipVisual = selected?.visual ?? {};
+  const lutCfg = visual.lut ?? null;
   const patchVisual = (patch: Partial<TimelineClipVisual>) => {
     if (!selected) return;
     edl.setClipVisual(selected.id, { ...visual, ...patch });
@@ -184,6 +205,45 @@ export const ShenJianInspectorParity = ({
       edl.setClipSpeed(selected.id, 1);
     }
     toast.success('已重置当前参数');
+  };
+
+  // —— LUT（.cube）资产下拉：进入「调整」页签拉一次项目内 LUT，上传成功后 tick 刷新 ——
+  const [lutAssets, setLutAssets] = useState<Asset[]>([]);
+  const [lutUploading, setLutUploading] = useState(false);
+  const [lutListTick, setLutListTick] = useState(0);
+  const lutFileRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (tab !== 'adjust' || !projectId) return;
+    let alive = true;
+    listProjectAssets(projectId)
+      .then((rows) => {
+        if (!alive) return;
+        setLutAssets(rows.filter((a) => a.assetType === 'lut' || LUT_FILE_RE.test(a.fileUrl ?? '') || LUT_FILE_RE.test(a.name ?? '')));
+      })
+      .catch(() => {
+        if (alive) setLutAssets([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tab, projectId, lutListTick]);
+
+  /** 导入 .cube → 上传为项目资产 → 直接应用到当前画面片段 */
+  const importLutFile = async (file: File) => {
+    if (!projectId || !selected) return;
+    setLutUploading(true);
+    try {
+      const { asset } = await uploadLocalFile(projectId, file, file.name);
+      const url = mediaUrl(asset) ?? asset.fileUrl ?? '';
+      if (!url) throw new Error('上传结果缺少文件地址');
+      patchVisual({ lut: normalizeVisualLut({ url, name: file.name, strength: lutCfg?.url === url ? (lutCfg.strength ?? 1) : 1 }) });
+      setLutListTick((v) => v + 1);
+      toast.success(`LUT 已导入并应用：${file.name}`);
+    } catch (e) {
+      toast.error(`LUT 导入失败：${(e as Error).message}`);
+    } finally {
+      setLutUploading(false);
+    }
   };
 
   return (
@@ -251,6 +311,44 @@ export const ShenJianInspectorParity = ({
               </div>
             </section>
             <section className="parity-group">
+              {/* 淡入淡出（G11）：秒输入，与时间线把手同一份 fadeIn/fadeOut 数据 */}
+              <h4>淡入淡出 <span className="parity-group-val">{(selected.fadeIn ?? 0).toFixed(2)}s / {(selected.fadeOut ?? 0).toFixed(2)}s</span></h4>
+              <div className="parity-inline">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  淡入
+                  <input
+                    type="number"
+                    min={0}
+                    max={Number(span.toFixed(3))}
+                    step={0.1}
+                    value={Number((selected.fadeIn ?? 0).toFixed(3))}
+                    onChange={(e) => edl.setClipFades(selected.id, { fadeIn: Math.max(0, Number(e.target.value) || 0) })}
+                    style={{ width: 72 }}
+                  />
+                  s
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  淡出
+                  <input
+                    type="number"
+                    min={0}
+                    max={Number(span.toFixed(3))}
+                    step={0.1}
+                    value={Number((selected.fadeOut ?? 0).toFixed(3))}
+                    onChange={(e) => edl.setClipFades(selected.id, { fadeOut: Math.max(0, Number(e.target.value) || 0) })}
+                    style={{ width: 72 }}
+                  />
+                  s
+                </label>
+                <button type="button" className="parity-mini" onClick={() => edl.setClipFades(selected.id, { fadeIn: 0, fadeOut: 0 })}>清除</button>
+              </div>
+              <div className="parity-hint">音频做线性幅度斜坡（与音量包络叠乘），画面同时透明度渐变；时间线片段角上的把手同样可调（帧量化）。</div>
+            </section>
+            {/* 音频效果链（FX rack）：按 key 重挂载，选中片段切换时展开态自动复位 */}
+            {selected.track === 'video' || selected.track === 'audio' ? (
+              <ShenJianAudioFx key={selected.id} clip={selected} />
+            ) : null}
+            <section className="parity-group">
               <h4>片段</h4>
               <div className="parity-inline">
                 <button type="button" className={`parity-mini${selected.reverse ? ' on' : ''}`} onClick={() => edl.toggleClipReverse(selected.id)}>
@@ -282,6 +380,79 @@ export const ShenJianInspectorParity = ({
               <div className="parity-kv"><span>结束</span><b>{(selected.timelineStart + span).toFixed(2)}s</b></div>
               <div className="parity-hint">变速后同轨后续片段会自动平移，不会留下空隙。</div>
             </section>
+          </div>
+        ) : tab === 'adjust' ? (
+          /* 调整页签：经典调色检查器 + LUT 区块纵向排成一列 */
+          <div className="parity-insp-col">
+            <ShenJianInspector grade={grade} setGrade={setGrade} />
+            <section className="parity-group">
+              <h4>LUT 调色<span className="parity-group-val">{lutCfg ? lutCfg.name || '已应用' : '未应用'}</span></h4>
+              {selected.track === 'video' ? (
+                <>
+                  <div className="parity-lut-row">
+                    <select
+                      value={lutCfg?.url ?? ''}
+                      aria-label="选择项目内的 .cube LUT"
+                      onChange={(e) => {
+                        const url = e.target.value;
+                        if (!url) {
+                          resetVisual('lut');
+                          return;
+                        }
+                        const hit = lutAssets.find((a) => (mediaUrl(a) ?? a.fileUrl ?? '') === url);
+                        patchVisual({ lut: normalizeVisualLut({ url, name: hit?.name, strength: lutCfg?.strength ?? 1 }) });
+                      }}
+                    >
+                      <option value="">不使用 LUT</option>
+                      {lutAssets.map((a) => {
+                        const url = mediaUrl(a) ?? a.fileUrl ?? '';
+                        return (
+                          <option key={a.id} value={url}>
+                            {a.name || url.split('/').pop() || '未命名 LUT'}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <button type="button" className="parity-mini" disabled={lutUploading || !projectId} onClick={() => lutFileRef.current?.click()}>
+                      {lutUploading ? '导入中…' : '导入 .cube'}
+                    </button>
+                  </div>
+                  {lutCfg ? (
+                    <>
+                      <ParSlider
+                        label="强度"
+                        value={Math.round((lutCfg.strength ?? 1) * 100)}
+                        min={0}
+                        max={100}
+                        suffix="%"
+                        onChange={(v) => patchVisual({ lut: { url: lutCfg.url, name: lutCfg.name, strength: v / 100 } })}
+                      />
+                      <div className="parity-inline">
+                        <button type="button" className="parity-mini" onClick={() => resetVisual('lut')}>清除 LUT</button>
+                      </div>
+                    </>
+                  ) : null}
+                  {lutAssets.length === 0 ? (
+                    <div className="parity-hint">项目里还没有 .cube LUT：点「导入 .cube」上传一份即可应用。</div>
+                  ) : null}
+                  <div className="parity-hint">.cube 3D 查找表只作用于画面片段：预览用 WebGL 逐帧查表，导出用 ffmpeg lut3d（三线性插值 + 强度混合，两端同语义）。</div>
+                </>
+              ) : (
+                <div className="parity-hint">LUT 只支持画面轨片段：选中一条画面片段后再来应用。</div>
+              )}
+              <input
+                ref={lutFileRef}
+                type="file"
+                accept=".cube"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) void importLutFile(file);
+                }}
+              />
+            </section>
+            <div className="parity-lut-foot" />
           </div>
         ) : showClassic ? (
           <ShenJianInspector grade={grade} setGrade={setGrade} />

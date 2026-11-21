@@ -25,6 +25,8 @@ import type {
   TimelineThumbnails,
   TimelineWaveform,
   TimelineAsrResult,
+  TimelineBeatAnalysis,
+  TimelineBeatAnalysisRequest,
 } from '@shared/api.interface';
 
 /** P2：按数组顺序重排镜头（服务端重编 sortOrder/shotNumber），返回全量镜头 */
@@ -133,6 +135,8 @@ export interface TimelineRevision {
   parentRevision: number | null;
   author: 'user' | 'agent' | 'restore' | string;
   summary: string | null;
+  /** 版本固定（C4）：星标后可在「只看已固定」过滤里快速定位 */
+  pinned?: boolean;
   changedClientKeys: string[] | null;
   createdAt: string;
 }
@@ -141,6 +145,14 @@ export const listTimelineRevisions = (projectId: string, limit = 30) =>
   axiosForBackend
     .get<TimelineRevision[]>(`/api/projects/${projectId}/timeline/revisions`, {
       params: { limit },
+    })
+    .then((res) => res.data);
+
+/** 固定 / 取消固定一条修订（服务端未升级时 404，调用方回退本地状态并提示） */
+export const pinTimelineRevision = (projectId: string, revision: number, pinned: boolean) =>
+  axiosForBackend
+    .put<TimelineRevision>(`/api/projects/${projectId}/timeline/revisions/${revision}/pin`, {
+      pinned,
     })
     .then((res) => res.data);
 
@@ -153,10 +165,18 @@ export const restoreTimelineRevision = (projectId: string, revision: number) =>
     }>(`/api/projects/${projectId}/timeline/revisions/${revision}/restore`)
     .then((res) => res.data);
 
-/** P4：按 EDL 导出成片（预留） */
+/** P4：按 EDL 导出成片（G20：format=mp4/webm/gif、quality、gif loopCount 可选） */
 export const exportTimeline = (projectId: string, data: ExportTimelineRequest = {}) =>
   axiosForBackend
     .post<ExportTimelineResult>(`/api/projects/${projectId}/timeline/export`, data)
+    .then((res) => res.data);
+
+/** G14 音乐节拍分析：返回节拍点（秒，升序）+ BPM，供时间线节拍吸附 */
+export const analyzeBeats = (projectId: string, assetId: string) =>
+  axiosForBackend
+    .post<TimelineBeatAnalysis>(`/api/projects/${projectId}/timeline/analyze-beats`, {
+      assetId,
+    } satisfies TimelineBeatAnalysisRequest)
     .then((res) => res.data);
 
 /** 视频片段帧缩略图 sprite（服务端抽帧 + 缓存，返回切片元数据） */

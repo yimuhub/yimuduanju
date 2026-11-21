@@ -9,7 +9,7 @@ import {
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { mkdir, rename, stat, unlink, writeFile } from 'fs/promises';
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
@@ -27,10 +27,28 @@ import {
 import { resolveTextStyle } from '@shared/api.interface';
 import { buildTransitionFilter, planTransitions } from './transition-plan';
 import { projectExportFileName } from '@shared/file-name';
+import {
+  buildVoiceDuckMixFilter,
+  planVoiceDucking,
+  type DuckPartInfo,
+} from '@shared/timeline-audio';
+import {
+  clampGifLoopCount,
+  exportFormatMimeType,
+  gifFilterChain,
+  resolveH264Crf,
+  resolveWebmCrf,
+  type ExportFormat,
+} from '@shared/export-formats';
 import { applyTimelineOps, clipKey, type TimelineOp } from '@shared/timeline-ops';
 import { scanTimelineIssues } from '@shared/timeline-issues';
 import { buildZoompanExpressions, normalizeVideoKeyframes } from '@shared/timeline-keyframes';
-import { mergeTrackingKeyframes } from '@shared/timeline-visual';
+import { buildVolumeAutomationExpr, normalizeVolumePoints } from '@shared/timeline-audio-expr';
+import type { TimelineVolumeAutomation } from '@shared/timeline-audio-expr';
+import { buildAudioFxFilterArgs, normalizeAudioFxNodes } from '@shared/timeline-audio-fx';
+import type { TimelineClipAudioFx } from '@shared/timeline-audio-fx';
+import { buildCropFilterArgs, mergeTrackingKeyframes, normalizeVisualLut } from '@shared/timeline-visual';
+import { buildLutFilterArgs, parseLutCube } from '@shared/lut3d';
 import { expandCompounds } from '@shared/timeline-compound';
 import type {
   Asset,
@@ -67,12 +85,18 @@ function diffChangedClientKeys(prev: SaveTimelineClipDto[], next: SaveTimelineCl
       c.track,
       c.lane ?? 0,
       c.sourceShotId ?? '',
+      c.sourceAssetId ?? '',
       c.sourceUrl ?? '',
       c.inPoint,
       c.outPoint,
       c.timelineStart,
       c.speed ?? 1,
       c.volume ?? 1,
+      JSON.stringify(c.volumeAutomation ?? null),
+      c.fadeIn ?? 0,
+      c.fadeOut ?? 0,
+      c.duckUnderVoice === true ? 1 : 0,
+      JSON.stringify(c.audioFx ?? null),
       c.pitch ?? 1,
       c.text ?? '',
       c.bindGroup ?? '',
@@ -184,6 +208,25 @@ const clipSpan = (c: Pick<TimelineClip, 'inPoint' | 'outPoint' | 'speed'>) =>
   Math.max(0, (c.outPoint - c.inPoint) / (c.speed > 0 ? c.speed : 1));
 
 /**
+ * 片段淡入淡出（G11）→ ffmpeg 滤镜片段（音频 afade / 画面 fade）。
+ * st/d 都按「片段内相对秒」理解：调用方保证此刻时间轴已归一（音频在
+ * areverse/atempo 之后、视频在 setpts 之后），与预览端的 fadeGainAt 同语义。
+ */
+const clipFadeFilterArgs = (
+  clip: Pick<TimelineClip, 'fadeIn' | 'fadeOut'>,
+  span: number,
+  kind: 'audio' | 'video',
+): string[] => {
+  const dIn = clip.fadeIn != null && clip.fadeIn > 0.001 ? Math.min(clip.fadeIn, span) : 0;
+  const dOut = clip.fadeOut != null && clip.fadeOut > 0.001 ? Math.min(clip.fadeOut, span) : 0;
+  const prefix = kind === 'audio' ? 'afade' : 'fade';
+  const out: string[] = [];
+  if (dIn > 0) out.push(`${prefix}=t=in:st=0:d=${dIn.toFixed(3)}`);
+  if (dOut > 0) out.push(`${prefix}=t=out:st=${Math.max(0, span - dOut).toFixed(3)}:d=${dOut.toFixed(3)}`);
+  return out;
+};
+
+/**
  * 线性剪辑 EDL（Phase 3/4）
  * -------------------------------------------------------------
  * shots 是「生产台账」，timeline_clips 是「剪辑决策表」。未保存过 EDL 的项目
@@ -207,6 +250,81 @@ export class TimelineService {
       .limit(1);
     if (rows.length === 0) throw new NotFoundException('项目不存在');
     return rows[0];
+  }
+
+  /** DB 行 → TimelineClip（旧行 sourceShotId 保留镜头关联；新列见 0040-0044 迁移） */
+  private mapClip(row: typeof timelineClips.$inferSelect): TimelineClip {
+    return {
+      id: row.id,
+      clientKey: row.clientKey ?? row.id,
+      projectId: row.projectId,
+      track: row.track as TimelineClip['track'],
+      sourceShotId: row.sourceShotId,
+      sourceAssetId: row.sourceAssetId,
+      sourceUrl: row.sourceUrl,
+      inPoint: num(row.inPoint),
+      outPoint: num(row.outPoint),
+      sourceDuration: row.sourceDuration != null ? num(row.sourceDuration) : Math.max(num(row.outPoint), num(row.inPoint)),
+      timelineStart: num(row.timelineStart),
+      lane: row.lane ?? 0,
+      speed: num(row.speed, 1) || 1,
+      volume: num(row.volume, 1),
+      volumeAutomation: (row.volumeAutomation as TimelineClip['volumeAutomation']) ?? null,
+      // 淡入淡出（G11）：NULL 视为未设置（不传 = 旧行为），落库前已按片段时长夹紧
+      fadeIn: row.fadeIn != null ? Math.max(0, num(row.fadeIn)) : undefined,
+      fadeOut: row.fadeOut != null ? Math.max(0, num(row.fadeOut)) : undefined,
+      duckUnderVoice: Boolean(row.duckUnderVoice),
+      // 音频效果链（FX rack）：旧数据 NULL 视为未设置（不传 = 旧行为）
+      audioFx: (row.audioFx as TimelineClipAudioFx | null) ?? null,
+      pitch: num(row.pitch, 1) || 1,
+      transition: (row.transition as TimelineClip['transition']) ?? null,
+      text: row.text,
+      keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
+      visual: (row.visual as TimelineClip['visual']) ?? null,
+      reverse: Boolean(row.reverse),
+      compound: (row.compound as TimelineClip['compound']) ?? null,
+      transcript: (row.transcript as TimelineClip['transcript']) ?? null,
+      textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
+      bindGroup: row.bindGroup,
+      locked: row.locked,
+      enabled: row.enabled !== false,
+      sortOrder: row.sortOrder,
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt),
+    };
+  }
+
+  /**
+   * 音量包络（G12）落库前归一化：帧量化到项目 fps、数值夹紧、升序去重；
+   * 不足 2 点（或片段时长非法）返回 null。客户端已归一化过一次，这里防御脏数据。
+   */
+  private normalizeClipVolumeAutomation(
+    c: SaveTimelineClipDto,
+    fps: number,
+  ): TimelineVolumeAutomation | null {
+    const automation = c.volumeAutomation;
+    if (!automation || !Array.isArray(automation.points) || automation.points.length < 2) return null;
+    const speed = c.speed && c.speed > 0 ? c.speed : 1;
+    const span = Math.max(0, (c.outPoint - c.inPoint) / speed);
+    if (!(span > 0)) return null;
+    const points = normalizeVolumePoints(automation.points, span, fps);
+    return points.length >= 2 ? { points } : null;
+  }
+
+  /**
+   * 淡入淡出（G11）落库前夹紧：各自 0–片段有效时长，未设置/0 落库为 NULL
+   * （等同无淡变）。客户端已帧量化并保证 fadeIn+fadeOut ≤ 时长，这里防御脏数据。
+   * 返回字符串（drizzle numeric 列入库形状）。
+   */
+  private normalizeClipFades(c: SaveTimelineClipDto): { fadeIn: string | null; fadeOut: string | null } {
+    const speed = c.speed && c.speed > 0 ? c.speed : 1;
+    const span = Math.max(0, (c.outPoint - c.inPoint) / speed);
+    const clamp = (v: number | null | undefined) => {
+      if (v == null || !(v > 0)) return null;
+      if (!(span > 0)) return null;
+      return String(Math.min(round3(v), round3(span)));
+    };
+    return { fadeIn: clamp(c.fadeIn), fadeOut: clamp(c.fadeOut) };
   }
 
   /** 从镜头台账派生默认 EDL（不落库）：视频轨为主，配音/字幕跟随视频镜头对齐 */
@@ -316,39 +434,6 @@ export class TimelineService {
     return { projectId, fps: 24, width: 1080, height: 1920, clips };
   }
 
-  private mapClip(row: typeof timelineClips.$inferSelect): TimelineClip {
-    return {
-      id: row.id,
-      clientKey: row.clientKey ?? row.id,
-      projectId: row.projectId,
-      track: row.track as TimelineClip['track'],
-      sourceShotId: row.sourceShotId,
-      sourceUrl: row.sourceUrl,
-      inPoint: num(row.inPoint),
-      outPoint: num(row.outPoint),
-      sourceDuration: row.sourceDuration != null ? num(row.sourceDuration) : Math.max(num(row.outPoint), num(row.inPoint)),
-      timelineStart: num(row.timelineStart),
-      lane: row.lane ?? 0,
-      speed: num(row.speed, 1) || 1,
-      volume: num(row.volume, 1),
-      pitch: num(row.pitch, 1) || 1,
-      transition: (row.transition as TimelineClip['transition']) ?? null,
-      text: row.text,
-      keyframes: (row.keyframes as TimelineClip['keyframes']) ?? null,
-      visual: (row.visual as TimelineClip['visual']) ?? null,
-      reverse: Boolean(row.reverse),
-      compound: (row.compound as TimelineClip['compound']) ?? null,
-      transcript: (row.transcript as TimelineClip['transcript']) ?? null,
-      textStyle: (row.textStyle as TimelineClip['textStyle']) ?? null,
-      bindGroup: row.bindGroup,
-      locked: row.locked,
-      enabled: row.enabled !== false,
-      sortOrder: row.sortOrder,
-      createdAt: iso(row.createdAt),
-      updatedAt: iso(row.updatedAt),
-    };
-  }
-
   async getDocument(projectId: string): Promise<TimelineDocument> {
     await this.requireProject(projectId);
     const docRows = await this.db
@@ -419,34 +504,54 @@ export class TimelineService {
     await this.db.transaction(async (tx) => {
       await tx.delete(timelineClips).where(eq(timelineClips.projectId, projectId));
       if (dto.clips.length > 0) {
-        const values = dto.clips.map((c: SaveTimelineClipDto, i: number) => ({
-          projectId,
-          clientKey: c.clientKey ?? null,
-          track: c.track,
-          sourceShotId: c.sourceShotId ?? null,
-          sourceUrl: c.sourceUrl ?? null,
-          inPoint: String(c.inPoint),
-          outPoint: String(c.sourceDuration != null ? Math.min(c.outPoint, c.sourceDuration) : c.outPoint),
-          sourceDuration: c.sourceDuration != null ? String(c.sourceDuration) : null,
-          timelineStart: String(c.timelineStart),
-          lane: c.lane ?? 0,
-          speed: String(c.speed ?? 1),
-          volume: String(c.volume ?? 1),
-          pitch: String(c.pitch ?? 1),
-          transition: c.transition ?? null,
-          text: c.text ?? null,
-          keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
-          visual: c.visual ?? null,
-          reverse: Boolean(c.reverse),
-          compound: c.compound?.children?.length ? c.compound : null,
-          transcript: c.transcript ?? null,
-          bindGroup: c.bindGroup ?? null,
-          textStyle: c.textStyle ?? null,
-          locked: c.locked ?? false,
-          enabled: c.enabled ?? true,
-          sortOrder: c.sortOrder ?? i,
-          updatedAt: now,
-        }));
+        const values = dto.clips.map((c: SaveTimelineClipDto, i: number) => {
+          // 淡入淡出（G11）：夹紧到片段有效时长，未设置/0 落库 NULL
+          const fades = this.normalizeClipFades(c);
+          return {
+            projectId,
+            clientKey: c.clientKey ?? null,
+            track: c.track,
+            sourceShotId: c.sourceShotId ?? null,
+            sourceAssetId: c.sourceAssetId ?? null,
+            sourceUrl: c.sourceUrl ?? null,
+            inPoint: String(c.inPoint),
+            outPoint: String(c.sourceDuration != null ? Math.min(c.outPoint, c.sourceDuration) : c.outPoint),
+            sourceDuration: c.sourceDuration != null ? String(c.sourceDuration) : null,
+            timelineStart: String(c.timelineStart),
+            lane: c.lane ?? 0,
+            speed: String(c.speed ?? 1),
+            volume: String(c.volume ?? 1),
+            // 音量包络（G12）：按片段有效时长 + 项目 fps 归一化（帧量化、升序去重）；
+            // 少于 2 个点不构成折线，落库为 NULL（等同无包络）
+            volumeAutomation: this.normalizeClipVolumeAutomation(c, fps),
+            fadeIn: fades.fadeIn,
+            fadeOut: fades.fadeOut,
+            duckUnderVoice: c.duckUnderVoice === true,
+            // 音频效果链（FX rack）：过滤非法节点 + 参数夹紧 + FX 自动化断点帧量化
+            // （span=片段有效秒、fps=项目帧率）；空链落库 NULL（等同无 FX）
+            audioFx: normalizeAudioFxNodes(c.audioFx?.nodes, {
+              span: Math.max(0, (c.outPoint - c.inPoint) / (c.speed && c.speed > 0 ? c.speed : 1)),
+              fps,
+            }),
+            pitch: String(c.pitch ?? 1),
+            transition: c.transition ?? null,
+            text: c.text ?? null,
+            keyframes: c.keyframes ? normalizeVideoKeyframes(c.keyframes) : null,
+            // 视觉增强整体透传；其中 LUT 单独归一化（url 非法视为未设置，strength 夹紧 0–1）
+            visual: c.visual
+              ? { ...c.visual, ...(c.visual.lut !== undefined ? { lut: normalizeVisualLut(c.visual.lut) } : {}) }
+              : null,
+            reverse: Boolean(c.reverse),
+            compound: c.compound?.children?.length ? c.compound : null,
+            transcript: c.transcript ?? null,
+            bindGroup: c.bindGroup ?? null,
+            textStyle: c.textStyle ?? null,
+            locked: c.locked ?? false,
+            enabled: c.enabled ?? true,
+            sortOrder: c.sortOrder ?? i,
+            updatedAt: now,
+          };
+        });
         await tx.insert(timelineClips).values(values);
       }
       const existing = await tx
@@ -696,6 +801,7 @@ export class TimelineService {
         parentRevision: timelineRevisions.parentRevision,
         author: timelineRevisions.author,
         summary: timelineRevisions.summary,
+        pinned: timelineRevisions.pinned,
         changedClientKeys: timelineRevisions.changedClientKeys,
         createdAt: timelineRevisions.createdAt,
       })
@@ -703,6 +809,28 @@ export class TimelineService {
       .where(eq(timelineRevisions.projectId, projectId))
       .orderBy(desc(timelineRevisions.revision))
       .limit(Math.min(100, Math.max(1, limit)));
+  }
+
+  /** 固定 / 取消固定一条修订（C4 版本历史 pin）：只改标记位，不动快照与顺序 */
+  async setRevisionPinned(projectId: string, revision: number, pinned: boolean) {
+    await this.requireProject(projectId);
+    const rows = await this.db
+      .update(timelineRevisions)
+      .set({ pinned })
+      .where(
+        and(eq(timelineRevisions.projectId, projectId), eq(timelineRevisions.revision, revision)),
+      )
+      .returning({
+        revision: timelineRevisions.revision,
+        parentRevision: timelineRevisions.parentRevision,
+        author: timelineRevisions.author,
+        summary: timelineRevisions.summary,
+        pinned: timelineRevisions.pinned,
+        changedClientKeys: timelineRevisions.changedClientKeys,
+        createdAt: timelineRevisions.createdAt,
+      });
+    if (!rows[0]) throw new NotFoundException(`修订 v${revision} 不存在`);
+    return rows[0];
   }
 
   /** 回滚到某条修订：以快照追加一个新修订，历史不改写。 */
@@ -1079,6 +1207,11 @@ export class TimelineService {
     const fps = doc.fps > 0 ? doc.fps : 24;
     const width = dto.width ?? doc.width ?? 1080;
     const height = dto.height ?? doc.height ?? 1920;
+    // G20 导出格式：缺省 mp4 = 旧行为。quality 缺省时 crf 恒为 20（历史命令不变），
+    // 传入 draft/standard/high 才映射（32/23/18）——「不传 = 旧行为」而非「不传 = standard」。
+    const format: ExportFormat = dto.format ?? 'mp4';
+    const crf = String(resolveH264Crf(dto.quality));
+    const loopCount = clampGifLoopCount(dto.loopCount);
     // 尊重轨道静音 / 独奏：导出只渲染「听得到」的轨
     const audible = this.audibleClips(doc.clips, doc.tracks);
     // 画面轨语义（缺省 sequence = 历史行为，保证老项目导出不变）
@@ -1108,7 +1241,10 @@ export class TimelineService {
       if (opacity < 0.999) out.push('format=rgba', `colorchannelmixer=aa=${opacity.toFixed(3)}`);
       if (v.keying?.enabled) {
         const color = (v.keying.color || '#00ff00').replace('#', '0x');
-        out.push(`chromakey=${color}:${Math.max(0.01, v.keying.similarity).toFixed(3)}:${Math.max(0, v.keying.smoothness).toFixed(3)}`, `despill=type=green:mix=${Math.max(0, Math.min(1, v.keying.spill)).toFixed(3)}`);
+        out.push(
+          `chromakey=${color}:${Math.max(0.01, v.keying.similarity).toFixed(3)}:${Math.max(0, v.keying.smoothness).toFixed(3)}`,
+          `despill=type=green:mix=${Math.max(0, Math.min(1, v.keying.spill)).toFixed(3)}`,
+        );
       }
       if (v.beauty?.enabled) {
         const smooth = Math.max(0, Math.min(100, v.beauty.smooth)) / 100;
@@ -1134,7 +1270,10 @@ export class TimelineService {
         const h = Math.max(0.05, Math.min(1, mask.h));
         const x = Math.max(0, Math.min(1 - w, mask.x - w / 2));
         const y = Math.max(0, Math.min(1 - h, mask.y - h / 2));
-        out.push(`crop=iw*${w.toFixed(3)}:ih*${h.toFixed(3)}:iw*${x.toFixed(3)}:ih*${y.toFixed(3)}`);
+        out.push(
+          `crop=iw*${w.toFixed(3)}:ih*${h.toFixed(3)}:iw*${x.toFixed(3)}:ih*${y.toFixed(3)}`,
+          'scale=iw:ih',
+        );
       }
       if (out.some((f) => f.startsWith('format='))) out.push('format=yuv420p');
       return out;
@@ -1244,8 +1383,37 @@ export class TimelineService {
         const seg = join(work, `v_seg_${String(i).padStart(3, '0')}.mp4`);
         cleanup.push(seg);
         const kf = buildZoompanExpressions(mergeTrackingKeyframes(clip.keyframes, clip.visual?.tracking), fps, visibleSpan);
+        // 源画面裁切（C1）：放在滤镜链最前面（源空间），抠像/蒙版/scale-pad 都作用在
+        // 裁切后的画面上，与预览「蒙版作用在裁切后显示画面」的层序一致
+        const cropArgs = buildCropFilterArgs(clip.visual?.crop);
+        // LUT（.cube）：源像素空间套 3D 查找表，放在蒙版 crop / chromakey / zoompan 之前，
+        // 且在调色 eq 之前——与预览层序一致（canvas 先做 WebGL 查表，CSS 调色链挂在 canvas 上）。
+        // 物化失败或表内容无效都跳过 LUT 继续出片（warn 不中断）；无 lut 时 lutArgs 为空，
+        // 滤镜链与旧版字节级一致。
+        const lutArgs: string[] = [];
+        const lutCfg = clip.visual?.lut;
+        if (lutCfg?.url) {
+          const cubeName = `lut_${String(i).padStart(3, '0')}.cube`;
+          const cubePath = join(work, cubeName);
+          cleanup.push(cubePath);
+          // eslint-disable-next-line no-await-in-loop
+          const lutOk = await this.exportService.materializeMediaToFile(lutCfg.url, cubePath, cacheDir);
+          if (!lutOk) {
+            this.logger.warn(`片段 ${i + 1} LUT 文件物化失败，跳过 LUT 继续导出`);
+          } else {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              parseLutCube(await readFile(cubePath, 'utf8'));
+              lutArgs.push(...buildLutFilterArgs(lutCfg, cubeName));
+            } catch (e) {
+              this.logger.warn(`片段 ${i + 1} LUT 文件无效（${(e as Error).message}），跳过 LUT 继续导出`);
+            }
+          }
+        }
         const vf = [
+          ...(cropArgs ? [cropArgs] : []),
           ...(clip.reverse ? ['reverse'] : []),
+          ...lutArgs,
           ...gradeFilters(clip),
           ...visualFilters(clip),
           `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
@@ -1261,6 +1429,9 @@ export class TimelineService {
               ]
             : []),
           ...fadeFilters,
+          // 片段淡入淡出（G11）：画面透明度斜坡，只挂在画面主轨渲染链上；
+          // 叠化尾巴（tail）不算有效时长，淡出按 visibleSpan 定位
+          ...clipFadeFilterArgs(clip, visibleSpan, 'video'),
           // 叠化尾巴：源素材够长时是真实画面（handle），不够长时克隆末帧补足，
           // 保证 xfade 的 offset+duration 一定落在这一段之内，否则 ffmpeg 直接报错
           ...(tail > 0 ? [`tpad=stop_mode=clone:stop_duration=${tail.toFixed(3)}`] : []),
@@ -1278,7 +1449,7 @@ export class TimelineService {
           '-c:v', 'libx264',
           '-pix_fmt', 'yuv420p',
           '-preset', 'veryfast',
-          '-crf', '20',
+          '-crf', crf,
           seg,
         ]);
         if (!segOk) throw new BadRequestException(`片段 ${i + 1} 渲染失败（源媒体可能损坏）`);
@@ -1312,7 +1483,7 @@ export class TimelineService {
           '-c:v', 'libx264',
           '-pix_fmt', 'yuv420p',
           '-preset', 'veryfast',
-          '-crf', '20',
+          '-crf', crf,
           '-t', String(totalDur),
           concatPath,
         ]);
@@ -1369,7 +1540,7 @@ export class TimelineService {
             '-c:v', 'libx264',
             '-pix_fmt', 'yuv420p',
             '-preset', 'veryfast',
-            '-crf', '20',
+            '-crf', crf,
             seg,
           ]);
           if (!segOk) {
@@ -1408,7 +1579,7 @@ export class TimelineService {
             '-c:v', 'libx264',
             '-pix_fmt', 'yuv420p',
             '-preset', 'veryfast',
-            '-crf', '20',
+            '-crf', crf,
             '-t', String(totalDur),
             compositePath,
           ]);
@@ -1422,9 +1593,18 @@ export class TimelineService {
       }
 
       // 2) 音频轨：trim + 音量 + 延迟到 timelineStart，多轨 amix
+      //    G15 人声避让：片段带 duckUnderVoice 且项目里有人声时，混音改走
+      //    sidechaincompress（人声链为 sidechain）；未命中避让条件时命令与旧版
+      //    完全一致。注意：volumeAutomation 包络的导出（包络驱动 volume 滤镜）
+      //    留给 W3 实现，这里只加避让路径，不动 per-clip volume 滤镜构造。
       let audioPath: string | null = null;
       if (audioClips.length > 0) {
         const parts: string[] = [];
+        /** 与 parts 一一对应的分类元数据（供避让规划） */
+        const partInfos: DuckPartInfo[] = [];
+        /** 人声判定：音频对白轨（lane 0）或带 ASR 转写的片段；显式标记的音乐优先按配乐处理 */
+        const isVoiceClip = (c: TimelineClip) =>
+          (c.transcript?.length ?? 0) > 0 || (c.track === 'audio' && (c.lane ?? 0) === 0);
         for (let i = 0; i < audioClips.length; i += 1) {
           const a = audioClips[i];
           const src = join(work, `a_src_${String(i).padStart(3, '0')}.m4a`);
@@ -1449,11 +1629,30 @@ export class TimelineService {
           while (rest > 2) { atempo.push(2); rest /= 2; }
           while (rest < 0.5) { atempo.push(0.5); rest /= 0.5; }
           if (rest !== 1 || atempo.length === 0) atempo.push(rest);
+          // 音量包络（G12）：有包络的片段用 volume 滤镜 expression 模式逐帧线性插值。
+          // 放在 areverse/asetrate/atempo 之后：此时 t 已归一到「片段内相对秒」
+          // （变速补偿后 0..span，倒放 pts 保持不变），与预览 volumeAt 同一插值语义。
+          const baseVolume = Math.min(2, Math.max(0, a.volume));
+          const volumeExpr = buildVolumeAutomationExpr(a.volumeAutomation?.points ?? null, baseVolume);
+          const volumeFilter = volumeExpr
+            ? `volume='${volumeExpr}':eval=frame`
+            : `volume=${baseVolume}`;
           const audioFilters = [
             a.reverse ? 'areverse' : '',
             pitch !== 1 ? `asetrate=44100*${pitch},aresample=44100` : '',
             ...atempo.map((v) => `atempo=${Math.min(2, Math.max(0.5, v))}`),
-            `volume=${Math.min(2, Math.max(0, a.volume))}`,
+            // 音频效果链（FX rack）：节点顺序=链序，bypass 跳过。插在音量包络之前
+            // （OpenMotion 语义 fx → automation）；挂画面片段上的 audioFx 会随
+            // 内嵌原声/镜像的 auto: 音频走到这里。无 audioFx 时不追加任何 filter
+            //（空数组展开为空，命令与旧版字节级一致）。
+            // span（变速补偿后的片段内有效秒）给定时，节点上的 FX 参数自动化
+            // 导出为 enable='between(t,S,E)' 窗口（阶梯近似）；此处的 t 已与
+            // 音量包络表达式一样归一到片段内相对秒。
+            ...buildAudioFxFilterArgs(a.audioFx?.nodes, span),
+            volumeFilter,
+            // 淡入淡出（G11）：afade 叠在包络 volume 之后（语义=幅度斜坡，
+            // 与预览 clipGainAt × fadeGainAt 的叠乘结果一致）
+            ...clipFadeFilterArgs(a, span, 'audio'),
             `adelay=${delayMs}|${delayMs}`,
           ].filter(Boolean).join(',');
           // eslint-disable-next-line no-await-in-loop
@@ -1467,21 +1666,46 @@ export class TimelineService {
             '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le',
             part,
           ]);
-          if (pOk) parts.push(part);
+          if (pOk) {
+            parts.push(part);
+            partInfos.push({
+              duckUnderVoice: a.duckUnderVoice === true,
+              isVoice: isVoiceClip(a),
+            });
+          }
         }
         if (parts.length > 0) {
           const mixed = join(work, 'audio_mix.m4a');
           cleanup.push(mixed);
-          const inputs = parts.flatMap((p) => ['-i', p]);
-          const mixArgs =
-            parts.length === 1
-              ? ['-y', '-i', parts[0], '-c:a', 'aac', '-b:a', '160k', mixed]
-              : [
-                  '-y', ...inputs,
-                  '-filter_complex', `amix=inputs=${parts.length}:duration=longest:normalize=0`,
-                  '-c:a', 'aac', '-b:a', '160k', mixed,
-                ];
-          const mixOk = await run(mixArgs);
+          const duckPlan = planVoiceDucking(partInfos);
+          const duckGraph = buildVoiceDuckMixFilter(partInfos, duckPlan);
+          let mixOk = false;
+          if (duckGraph) {
+            // 人声避让混音：音乐先过 sidechaincompress，再与其余轨一起 amix。
+            // sidechaincompress 必须两路输入（主链=音乐，sidechain=人声求和），
+            // 每条输入流只能被消费一次，人声 / sidechain 都要显式 asplit。
+            this.logger.log(
+              `人声避让混音：配乐 ${duckPlan.musicIndexes.length} 条避让 ${duckPlan.voiceIndexes.length} 条人声`,
+            );
+            mixOk = await run([
+              '-y',
+              ...parts.flatMap((p) => ['-i', p]),
+              '-filter_complex', duckGraph.filter,
+              '-map', `[${duckGraph.mapLabel}]`,
+              '-c:a', 'aac', '-b:a', '160k', mixed,
+            ]);
+          } else {
+            const inputs = parts.flatMap((p) => ['-i', p]);
+            const mixArgs =
+              parts.length === 1
+                ? ['-y', '-i', parts[0], '-c:a', 'aac', '-b:a', '160k', mixed]
+                : [
+                    '-y', ...inputs,
+                    '-filter_complex', `amix=inputs=${parts.length}:duration=longest:normalize=0`,
+                    '-c:a', 'aac', '-b:a', '160k', mixed,
+                  ];
+            mixOk = await run(mixArgs);
+          }
           if (mixOk) audioPath = mixed;
         }
       }
@@ -1489,14 +1713,17 @@ export class TimelineService {
       // 3) 字幕 + 最终封装
       // 文件名＝项目名（唯一真源 shared/file-name.ts）：旧实现落 final_tl_<uuid>.mp4，
       // 时间线导出的成片在素材箱/下载目录里认不出是哪个项目。
+      // G20：管线始终产出 mp4 中间片（midAbs）；format=webm/gif 时最后一步再转码，
+      // 这样叠化 / 选区裁剪 / 字幕封装等既有 mp4 链路完全复用，mp4 时 midAbs === outAbs。
       const outName = projectExportFileName(
         project.title,
-        'mp4',
+        format,
         `final_tl_${randomUUID().slice(0, 8)}`,
       );
       const outDir = join(uploadDir(), projectId);
       await mkdir(outDir, { recursive: true });
       const outAbs = join(outDir, outName);
+      const midAbs = format === 'mp4' ? outAbs : join(work, 'final_mid.mp4');
       const aigcMeta = ['-metadata', 'comment=AIGC-Generated-By-YIMU-AI-Workshop'];
       let done = false;
       if (burn && burnBin) {
@@ -1512,10 +1739,10 @@ export class TimelineService {
             '-vf', vf,
             '-map', '0:v:0',
             ...(audioPath ? ['-map', '1:a:0'] : []),
-            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-crf', '20',
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-crf', crf,
             ...(audioPath ? ['-c:a', 'aac', '-b:a', '160k'] : ['-an']),
             '-t', String(totalDur),
-            ...aigcMeta, outAbs,
+            ...aigcMeta, midAbs,
           ],
           burnBin,
         );
@@ -1538,7 +1765,7 @@ export class TimelineService {
                 ...(audioPath ? ['-c:a', 'copy'] : ['-an']),
                 '-c:s', 'mov_text',
                 '-t', String(totalDur),
-                ...aigcMeta, outAbs,
+                ...aigcMeta, midAbs,
               ]);
             })()
           : await run([
@@ -1548,7 +1775,7 @@ export class TimelineService {
               '-c:v', 'copy',
               ...(audioPath ? ['-c:a', 'copy'] : ['-an']),
               '-t', String(totalDur),
-              ...aigcMeta, outAbs,
+              ...aigcMeta, midAbs,
             ]);
         done = softOk;
       }
@@ -1562,16 +1789,31 @@ export class TimelineService {
         const rangeOk = await run([
           '-y',
           '-ss', rangeStart.toFixed(3),
-          '-i', outAbs,
+          '-i', midAbs,
           '-t', finalDuration.toFixed(3),
-          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-crf', '20',
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-crf', crf,
           '-c:a', 'aac', '-b:a', '160k',
           '-movflags', '+faststart',
           ...aigcMeta, ranged,
         ]);
         if (!rangeOk) throw new BadRequestException('选区裁剪失败：导出中间文件不可读');
-        await rename(ranged, outAbs);
+        await rename(ranged, midAbs);
         cleanup.splice(cleanup.indexOf(ranged), 1);
+      }
+
+      // G20 非 mp4 容器：mp4 中间片 → webm(VP9+opus) / gif(调色板两段式)。
+      // 放在管线最后一步：叠化/字幕/选区都在 mp4 上完成后只做一次转码。
+      if (format !== 'mp4') {
+        if (midAbs !== outAbs) cleanup.push(midAbs);
+        const encoded = await this.encodeExportFormat(
+          format,
+          midAbs,
+          outAbs,
+          { width, height, fps, quality: dto.quality, loopCount, hasAudio: Boolean(audioPath) },
+        );
+        if (!encoded.ok) {
+          throw new BadRequestException(encoded.error ?? `${format} 转码失败：请检查本机 ffmpeg`);
+        }
       }
 
       const st = await stat(outAbs);
@@ -1582,17 +1824,18 @@ export class TimelineService {
         name: `精剪成片-${project.title}`.slice(0, 120),
         fileUrl,
         filePath: outAbs,
-        mimeType: 'video/mp4',
+        mimeType: exportFormatMimeType(format),
         fileSize: st.size,
         durationSeconds: String(finalDuration),
         sourceType: 'generated' as const,
         sourceId: `timeline-export-${randomUUID()}`,
-        generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}${wantRange ? '·选区' : ''}）`,
+        generationPrompt: `按 EDL 导出 ${segments.length + overlayCount} 段（${audioPath ? '含混音' : '纯画面'}${srt.trim() ? '+字幕' : ''}${overlayCount ? '+画中画' : ''}${wantRange ? '·选区' : ''}${format !== 'mp4' ? `·${format}` : ''}）`,
         metadata: {
           aigcGenerated: true,
           hasAudio: Boolean(audioPath),
           hasSubtitles: Boolean(srt.trim()),
           timelineExport: true,
+          exportFormat: format,
         } as never,
         status: 'ready' as const,
       };
@@ -1615,6 +1858,106 @@ export class TimelineService {
     } finally {
       for (const f of cleanup) await unlink(f).catch(() => {});
     }
+  }
+
+  /** webm 编码器可用性探测缓存：null = 未探测，true/false = libvpx-vp9+libopus 是否齐全 */
+  private webmEncoders: boolean | null = null;
+
+  /**
+   * 探测本机 ffmpeg 是否带 webm 导出所需编码器（libvpx-vp9 + libopus）。
+   * 结果缓存到进程生命周期，避免每次导出都跑一遍 -encoders。
+   */
+  private async ensureWebmEncoders(ffmpeg: string): Promise<boolean> {
+    if (this.webmEncoders !== null) return this.webmEncoders;
+    const available = await new Promise<boolean>((resolve) => {
+      try {
+        const child = spawn(ffmpeg, ['-hide_banner', '-encoders'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        let out = '';
+        child.stdout?.on('data', (d: Buffer) => {
+          out += d.toString();
+        });
+        child.on('error', () => resolve(false));
+        child.on('close', () => {
+          resolve(out.includes('libvpx-vp9') && out.includes('libopus'));
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+    this.webmEncoders = available;
+    return available;
+  }
+
+  /**
+   * G20：mp4 中间片 → webm / gif。
+   * · webm：VP9（crf 按质量档）+ opus；编码器缺失时返回明确错误（不静默失败）；
+   * · gif：调色板两段式（palettegen → paletteuse），fps 钳 30、超 720p 自动等比降，
+   *   -loop 为循环次数（0 = 无限）。GIF 无音轨，audioPath 被忽略。
+   */
+  private async encodeExportFormat(
+    format: 'webm' | 'gif',
+    src: string,
+    dest: string,
+    opts: {
+      width: number;
+      height: number;
+      fps: number;
+      quality?: 'draft' | 'standard' | 'high';
+      loopCount: number;
+      hasAudio: boolean;
+    },
+  ): Promise<{ ok: boolean; error?: string }> {
+    const ffmpeg = this.exportService.resolveFfmpegBin();
+    // runFfmpeg 需要 cwd 存在（spawn 语义），所有文件路径均为绝对路径，cwd 仅作占位
+    const muxCwd = join(tmpdir(), 'yimu-export-mux');
+    await mkdir(muxCwd, { recursive: true });
+    if (format === 'webm') {
+      if (!(await this.ensureWebmEncoders(ffmpeg))) {
+        return {
+          ok: false,
+          error: '本机 ffmpeg 缺少 webm 编码器（需要 libvpx-vp9 与 libopus），请安装完整版 ffmpeg 或改用 mp4',
+        };
+      }
+      const ok = await this.exportService.runFfmpeg(
+        ffmpeg,
+        [
+          '-y', '-i', src,
+          '-map', '0:v:0',
+          ...(opts.hasAudio ? ['-map', '0:a:0'] : []),
+          '-c:v', 'libvpx-vp9',
+          '-crf', String(resolveWebmCrf(opts.quality)),
+          '-b:v', '0',
+          '-pix_fmt', 'yuv420p',
+          '-row-mt', '1',
+          ...(opts.hasAudio ? ['-c:a', 'libopus', '-b:a', '128k'] : ['-an']),
+          dest,
+        ],
+        muxCwd,
+      );
+      return ok ? { ok: true } : { ok: false, error: 'webm 转码失败：请检查本机 ffmpeg' };
+    }
+    // gif：两段式。两段的 fps / scale 必须一致，否则调色板与帧错位
+    const chain = gifFilterChain(opts.width, opts.height, opts.fps);
+    const palette = `${dest}.palette.png`;
+    const genOk = await this.exportService.runFfmpeg(
+      ffmpeg,
+      ['-y', '-i', src, '-vf', `${chain},palettegen`, '-frames:v', '1', palette],
+      muxCwd,
+    );
+    if (!genOk) return { ok: false, error: 'GIF 调色板生成失败：请检查本机 ffmpeg' };
+    const useOk = await this.exportService.runFfmpeg(
+      ffmpeg,
+      [
+        '-y', '-i', src, '-i', palette,
+        '-lavfi', `${chain}[x];[x][1:v]paletteuse`,
+        '-loop', String(opts.loopCount),
+        dest,
+      ],
+      muxCwd,
+    );
+    return useOk ? { ok: true } : { ok: false, error: 'GIF 编码失败：请检查本机 ffmpeg' };
   }
 
   private mapAsset(row: typeof assets.$inferSelect): Asset {

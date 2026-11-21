@@ -97,7 +97,7 @@ export const ShenJianKeyframes = ({
         <p className="mini-note">还没有画面关键帧。把播放头停在想要的画面上，点「抽取画面」即可把当前画面定为关键帧。</p>
       ) : (
         <div className="kf-strip">
-          {frames.map((f) => {
+          {frames.map((f, idx) => {
             const shot = cell(f);
             const tr = sampleVideoTransform([f], 0);
             const on = Math.abs(f.time - localT) < 0.5 / Math.max(1, edl.fps) + 0.05;
@@ -118,6 +118,23 @@ export const ShenJianKeyframes = ({
                 <div className="kf-meta">
                   <span>{Math.round((tr.scale ?? 1) * 100)}%</span>
                   <span>{Math.round((f.x ?? 0) * 100)},{Math.round((f.y ?? 0) * 100)}</span>
+                  {/* R2 缓动（此帧→下一帧段）：末帧没有下一段，改了不生效 */}
+                  <select
+                    className="kf-ease"
+                    value={f.easing ?? 'linear'}
+                    title={`缓动（此帧到下一帧）${idx === frames.length - 1 ? ' · 末帧无下一段，不参与插值' : ''}`}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      const easing = e.target.value as TimelineVideoKeyframe['easing'];
+                      edl.setClipKeyframes(clip.id, frames.map((x) => (x === f ? { ...x, easing } : x)));
+                    }}
+                  >
+                    <option value="linear">线性</option>
+                    <option value="ease-in">缓入</option>
+                    <option value="ease-out">缓出</option>
+                    <option value="ease-inout">缓入缓出</option>
+                  </select>
                   <i
                     role="button"
                     tabIndex={0}

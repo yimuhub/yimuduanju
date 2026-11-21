@@ -8,6 +8,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Clapperboard,
+  History,
+  Layers,
   Code2,
   Download,
   Eye,
@@ -25,7 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useStudio } from './StudioShell';
+import { useStudio, SHUTTLE_SPEEDS } from './StudioShell';
 import { useEdl } from './EdlContext';
 import { exportTimeline } from '@client/src/api/timeline';
 import { downloadDeliverable } from '@client/src/api/export';
@@ -34,12 +36,19 @@ import { ParityLibrary } from './ParityLibrary';
 import { ShenJianStage } from './ShenJianStage';
 import { ShenJianInspectorParity } from './ShenJianInspectorParity';
 import { ShenJianShotPool } from './ShenJianShotPool';
+import { ShenJianAudioGainDialog } from './ShenJianAudioGainDialog';
 import { ParityTimeline } from './ParityTimeline';
+import { HistoryPanel } from './HistoryPanel';
+import { LayersPanel } from './LayersPanel';
+import { TimelineAiBar } from './TimelineAiBar';
 import { StudioImportDialog } from './StudioImportDialog';
 import { StudioCoverDialog } from './StudioCoverDialog';
 import { StudioFloatingChat } from './StudioFloatingChat';
 import { JIANYING_SHORTCUT_GROUPS } from '@client/src/lib/jianying-shortcuts';
 import { clipSpan } from './model';
+import type { TimelineClip } from '@shared/api.interface';
+import { quantizeToFrame } from '@client/src/lib/timeline-frame';
+import { applyBeatRedo, applyBeatUndo } from '@client/src/lib/timeline-beats';
 import { useParityLayout } from './useParityLayout';
 import { ParityDockShell } from './ParityDockShell';
 import { ParityEditorProvider, type ParityEditorUI } from './ParityEditorContext';
@@ -56,6 +65,15 @@ export const ShenJianWorkbenchParity = () => {
     setCurT,
     playing,
     setPlaying,
+    playDir,
+    playSpeed,
+    setPlaySpeed,
+    loopEnabled,
+    setLoopEnabled,
+    workIn,
+    workOut,
+    setWorkIn,
+    setWorkOut,
     previewQuality,
     setPreviewQuality,
     setPlayDir,
@@ -87,14 +105,19 @@ export const ShenJianWorkbenchParity = () => {
   const [exportBurnSubs, setExportBurnSubs] = useState(true);
   const [exportLaneMode, setExportLaneMode] = useState<'sequence' | 'main' | 'overlay'>('overlay');
   const [exportAsset, setExportAsset] = useState<{ name: string; fileUrl?: string; durationSeconds?: number } | null>(null);
+  // G20（OpenMotion 对齐）：格式 mp4/webm/gif + 质量三档 + gif 循环次数
+  const [exportFormat, setExportFormat] = useState<'mp4' | 'webm' | 'gif'>('mp4');
+  const [exportQuality, setExportQuality] = useState<'draft' | 'standard' | 'high'>('standard');
+  const [exportLoopCount, setExportLoopCount] = useState(0);
   const [rightTab, setRightTab] = useState<'inspector' | 'pool'>('inspector');
-  const [compactPanel, setCompactPanel] = useState<'library' | 'pool' | 'inspector' | null>(null);
+  // G17/G18：历史与图层沿用素材库/检查器的浮层抽屉机制
+  const [compactPanel, setCompactPanel] = useState<'library' | 'pool' | 'inspector' | 'history' | 'layers' | null>(null);
   const [grade, setGradeState] = useState({ brightness: 100, contrast: 100, saturation: 100, filter: 'none' });
   const [tip, setTip] = useState<{ text: string; rect: DOMRect } | null>(null);
   const [tipPos, setTipPos] = useState<{ left: number; top: number; transform: string } | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
-  const [inT, setInT] = useState(0);
-  const [outT, setOutT] = useState(0);
+  // 音频增益对话框（G10）：非 null 时渲染，targets = 选中且含音频的片段
+  const [gainTargets, setGainTargets] = useState<TimelineClip[] | null>(null);
   const [attrClip, setAttrClip] = useState<{ speed: number; volume: number; transition: typeof selected extends null ? never : NonNullable<typeof selected>['transition']; textStyle: NonNullable<typeof selected>['textStyle'] } | null>(null);
 
   const setGrade = (patch: Partial<typeof grade>) => setGradeState((prev) => ({ ...prev, ...patch }));
@@ -183,6 +206,10 @@ export const ShenJianWorkbenchParity = () => {
       const res = await exportTimeline(projectId, {
         burnSubtitles: exportBurnSubs,
         videoLaneMode: exportLaneMode,
+        // G20：格式 / 质量档 / gif 循环次数（仅 gif 传循环，0 = 无限）
+        format: exportFormat,
+        quality: exportQuality,
+        ...(exportFormat === 'gif' ? { loopCount: exportLoopCount } : {}),
       });
       setExportAsset(res.asset);
       toast.success(`精剪成片已生成：${res.clips} 段 · ${res.durationSeconds.toFixed(1)}s`);
@@ -277,8 +304,10 @@ export const ShenJianWorkbenchParity = () => {
         if (selected) edl.setClipSpeedCurve(selected.id, [1, 1.25, 1.5, 1.25, 1]);
         return;
       }
-      if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); edl.undo(); return; }
-      if ((mod && key === 'z' && e.shiftKey) || (mod && key === 'y')) { e.preventDefault(); edl.redo(); return; }
+      // R3 节拍独立撤销：最后一次节拍操作（编辑/撤销/重做）后 5s 内 ⌘Z 归节拍栈，
+      // 否则回落到 EDL 撤销（applyBeatUndo 在空栈/过期时返回 false）
+      if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); if (applyBeatUndo()) return; edl.undo(); return; }
+      if ((mod && key === 'z' && e.shiftKey) || (mod && key === 'y')) { e.preventDefault(); if (applyBeatRedo()) return; edl.redo(); return; }
       if (mod && key === 'c') { e.preventDefault(); edl.copySelection(edl.selectedIds); return; }
       if (mod && key === 'd') {
         e.preventDefault();
@@ -294,11 +323,10 @@ export const ShenJianWorkbenchParity = () => {
       if (mod && key === 'e') { e.preventDefault(); goExport(); return; }
       if (mod && key === 'b' && e.shiftKey) {
         e.preventDefault();
-        let n = 0;
-        for (const c of (data.timeline?.clips ?? [])) {
-          if (curT > c.timelineStart && curT < c.timelineStart + clipSpan(c) && edl.splitAtPlayhead(curT, c.id)) n += 1;
-        }
-        toast.success(`已批量分割 ${n} 个片段`);
+        // 批量分割走一次 commit：循环里逐个 splitClip 会在 clipsRef 未刷新时丢刀
+        const n = edl.splitManyAt(curT);
+        if (n > 0) toast.success(`已批量分割 ${n} 个片段`);
+        else toast.info('播放头下没有可分割片段');
         return;
       }
       if (mod && key === 'b') { e.preventDefault(); split(); return; }
@@ -364,23 +392,72 @@ export const ShenJianWorkbenchParity = () => {
       if (key === 'v') { e.preventDefault(); if (selected) edl.setClipEnabled(selected.id, selected.enabled === false); return; }
       if (key === 'p') { e.preventDefault(); setSnapOn((v) => !v); toast.info(snapOn ? '主轨磁吸已关闭' : '主轨磁吸已开启', { duration: 1200 }); return; }
       if (key === '~') { e.preventDefault(); if (edl.selectedIds.length) { edl.bindSelection(); toast.success('已绑定'); } else { edl.unbindSelection(); toast.info('已解绑'); } return; }
-      if (e.altKey && key === 'x') { e.preventDefault(); edl.setSelection([]); return; }
-      if (key === 'i') { e.preventDefault(); setInT(curT); toast.success(`入点 ${curT.toFixed(2)}s`); return; }
-      if (key === 'o') { e.preventDefault(); setOutT(curT); toast.success(`出点 ${curT.toFixed(2)}s`); return; }
+      if (e.altKey && key === 'x') {
+        e.preventDefault();
+        edl.setSelection([]);
+        // 清除区域自动关循环（G8）：I/O 区域与循环开关联动
+        setWorkIn(null);
+        setWorkOut(null);
+        setLoopEnabled(false);
+        return;
+      }
+      if (key === 'i') {
+        e.preventDefault();
+        const t = quantizeToFrame(curT, edl.fps);
+        setWorkIn(t);
+        // G8：区域成型（两侧都有且出点在入点之后）时自动开循环
+        if (workOut != null && workOut > t) setLoopEnabled(true);
+        toast.success(`入点 ${t.toFixed(2)}s`);
+        return;
+      }
+      if (key === 'o') {
+        e.preventDefault();
+        const t = quantizeToFrame(curT, edl.fps);
+        setWorkOut(t);
+        if (workIn != null && t > workIn) setLoopEnabled(true);
+        toast.success(`出点 ${t.toFixed(2)}s`);
+        return;
+      }
       if (e.shiftKey && key === 'x') {
         e.preventDefault();
-        const a = Math.min(inT, outT);
-        const b = Math.max(inT, outT);
+        const a = Math.min(workIn ?? 0, workOut ?? 0);
+        const b = Math.max(workIn ?? 0, workOut ?? 0);
         if (b <= a) { toast.info('先按 I / O 设置入点与出点'); return; }
         const ids = (data.timeline?.clips ?? []).filter((c) => c.timelineStart < b && c.timelineStart + clipSpan(c) > a).map((c) => c.id);
         edl.setSelection(ids);
         toast.success(`已选 ${ids.length} 个片段`);
         return;
       }
+      // G10：选中含音频的片段按 G 调增益（⌘G 组合 / ⌥G 复合已在前面分流）
+      if (key === 'g') {
+        e.preventDefault();
+        const targets = (data.timeline?.clips ?? []).filter(
+          (c) => edl.selectedIds.includes(c.id) && (c.track === 'audio' || c.track === 'video') && c.sourceUrl && c.enabled !== false,
+        );
+        if (!targets.length) { toast.info('选中含音频的片段后按 G 调整增益'); return; }
+        setGainTargets(targets);
+        return;
+      }
+      // G8：Shift+L 切换循环播放（单按 L = 走带加速，不冲突）
+      if (e.shiftKey && key === 'l') {
+        e.preventDefault();
+        setLoopEnabled(!loopEnabled);
+        toast.info(loopEnabled ? '循环播放已关闭' : '循环播放已开启', { duration: 1200 });
+        return;
+      }
       if (key === 'j' || key === 'k' || key === 'l') {
         e.preventDefault();
-        if (key === 'k') setPlaying(false);
-        else { setPlayDir(key === 'j' ? -1 : 1); setPlaying(true); }
+        if (key === 'k') {
+          setPlaying(false); // 停止回 1×（context 在停止时统一复位档位）
+        } else {
+          const dir: 1 | -1 = key === 'j' ? -1 : 1;
+          // G7：同方向再按一次档位内加速（1→2→4），换方向回 1× 起步（OpenMotion shuttle 同语义）
+          const continuing = playing && playDir === dir;
+          const at = continuing ? SHUTTLE_SPEEDS.indexOf(playSpeed) : -1;
+          setPlaySpeed(at >= 0 ? SHUTTLE_SPEEDS[Math.min(at + 1, SHUTTLE_SPEEDS.length - 1)] : 1);
+          setPlayDir(dir);
+          setPlaying(true);
+        }
         return;
       }
       if ((e.shiftKey && key === 'z')) {
@@ -392,7 +469,7 @@ export const ShenJianWorkbenchParity = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [curT, data.timeline?.clips, edl, inT, outT, playing, selected, setCurT, setPlayDir, setPlaying, snapOn, total, exportOpen, exportBusy, shortcutsOpen, parityOpen, coverOpen, importOpen]);
+  }, [curT, data.timeline?.clips, edl, workIn, workOut, loopEnabled, playDir, playSpeed, playing, selected, setCurT, setPlayDir, setPlaySpeed, setPlaying, setLoopEnabled, setWorkIn, setWorkOut, snapOn, total, exportOpen, exportBusy, shortcutsOpen, parityOpen, coverOpen, importOpen, compactPanel]);
 
   const showTip = (e: React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest('[data-tip]') as HTMLElement | null;
@@ -491,6 +568,8 @@ export const ShenJianWorkbenchParity = () => {
             }}><LayoutGrid /><span>素材池</span></button>
             <button type="button" className="parity-ghost" data-tip="显示 72 / 300 / 430 / 360 四区尺寸" onClick={() => setAnnotate((v) => !v)}><LayoutGrid /><span>布局对照</span></button>
             <button type="button" className="parity-ghost" data-tip="HTML 动画：写网页，直接渲染成 MP4" onClick={() => navigate('/motion')}><Code2 /><span>HTML 动画</span></button>
+            <button type="button" className="parity-ghost" data-tip="图层：轨道树、显隐与锁定" onClick={() => setCompactPanel((v) => (v === 'layers' ? null : 'layers'))}><Layers /><span>图层</span></button>
+            <button type="button" className="parity-ghost" data-tip="版本历史：修订列表、恢复与固定" onClick={() => setCompactPanel((v) => (v === 'history' ? null : 'history'))}><History /><span>历史</span></button>
             <button type="button" className="parity-ghost" data-tip="查看同构版已落地 / 待接入清单" onClick={() => setParityOpen(true)}><Clapperboard /><span>差异清单</span></button>
             <button type="button" className="parity-ghost" data-tip="查看全部剪映快捷键" onClick={() => setShortcutsOpen(true)}><Keyboard /><span>快捷键</span></button>
             <button type="button" className="parity-ghost desktop-only" data-tip="封面编辑：模板、标题、字号、颜色" onClick={() => setCoverOpen(true)}><ImageIcon /><span>封面</span></button>
@@ -516,7 +595,7 @@ export const ShenJianWorkbenchParity = () => {
         <div className="compact-drawer-backdrop" onClick={() => setCompactPanel(null)}>
           <aside className="compact-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="compact-drawer-head">
-              <b>{compactPanel === 'library' ? '素材库' : compactPanel === 'pool' ? '素材池' : '属性检查器'}</b>
+              <b>{compactPanel === 'library' ? '素材库' : compactPanel === 'pool' ? '素材池' : compactPanel === 'history' ? '版本历史' : compactPanel === 'layers' ? '图层' : '属性检查器'}</b>
               <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setCompactPanel(null)}><X /></button>
             </div>
             <div className="compact-drawer-body">
@@ -524,6 +603,10 @@ export const ShenJianWorkbenchParity = () => {
                 ? <ParityLibrary onImport={() => setImportOpen(true)} />
                 : compactPanel === 'pool'
                   ? <ShenJianShotPool onBack={() => setCompactPanel('inspector')} />
+                  : compactPanel === 'history'
+                    ? <HistoryPanel />
+                    : compactPanel === 'layers'
+                      ? <LayersPanel />
                   : <ShenJianInspectorParity grade={grade} setGrade={setGrade} />}
             </div>
           </aside>
@@ -641,6 +724,45 @@ export const ShenJianWorkbenchParity = () => {
                     <option value="sequence">全部串行</option>
                   </select>
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  导出格式
+                  <select
+                    value={exportFormat}
+                    disabled={exportBusy}
+                    onChange={(e) => setExportFormat(e.target.value as 'mp4' | 'webm' | 'gif')}
+                  >
+                    <option value="mp4">MP4（H.264，通用）</option>
+                    <option value="webm">WebM（VP9，体积更小）</option>
+                    <option value="gif">GIF（动图，循环播放）</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  画质
+                  <select
+                    value={exportQuality}
+                    disabled={exportBusy}
+                    onChange={(e) => setExportQuality(e.target.value as 'draft' | 'standard' | 'high')}
+                  >
+                    <option value="draft">草稿（最快，文件最小）</option>
+                    <option value="standard">标准（推荐）</option>
+                    <option value="high">高（细节最好）</option>
+                  </select>
+                </label>
+                {exportFormat === 'gif' ? (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    循环次数
+                    <input
+                      type="number"
+                      min={0}
+                      max={65535}
+                      value={exportLoopCount}
+                      disabled={exportBusy}
+                      onChange={(e) => setExportLoopCount(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                      style={{ width: 90 }}
+                    />
+                    <span style={{ color: '#9aa3af' }}>0 = 无限循环 · GIF 上限 30fps / 720p</span>
+                  </label>
+                ) : null}
               </div>
               {exportAsset ? (
                 <div
@@ -665,7 +787,7 @@ export const ShenJianWorkbenchParity = () => {
                       onClick={() =>
                         downloadDeliverable(
                           exportAsset.fileUrl as string,
-                          projectExportFileName(data.project?.title, 'mp4', '成片'),
+                          projectExportFileName(data.project?.title, exportFormat, '成片'),
                         ).catch(() => toast.error('下载失败'))
                       }
                     >
@@ -737,6 +859,13 @@ export const ShenJianWorkbenchParity = () => {
           </div>
         </div>
       ) : null}
+
+      {gainTargets ? (
+        <ShenJianAudioGainDialog targets={gainTargets} onClose={() => setGainTargets(null)} />
+      ) : null}
+
+      {/* G19 选区 AI 条：单选片段时锚定片段上方浮出 */}
+      <TimelineAiBar />
 
       <StudioFloatingChat />
     </div>
