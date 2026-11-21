@@ -109,7 +109,7 @@ pub fn run() {
 
             #[allow(unused_mut)]
             let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("一幕 · YIMU AI 短剧创作平台")
+                .title("一幕短剧")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 640.0)
                 .center();

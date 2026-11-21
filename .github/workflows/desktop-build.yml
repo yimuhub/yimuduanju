@@ -39,6 +39,15 @@ jobs:
             label: linux-x64
 
     runs-on: ${{ matrix.os }}
+    env:
+      # 配了 Apple 开发者证书的 secrets 时，macOS 走 Developer ID 签名 + 公证（用户双击即开）；
+      # 没配则 scripts/macos-bundle.sh 退化为 ad-hoc 签名 —— 封条完整，不会出现「已损坏」。
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -117,31 +126,45 @@ jobs:
             console.log("自包含校验通过：" + must.join(", "));
           '
 
+      - name: 导入 macOS 签名证书（配置了 secrets 才执行）
+        if: startsWith(matrix.os, 'macos') && env.APPLE_CERTIFICATE != ''
+        shell: bash
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/yimu-signing.keychain-db"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p yimu-ci "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p yimu-ci "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k yimu-ci "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning
+
       - name: 打包桌面客户端
         shell: bash
-        working-directory: desktop
         run: |
           # Linux 只出 deb：AppImage/rpm 在 GitHub runner 上依赖 FUSE/rpmbuild，
           # 容易在“打包”阶段整体失败；deb 是本项目 Linux 的正式安装包。
-          # macOS 只出 .app，DMG 由下一步 hdiutil 生成，绕开 Tauri 的 Finder AppleEvent 超时。
+          #
+          # productName 是中文「一幕短剧」（macOS/Windows 的显示名），但 deb 的包名
+          # 必须是 ASCII 小写，否则 dpkg 直接拒绝。因此 Linux 用 --config 覆盖成
+          # yimu-desktop，只影响包名，不影响三个平台的显示名。
+          #
+          # macOS 走 scripts/macos-bundle.sh：出 .app → 签名（有证书用 Developer ID，
+          # 没有则 ad-hoc）→ 校验封条 → 生成 DMG → 再校验 DMG 内的封条。
+          # 绕开 Tauri 自带 DMG 的 Finder AppleEvent 超时。
           if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
-            npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles deb
+            (cd desktop && npx --yes @tauri-apps/cli@2 build \
+              --target ${{ matrix.target }} --bundles deb \
+              --config '{"productName":"yimu-desktop"}')
           elif [ "${{ matrix.os }}" = "macos-15" ] || [ "${{ matrix.os }}" = "macos-15-intel" ]; then
-            npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles app
+            bash scripts/macos-bundle.sh ${{ matrix.target }}
           else
-            npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }}
+            (cd desktop && npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }})
           fi
-
-      - name: 生成 macOS DMG（hdiutil，绕开 Finder AppleEvent）
-        if: startsWith(matrix.os, 'macos')
-        shell: bash
-        run: |
-          VER=$(node -p "require('./package.json').version")
-          APP="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/YIMU.app"
-          OUT="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
-          mkdir -p "$OUT"
-          hdiutil create -ov -srcfolder "$APP" -format UDZO "$OUT/YIMU_${VER}_${{ matrix.label }}.dmg"
-          hdiutil verify "$OUT/YIMU_${VER}_${{ matrix.label }}.dmg"
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
@@ -176,11 +199,15 @@ jobs:
           files: out/*
           generate_release_notes: true
           body: |
-            一幕 YIMU ${{ github.ref_name }} —— 全量自包含安装包
+            一幕短剧（YIMU）${{ github.ref_name }} —— 全量自包含安装包
 
             每个安装包内部已携带 Node 运行时、PostgreSQL 16 与 ffmpeg，
             安装后双击即可使用，无需另装任何环境。数据保存在本机用户目录
             （`~/.yimu-desktop`，Windows 为 `%USERPROFILE%\.yimu-desktop`）。
+
+            macOS 包名为 `YIMU_*.dmg`，安装后应用显示名是「一幕短剧」。
+            若首次打开被系统拦下，右键点图标选「打开」，或执行
+            `xattr -cr "/Applications/一幕短剧.app"` 即可。
 
             也可以只用 Docker：
             ```

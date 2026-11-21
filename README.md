@@ -30,7 +30,7 @@
 
 | 形态 | 命令 / 产物 | 需要预装什么 |
 |---|---|---|
-| **桌面客户端**（推荐给创作者） | `YIMU_3.7.3_*.dmg` / `*-setup.exe` / `*.AppImage` | **什么都不用装**（包内自带 Node + PostgreSQL + ffmpeg） |
+| **桌面客户端**（推荐给创作者） | `YIMU_*.dmg` / `*-setup.exe` / `*.deb`（macOS 安装后应用显示名为「一幕短剧」） | **什么都不用装**（包内自带 Node + PostgreSQL + ffmpeg） |
 | **Docker 单容器**（自带数据库） | `docker run -d -p 127.0.0.1:5173:5173 -v yimu-data:/data yimuhub/yimuduanju:3.7.3` | 只需要 Docker |
 | **Docker 三容器**（app + PG + Redis） | `docker compose up -d --build` | Docker + Compose |
 | **源码安装** | `bash scripts/install-macos.sh` / `install-linux.sh` / `install-windows.bat` | Node 22 + PostgreSQL 16 |

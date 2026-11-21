@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "YIMU",
-  "version": "3.44.0",
+  "productName": "一幕短剧",
+  "mainBinaryName": "yimu-desktop",
+  "version": "3.45.1",
   "identifier": "com.yimu.desktop",
   "build": {
     "frontendDist": "../../desktop/splash",
@@ -33,11 +34,13 @@
       "../../build/desktop-app": "app"
     },
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     },
     "windows": {
       "wix": {
-        "language": "zh-CN"
+        "language": "zh-CN",
+        "upgradeCode": "06533B24-CBDC-4A73-9E79-E6305F56F7A1"
       },
       "nsis": {
         "languages": [

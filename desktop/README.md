@@ -1,8 +1,13 @@
-# YIMU 桌面客户端（Tauri 2 · v1 全量自包含）
+# 一幕短剧 桌面客户端（YIMU · Tauri 2 · v1 全量自包含）
 
 一幕·YIMU AI 短剧创作平台的桌面客户端。**开包即用**：安装包里自带 Node 运行时、
 PostgreSQL 16 二进制与 ffmpeg，用户不需要装 Node / 数据库 / Redis，也不需要跑
 `./scripts/start.sh`。
+
+显示名与安装包名分工：`tauri.conf.json` 的 `productName` 是中文「一幕短剧」
+（写进 macOS `.app` 名与 `CFBundleDisplayName`、Windows 安装目录与快捷方式）；
+`mainBinaryName` 固定为 `yimu-desktop`（可执行文件名、deb 包名保持 ASCII）；
+DMG 文件名仍是 `YIMU_<版本>_macos-<arch>.dmg`。
 
 ## 目录结构
 
@@ -28,10 +33,13 @@ desktop/
 # 1. 生成运行时目录（内嵌 Node + PostgreSQL + ffmpeg + 生产依赖）
 npm run desktop:pack
 
-# 2. 打安装包（需要 Rust 工具链）
+# 2. macOS 出 .app + .dmg（签名 → 校验封条 → 打包 → 再校验封条）
+npm run desktop:bundle:mac
+
+# 3. 三平台的完整安装包（需要 Rust 工具链）
 npm run desktop:build
 
-# 3. 只验证运行时（不启壳，直接看日志/接口）
+# 4. 只验证运行时（不启壳，直接看日志/接口）
 npm run desktop:run
 ```
 
@@ -59,8 +67,14 @@ npm run desktop:run
 
 ## 代码签名（发布前必做）
 
-- macOS：Developer ID Application 证书 + `codesign` + `notarytool` 公证，
-  配置入口 `bundle.macOS.signingIdentity`；当前构建是未签名包，首次打开需右键「打开」。
+- macOS 未签名时 Gatekeeper 会判定「已损坏」（`Info.plist=not bound`、
+  `Sealed Resources=none`，设置里连「仍要打开」都没有）。因此
+  `bundle.macOS.signingIdentity` 固定写 `-`，保证任何一次 `tauri build` 都产出
+  **封条完整**的 app；`scripts/macos-bundle.sh` 还会用 `codesign --verify --deep
+  --strict` 在打包前后各校验一次，封条坏了直接构建失败。
+- 正式发布：配好 `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` /
+  `APPLE_TEAM_ID` 后，同一脚本自动升级为 Developer ID 签名 + 公证，用户双击即开。
+  CI 里对应 secrets：`APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD` 等。
 - Windows：EV 代码签名证书（否则 SmartScreen 拦截）。
 - Linux：不强制签名。
 

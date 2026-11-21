@@ -1,6 +1,6 @@
 {
   "name": "yimuduanju",
-  "version": "3.45.0",
+  "version": "3.45.1",
   "description": "一幕·YIMU AI 短剧创作平台 —— 从一句话创意到成片的 AI 短剧 / AI 漫剧全流程创作平台",
   "private": true,
   "license": "BUSL-1.1",
@@ -24,6 +24,7 @@
     "build:client": "vite build --config vite.config.ts",
     "desktop:dev": "cd desktop && npx @tauri-apps/cli dev",
     "desktop:build": "node scripts/desktop-pack.js && cd desktop && npx @tauri-apps/cli build",
+    "desktop:bundle:mac": "bash scripts/macos-bundle.sh",
     "start": "NODE_ENV=production node main.js",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
