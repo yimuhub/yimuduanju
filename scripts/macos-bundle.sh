@@ -20,6 +20,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# CI 里 secrets 缺失时 env 是**空字符串而不是未设置**，Tauri 会当成“要用的签名身份”
+# 直接调 codesign --sign "" → no identity found → 整个 bundle 失败（v3.45.1 CI 实测）。
+# 空值一律 unset，让它走 tauri.conf.json 里的 `-`（ad-hoc）。
+for var in APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+           APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+  eval "value=\${${var}:-}"
+  if [ -z "$value" ]; then
+    unset "$var"
+  fi
+done
+
 TARGET="${1:-}"
 LABEL="${TARGET:-$(uname -m)}"
 LABEL="${LABEL/aarch64-apple-darwin/macos-arm64}"
