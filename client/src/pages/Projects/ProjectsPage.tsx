@@ -11,6 +11,7 @@ import {
   Sparkles,
   ArrowUpDown,
   Clapperboard,
+  Code2,
   Workflow,
   Trash2,
   ArrowRight,
@@ -251,13 +252,22 @@ const ProjectsPage = () => {
         title="我的项目"
         description={`共 ${total} 个项目，管理你的所有短剧创作`}
         actions={
-          <button
-            onClick={() => navigate('/create')}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" />
-            新建项目
-          </button>
+          <>
+            <button
+              onClick={() => navigate('/motion')}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#2ee6cf55] bg-[#2ee6cf14] px-3.5 py-2.5 text-sm font-medium text-[#0f9f8f] transition-colors hover:bg-[#2ee6cf26]"
+            >
+              <Code2 className="h-4 w-4" />
+              HTML 动画
+            </button>
+            <button
+              onClick={() => navigate('/create')}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4" />
+              新建项目
+            </button>
+          </>
         }
       />
 

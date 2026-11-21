@@ -27,6 +27,7 @@ import { SkillsModule } from './modules/skills/skills.module';
 import { TimelineModule } from './modules/timeline/timeline.module';
 import { SystemLogsModule } from './modules/system-logs/system-logs.module';
 import { EpisodesModule } from './modules/episodes/episodes.module';
+import { MotionModule } from './modules/motion/motion.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { EpisodesModule } from './modules/episodes/episodes.module';
     SystemLogsModule,
     // 长篇多集（migration 0024）：集 CRUD/按集查询/跨集账本/按集门；旧项目（无集）不触碰
     EpisodesModule,
+    MotionModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

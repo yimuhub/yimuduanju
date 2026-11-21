@@ -1067,3 +1067,13 @@ export const agentEditOps = pgTable("agent_edit_ops", {
   }).onDelete("cascade"),
 ]);
 export const agentEditOpsTable = agentEditOps;
+
+/* ================= HTML 动画工程（OpenMotion 式） ================= */
+
+export const htmlMotionProjects = pgTable("html_motion_projects", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: varchar("title", { length: 255 }).notNull(),
+  document: jsonb("document").notNull(),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});

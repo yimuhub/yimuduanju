@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Clapperboard,
+  Code2,
   Download,
   Eye,
   FolderOpen,
@@ -404,6 +405,7 @@ export const ShenJianWorkbenchParity = () => {
             <ShenJianVariantSwitch />
             <button type="button" className="parity-ghost desktop-only" data-tip="镜头池：点镜头自动起播，可删除镜头" onClick={() => setRightTab((v) => (v === 'pool' ? 'inspector' : 'pool'))}><LayoutGrid /><span>镜头池</span></button>
             <button type="button" className="parity-ghost" data-tip="显示 72 / 300 / 430 / 360 四区尺寸" onClick={() => setAnnotate((v) => !v)}><LayoutGrid /><span>布局对照</span></button>
+            <button type="button" className="parity-ghost" data-tip="HTML 动画：写网页，直接渲染成 MP4" onClick={() => navigate('/motion')}><Code2 /><span>HTML 动画</span></button>
             <button type="button" className="parity-ghost" data-tip="查看同构版已落地 / 待接入清单" onClick={() => setParityOpen(true)}><Clapperboard /><span>差异清单</span></button>
             <button type="button" className="parity-ghost" data-tip="查看全部剪映快捷键" onClick={() => setShortcutsOpen(true)}><Keyboard /><span>快捷键</span></button>
             <button type="button" className="parity-ghost desktop-only" data-tip="封面编辑：模板、标题、字号、颜色" onClick={() => setCoverOpen(true)}><ImageIcon /><span>封面</span></button>

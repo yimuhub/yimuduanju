@@ -28,6 +28,7 @@ import StudioLayout from './components/studio/StudioLayout';
 import { StudioShell } from './components/studio/StudioShell';
 import StudioHomePage from './pages/Studio/StudioHomePage';
 import StudioProjectPage from './pages/Studio/StudioProjectPage';
+import HtmlMotionStudio from './pages/HtmlMotionStudio';
 import StudioSectionPage from './pages/Studio/StudioSectionPage';
 import { CanvasModePage } from './pages/CanvasMode/CanvasModePage';
 // P1 性能：画布（含 three/xyflow 重依赖）懒加载，首屏不再背全量包
@@ -71,6 +72,8 @@ const RoutesComponent = () => {
   const isStudio = mode === 'studio';
   return (
     <Routes>
+      <Route path="motion" element={<HtmlMotionStudio />} />
+      <Route path="motion/:id" element={<HtmlMotionStudio />} />
       {isStudio ? (
         <>
           {/* 画布沉浸全屏：独立于 Studio 外壳 */}
