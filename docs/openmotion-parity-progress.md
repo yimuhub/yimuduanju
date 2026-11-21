@@ -110,3 +110,14 @@
 - 实测：HTML 23 项交互全通过；视频 29 项交互全通过；六档视口 0 横向溢出；独立项目 typecheck/185 单测/build 全通过。
 - 已同步：本项目 v3.43.0（commit 9d21d83，tag 已推送）；经典版、镜头池与 7 页签检查器未改。
 - 待完成：视频关键帧时间线内联编辑、片段 hover 缩略预览（下一轮增强，不冒充已实现）。
+
+---
+
+## 6. 2026-11-21 第三轮：原项目同步（视频同构版 Dockview）
+
+- `client/src/components/studio/ParityDockShell.tsx` / `ParityDockPanels.tsx` / `ParityEditorContext.tsx`：从独立项目同步 Dockview 壳；面板节点改为项目内 `ShenJianShotPool`，业务数据仍走 `StudioShell` + `EdlContext`。
+- `ShenJianWorkbenchParity.tsx`：改为 Dockview 布局，保留经典版、镜头池、检查器、导入/封面/导出、快捷键与全部既有入口。
+- 设计令牌与品牌红：新增 `motion-tokens.css`，同步 `shenjian-parity.css` / `shenjian-proto.css`；青色强调改一幕红，字号统一 10/11px。
+- 依赖：新增 `dockview-react@8.3.1`；原项目未引入 fontsource（构建时字体路径无法解析），使用系统字体回落。
+- 验证：`npm run type:check` 通过；34 套 / 445 项单测通过；`npm run build:client` 通过。
+- 未同步：HTML 动画工作室仍是固定四栏（独立项目已 Dockview 化）；需单独迁移 `MotionDockShell`，避免影响本项目的 7 页签工作台。

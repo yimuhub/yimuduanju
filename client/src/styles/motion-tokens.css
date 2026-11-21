@@ -1,0 +1,195 @@
+/**
+ * 一幕编辑器设计令牌（OpenMotion 对齐）
+ * 结构与交互 1:1；主色保留一幕品牌红，不直接搬用 OpenMotion 荧光绿。
+ * 只在编辑器作用域下生效，不影响项目对话、创作向导等既有页面。
+ */
+.sj2,
+.hm-shell,
+.dv-theme {
+  /* 字体：拉丁 Albert Sans，中文回落苹方 / 微软雅黑；时间码 IBM Plex Mono */
+  --m-font-sans: "Albert Sans Variable", "Albert Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --m-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* 字号阶梯：与 OpenMotion 对齐，禁止再出现 9px / 10.5px 正文 */
+  --m-text-xs: 11px;
+  --m-text-sm: 12px;
+  --m-text-md: 13px;
+  --m-text-body: 14px;
+  --m-text-heading: 16px;
+  --m-text-title: 20px;
+
+  /* 4 的倍数间距 */
+  --m-space-2: 2px;
+  --m-space-4: 4px;
+  --m-space-6: 6px;
+  --m-space-8: 8px;
+  --m-space-10: 10px;
+  --m-space-12: 12px;
+  --m-space-16: 16px;
+  --m-space-20: 20px;
+  --m-space-24: 24px;
+  --m-space-32: 32px;
+  --m-space-40: 40px;
+  --m-space-48: 48px;
+
+  /* 圆角 / 控件 / 图标 */
+  --m-radius-xs: 2px;
+  --m-radius-sm: 4px;
+  --m-radius-md: 6px;
+  --m-radius-lg: 10px;
+  --m-radius-xl: 12px;
+  --m-control-sm: 28px;
+  --m-control: 32px;
+  --m-icon: 16px;
+
+  /* 动效：控件最快，面板次之，弹层稍慢 */
+  --m-duration-control: 100ms;
+  --m-duration-fast: 150ms;
+  --m-duration-panel: 180ms;
+  --m-duration-normal: 200ms;
+  --m-duration-slow: 300ms;
+  --m-ease-out: cubic-bezier(0, 0, 0, 1);
+  --m-ease-standard: cubic-bezier(0.33, 0, 0.67, 1);
+
+  /* 深色语义色：面板比底色亮、输入比面板暗，层次来自明度而不是粗边框 */
+  --m-bg: #191a1b;
+  --m-inset: #111213;
+  --m-panel: #202123;
+  --m-raised: #292b2c;
+  --m-hover: #36383a;
+  --m-border: #484b4d;
+  --m-border-strong: #737878;
+  --m-text: #e6e8e4;
+  --m-strong: #f7f8f5;
+  --m-muted: #c0c4bd;
+  --m-dim: #a9afa7;
+  --m-placeholder: #a0a69f;
+
+  /* 品牌红：所有选中、聚焦、进度、播放头统一读这一组，不再散落青色 */
+  --m-accent: #ff403a;
+  --m-accent-hover: #ff6a65;
+  --m-accent-soft: #3b1517;
+  --m-accent-ink: #ff8b87;
+  --m-focus: #ff8b87;
+
+  /* 片段语义色：视频蓝、音频紫、字幕金，选中由描边而不是换底色表达 */
+  --m-clip-video: #234a72;
+  --m-clip-audio: #30283d;
+  --m-clip-audio-ink: #bda5e3;
+  --m-clip-text: #68501c;
+  --m-clip-image: #255b45;
+  --m-on-clip: #fafafa;
+
+  --m-success: #69d99b;
+  --m-danger: #ff9898;
+  --m-warning: #ffc740;
+  --m-canvas: #0a0b0c;
+  --m-overlay: rgb(6 7 8 / 68%);
+
+  --m-shadow-sm: 0 1px 2px rgb(0 0 0 / 30%), 0 1px 3px rgb(0 0 0 / 20%);
+  --m-shadow-md: 0 6px 24px rgb(0 0 0 / 40%), 0 2px 6px rgb(0 0 0 / 25%);
+  --m-shadow-lg: 0 24px 60px rgb(0 0 0 / 60%), 0 8px 16px rgb(0 0 0 / 30%);
+
+  /* 时间线尺寸 */
+  --m-timeline-label: 232px;
+  --m-timeline-row: 48px;
+  --m-timeline-main-row: 64px;
+  --m-timeline-ruler: 24px;
+  --m-timeline-handle: 18px;
+
+  /* 旧变量桥接：现有样式继续读 --*，逐步迁移而不是一次全改 */
+  --bg: var(--m-bg);
+  --bg-inset: var(--m-inset);
+  --bg-rail: var(--m-inset);
+  --bg-panel: var(--m-panel);
+  --bg-float: var(--m-raised);
+  --bg-hover: var(--m-hover);
+  --line: color-mix(in srgb, var(--m-border) 62%, transparent);
+  --line-strong: var(--m-border);
+  --line-inset: color-mix(in srgb, #000 50%, transparent);
+  --acc: var(--m-accent);
+  --acc-soft: var(--m-accent-soft);
+  --dim: var(--m-dim);
+
+  font-family: var(--m-font-sans);
+  color: var(--m-text);
+}
+
+/* 浅色主题：编辑器与外围页面共用同一组语义值 */
+.sj2[data-theme="light"],
+.hm-shell[data-theme="light"] {
+  color-scheme: light;
+  --m-bg: #ffffff;
+  --m-inset: #ededed;
+  --m-panel: #fafafa;
+  --m-raised: #ffffff;
+  --m-hover: #ededed;
+  --m-border: #dbdbdb;
+  --m-border-strong: #bdbdbd;
+  --m-text: #494949;
+  --m-strong: #202020;
+  --m-muted: #5c5c5c;
+  --m-dim: #696969;
+  --m-accent: #ff403a;
+  --m-accent-hover: #d92d28;
+  --m-accent-soft: #ffeceb;
+  --m-accent-ink: #c52b25;
+  --m-focus: #c52b25;
+  --m-clip-video: #e8efff;
+  --m-clip-audio: #eee8f7;
+  --m-clip-text: #fff0d5;
+  --m-clip-image: #e7f6ef;
+  --m-on-clip: #353535;
+  --m-canvas: #ededed;
+  --m-overlay: rgb(32 32 32 / 28%);
+  --m-shadow-sm: 0 1px 2px rgb(28 27 26 / 5%), 0 1px 3px rgb(28 27 26 / 4%);
+  --m-shadow-md: 0 6px 24px rgb(28 27 26 / 7%), 0 2px 6px rgb(28 27 26 / 4%);
+  --m-shadow-lg: 0 24px 60px rgb(28 27 26 / 16%), 0 8px 16px rgb(28 27 26 / 7%);
+  --bg: var(--m-bg);
+  --bg-inset: var(--m-inset);
+  --bg-rail: var(--m-inset);
+  --bg-panel: var(--m-panel);
+  --bg-float: var(--m-raised);
+  --bg-hover: var(--m-hover);
+  --line: color-mix(in srgb, var(--m-border) 75%, transparent);
+  --line-strong: var(--m-border);
+  --acc: var(--m-accent);
+  --acc-soft: var(--m-accent-soft);
+  --dim: var(--m-dim);
+}
+
+/* 时间码、帧号、缩放百分比一律等宽 + 等宽数字，数字跳动不推挤布局 */
+.mono,
+.timecode,
+.hm-time,
+.tl-zoom,
+.parity-save-line em {
+  font-family: var(--m-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 统一命中区：视觉 16–20px，可点区域至少 28px；滑杆轨道保持细线 */
+.editor-hit,
+.parity-icon,
+.parity-ghost,
+.parity-quality,
+.parity-snap,
+.hm-icon,
+.hm-btn,
+.tl-tool {
+  min-height: var(--m-control-sm);
+  min-width: var(--m-control-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sj2 *,
+  .sj2 *::before,
+  .sj2 *::after,
+  .hm-shell *,
+  .hm-shell *::before,
+  .hm-shell *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

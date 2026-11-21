@@ -1,6 +1,6 @@
 {
   "name": "yimuduanju",
-  "version": "3.43.1",
+  "version": "3.44.0",
   "description": "一幕·YIMU AI 短剧创作平台 —— 从一句话创意到成片的 AI 短剧 / AI 漫剧全流程创作平台",
   "private": true,
   "license": "BUSL-1.1",
@@ -63,6 +63,7 @@
     "cache-manager": "^6.4.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "dockview-react": "^8.3.1",
     "dotenv": "^17.2.2",
     "drizzle-orm": "0.44.6",
     "embedded-postgres": "16.14.0-beta.17",

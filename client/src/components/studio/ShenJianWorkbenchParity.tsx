@@ -17,6 +17,8 @@ import {
   LayoutGrid,
   Magnet,
   Maximize2,
+  PanelLeftClose,
+  PanelRightClose,
   Redo2,
   SlidersHorizontal,
   Undo2,
@@ -39,6 +41,9 @@ import { StudioFloatingChat } from './StudioFloatingChat';
 import { JIANYING_SHORTCUT_GROUPS } from '@client/src/lib/jianying-shortcuts';
 import { clipSpan } from './model';
 import { useParityLayout } from './useParityLayout';
+import { ParityDockShell } from './ParityDockShell';
+import { ParityEditorProvider, type ParityEditorUI } from './ParityEditorContext';
+import type { DockviewApi } from 'dockview-react';
 import { ShenJianVariantSwitch } from './ShenJianVariantSwitch';
 
 type Ratio = '9:16' | '16:9' | '1:1' | '4:3';
@@ -62,6 +67,8 @@ export const ShenJianWorkbenchParity = () => {
   const navigate = useNavigate();
   const pane = useParityLayout();
   const stageShellRef = useRef<HTMLDivElement | null>(null);
+  const dockApiRef = useRef<DockviewApi | null>(null);
+  const [sideCollapsed, setSideCollapsed] = useState({ left: false, right: false });
 
   const [ratio, setRatio] = useState<Ratio>('9:16');
   useEffect(() => {
@@ -113,8 +120,38 @@ export const ShenJianWorkbenchParity = () => {
     return Math.max(1, ...ends);
   }, [data.timeline?.clips, data.totalSec]);
   useEffect(() => {
-    if (edl.selectedIds.length) setRightTab('inspector');
+    if (edl.selectedIds.length) {
+      setRightTab('inspector');
+      dockApiRef.current?.getPanel('inspector')?.api.setActive();
+    }
   }, [edl.selectedIds]);
+
+  const focusPanel = (id: string) => {
+    const api = dockApiRef.current;
+    const panel = api?.getPanel(id);
+    if (panel) panel.api.setActive();
+  };
+
+  /**
+   * 侧栏折叠：先收宽度，再由 Dockview 的分隔条约束兜底。
+   * 不删除面板、不卸载内容，展开后仍然保留滚动位置与素材筛选。
+   */
+  const toggleSide = (side: 'left' | 'right') => {
+    const id = side === 'left' ? 'library' : 'inspector';
+    const api = dockApiRef.current;
+    const group = api?.getPanel(id)?.group;
+    const next = !sideCollapsed[side];
+    if (group) {
+      try {
+        // Dockview 的组宽度约束允许 48px 折叠轨；右栏展开回到 430。
+        (group.api as unknown as { setConstraints: (v: { minimumWidth: number }) => void }).setConstraints({ minimumWidth: next ? 48 : 220 });
+        group.api.setSize({ width: next ? 48 : side === 'left' ? 372 : 430 });
+      } catch {
+        // 组尚未完成布局时忽略一次，下一次点击即可生效。
+      }
+    }
+    setSideCollapsed((prev) => ({ ...prev, [side]: next }));
+  };
 
   const selected = useMemo(() => {
     const ids = edl.selectedIds;
@@ -321,7 +358,7 @@ export const ShenJianWorkbenchParity = () => {
       if (key === 'f') {
         e.preventDefault();
         if (document.fullscreenElement) void document.exitFullscreen();
-        else void document.documentElement.requestFullscreen?.();
+        else void stageShellRef.current?.requestFullscreen?.();
         return;
       }
       if (key === 'v') { e.preventDefault(); if (selected) edl.setClipEnabled(selected.id, selected.enabled === false); return; }
@@ -392,7 +429,26 @@ export const ShenJianWorkbenchParity = () => {
     setTipPos({ left, top, transform });
   }, [tip]);
 
+  const editorUI: ParityEditorUI = {
+    ratio,
+    safe,
+    grade,
+    snapOn,
+    rightTab,
+    openImport: () => setImportOpen(true),
+    openCover: () => setCoverOpen(true),
+    setSafe,
+    setGrade,
+    setSnapOn,
+    setRightTab,
+    focusPanel,
+    toggleSide,
+    collapseState: sideCollapsed,
+    stageRef: stageShellRef,
+  };
+
   return (
+    <ParityEditorProvider value={editorUI}>
     <div className={`sj2 parity${pane.dragging ? ' dragging' : ''}`} style={pane.rootStyle} onMouseOver={showTip} onMouseLeave={hideTip}>
       <div className="app">
         <header className="topbar parity-topbar">
@@ -412,6 +468,9 @@ export const ShenJianWorkbenchParity = () => {
             </div>
           </div>
           <div className="parity-top-center">
+            <button type="button" className={`parity-icon${sideCollapsed.left ? ' is-off' : ''}`} data-tip={sideCollapsed.left ? '展开素材面板' : '收起素材面板'} aria-pressed={sideCollapsed.left} onClick={() => toggleSide('left')}><PanelLeftClose /></button>
+            <button type="button" className={`parity-icon${sideCollapsed.right ? ' is-off' : ''}`} data-tip={sideCollapsed.right ? '展开检查器' : '收起检查器'} aria-pressed={sideCollapsed.right} onClick={() => toggleSide('right')}><PanelRightClose /></button>
+            <span className="parity-sep" />
             <button type="button" className="parity-icon" data-tip="撤销 (Ctrl+Z)" disabled={!edl.canUndo} onClick={() => edl.undo()}><Undo2 /></button>
             <button type="button" className="parity-icon" data-tip="重做 (Ctrl+Shift+Z)" disabled={!edl.canRedo} onClick={() => edl.redo()}><Redo2 /></button>
             <span className="parity-sep" />
@@ -425,7 +484,11 @@ export const ShenJianWorkbenchParity = () => {
           </div>
           <div className="parity-top-right">
             <ShenJianVariantSwitch />
-            <button type="button" className="parity-ghost desktop-only" data-tip="镜头池：点镜头自动起播，可删除镜头" onClick={() => setRightTab((v) => (v === 'pool' ? 'inspector' : 'pool'))}><LayoutGrid /><span>镜头池</span></button>
+            <button type="button" className="parity-ghost desktop-only" data-tip="素材池：点素材定位到时间线引用" onClick={() => {
+              const next = rightTab === 'pool' ? 'inspector' : 'pool';
+              setRightTab(next);
+              focusPanel(next);
+            }}><LayoutGrid /><span>素材池</span></button>
             <button type="button" className="parity-ghost" data-tip="显示 72 / 300 / 430 / 360 四区尺寸" onClick={() => setAnnotate((v) => !v)}><LayoutGrid /><span>布局对照</span></button>
             <button type="button" className="parity-ghost" data-tip="HTML 动画：写网页，直接渲染成 MP4" onClick={() => navigate('/motion')}><Code2 /><span>HTML 动画</span></button>
             <button type="button" className="parity-ghost" data-tip="查看同构版已落地 / 待接入清单" onClick={() => setParityOpen(true)}><Clapperboard /><span>差异清单</span></button>
@@ -435,70 +498,25 @@ export const ShenJianWorkbenchParity = () => {
             <button type="button" className="parity-ghost parity-back" data-tip="返回项目工作台" onClick={goProject}><ArrowLeft /></button>
             <div className="parity-avatar" title="当前账号">张</div>
             <button type="button" className="parity-icon compact-only" data-tip="打开素材库" onClick={() => setCompactPanel('library')}><FolderOpen /></button>
-            <button type="button" className="parity-icon compact-only" data-tip="打开镜头池" onClick={() => setCompactPanel('pool')}><LayoutGrid /></button>
+            <button type="button" className="parity-icon compact-only" data-tip="打开素材池" onClick={() => setCompactPanel('pool')}><LayoutGrid /></button>
             <button type="button" className="parity-icon compact-only" data-tip="打开属性检查器" onClick={() => setCompactPanel('inspector')}><SlidersHorizontal /></button>
           </div>
         </header>
 
-        <main className="workspace">
-          <ParityLibrary onImport={() => setImportOpen(true)} />
-          <div className="parity-stage-shell" ref={stageShellRef}>
-            <div className="parity-stage-head">
-              <div className="parity-stage-title"><b>播放器</b><span>·</span><span>时间线 01</span><i>{ratio} 预览</i></div>
-              <div className="parity-stage-actions">
-                <button type="button" className={safe ? 'on' : ''} data-tip="安全框：检查字幕与主体是否出画" onClick={() => setSafe((v) => !v)}><Eye /></button>
-                <button type="button" data-tip="全屏预览 (F)" onClick={() => {
-                  if (document.fullscreenElement) void document.exitFullscreen();
-                  else void stageShellRef.current?.requestFullscreen?.();
-                }}><Maximize2 /></button>
-              </div>
-            </div>
-            <ShenJianStage ratio={ratio} safe={safe} onToggleSafe={() => setSafe((v) => !v)} grade={grade} />
-          </div>
-          {rightTab === 'pool' ? <ShenJianShotPool onBack={() => setRightTab('inspector')} /> : <ShenJianInspectorParity grade={grade} setGrade={setGrade} />}
-          <div
-            className="pane-resizer left"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整素材库宽度"
-            tabIndex={0}
-            data-tip="拖动调整素材库宽度，双击恢复默认"
-            onPointerDown={(e) => pane.startResize('left', e)}
-            onDoubleClick={() => pane.reset('left')}
-            onKeyDown={pane.onResizerKey('left')}
-          />
-          <div
-            className="pane-resizer right"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整检查器宽度"
-            tabIndex={0}
-            data-tip="拖动调整检查器宽度，双击恢复默认"
-            onPointerDown={(e) => pane.startResize('right', e)}
-            onDoubleClick={() => pane.reset('right')}
-            onKeyDown={pane.onResizerKey('right')}
-          />
-        </main>
-
-        <ParityTimeline snapOn={snapOn} setSnapOn={setSnapOn} />
-        <div
-          className="pane-resizer bottom"
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="调整时间线高度"
-          tabIndex={0}
-          data-tip="拖动调整时间线高度，双击恢复默认"
-          onPointerDown={(e) => pane.startResize('bottom', e)}
-          onDoubleClick={() => pane.reset('bottom')}
-          onKeyDown={pane.onResizerKey('bottom')}
-        />
+        <ParityDockShell projectId={projectId} apiRef={dockApiRef} onReady={() => {
+          // 布局恢复后把检查器/素材池保持为同一组，右键素材池按需激活。
+          const api = dockApiRef.current;
+          if (!api) return;
+          if (rightTab === 'pool') api.getPanel('pool')?.api.setActive();
+          else api.getPanel('inspector')?.api.setActive();
+        }} />
       </div>
 
       {compactPanel ? (
         <div className="compact-drawer-backdrop" onClick={() => setCompactPanel(null)}>
           <aside className="compact-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="compact-drawer-head">
-              <b>{compactPanel === 'library' ? '素材库' : compactPanel === 'pool' ? '镜头池' : '属性检查器'}</b>
+              <b>{compactPanel === 'library' ? '素材库' : compactPanel === 'pool' ? '素材池' : '属性检查器'}</b>
               <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setCompactPanel(null)}><X /></button>
             </div>
             <div className="compact-drawer-body">
@@ -722,6 +740,7 @@ export const ShenJianWorkbenchParity = () => {
 
       <StudioFloatingChat />
     </div>
+    </ParityEditorProvider>
   );
 };
 

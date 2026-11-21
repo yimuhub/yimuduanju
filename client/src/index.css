@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./styles/graphite.css";
+@import "./styles/motion-tokens.css";
 @import "./styles/shenjian-proto.css";
 @import "./styles/shenjian-parity.css";
 @import "./tailwind-theme.css";
